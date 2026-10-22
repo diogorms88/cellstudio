@@ -1,0 +1,789 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : TRcuColorDef.ttp                                            *
+*   Description : PaintAssignment table for code and color group              *
+*-----------------------------------------------------------------------------*)
+
+CONSTANT PRIVATE
+   cMaxColor             : INT    := 255 (* Max. number of colors *);
+ 
+   // Pathes and file names
+   cRelPathToColorDefDef : STRING := "application/control/PCU?/definitions/colordef.Def";
+   cRelPathToColorDefIni : STRING := "application/control/PCU?/Cfg/colordef.ini";
+   cRelPathCfg           : STRING := "application/control/PCU?/cfg";
+   cRelDopwnloadPath     : STRING := "application/control/PCU?/download";
+   
+   // Section and key  names
+   cDefSectionName       : STRING := "section";
+   cDefColumnName        : STRING := "column";
+   cIniSectionName       : STRING := "color";
+   cIniColumnName        : STRING := "group";
+   cIniKeySectionName    : STRING := "sectionname";
+   cIniKeySectionAlias   : STRING := "sectionalias";
+   cIniKeyStartRow       : STRING := "startrow";
+   cIniKeyRows           : STRING := "rows";
+   cIniKeyKey            : STRING := "key";
+   cIniKeyRangeMax       : STRING := "rangemax"; 
+   cIniKeyCode           : STRING := "code";
+   cIniKeyGroup          : STRING := "group";
+   cIniKeyThickMinErr    : STRING := "filmthickminerr";
+   cIniKeyThickMinWarn   : STRING := "filmthickminwarn";
+   cIniKeyThickMaxWarn   : STRING := "filmthickmaxwarn";
+   cIniKeyThickMaxErr    : STRING := "filmthickmaxerr";
+   cIniKeyEcoatCalib     : STRING := "ecoatcalib";
+   cIniKeyEcoatFactor    : STRING := "ecoatfactor";    
+   cIniKeyEcoatOffset    : STRING := "ecoatoffset";    
+END_CONSTANT
+
+TYPE
+   TRcuColor : STRUCT
+      iNo       : INT;
+      sCode     : STRING;
+      iColorGrp : INT;
+      Limits            : TRcuPacMeasureLimits;
+      EcoatCompensation : TRcuPacEcoatCompColor;
+   END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   myRobot           : MAPTO TRcuRobot;
+
+   bDownloadReq      : MAPTO BOOL;
+   bDownloadReqAck   : MAPTO BOOL;
+   bDownloadReqBack  : MAPTO BOOL;
+   sDownloadFileName : MAPTO STRING[255];
+   
+   iMaxColorGrps     : INT;
+   iMaxColors        : INT;
+   
+   colorDef          : ARRAY [1..cMaxColor] OF TRcuColor;
+END_VAR
+
+ROUTINE Init(locRobot : TRcuRobot)
+   myRobot := MAP(locRobot);  
+
+   WAIT PaintRobot[myRobot.kinListInx].initRobComplete;
+   
+   CheckDownloadPath();
+      
+   IF ReadColorDef(GetPath(cRelPathToColorDefIni)) THEN
+   END_IF;
+   
+   IF MapIECVars() THEN
+      START ObserveDownloadReq();
+   END_IF;
+END_ROUTINE
+
+ROUTINE GetColorDef(CONST iExtColorNo : INT;
+                    sColorCode  : STRING;
+                    iColorGroup   : INT;
+                    Limits        : TRcuPacMeasureLimits;
+                    EcoatComp     : TRcuPacEcoatCompColor)
+                   : BOOL
+   IF (iExtColorNo > 0) AND
+      (iExtColorNo <= cMaxColor) THEN
+      sColorCode := colorDef[iExtColorNo].sCode;
+      iColorGroup := colorDef[iExtColorNo].iColorGrp;
+      Limits  := colorDef[iExtColorNo].Limits;
+      EcoatComp := colorDef[iExtColorNo].EcoatCompensation; 
+      
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE CheckDownloadPath() PRIVATE 
+   VAR
+      sPath : STRING;
+   END_VAR
+   
+   sPath := GetDownloadPath();
+   
+   IF NOT IsDir(sPath, TRUE) THEN
+      myRobot.DebugPrint(eTracePaintChecker, "CheckDownloadPath: Download folder '" + sPath + "' was not found");
+      IF MkDir(sPath) THEN
+         myRobot.DebugPrint(eTracePaintChecker, "CheckDownloadPath: Download folder '" + sPath + "' was created");
+      ELSE
+         myRobot.DebugPrint(eTracePaintChecker, "CheckDownloadPath: Download folder '" + sPath + "' could not be created");
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+ROUTINE MapIECVars() : BOOL PRIVATE
+   bDownloadReq := MAPX(cSV_bDownloadPaintAssNewFile[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bDownloadReq) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrNotMapped, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuColorDef.MapIECVars", 
+                        cSV_bDownloadPaintAssNewFile[myRobot.kinListInx]);
+      RETURN FALSE;
+   END_IF;
+ 
+   bDownloadReqAck := MAPX(cSV_bDownloadPaintAssNewFileAck[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bDownloadReqAck) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrNotMapped, 
+                        myRobot.kinListInx, 
+                        2, 
+                        0, 
+                        "TRcuColorDef.MapIECVars", 
+                        cSV_bDownloadPaintAssNewFileAck[myRobot.kinListInx]);
+      RETURN FALSE;
+   END_IF;
+   
+   bDownloadReqBack := MAPX(cSV_bDownloadPaintAssNewFileBack[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bDownloadReqBack) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrNotMapped, 
+                        myRobot.kinListInx, 
+                        3, 
+                        0, 
+                        "TRcuColorDef.MapIECVars", 
+                        cSV_bDownloadPaintAssNewFileBack[myRobot.kinListInx]);
+      RETURN FALSE;
+   END_IF;
+   
+   sDownloadFileName := MAPX(cSV_bDownloadPaintAssNewName[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(sDownloadFileName) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrNotMapped, 
+                        myRobot.kinListInx, 
+                        4, 
+                        0, 
+                        "TRcuColorDef.MapIECVars", 
+                        cSV_bDownloadPaintAssNewName[myRobot.kinListInx]);
+      RETURN FALSE;
+   END_IF;
+   
+   
+   RETURN TRUE;
+END_ROUTINE
+
+ROUTINE ObserveDownloadReq() PRIVATE
+   VAR
+      bChg     : BOOL;
+      timeout  : BOOL;
+      sDstname : STRING;
+   END_VAR;
+   
+   bDownloadReq      := FALSE;
+   bDownloadReqAck   := FALSE;
+   bDownloadReqBack  := FALSE;
+
+   bChg := IS_CHANGED(bDownloadReq);
+   
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF bDownloadReq THEN
+         myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Download requested from 3D-OnSite");
+
+         IF ReadColorDef(sDownloadFileName) THEN
+            sDstname := GetPath(cRelPathToColorDefIni);
+            IF FileCopy(sDownloadFileName, 
+                        sDstname) THEN
+               FileDelete(sDownloadFileName);
+          
+               bDownloadReqAck  := TRUE;
+               bDownloadReqBack := FALSE;
+            ELSE
+               bDownloadReqAck  := FALSE;
+               bDownloadReqBack := TRUE;
+            END_IF;
+         ELSE
+            bDownloadReqAck  := FALSE;
+            bDownloadReqBack := TRUE;
+         END_IF;
+
+         myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: DownloadReqAck  : " + STR(bDownloadReqAck));
+         myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: DownloadReqBack : " + STR(bDownloadReqBack));
+
+         timeout := FALSE;
+         SysTimerSet(giTimeOutDownload3DOnsite, timeout); // 5 sec
+         WAIT NOT bDownloadReq OR timeout;
+         IF timeout THEN
+            myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Download timeout");
+         ELSE
+            myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Download finished");
+         END_IF;
+      
+         bDownloadReqAck := FALSE;
+         bDownloadReqBack := FALSE;
+
+         myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: DownloadReqAck  : " + STR(bDownloadReqAck));
+         myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: DownloadReqBack : " + STR(bDownloadReqBack));
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ReadColorDef(CONST sIniFilePath : STRING) 
+                    : BOOL PRIVATE
+   VAR
+      bResult : BOOL := FALSE;
+   END_VAR
+   
+   myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Update of colordef started: " + sIniFilePath);
+
+   Reset();
+   
+   IF GetMaxColAndColGrpFromDefFile(iMaxColors, 
+                                    iMaxColorGrps) THEN
+      IF iMaxColors > cMaxColor THEN
+           myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Error max number of colors in colordef.def file is to high. MaxNoOfColors" + STR(cMaxColor));
+      ELSE
+         IF iMaxColorGrps <= 0 THEN
+            myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Max number of colors in colordef.def file is not defined.");
+         ELSE
+            bResult := ReadColorDefIni(sIniFilePath);
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   myRobot.DebugPrint(eTracePaintChecker, "ObserveDownloadReq: Update of colordef finished");
+   
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE Reset() PRIVATE
+   VAR
+      i : INT;
+   END_VAR
+   
+   FOR i := 1 TO cMaxColor DO
+      colorDef[i].iNo       := -1;
+      colorDef[i].sCode     := "";
+      colorDef[i].iColorGrp := -1;
+      colorDef[i].Limits.rThicknMinError   := -1;
+      colorDef[i].Limits.rThicknMinWarning := -1;
+      colorDef[i].Limits.rThicknMaxWarning := -1;
+      colorDef[i].Limits.rThicknMaxError   := -1;
+      colorDef[i].EcoatCompensation.EcoatFactor := 0.0;
+      colorDef[i].EcoatCompensation.EcoatOffset := 0.0;
+      colorDef[i].EcoatCompensation.EcoatCalib  := 0.0;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE ReadColorDefIni(CONST sInFilePath : STRING) 
+                       : BOOL PRIVATE
+   VAR
+      fileHandle      : DINT;
+      bEof            : BOOL;
+      s               : STRING;
+      sTmp            : STRING;      
+
+      sNewSection     : STRING := "";
+      sSection        : STRING := "";
+      sKey            : STRING := "";
+      sValue          : STRING := "";
+      sComment        : STRING := "";
+      
+      sCode           : STRING := "";
+      sGroup          : STRING := "";
+      sThicknMinErr   : STRING := "";
+      sThicknMinWarn  : STRING := "";
+      sThicknMaxWarn  : STRING := "";
+      sThicknMaxErr   : STRING := "";
+      
+      sEcoatCalib     : STRING := "";
+      sEcoatFactor    : STRING := "";
+      sEcoatOffset    : STRING := "";
+      
+      bResult         : BOOL := TRUE;
+   END_VAR
+   
+   fileHandle := FileOpen(sInFilePath, 
+                          eFileModeReadOnly);
+   IF fileHandle <> -1 THEN
+      bEof := FALSE;
+      WHILE NOT bEof DO
+         bEof := NOT FileReadLn(fileHandle, 
+                                s);
+                                
+         IF NOT bEof THEN
+            s := StrLtrim(s);
+            
+            IF IsSection(s, 
+                         sTmp) THEN
+               // New section found
+               sNewSection := sTmp;      
+            ELSE                                
+               // Check keys
+               IF StrLen(sSection) > 0 THEN
+                  IF IsParameter(s, 
+                                 sKey,
+                                 sValue,
+                                 sComment) THEN
+                     sKey := StrToLower(sKey);
+                     
+                     CASE sKey OF
+                        cIniKeyCode:   sCode  := sValue;
+                        cIniKeyGroup:  sGroup := sValue;
+                        cIniKeyThickMinErr:  sThicknMinErr  := sValue;
+                        cIniKeyThickMinWarn: sThicknMinWarn := sValue;
+                        cIniKeyThickMaxWarn: sThicknMaxWarn := sValue;
+                        cIniKeyThickMaxErr:  sThicknMaxErr  := sValue;
+                        cIniKeyEcoatCalib:   sEcoatCalib    := sValue; 
+                        cIniKeyEcoatFactor:  sEcoatFactor   := sValue; 
+                        cIniKeyEcoatOffset:  sEcoatOffset   := sValue; 
+                     END_CASE;
+                  END_IF;
+               END_IF; 
+            END_IF;
+         END_IF;
+
+         IF bEof OR (sSection <> sNewSection) THEN
+            // IF End of file or new section found
+            IF StrLeft(StrToLower(sSection), 
+                       StrLen(cIniSectionName)) = cIniSectionName THEN
+               IF NOT SetColor(sSection,
+                               sCode,
+                               sGroup,
+                               sThicknMinErr,
+                               sThicknMinWarn,
+                               sThicknMaxWarn,
+                               sThicknMaxErr,
+                               sEcoatFactor,
+                               sEcoatOffset,
+                               sEcoatCalib) THEN
+                  bResult:= FALSE;
+               END_IF;
+            END_IF;
+            
+            IF (StrLeft(StrToLower(sNewSection), 
+                        StrLen(cIniSectionName)) = cIniSectionName) THEN
+               sSection := sNewSection;
+            ELSE
+               sSection := "";
+            END_IF;
+            
+            sCode  := "";
+            sGroup := "";
+            sThicknMinErr  := "";
+            sThicknMinWarn := "";
+            sThicknMaxWarn := "";
+            sThicknMaxErr  := "";
+            sEcoatFactor   := "";
+            sEcoatOffset   := "";
+            sEcoatCalib    := "";
+         END_IF;                 
+                 
+         WAIT TRUE;
+      END_WHILE;
+   ELSE
+      bResult := FALSE;
+      myRobot.DebugPrint(eTracePaintChecker, "File " + sInFilePath + " cannot be opened");
+   END_IF;
+   
+   StreamClose(fileHandle);        
+                             
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE SetColor(CONST sSectionName : STRING;
+                 CONST sCode : STRING;
+                 CONST sGroup : STRING;
+                 CONST sThicknMinErr  : STRING;
+                 CONST sThicknMinWarn : STRING;
+                 CONST sThicknMaxWarn : STRING;
+                 CONST sThicknMaxErr  : STRING;
+                 CONST sEcoatFactor   : STRING;
+                 CONST sEcoatOffset   : STRING;
+                 CONST sEcoatCalib   : STRING) 
+                : BOOL PRIVATE
+   VAR
+      sColorNo  : STRING;
+      iColorNo  : INT;      
+      iColorGrp : INT;
+      r         : REAL;
+      bIsNum    : BOOL;
+      bResult   : BOOL := FALSE;
+   END_VAR
+                 
+   sColorNo := StrMid(sSectionName,
+                      StrLen(sSectionName) - StrLen(cIniSectionName), 
+                      StrLen(cIniSectionName)+1);
+   iColorNo := StrToInt(sColorNo,
+                        bIsNum);
+   
+   IF bIsNum THEN
+      IF (iColorNo>0) AND (iColorNo<=cMaxColor) THEN
+         colorDef[iColorNo].iNo       := iColorNo;
+         colorDef[iColorNo].sCode     := sCode;
+         colorDef[iColorNo].Limits.rThicknMinError   := -1.0;
+         colorDef[iColorNo].Limits.rThicknMinWarning := -1.0;
+         colorDef[iColorNo].Limits.rThicknMaxWarning := -1.0;
+         colorDef[iColorNo].Limits.rThicknMaxError   := -1.0;
+         colorDef[iColorNo].EcoatCompensation.EcoatFactor := 0.0;
+         colorDef[iColorNo].EcoatCompensation.EcoatOffset := 0.0;
+         colorDef[iColorNo].EcoatCompensation.EcoatCalib  := 0.0;         
+         
+         iColorGrp := StrToInt(sGroup,
+                               bIsNum);
+         
+         IF bIsNum THEN
+            IF (iColorGrp >0) AND (iColorGrp <= iMaxColorGrps) THEN
+               colorDef[iColorNo].iColorGrp :=  iColorGrp;
+               bResult := TRUE;
+            ELSE
+            END_IF;
+         ELSE
+         END_IF;
+         
+         r := StrToReal(sThicknMinErr, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].Limits.rThicknMinError  := r;
+         ELSE
+         END_IF;
+         
+         r := StrToReal(sThicknMinWarn, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].Limits.rThicknMinWarning := r;
+         ELSE
+         END_IF;
+
+         r := StrToReal(sThicknMaxWarn, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].Limits.rThicknMaxWarning := r;
+         ELSE
+         END_IF;
+         
+         r := StrToReal(sThicknMaxErr, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].Limits.rThicknMaxError  := r;
+         ELSE
+         END_IF;
+
+         r := StrToReal(sEcoatFactor, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].EcoatCompensation.EcoatFactor  := r;
+         ELSE
+         END_IF;
+
+         r := StrToReal(sEcoatOffset, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].EcoatCompensation.EcoatOffset  := r;
+         ELSE
+         END_IF;
+         
+         r := StrToReal(sEcoatCalib, bIsNum);
+         IF bIsNum THEN
+            colorDef[iColorNo].EcoatCompensation.EcoatCalib  := r;
+         ELSE
+         END_IF;
+      ELSE
+         bResult := TRUE;
+      END_IF;
+   ELSE
+      bResult := TRUE;
+   END_IF;
+   
+   RETURN bResult;
+END_ROUTINE
+   
+ROUTINE GetMaxColAndColGrpFromDefFile(iMaxColors : INT;
+                                      iMaxColorGrps : INT) : BOOL PRIVATE
+   VAR
+      sPath           : STRING;
+      fileHandle      : DINT;
+      bEof            : BOOL;
+      s               : STRING;
+      sTmp            : STRING;      
+      sNewSection     : STRING := "";
+      sSection        : STRING := "";
+      sKey            : STRING := "";
+      sValue          : STRING := "";
+      sComment        : STRING := "";
+      
+      sSectionName    : STRING := "";
+      sSectionAlias   : STRING := "";
+      sStartRow       : STRING := "";
+      sRows           : STRING := "";
+      sColumnKey      : STRING := "";
+      sRangeMax       : STRING := "";
+   END_VAR
+   
+   iMaxColors    := -1;
+   iMaxColorGrps := -1;
+   
+   sPath := GetPath(cRelPathToColorDefDef);
+   
+   fileHandle := FileOpen(sPath, 
+                          eFileModeReadOnly);
+   IF fileHandle <> -1 THEN
+      bEof := FALSE;
+      WHILE NOT bEof AND ((iMaxColors=-1) OR (iMaxColorGrps=-1)) DO
+         bEof := NOT FileReadLn(fileHandle, 
+                                s);
+                                
+         IF NOT bEof THEN
+            s := StrLtrim(s);
+            
+            IF IsSection(s, 
+                         sTmp) THEN
+               // New section found
+               sNewSection := sTmp;
+      
+            ELSE                                
+               // Check keys
+               IF StrLen(sSection) > 0 THEN
+                  IF IsParameter(s, 
+                                 sKey,
+                                 sValue, 
+                                 sComment) THEN
+                     sKey := StrToLower(sKey);
+                     
+                     CASE sKey OF
+                        cIniKeySectionAlias: sSectionAlias := sValue;
+                        cIniKeySectionName:  sSectionName  := sValue;
+                        cIniKeyStartRow:     sStartRow     := sValue;
+                        cIniKeyRows:         sRows         := sValue;
+                        cIniKeyKey:          sColumnKey    := sValue;
+                        cIniKeyRangeMax:     sRangeMax     := sValue;     
+                     END_CASE;
+                  END_IF;
+               END_IF; 
+            END_IF;
+         END_IF;
+
+         IF bEof OR (sSection <> sNewSection) THEN
+            // IF End of file or new section found
+            IF StrLeft(StrToLower(sSection), 
+                       StrLen(cDefSectionName)) = cDefSectionName THEN
+               // Section definition: Check max colors
+               iMaxColors := GetLastRowFromSectionDef(sSectionName,
+                                                      sSectionAlias,
+                                                      sStartRow, 
+                                                      sRows, 
+                                                      iMaxColors);
+            ELSIF StrLeft(StrToLower(sSection), 
+                          StrLen(cDefColumnName)) = cDefColumnName THEN
+               // Column definition: Check max color group
+               iMaxColorGrps := GetMaxColGroupFromColumnDef(sColumnKey, 
+                                                            sRangeMax, 
+                                                            iMaxColorGrps);
+            END_IF;
+            
+            IF (StrLeft(StrToLower(sNewSection), 
+                        StrLen(cDefSectionName)) = cDefSectionName) 
+               OR
+               (StrLeft(StrToLower(sNewSection), 
+                        StrLen(cDefColumnName)) = cDefColumnName) THEN
+               sSection := sNewSection;
+            ELSE
+               sSection := "";
+            END_IF;
+            
+            sSectionName  := "";
+            sSectionAlias := "";
+            sStartRow     := "";
+            sRows         := "";
+         END_IF;                 
+      END_WHILE;
+   ELSE
+      myRobot.DebugPrint(eTracePaintChecker, "File " + sPath + " cannot be opened");
+   END_IF;
+   
+   StreamClose(fileHandle);                                  
+   
+   RETURN (iMaxColors > 0) AND (iMaxColorGrps > 0);
+END_ROUTINE
+
+ROUTINE GetMaxColGroupFromColumnDef(sColumnName : STRING;
+                                    sRangeMax   : STRING;
+                                    iMaxColGrpDefault : INT)
+                                    : INT PRIVATE
+   VAR
+      iResult        : INT := -1;
+      iRangeMax      : INT;
+      bRangeMaxIsNum : BOOL := FALSE;
+   END_VAR
+   
+    IF StrToLower(sColumnName) = cIniColumnName THEN
+      iRangeMax := StrToInt(sRangeMax, 
+                            bRangeMaxIsNum);
+    END_IF;
+    
+    IF bRangeMaxIsNum THEN
+       RETURN iRangeMax;
+    ELSE
+       RETURN -1;
+    END_IF;
+END_ROUTINE
+                                    
+ROUTINE GetLastRowFromSectionDef(sSectionName      : STRING;
+                                 sSectionAlias     : STRING;
+                                 sStartRow         : STRING;
+                                 sRows             : STRING;
+                                 iMaxColorsDefault : INT) 
+                                 : INT PRIVATE
+    VAR
+      bCheckMaxColors : BOOL := FALSE;
+      iStartRow       : INT;
+      iRows           : INT;
+      bStartRowIsNum  : BOOL;
+      bRowsIsNum      : BOOL;
+      iMaxColors      : INT;
+   END_VAR
+   
+   iMaxColors := iMaxColorsDefault;   
+
+   IF StrLen(sSectionName) > 0 THEN
+      IF StrLen(sSectionAlias) > 0 THEN
+         IF StrToLower(sSectionAlias) = cIniSectionName THEN
+            bCheckMaxColors := TRUE;
+         END_IF;
+      ELSE
+         IF StrToLower(sSectionName) = cIniSectionName THEN
+            bCheckMaxColors := TRUE;
+         END_IF;
+      END_IF; 
+   END_IF;
+
+   IF bCheckMaxColors THEN
+      iStartRow := StrToInt(sStartRow, 
+                            bStartRowIsNum);
+      iRows     := StrToInt(sRows, 
+                            bRowsIsNum);
+
+      IF bStartRowIsNum AND bRowsIsNum THEN
+         IF (iStartRow+iRows-1) > iMaxColors THEN
+            iMaxColors := (iStartRow+iRows-1);
+         END_IF;
+      END_IF;
+      bCheckMaxColors := FALSE;
+   END_IF;
+   
+   RETURN iMaxColors;
+END_ROUTINE
+
+ROUTINE IsSection(VAR_IN s : STRING;
+                  sSection : STRING)
+                  : BOOL PRIVATE
+   VAR
+      iEnd    : DINT;
+      bResult : BOOL := FALSE;
+   END_VAR
+   
+   IF StrLeft(s,
+              1) = "[" THEN
+      iEnd := StrFind(s, 
+                      "]");
+      IF iEnd > 2 THEN
+         sSection := StrMid(s, 
+                            iEnd-2, 
+                            2);
+        
+         bResult := TRUE;
+      END_IF;
+   END_IF;
+
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE IsParameter(CONST s  : STRING;
+                    sKey     : STRING;
+                    sValue   : STRING;
+                    sComment : STRING)
+                   : BOOL PRIVATE
+   VAR
+      bResult  : BOOL := FALSE;
+      iPos     : DINT;
+      sLine    : STRING;
+   END_VAR
+   
+   sKey     := "";
+   sValue   := "";
+   sComment := "";
+   
+   sLine := s;
+   
+   // Replace tabs
+   iPos := StrFind(sLine, CHR(9)); 
+   WHILE  iPos > 0 DO
+      sLine := StrReplace(s, 
+                          " ", 
+                          1, 
+                          iPos); 
+                          
+      iPos := StrFind(sLine, CHR(9)); 
+   END_WHILE;
+   
+   // Find comment
+   iPos := StrFind(sLine, "//");
+   IF iPos > 0 THEN
+      // Comment is the rest of line after comment string
+      sComment := StrRight(sLine,
+                           StrLen(sLine) - (iPos+2));
+      
+      // Remove comment from sLine
+      sLine := StrLeft(sLine, 
+                       iPos-1);
+      sLine := StrRtrim(sLine);
+   END_IF;
+   
+   // Split key and value at '='
+   iPos := StrFind(sLine, "=");
+   IF iPos > 0 THEN
+      sKey := StrLeft(sLine,
+                      iPos-1);
+      sKey := StrRtrim(sKey);
+ 
+      sValue := StrRight(sLine,
+                         StrLen(sLine) - iPos);
+      sValue := StrLtrim(sValue);
+                        
+      IF sKey <> "" THEN
+         bResult := TRUE;
+      END_IF;
+   END_IF;   
+   
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE GetDownloadPath() : STRING PRIVATE
+   VAR
+      sApplPath    : STRING;
+      sPath        : STRING;
+      iPos         : DINT;
+   END_VAR
+
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   sPath := sApplPath + cRelDopwnloadPath;
+   
+   iPos := StrFind(sPath, "?");
+   IF iPos > 0 THEN
+     sPath := StrReplace(sPath, STR(gyiNrBcu[myRobot.kinListInx]), 1, iPos);
+   END_IF;
+   
+   RETURN sPath;
+END_ROUTINE
+
+ROUTINE GetPath(sRelPathToFile : STRING) : STRING PRIVATE
+   VAR
+      sApplPath    : STRING;
+      sPath        : STRING;
+      iPos         : DINT;
+   END_VAR
+
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   sPath := sApplPath + sRelPathToFile;
+   
+   iPos := StrFind(sPath, "?");
+   IF iPos > 0 THEN
+     sPath := StrReplace(sPath, STR(gyiNrBcu[myRobot.kinListInx]), 1, iPos);
+   END_IF;
+   
+   RETURN sPath;
+END_ROUTINE

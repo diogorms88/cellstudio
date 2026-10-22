@@ -1,0 +1,39 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 31.05.2016  | RHI    | First release
+//  v2_01.01.00  | 05.04.2018  | KTO    | AddOn:  copy Python scripts
+//  v2_01.02.00  | 16.04.2018  | KTO    | AddOn:  copy additional Durr_EthernetIP.py
+//  v2_01.03.00  | 24.11.2021  | KTO    | AddOn:  copy additional files for automatic bus config
+//  v2_01.04.00  | 31.03.2022  | KTO    | Change: delete origin folder of python scripts
+//  v2_01.05.00  | 13.07.2022  | KTO    | Change: script names and folders
+//  v2_01.06.00  | 12.02.2024  | KTO    | Change: copy new script Durr_Run_EcatDiagHmi
+//  v2_01.07.00  | 02.05.2024  | MUCH   | AddOn:  [ECORPC-1794] copy new script Durr_Run_CP505_AppSync
+
+
+Parameter OptionKeStudio
+
+Call Main_KeStudio
+Message OptionKeStudio version changed! 
+End
+
+SubRoutine Main_KeStudio
+	SelectCase OptionKeStudio
+		Case V1.40_RCMP
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_Profinet.py	..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_EthernetIP.py	..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_BusConfig.py		..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_EcatDiagHmi.py		..\..\..\..\ManagerProject\
+			FSCopy "..\..\..\..\ManagerProject\XML\scripts\Script Commands\Durr_Run_IO_Mapping.py"		..\..\..\..\ManagerProject\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\scripts\run
+			
+		Case V1.40_RCMP2
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_Profinet.py	..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_EthernetIP.py	..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_SCP.py		..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_BusConfig.py		..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_EcatDiagHmi.py		..\..\..\..\ManagerProject\
+			FSCopy ..\..\..\..\ManagerProject\XML\scripts\run\Durr_Run_CP505_AppSync.py		..\..\..\..\ManagerProject\
+			FSCopy "..\..\..\..\ManagerProject\XML\scripts\Script Commands\Durr_Run_IO_Mapping.py"		..\..\..\..\ManagerProject\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\scripts\run
+	EndSelect
+Return

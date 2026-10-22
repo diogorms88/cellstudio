@@ -1,0 +1,32 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 23.04.2018  | PZB    | First release
+//  v2_01.01.00  | 02.10.2018  | KTO    | Change: structural modification
+//  v2_01.02.00  | 17.05.2019  | KTO    | Add: copy/delete safety specific fixpos refscp / synscp
+//  v2_01.03.00  | 04.06.2019  | BIT    | Add: Set cfg parameters optional in RCUx.cfg when safe-robotic is used or not
+//  v2_01.04.00  | 11.06.2019  | MWT    | Change: moved SCP fixed positions from compatibility files to FixpsPatterns
+
+Imports Common
+
+Parameter Option1 OptionSafetyType
+
+Call Main_SafetyType
+END
+
+SubRoutine Main_SafetyType
+	SelectCase OptionSafetyType // Variant of safety type
+		Case SafeRobotics
+			Call Common_Use_SCPConfigurationRCUCfg
+			Call Common_Enable_SCP_Fixpos
+			SelectCase Option1
+				Case Handler
+					FSCopy ..\..\..\..\..\FixposPatterns\SCP\Handler\*scp.ti*			..\..\..\teachcontrol\kin1\fixpos.tt
+				CaseElse
+					FSCopy ..\..\..\..\..\FixposPatterns\SCP\Robot\*scp.ti*				..\..\..\teachcontrol\kin1\fixpos.tt
+			EndSelect
+		CaseElse
+			Call Common_Disuse_SCPConfigurationRCUCfg
+			Call Common_Disable_SCP_Fixpos
+			FSDeleteFile ..\..\..\teachcontrol\kin1\fixpos.tt\*scp.ti*			//safety specific fixpos refscp / synscp
+	EndSelect
+Return

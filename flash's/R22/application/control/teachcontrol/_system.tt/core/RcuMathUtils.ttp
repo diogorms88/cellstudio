@@ -1,0 +1,598 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2004 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*-------------------------------------------------------------------------------
+*  Component    : RC
+*  Modul        : RcMathUtils.ttp
+*  First Author : nmr
+*  Date         : 22.07.2005
+*-------------------------------------------------------------------------------
+*  Description:
+*
+*  useful mathematic functions
+*------------------------------------------------------------------------------
+*)
+
+
+(*------------------------------------------------------------------------------
+* Transforms an orientation-vector from degrees into radiant
+*)
+
+TYPE GLOBAL
+   HomogenMatrix : ARRAY[4] OF ARRAY[4] OF REAL;
+END_TYPE
+
+
+ROUTINE RcuDegToRad(CONST v : TMcuVector3; vRad : TMcuVector3) GLOBAL
+   
+   McuMultiplyScalarVec3(vRad, v, gcPi / 180.0); 
+(*
+   VAR
+      i : DINT;
+   END_VAR
+   
+   FOR i := 0 TO 2 DO   
+      vRad.mValues[i] := v.mValues[i] * gcPi / 180.0;
+   END_FOR;
+*)
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Transforms an orientation-vector from radiant into degrees
+*)
+ROUTINE RcuRadToDeg(CONST v : TMcuVector3; vDeg : TMcuVector3) GLOBAL
+   
+   McuMultiplyScalarVec3(vDeg, v, 180.0 / gcPi); 
+(*
+   VAR
+      i : DINT;
+   END_VAR
+   
+   FOR i := 0 TO 2 DO   
+      vDeg.mValues[i] := 180.0 / gcPi * v.mValues[i];
+   END_FOR;
+*)
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Calculates normal-vector n for euler-orientation euler
+*)
+ROUTINE RcuEulerToNormal(CONST euler : TMcuVector3; n : TMcuVector3) GLOBAL
+   VAR
+      eulerRad : TMcuVector3;
+   END_VAR
+   
+   //RcuDegToRad(euler, eulerRad); 
+   McuMultiplyScalarVec3(eulerRad, euler, gcPi / 180.0); 
+
+   n.mValues[0] := Sinus(eulerRad.mValues[1])*Cosinus(eulerRad.mValues[0]);
+   n.mValues[1] := Sinus(eulerRad.mValues[0])*Sinus(eulerRad.mValues[1]);
+   n.mValues[2] := Cosinus(eulerRad.mValues[1]);     
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Calculates euler-orientation euler for normal-vector n
+*)
+ROUTINE RcuNormalToEuler(CONST n : TMcuVector3; euler : TMcuVector3) GLOBAL
+   VAR
+      r : REAL;
+   END_VAR
+   
+   r := n.mValues[0] * n.mValues[0] + n.mValues[1] * n.mValues[1];
+   Sqrt(r, r);
+   euler.mValues[0] := ArcTan2(n.mValues[1], n.mValues[0]);
+   euler.mValues[1] := ArcTan2(r, n.mValues[2]);
+   euler.mValues[2] := 0;
+   
+   //RcuRadToDeg(euler, euler);      
+   McuMultiplyScalarVec3(euler, euler, 180.0 / gcPi); 
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Calculates the dot-product r of vector p1 and vector p2
+*
+* function replaced by 
+* McuDotProductVec3: ROUTINE(CONST vec1: TMcuVector3; CONST vec2: TMcuVector3): REAL;
+*)
+ROUTINE RcuDotProduct(CONST p1 : TMcuVector3; CONST p2 : TMcuVector3; r : REAL) GLOBAL
+   VAR
+      i : DINT;
+   END_VAR
+   
+   r:= 0.0;
+   FOR i := 0 TO 2 DO
+      r := r + p1.mValues[i] * p2.mValues[i];
+   END_FOR;
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Multiplies vector v by scalar s
+*
+* function replaced by 
+* McuMultiplyScalarVec3: ROUTINE(result: TMcuVector3; CONST vec: TMcuVector3; CONST val: REAL);
+*)
+ROUTINE RcuVectMultScalar(CONST v : TMcuVector3; s : REAL; vout : TMcuVector3) GLOBAL
+   VAR
+      i : DINT;
+   END_VAR
+   
+   FOR i := 0 TO 2 DO   
+      vout.mValues[i] := v.mValues[i] * s;
+   END_FOR;
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Divides vector v by scalar s
+*
+* function replaced by 
+* McuMultiplyScalarVec3: ROUTINE(result: TMcuVector3; CONST vec: TMcuVector3; CONST val: REAL);
+*)
+ROUTINE RcuVectDivScalar(CONST v : TMcuVector3; s : REAL; vout : TMcuVector3) GLOBAL
+   VAR
+      i : DINT;
+   END_VAR
+   
+   IF s = 0 THEN
+      RcuSetMessageOnce(RcuMathUtils_ErrPathParOutOfRng, -1, 1, 0, "RcuMathUtils.RcuVectDivScalar", "s=0");
+   ELSE
+      FOR i := 0 TO 2 DO   
+         vout.mValues[i] := v.mValues[i] / s;
+      END_FOR;
+   END_IF;
+END_ROUTINE
+
+
+(*
+/*=============================================================================
+*   
+*   Compute_kardan_tcp
+*   
+*   Funktion:     Kardanwinkel auf TCP
+*   
+*   
+*============================================================================*/
+*)
+ROUTINE Compute_kardan_tcp(Ori : TMcuMatrix3; Pos : TMcuVector3; kard : OBJECT) GLOBAL
+VAR
+   si_a : REAL; co_a : REAL;
+   si_b : REAL; co_b : REAL;
+   si_c : REAL; co_c : REAL;
+END_VAR
+
+   si_a := Sinus(kard.A_deg * gcPi/180);
+   co_a := Cosinus(kard.A_deg * gcPi/180);
+   si_b := Sinus(kard.B_deg * gcPi/180);
+   co_b := Cosinus(kard.B_deg * gcPi/180);
+   si_c := Sinus(kard.C_deg * gcPi/180);
+   co_c := Cosinus(kard.C_deg * gcPi/180);
+  
+   Ori.mValues[0][0] :=  co_b * co_c;
+   Ori.mValues[0][1] := -co_a * si_c + si_a * si_b * co_c;
+   Ori.mValues[0][2] :=  si_a * si_c + co_a * si_b * co_c;
+
+   Ori.mValues[1][0] :=  co_b * si_c;
+   Ori.mValues[1][1] :=  co_a * co_c + si_a * si_b * si_c;
+   Ori.mValues[1][2] := -si_a * co_c + co_a * si_b * si_c;
+
+   Ori.mValues[2][0] :=  -si_b;
+   Ori.mValues[2][1] :=  si_a * co_b;
+   Ori.mValues[2][2] :=  co_a * co_b;
+
+   Pos.mValues[0] := kard.X_mm;
+   Pos.mValues[1] := kard.Y_mm;
+   Pos.mValues[2] := kard.Z_mm;
+END_ROUTINE
+
+
+(*
+/*=============================================================================
+*   
+*   Compute_tcp_kardan
+*   
+*   Funktion:     TCP auf Kardanwinkel
+*   
+*   
+*============================================================================*/
+*)
+ROUTINE Compute_tcp_kardan(Ori : TMcuMatrix3; Pos : TMcuVector3; mode : INT; kard : OBJECT) GLOBAL
+VAR
+   si : REAL;
+   co : REAL;
+END_VAR
+
+   kard.X_mm := Pos.mValues[0];
+   kard.Y_mm := Pos.mValues[1];
+   kard.Z_mm := Pos.mValues[2];
+   
+   IF (rAbs(Ori.mValues[0][0]) < 0.001) AND (rAbs(Ori.mValues[1][0]) < 0.001) THEN
+      kard.C_deg := 0.0;
+   ELSE
+      IF mode = 0 THEN
+         kard.C_deg := ArcTan2(Ori.mValues[1][0], Ori.mValues[0][0]);
+      ELSE
+         kard.C_deg := ArcTan2(-Ori.mValues[1][0], -Ori.mValues[0][0]);
+      END_IF;
+   END_IF;
+   si := Sinus(kard.C_deg);
+   co := Cosinus(kard.C_deg);
+   kard.B_deg := ArcTan2(-Ori.mValues[2][0], co*Ori.mValues[0][0] + si*Ori.mValues[1][0]);
+   kard.A_deg := ArcTan2(si*Ori.mValues[0][2] - co*Ori.mValues[1][2], co*Ori.mValues[1][1] - si*Ori.mValues[0][1]);
+   kard.A_deg := kard.A_deg * 180/gcPi;
+   kard.B_deg := kard.B_deg * 180/gcPi;
+   kard.C_deg := kard.C_deg * 180/gcPi;
+END_ROUTINE
+
+
+ROUTINE SetUnitMatrix(homMat: HomogenMatrix) GLOBAL
+
+   homMat[0][0] := 1.0; 
+   homMat[0][1] := 0.0;
+   homMat[0][2] := 0.0;
+   homMat[0][3] := 0.0;
+   
+   homMat[1][0] := 0.0; 
+   homMat[1][1] := 1.0;
+   homMat[1][2] := 0.0;
+   homMat[1][3] := 0.0;
+   
+   homMat[2][0] := 0.0; 
+   homMat[2][1] := 0.0;
+   homMat[2][2] := 1.0;
+   homMat[2][3] := 0.0;
+   
+   homMat[3][0] := 0.0; 
+   homMat[3][1] := 0.0;
+   homMat[3][2] := 0.0;
+   homMat[3][3] := 1.0;      
+END_ROUTINE
+
+
+ROUTINE SetRotXMatrix(CONST angle : REAL; homMat: HomogenMatrix) GLOBAL
+VAR
+   co : REAL;
+   si : REAL;
+END_VAR
+   
+   si := Sinus(angle);
+   co := Cosinus(angle);
+
+   homMat[0][0] := 1.0; 
+   homMat[0][1] := 0.0;
+   homMat[0][2] := 0.0;
+   homMat[0][3] := 0.0;
+   
+   homMat[1][0] := 0.0; 
+   homMat[1][1] := co;
+   homMat[1][2] := -si;
+   homMat[1][3] := 0.0;
+   
+   homMat[2][0] := 0.0; 
+   homMat[2][1] := si;
+   homMat[2][2] := co;
+   homMat[2][3] := 0.0;
+   
+   homMat[3][0] := 0.0; 
+   homMat[3][1] := 0.0;
+   homMat[3][2] := 0.0;
+   homMat[3][3] := 1.0;      
+END_ROUTINE
+
+
+ROUTINE SetRotYMatrix(CONST angle : REAL; homMat: HomogenMatrix) GLOBAL
+VAR
+   co : REAL;
+   si : REAL;
+END_VAR
+   
+   si := Sinus(angle);
+   co := Cosinus(angle);
+
+   homMat[0][0] := co; 
+   homMat[0][1] := 0.0;
+   homMat[0][2] := si;
+   homMat[0][3] := 0.0;
+   
+   homMat[1][0] := 0.0; 
+   homMat[1][1] := 1.0;
+   homMat[1][2] := 0.0;
+   homMat[1][3] := 0.0;
+   
+   homMat[2][0] := -si; 
+   homMat[2][1] := 0.0;
+   homMat[2][2] := co;
+   homMat[2][3] := 0.0;
+   
+   homMat[3][0] := 0.0; 
+   homMat[3][1] := 0.0;
+   homMat[3][2] := 0.0;
+   homMat[3][3] := 1.0;      
+END_ROUTINE
+
+
+ROUTINE SetRotZMatrix(CONST angle : REAL; homMat: HomogenMatrix) GLOBAL
+VAR
+   co : REAL;
+   si : REAL;
+END_VAR
+   
+   si := Sinus(angle);
+   co := Cosinus(angle);
+
+   homMat[0][0] := co; 
+   homMat[0][1] := -si;
+   homMat[0][2] := 0.0;
+   homMat[0][3] := 0.0;
+   
+   homMat[1][0] := si; 
+   homMat[1][1] := co;
+   homMat[1][2] := 0.0;
+   homMat[1][3] := 0.0;
+   
+   homMat[2][0] := 0.0; 
+   homMat[2][1] := 0.0;
+   homMat[2][2] := 1.0;
+   homMat[2][3] := 0.0;
+   
+   homMat[3][0] := 0.0; 
+   homMat[3][1] := 0.0;
+   homMat[3][2] := 0.0;
+   homMat[3][3] := 1.0;      
+END_ROUTINE
+
+
+ROUTINE SetTransMatrix(CONST t : TMcuVector3; homMat: HomogenMatrix) GLOBAL
+   homMat[0][0] := 1.0; 
+   homMat[0][1] := 0.0;
+   homMat[0][2] := 0.0;
+   homMat[0][3] := t.mValues[0];
+   
+   homMat[1][0] := 0.0; 
+   homMat[1][1] := 1.0;
+   homMat[1][2] := 0.0;
+   homMat[1][3] := t.mValues[1];
+   
+   homMat[2][0] := 0.0; 
+   homMat[2][1] := 0.0;
+   homMat[2][2] := 1.0;
+   homMat[2][3] := t.mValues[2];
+   
+   homMat[3][0] := 0.0; 
+   homMat[3][1] := 0.0;
+   homMat[3][2] := 0.0;
+   homMat[3][3] := 1.0;      
+END_ROUTINE
+
+ROUTINE MultiplyHomMat(result : HomogenMatrix; VAR_IN mat1 : HomogenMatrix; VAR_IN mat2 : HomogenMatrix) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+   k : INT;
+   s : REAL;
+END_VAR
+
+   FOR i := 0 TO 3 DO
+      FOR j := 0 TO 3 DO
+         s := 0.0;
+         FOR k := 0 TO 3 DO
+            s := s + mat1[i][k]*mat2[k][j];
+         END_FOR;
+         result[i][j] := s;
+      END_FOR;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE MultiplyHomMatVector3(result : TMcuVector3; VAR_IN mat1 : HomogenMatrix; VAR_IN vector : TMcuVector3) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+   k : INT;
+   s : REAL;
+END_VAR
+
+   FOR i := 0 TO 2 DO
+      s := 0.0;
+      FOR k := 0 TO 2 DO
+         s := s + mat1[i][k]*vector.mValues[k];
+      END_FOR;
+      s := s + mat1[i][3];
+      result.mValues[i] := s;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE InvertHomMat(result : HomogenMatrix; VAR_IN mat1 : HomogenMatrix) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+   k : INT;
+   s : REAL;
+END_VAR
+   
+   // Teilmatrix Rotation transponieren
+   FOR i := 0 TO 2 DO
+      FOR j := 0 TO 2 DO
+         result[i][j] := mat1[j][i];
+      END_FOR;
+   END_FOR;
+   // Teilmatrix Translation berechnen
+   FOR i := 0 TO 2 DO
+      s := 0.0;
+      FOR j := 0 TO 2 DO
+         s := s + mat1[j][i] * mat1[j][3];
+      END_FOR;
+      result[i][3] := -s;
+   END_FOR;
+   result[3][3] := 1.0;
+END_ROUTINE
+
+
+ROUTINE CopyHomMat2Matrix3(result : TMcuMatrix3; VAR_IN mat1 : HomogenMatrix) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+END_VAR
+
+   FOR i := 0 TO 2 DO
+      FOR j := 0 TO 2 DO
+         result.mValues[i][j] := mat1[i][j];
+      END_FOR;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE CopyHomMat2Vector3(result : TMcuVector3; VAR_IN mat1 : HomogenMatrix) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+END_VAR
+
+   FOR i := 0 TO 2 DO
+      result.mValues[i] := mat1[i][3];
+   END_FOR;
+END_ROUTINE
+
+
+ROUTINE CopyMatrix32HomMat(result : HomogenMatrix; VAR_IN mat1 : TMcuMatrix3) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+END_VAR
+
+   FOR i := 0 TO 2 DO
+      FOR j := 0 TO 2 DO
+         result[i][j] := mat1.mValues[i][j];
+      END_FOR;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE CopyVector32HomMat(result : HomogenMatrix; VAR_IN mat1 : TMcuVector3) GLOBAL
+VAR
+   i : INT;
+   j : INT;
+END_VAR
+
+   FOR i := 0 TO 2 DO
+      result[i][3] := mat1.mValues[i];
+   END_FOR;
+END_ROUTINE
+
+ROUTINE TransformVector3(result : TMcuVector3; VAR_IN mat1 : HomogenMatrix; VAR_IN vec : TMcuVector3) GLOBAL
+VAR
+   i : INT;
+   k : INT;
+   s : REAL;
+END_VAR
+
+   FOR i := 0 TO 2 DO
+         s := 0.0;
+         FOR k := 0 TO 2 DO
+            s := s + mat1[i][k]*vec.mValues[k];
+         END_FOR;
+         result.mValues[i] := s;
+   END_FOR;
+   
+END_ROUTINE
+
+
+// Calculates new object (NewObj) from original object(OrgObj) and an additional 
+// translation/rotation (VisObj) e.g. from vision system
+ROUTINE RcuCalcObject(lKin     : TRcuKinematic; 
+                      OrgObj   : OBJECT; 
+                      VisFrame : TMcuFrame; 
+                      NewObj   : OBJECT) GLOBAL
+VAR
+   OrgFrame : TMcuFrame;
+   NewFrame : TMcuFrame;
+   b       : BOOL;
+   str     : STRING;
+END_VAR
+   
+   OrgFrame.mFrameTyp := eMcuFrameKardan;
+   OrgFrame.mPos.mValues[0] := OrgObj.X_mm;
+   OrgFrame.mPos.mValues[1] := OrgObj.Y_mm;
+   OrgFrame.mPos.mValues[2] := OrgObj.Z_mm;
+   OrgFrame.mOri.mValues[0] := OrgObj.A_deg;
+   OrgFrame.mOri.mValues[1] := OrgObj.B_deg;
+   OrgFrame.mOri.mValues[2] := OrgObj.C_deg;                    
+
+   McuMultiplyFrames(NewFrame, OrgFrame, VisFrame);
+   
+   NewObj.X_mm := NewFrame.mPos.mValues[0];
+   NewObj.Y_mm := NewFrame.mPos.mValues[1];
+   NewObj.Z_mm := NewFrame.mPos.mValues[2];
+   NewObj.A_deg := NewFrame.mOri.mValues[0];
+   NewObj.B_deg := NewFrame.mOri.mValues[1];
+   NewObj.C_deg := NewFrame.mOri.mValues[2];
+
+   PrintObject(lKin, "Values for SET_OBJECT:", NewObj);
+   
+   str := NewObj.GetInstancePathName();
+   b := WriteInitValues(str); 
+   
+END_ROUTINE
+
+
+// Calculates new tool (NewTool) from original tool(OrgTool) and an additional 
+// translation/rotation (VisObj) e.g. from vision system
+ROUTINE RcuCalcTool(lKin     : TRcuKinematic; 
+                     OrgTool  : TOOL; 
+                     VisFrame : TMcuFrame; 
+                     NewTool  : TOOL) GLOBAL
+VAR
+   OrgFrame : TMcuFrame;
+   NewFrame : TMcuFrame;
+   b       : BOOL;
+   str     : STRING;
+END_VAR
+   
+   OrgFrame.mFrameTyp := eMcuFrameKardan;
+   OrgFrame.mPos.mValues[0] := OrgTool.X_mm;
+   OrgFrame.mPos.mValues[1] := OrgTool.Y_mm;
+   OrgFrame.mPos.mValues[2] := OrgTool.Z_mm;
+   OrgFrame.mOri.mValues[0] := OrgTool.A_deg;
+   OrgFrame.mOri.mValues[1] := OrgTool.B_deg;
+   OrgFrame.mOri.mValues[2] := OrgTool.C_deg;                    
+
+   McuMultiplyFrames(NewFrame, OrgFrame, VisFrame);
+   
+   NewTool.X_mm  := NewFrame.mPos.mValues[0];
+   NewTool.Y_mm  := NewFrame.mPos.mValues[1];
+   NewTool.Z_mm  := NewFrame.mPos.mValues[2];
+   NewTool.A_deg := NewFrame.mOri.mValues[0];
+   NewTool.B_deg := NewFrame.mOri.mValues[1];
+   NewTool.C_deg := NewFrame.mOri.mValues[2];
+
+   PrintTool(lKin, "Values for SET_TOOL:", NewTool);
+   
+   str := NewTool.GetInstancePathName();
+   b := WriteInitValues(str); 
+   
+END_ROUTINE
+
+
+ROUTINE PrintObject(lKin : TRcuKinematic; CONST Text : STRING; kard : OBJECT) PRIVATE
+   lKin.DebugPrint(eTraceVision, Text);
+   lKin.DebugPrint(eTraceVision, "X = " + STR(kard.X_mm));
+   lKin.DebugPrint(eTraceVision, "Y = " + STR(kard.Y_mm));
+   lKin.DebugPrint(eTraceVision, "Z = " + STR(kard.Z_mm));
+   lKin.DebugPrint(eTraceVision, "A = " + STR(kard.A_deg));
+   lKin.DebugPrint(eTraceVision, "B = " + STR(kard.B_deg));
+   lKin.DebugPrint(eTraceVision, "C = " + STR(kard.C_deg));
+END_ROUTINE
+
+ROUTINE PrintTool(lKin : TRcuKinematic; CONST Text : STRING; kard : TOOL) PRIVATE
+   lKin.DebugPrint(eTraceVision, Text);
+   lKin.DebugPrint(eTraceVision, "X = " + STR(kard.X_mm));
+   lKin.DebugPrint(eTraceVision, "Y = " + STR(kard.Y_mm));
+   lKin.DebugPrint(eTraceVision, "Z = " + STR(kard.Z_mm));
+   lKin.DebugPrint(eTraceVision, "A = " + STR(kard.A_deg));
+   lKin.DebugPrint(eTraceVision, "B = " + STR(kard.B_deg));
+   lKin.DebugPrint(eTraceVision, "C = " + STR(kard.C_deg));
+END_ROUTINE
+
+

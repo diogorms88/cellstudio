@@ -1,0 +1,301 @@
+//  Version     | ReleaseDate | Respon  | Changes
+//  -----------------------------------------------------------------------------------------------
+//  v2_01.00.00 | 2022-04-12  | KLCH    | First release [ECORPC-1148]
+
+Imports Common
+
+Parameter Option1
+
+Call Main_Material1
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Material1
+	SelectCase Option1
+		Case EcoDose_SM
+			Call Material1_ChannelsAndDevices_SM
+			Call Material1_ConfigureLogChannels
+			Call Material1_ConfigureResetChannelStates
+			Call Material1_ConfigureTriggerBrush_SM
+		Case EcoDose_SM_SM
+			Call Material1_ChannelsAndDevices_SM
+			Call Material1_ConfigureLogChannels
+			Call Material1_ConfigureResetChannelStates
+			Call Material1_ConfigureTriggerBrush_SM
+		Case EcoDose_SM_PCL
+			Call Material1_ChannelsAndDevices_SM
+			Call Material1_ConfigureLogChannels
+			Call Material1_ConfigureResetChannelStates
+			Call Material1_ConfigureTriggerBrush_SM
+		Case EcoDose_PCL
+			Call Material1_ChannelsAndDevices_PCL
+			Call Material1_ConfigureLogChannels
+			Call Material1_ConfigureResetChannelStates
+			Call Material1_ConfigureTriggerBrush_PCL
+		Case EcoDose_PCL_PCL
+			Call Material1_ChannelsAndDevices_PCL
+			Call Material1_ConfigureLogChannels
+			Call Material1_ConfigureResetChannelStates
+			Call Material1_ConfigureTriggerBrush_PCL
+		CaseElse
+			Message Process type not supported (Option1)! (Main_Material1)
+	EndSelect
+Return
+
+SubRoutine Material1_ConfigureLogChannels
+	//Add physical channels to logical main channel
+	//*********** Add physical Material1*****************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1.LogMainChannel
+	LogChannelAddPhysChannel Material1
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 1
+	//Add logical channels
+	//*********** Logic Material1***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	AddLogChannel LogMaterial1
+	LogChannelDescription Logical channel for material 1
+	LogChannelPropertyPaintRelevant 0
+	LogChannelPropertyMixedMaterial 0
+	//*********** Add physical Material1************************
+	SelectLogChannel PCU1.LogMaterial1
+	LogChannelAddPhysChannel Material1
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 1
+Return
+
+SubRoutine Material1_ConfigureResetChannelStates
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectTab [ResetChannelStates]
+	ResetChannelState 2r 73a 1
+	ResetChannelState 2r 73r 1
+Return
+
+SubRoutine Material1_ChannelsAndDevices_SM
+	//******** Add Material1************
+	Call Common_AddChannel_Material1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BShotMeter1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BShotMeter1
+	SelectTab [CfgParameter]
+	SelectCfg BShotMeter1.HoseCompensation
+	OptionalUsed 1
+	SelectCfg BShotMeter1.HoseCompensation.EnableHoseComp
+	Value 0
+	SelectCfg BShotMeter1.TimeOff
+	Value 0d0h0m0s70ms
+	SelectCfg BShotMeter1.TimeOn
+	Value 0d0h0m0s160ms
+	SelectCfg BShotMeter1.PressureSensorName
+	Value "AP1P"
+	SelectCfg BShotMeter1.FillingVolumeTol
+	OptionalUsed 1
+	SelectCfg BShotMeter1.FillingVolumeInPerc
+	OptionalUsed 1
+	SelectCfg BShotMeter1.ActualPressure
+	OptionalUsed 1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_AMatManager1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+	SelectTab [CfgParameter]
+	SelectCfg AMatManager1.Characteristics
+	OptionalUsed 1
+	SelectCfg AMatManager1.Characteristics.CheckIncreasing
+	OptionalUsed 1
+	SelectCfg AMatManager1.Characteristics.ExponentialCalib
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.PressureSensor
+	OptionalUsed 1
+	Value "AP1P"
+	SelectCfg AMatManager1.DeviceNames.TemperatureSensor
+	OptionalUsed 1
+	Value "AP1T"
+	SelectCfg AMatManager1.DeviceNames.SetPressureCtrlDevice
+	OptionalUsed 1
+	Value "ShotMeter1.SetPressure"
+	SelectCfg AMatManager1.DeviceNames.SetFlowCtrlDevice
+	OptionalUsed 1
+	Value "ShotMeter1.SetQuantity"
+	SelectCfg AMatManager1.Adaption
+	OptionalUsed 1
+Return
+
+SubRoutine Material1_ChannelsAndDevices_PCL
+	//******** Add Material1************
+	Call Common_AddChannel_Material1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_AMV2FC
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+	SelectTab [CfgParameter]
+	SelectCfg AMV2FC.DeviceNames.FlowSensor
+	OptionalUsed 1
+	Value "MV2F"
+	SelectCfg AMV2FC.DeviceNames.PressureSensor
+	OptionalUsed 1
+	Value "AP1P"
+	SelectCfg AMV2FC.DeviceNames.PressureSensorOutput
+	OptionalUsed 1
+	Value "MV2PA"
+	SelectCfg AMV2FC.DeviceNames.CirculationValve
+	OptionalUsed 1
+	Value "AVR1"
+	SelectCfg AMV2FC.CirculationControl
+	OptionalUsed 1
+	SelectCfg AMV2FC.InitialPressureControl
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TimeStartAddInitPressChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TimeStartAddInitPressure
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TnHoseComp
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TnHoseCompBrushChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TimeStartAddInitPressChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TimeStartAddInitPressure
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TnHoseComp
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TnHoseCompBrushChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TimeStartAddInitPressChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TimeStartAddInitPressure
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TnHoseComp
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TnHoseCompBrushChange
+	OptionalUsed 1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_AMatManager1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+	SelectTab [CfgParameter]
+	SelectCfg AMatManager1.Characteristics
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.PressureSensor
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.TemperatureSensor
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.SetPressureCtrlDevice
+	OptionalUsed 1
+	Value "MV2FC.SetPressure"
+	SelectCfg AMatManager1.DeviceNames.SetFlowCtrlDevice
+	OptionalUsed 1
+	Value "MV2FC.SetFlow"
+	SelectCfg AMatManager1.DeviceNames.PressureSensorOutput
+	OptionalUsed 1
+	Value "MV2PA"
+	SelectCfg AMatManager1.DeviceNames.ActValueCtrlDevice
+	OptionalUsed 1
+	Value "MV2.Set"
+	SelectCfg AMatManager1.Adaption
+	OptionalUsed 1
+	SelectCfg AMatManager1.Adaption.MaxFlow
+	Value 40
+	SelectCfg AMatManager1.Characteristics.CheckIncreasing
+	OptionalUsed 1
+	SelectCfg AMatManager1.Characteristics.ExponentialCalib
+	OptionalUsed 1
+	Value 0
+	SelectCfg AMatManager1.Characteristics.MinPressureDiff
+	OptionalUsed 1
+Return
+
+SubRoutine Material1_ConfigureTriggerBrush_SM
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	// ************Set paint relevant devices for SM*************
+//	SelectTab [BrushTriggerSetValuesPaintRelDevices]
+	// ************Set trigger devices for SM*************
+	SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+	// Set analog signals for paint relevant devices
+	NotResetBrushAtEnd BShotMeter1.InitialPressure 0
+	BrushSource BShotMeter1.InitialPressure InitialPressure1
+	IdleBrush1Enable BShotMeter1.InitialPressure 1
+	IdleBrush1Value BShotMeter1.InitialPressure 20
+	IdleBrush2Enable BShotMeter1.InitialPressure 1
+	IdleBrush2Value BShotMeter1.InitialPressure 20
+	OverrideEnable BShotMeter1.InitialPressure 0
+	NotResetBrushAtEnd BShotMeter1.OffsetInitialPressure 0
+	BrushSource BShotMeter1.OffsetInitialPressure OffsetInitialPressure1
+	IdleBrush1Enable BShotMeter1.OffsetInitialPressure 0
+	IdleBrush1Value BShotMeter1.OffsetInitialPressure 0
+	IdleBrush2Enable BShotMeter1.OffsetInitialPressure 0
+	IdleBrush2Value BShotMeter1.OffsetInitialPressure 0
+	OverrideEnable BShotMeter1.OffsetInitialPressure 0
+	NotResetBrushAtEnd BShotMeter1.SetQuantity 0
+	BrushSource BShotMeter1.SetQuantity PaintFlow1
+	IdleBrush1Enable BShotMeter1.SetQuantity 0
+	IdleBrush1Value BShotMeter1.SetQuantity 0
+	IdleBrush2Enable BShotMeter1.SetQuantity 0
+	IdleBrush2Value BShotMeter1.SetQuantity 0
+	OverrideEnable BShotMeter1.SetQuantity 1
+	NotResetBrushAtEnd BShotMeter1.SetPressure 0
+	BrushSource BShotMeter1.SetPressure PaintPressure1
+	IdleBrush1Enable BShotMeter1.SetPressure 0
+	IdleBrush1Value BShotMeter1.SetPressure 0
+	IdleBrush2Enable BShotMeter1.SetPressure 0
+	IdleBrush2Value BShotMeter1.SetPressure 0
+	OverrideEnable BShotMeter1.SetPressure 1
+	NotResetBrushAtEnd BShotMeter1.ShotmeterControltype 0
+	BrushSource BShotMeter1.ShotmeterControltype ControlType1
+	IdleBrush1Enable BShotMeter1.ShotmeterControltype 0
+	IdleBrush1Value BShotMeter1.ShotmeterControltype 0
+	IdleBrush2Enable BShotMeter1.ShotmeterControltype 0
+	IdleBrush2Value BShotMeter1.ShotmeterControltype 0
+	OverrideEnable BShotMeter1.ShotmeterControltype 0
+	NotResetBrushAtEnd BShotMeter1.TimeOff 0
+	BrushSource BShotMeter1.TimeOff DelayStop1
+	IdleBrush1Enable BShotMeter1.TimeOff 0
+	IdleBrush1Value BShotMeter1.TimeOff 0
+	IdleBrush2Enable BShotMeter1.TimeOff 0
+	IdleBrush2Value BShotMeter1.TimeOff 0
+	OverrideEnable BShotMeter1.TimeOff 0
+	NotResetBrushAtEnd BShotMeter1.TimeOn 0
+	BrushSource BShotMeter1.TimeOn DelayStart1
+	IdleBrush1Enable BShotMeter1.TimeOn 0
+	IdleBrush1Value BShotMeter1.TimeOn 0
+	IdleBrush2Enable BShotMeter1.TimeOn 0
+	IdleBrush2Value BShotMeter1.TimeOn 0
+	OverrideEnable BShotMeter1.TimeOn 0
+Return
+
+SubRoutine Material1_ConfigureTriggerBrush_PCL
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	// ************Set paint relevant devices for PCL*************
+//	SelectTab [BrushTriggerSetValuesPaintRelDevices]
+	// Set boolean signals for paint relevant devices
+	// ************Set trigger devices for PCL*************
+	SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+	// Set analog signals for paint relevant devices
+	NotResetBrushAtEnd AMV2FC.ControlType 0
+	BrushSource AMV2FC.ControlType ControlType1
+	NotResetBrushAtEnd AMV2FC.SetFlow 0
+	BrushSource AMV2FC.SetFlow PaintFlow1
+	IdleBrush1Enable AMV2FC.SetFlow 1
+	IdleBrush1Value AMV2FC.SetFlow 5
+	IdleBrush2Enable AMV2FC.SetFlow 1
+	IdleBrush2Value AMV2FC.SetFlow 5
+	OverrideEnable AMV2FC.SetFlow 1
+	NotResetBrushAtEnd AMV2FC.SetPressure 0
+	BrushSource AMV2FC.SetPressure PaintPressure1
+	IdleBrush1Enable AMV2FC.SetPressure 1
+	IdleBrush1Value AMV2FC.SetPressure 20
+	IdleBrush2Enable AMV2FC.SetPressure 1
+	IdleBrush2Value AMV2FC.SetPressure 20
+	OverrideEnable AMV2FC.SetPressure 1
+	NotResetBrushAtEnd AMV2FC.SetPressureOffsetAirFlow 0
+	BrushSource AMV2FC.SetPressureOffsetAirFlow OffsetInitialPressure1
+	// Set boolean signals for trigger devices (AMV2FC)
+	NotResetTriggerAtEnd AMV2FC.OrderSet 0
+	SetInverseTrigger AMV2FC.OrderSet 0
+Return

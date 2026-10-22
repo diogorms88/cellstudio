@@ -1,0 +1,167 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-12-13  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option20
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "Checking leakage with piston A" "" 50 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "ShotMeter1Sub_a.YBV1a.Set"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.SetPressure"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.PressureSetValueExtern"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.PressureActValueExtern"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.OrderSetPressure"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.FreezeActPosition"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.ActPosition"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.PositionInRange"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.PositionRange"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.PressureInRange"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.PressureBest"
+	Add_TPSignal "ShotMeter1Sub_a.MDP92a.HoldSetPressure"
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			Add_TPSignal "ShotMeter1Sub_a.YAV1a.Set"
+			Add_TPSignal "ShotMeter1Sub_b.YBV1b.Set"
+			Add_TPSignal "ShotMeter1Sub_b.YAV1b.Set"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	// add step 1:
+	Add_TPStepTime "FreezePositionA-1" 0.2 True "Actual position value of piston A is stored for comparison in the next step."
+	// add step 2:
+	Add_TPStepEvent "PressureControlA" False 5 False 0 True True ChannelError 19 Or True 2 "" "Setting up pressure at applicator."
+	// add step 3:
+	Add_TPStepEvent "CheckPositionA-1" False 0.2 False 0 True True ChannelError 19 Or False 0 "" "Checking deviation between act position and last frozen position."
+	// add step 4:
+	Add_TPStepTime "FreezePositionA-2" 0.004 True "Actual position value of piston A is stored and will be stored until signal MDP92a.FreezeActPosition is set again to set the latest position."
+	// add step 5:
+	Add_TPStepEvent "CheckPositionA-2" False 10 False 0 True False ChannelError 65 Or False 0 "" "Piston A is still controlling the system pressure. This step is active, as long as the actual position value is in range of stored position value."
+	// add step 6:
+	Add_TPStepEvent "SendError-PositionA" False 0.01 False 0 True True ChannelError 65 And True 1 "" "Sending error, if position range is exceeded."
+	//
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			// add step 7:
+			Add_TPStepTime "CloseAV1b" 0.2 True ""
+			// add step 8:
+			Add_TPStepTime "CloseAV1a" 0.2 True ""
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "FreezePositionA-1"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "ShotMeter1Sub_a.YBV1a.Set" False
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.SetPressure" 0
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureSetValueExtern" False
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureActValueExtern" False
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.OrderSetPressure" False
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.FreezeActPosition" True
+	Act_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.ActPosition" False 0 GreaterEqual 0
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PositionInRange" False False
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.PositionRange" 0
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureInRange" False False
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureBest" False False
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.HoldSetPressure" False
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			Set_TPSignalBool "ShotMeter1Sub_a.YAV1a.Set" True
+			Set_TPSignalBool "ShotMeter1Sub_b.YBV1b.Set" False
+			Set_TPSignalBool "ShotMeter1Sub_b.YAV1b.Set" True
+	EndSelect
+
+	// Step 2
+	Select_TPStep "PressureControlA"
+	//
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.SetPressure" 100
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureSetValueExtern" True
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureActValueExtern" True
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.OrderSetPressure" True
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.FreezeActPosition" False
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.PositionRange" 10
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureInRange" True True
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureBest" True True
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.HoldSetPressure" True
+
+	// Step 3
+	Select_TPStep "CheckPositionA-1"
+	//
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PositionInRange" True True
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureInRange" False False
+
+	// Step 4
+	Select_TPStep "FreezePositionA-2"
+	//
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.FreezeActPosition" True
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PositionInRange" False False
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.PositionRange" 2
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureBest" False False
+
+	// Step 5
+	Select_TPStep "CheckPositionA-2"
+	//
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.FreezeActPosition" False
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PositionInRange" True False
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureBest" True True
+
+	// Step 6
+	Select_TPStep "SendError-PositionA"
+	//
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.SetPressure" 100 MinAndMaxValue
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureSetValueExtern" False
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureActValueExtern" False
+	Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.OrderSetPressure" False
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PositionInRange" True True Equal StartAndEndValue
+	Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.PositionRange" 2 MinAndMaxValue
+	Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PressureBest" False False
+
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			// Step 7
+			Select_TPStep "CloseAV1b"
+			//
+			Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.SetPressure" 0
+			Act_TPSignalBool "ShotMeter1Sub_a.MDP92a.PositionInRange" False False
+			Set_TPSignalAnalog "ShotMeter1Sub_a.MDP92a.PositionRange" 0
+			Set_TPSignalBool "ShotMeter1Sub_a.MDP92a.HoldSetPressure" False
+			Set_TPSignalBool "ShotMeter1Sub_b.YAV1b.Set" False
+
+			// Step 8
+			Select_TPStep "CloseAV1a"
+			//
+			Set_TPSignalBool "ShotMeter1Sub_a.YAV1a.Set" False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "leakagecheck_sm1_sub1" True
+Return

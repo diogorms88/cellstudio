@@ -1,0 +1,35 @@
+//  Version     | ReleaseDate | Respon  | Changes
+//  -----------------------------------------------------------------------------------------------
+//  v2_01.00.00 | 09.08.2021  | MUCH    | First release
+//  v2_01.01.00 | 22.02.2022  | KTO     | Change: use mask_common folder to handle texts and images only once
+//  v2_01.01.01 | 02.11.2022  | MUCH    | Add: support for T70ex
+
+Imports Common
+
+Parameter OptionTeachInPendant
+
+Call Main_TeachInPendant
+END
+
+SubRoutine Main_TeachInPendant
+	FSDeleteFile ..\..\..\config\httype.*
+	FSDeleteFile ..\..\..\config\c50rcu.cfg
+	
+	SelectCase OptionTeachInPendant // Variant of TeachInPendant
+		Case T70
+			FSCopy ..\..\..\..\..\TeachInPendant\T70\httype.properties		..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\T70\c50rcu.cfg				..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\mask_common\*				..\..\..\teachcontrol\_system.tt\mask_t70
+		Case T70ex
+			FSCopy ..\..\..\..\..\TeachInPendant\T70ex\httype.properties		..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\T70ex\c50rcu.cfg				..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\mask_common\*				..\..\..\teachcontrol\_system.tt\mask_t70
+		Case HT601Ex
+			FSCopy ..\..\..\..\..\TeachInPendant\HT601Ex\httype.properties	..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\HT601Ex\c50rcu.cfg			..\..\..\config
+		CaseElse
+			FSCopy ..\..\..\..\..\TeachInPendant\T50\httype.properties		..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\T50\c50rcu.cfg				..\..\..\config
+			FSCopy ..\..\..\..\..\TeachInPendant\mask_common\*				..\..\..\teachcontrol\_system.tt\mask
+	EndSelect
+Return

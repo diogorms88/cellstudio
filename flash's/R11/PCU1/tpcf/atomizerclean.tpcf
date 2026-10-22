@@ -1,0 +1,238 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option1 NumberOfMainNeedles Option18
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "AtomizerClean" "" 7 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	SelectCase Option18 // Cleaning system with water for LASD
+	Case No_CleaningSystem
+		Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+		Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+		Add_TPSignal "MainChannel.AFIXPOS.GoBlowOutHN1"
+		Add_TPSignal "MainChannel.AFIXPOS.AtBlowOutHN1"
+		SelectCase NumberOfMainNeedles
+			Case 1
+			CaseElse
+				Add_TPSignal "MainChannel.AFIXPOS.GoBlowOutHN2"
+				Add_TPSignal "MainChannel.AFIXPOS.AtBlowOutHN2"
+		EndSelect
+		SelectCase NumberOfMainNeedles
+			Case 1
+			Case 2
+			CaseElse
+				Add_TPSignal "MainChannel.AFIXPOS.GoBlowOutHN3"
+				Add_TPSignal "MainChannel.AFIXPOS.AtBlowOutHN3"
+		EndSelect
+		Add_TPSignal "BlowOut.YLV3.Set"
+	CaseElse
+		Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+		Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+		Add_TPSignal "MainChannel.AFIXPOS.AtAboveBox"
+		Add_TPSignal "MainChannel.AFIXPOS.GoAboveBox"
+		Add_TPSignal "MainChannel.AFIXPOS.AtInBox"
+		Add_TPSignal "MainChannel.AFIXPOS.GoInBox"
+		Add_TPSignal "MainChannel.AFIXPOS.AtBlowOutHN1"
+		Add_TPSignal "MainChannel.AFIXPOS.GoBlowOutHN1"
+		Add_TPSignal "WaterQuench.YBL1.Set"	
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	SelectCase Option18 // Cleaning system with water for LASD
+	Case No_CleaningSystem
+		Add_TPStepEvent "GoBlowOutHN1" False 20 False 0 True True ChannelError 208 And False 0 "" ""
+		Add_TPStepTime "CleanHN1" 1 True ""
+		SelectCase NumberOfMainNeedles
+			Case 1
+			CaseElse
+				Add_TPStepEvent "GoBlowOutHN2" False 5 False 0 True True ChannelError 209 And False 0 "" ""
+				Add_TPStepTime "CleanHN2" 1 True ""
+		EndSelect
+		SelectCase NumberOfMainNeedles
+			Case 1
+			Case 2
+			CaseElse
+				Add_TPStepEvent "GoBlowOutHN3" False 5 False 0 True True ChannelError 210 And False 0 "" ""
+				Add_TPStepTime "CleanHN3" 1 True ""
+		EndSelect
+		Add_TPStepEvent "GoHome" False 20 False 0 True True ChannelError 100 And False 0 "" ""
+		Add_TPStepTime "Reset" 0.004 True ""
+	CaseElse
+		Add_TPStepEvent "GoAboveBox" False 10 False 0 True True ChannelError 102 And False 0 "" ""
+		Add_TPStepEvent "GoInBox" False 30 False 0 True True ChannelError 103 And False 0 "" ""
+		Add_TPStepEvent "GoBlowOutHN1" False 30 False 0 True True ChannelError 208 And False 0 "" ""
+		Add_TPStepEvent "GoAboveBox" False 10 False 0 True True ChannelError 102 And False 0 "" ""
+		Add_TPStepEvent "GoHome" False 10 False 0 True True ChannelError 100 And False 0 "" ""
+		Add_TPStepTime "Reset" 0.004 True ""	
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+	
+	SelectCase Option18 // Cleaning system with water for LASD
+	Case No_CleaningSystem
+		// Step 1
+		Select_TPStep "GoBlowOutHN1"
+		// First: Apply base settings to all signals
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN1" True
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN1" True True
+		SelectCase NumberOfMainNeedles
+			Case 1
+			CaseElse
+				Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN2" False
+				Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN2" False False
+		EndSelect
+		SelectCase NumberOfMainNeedles
+			Case 1
+			Case 2
+			CaseElse
+				Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN3" False
+				Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN3" False False
+		EndSelect
+		Set_TPSignalBool "BlowOut.YLV3.Set" False
+
+		// Step 2
+		Select_TPStep "CleanHN1"
+		// Modify only signals changed to step before
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN1" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN1" False False
+		Set_TPSignalBool "BlowOut.YLV3.Set" True
+
+		SelectCase NumberOfMainNeedles
+			Case 1
+			CaseElse
+				// Step 3
+				Select_TPStep "GoBlowOutHN2"
+				// Modify only signals changed to step before
+				Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN2" True
+				Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN2" True True
+				Set_TPSignalBool "BlowOut.YLV3.Set" False
+
+				// Step 4
+				Select_TPStep "CleanHN2"
+				// Modify only signals changed to step before
+				Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN2" False
+				Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN2" False False
+				Set_TPSignalBool "BlowOut.YLV3.Set" True
+		EndSelect
+
+		SelectCase NumberOfMainNeedles
+			Case 1
+			Case 2
+			CaseElse
+				// Step 5
+				Select_TPStep "GoBlowOutHN3"
+				// Modify only signals changed to step before
+				Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN3" True
+				Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN3" True True
+				Set_TPSignalBool "BlowOut.YLV3.Set" False
+
+				// Step 6
+				Select_TPStep "CleanHN3"
+				// Modify only signals changed to step before
+				Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN3" False
+				Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN3" False False
+				Set_TPSignalBool "BlowOut.YLV3.Set" True
+		EndSelect
+
+		// Step 7
+		Select_TPStep "GoHome"
+		// Modify only signals changed to step before
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+		Set_TPSignalBool "BlowOut.YLV3.Set" False
+
+		// Step 8
+		Select_TPStep "Reset"
+		// Modify only signals changed to step before
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+	CaseElse
+		// Step 1
+		Select_TPStep "GoAboveBox"
+		// First: Apply base settings to all signals
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" True True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" True
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtInBox" False False
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoInBox" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN1" False True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN1" False
+		Set_TPSignalBool "WaterQuench.YBL1.Set" False
+
+		// Step 2
+		Select_TPStep "GoInBox"
+		// Modify only signals changed to step before
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" False False
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtInBox" True True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoInBox" True
+
+		// Step 3
+		Select_TPStep "GoBlowOutHN1"
+		// Modify only signals changed to step before
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtInBox" False True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoInBox" False
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN1" True True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN1" True
+		Set_TPSignalBool "WaterQuench.YBL1.Set" True
+
+		// Step 4
+		Select_TPStep "GoAboveBox"
+		// Modify only signals changed to step before
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" True True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" True
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtBlowOutHN1" False False
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoBlowOutHN1" False
+		Set_TPSignalBool "WaterQuench.YBL1.Set" False
+
+		// Step 5
+		Select_TPStep "GoHome"
+		// Modify only signals changed to step before
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" False True
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" False
+
+		// Step 6
+		Select_TPStep "Reset"
+		// Modify only signals changed to step before
+		Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+		Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "atomizerclean" True
+Return

@@ -1,0 +1,257 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-12-13  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option20 OptionShotMeter MaterialValve1 Circulation
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties CurrentStep "Mastering dosing piston automatically" "" 55 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+	Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+	Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN1"
+	Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN1"
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			Add_TPSignal "ShotMeter1Sub_?.YAV1?.Set"
+	EndSelect
+	Add_TPSignal "MainChannel.YHN1.Set"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderMastering"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderDone"
+	SelectCase OptionShotMeter
+		Case SM_300ccm // Mastering is executed to pistons max. pos.
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetQuantity"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetVolume"
+			Add_TPSignal "ShotMeter1Sub_?.YBV1?.Set"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.ContainedVolume"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.InControl"
+		Case SM_600ccm // Mastering is executed to pistons max. pos.
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetQuantity"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetVolume"
+			Add_TPSignal "ShotMeter1Sub_?.YBV1?.Set"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.ContainedVolume"
+			Add_TPSignal "ShotMeter1Sub_?.MDP92?.InControl"
+	EndSelect
+	SelectCase MaterialValve1 //Automatic Material Valve at Supply/Robot Interface
+		Case 1 // Automatic Material Valve selected
+			Add_TPSignal "MaterialSupply1.AYMV1.Set"
+	EndSelect
+	SelectCase Circulation // Variants of Circulation
+		Case Circ_OnRobot_NoRL // Add following Signal, if robot internal circulation is used.
+			Add_TPSignal "MaterialSupply1.YFDR.Set"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepEvent "GoPurgePosHN1" False 10 False 0 True True ChannelError 105 And False 0 "" ""
+	Add_TPStepTime "OpenValve" 0.2 True ""
+	Add_TPStepEvent "Master" False 1400 False 0 True True ChannelError 5 And False 0 "" ""
+	SelectCase OptionShotMeter
+		Case SM_113ccm // Mastering is executed to pistons min. pos.
+			Add_TPStepTime "CloseHN1" 0.2 True ""
+		Case SM_590ccm // Mastering is executed to pistons min. pos.
+			Add_TPStepTime "CloseHN1" 0.2 True ""
+		CaseElse // Mastering is executed to pistons max. pos. (Case SM_300ccm and SM_600ccm)
+			Add_TPStepTime "OpenAV1" 0.2 True ""
+			Add_TPStepEvent "MoveToWorkArea" False 2 False 0 True True ChannelError 3 Or False 0 "" ""
+	EndSelect
+	Add_TPStepEvent "GoHome" False 10 False 0 True True ChannelError 100 And False 0 "" ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "GoPurgePosHN1"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN1" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN1" True True
+	Set_TPSignalBool "MainChannel.YHN1.Set" False
+	SelectCase OptionShotMeter
+		Case SM_113ccm // Mastering is executed to pistons min. pos.
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" True
+			EndSelect
+		Case SM_590ccm // Mastering is executed to pistons min. pos.
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" True
+			EndSelect
+		CaseElse // Mastering is executed to pistons max. pos. (Case SM_300ccm and SM_600ccm)
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" False
+			EndSelect
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" False
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 0
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 0
+			Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" False 0 GreaterEqual 0
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.InControl" False False
+			Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" True
+	EndSelect	
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderMastering" False
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+	// Opening connection to material supply:
+	SelectCase OptionShotMeter 
+		Case SM_300ccm 
+			SelectCase MaterialValve1 //Automatic Material Valve at Supply/Robot Interface
+				Case 1 // Automatic Material Valve selected
+					Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+			EndSelect
+			SelectCase Circulation // Variants of Circulation
+				Case Circ_OnRobot_NoRL // Set following Signal, if robot internal circulation is used.
+					Set_TPSignalBool "MaterialSupply1.YFDR.Set" True
+			EndSelect
+		Case SM_600ccm 
+			SelectCase MaterialValve1 //Automatic Material Valve at Supply/Robot Interface
+				Case 1 // Automatic Material Valve selected
+					Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+			EndSelect
+			SelectCase Circulation // Variants of Circulation
+				Case Circ_OnRobot_NoRL // Set following Signal, if robot internal circulation is used.
+					Set_TPSignalBool "MaterialSupply1.YFDR.Set" True
+			EndSelect
+	EndSelect
+	
+	// Step 2
+	Select_TPStep "OpenValve"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN1" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN1" False True
+	SelectCase OptionShotMeter
+		Case SM_113ccm 
+			Set_TPSignalBool "MainChannel.YHN1.Set" True
+		Case SM_590ccm 
+			Set_TPSignalBool "MainChannel.YHN1.Set" True
+	EndSelect
+
+	// Step 3
+	Select_TPStep "Master"
+	// Modify only signals changed to step before
+	SelectCase OptionShotMeter
+		Case SM_300ccm 
+			Set_TPSignalBoolVar "ShotMeter1Sub_?.YBV1?.Set" "ShotMeter1Sub_?.MDP92?.InControl"
+		Case SM_600ccm 
+			Set_TPSignalBoolVar "ShotMeter1Sub_?.YBV1?.Set" "ShotMeter1Sub_?.MDP92?.InControl"
+	EndSelect	
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderMastering" True
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" True True
+
+	// Variation of Step 4 
+	SelectCase OptionShotMeter
+		Case SM_113ccm 
+			// Step 4 
+			Select_TPStep "CloseHN1"
+			// 
+			Set_TPSignalBool "MainChannel.YHN1.Set" False
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" False
+			EndSelect
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderMastering" False
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+		Case SM_590ccm 
+			// Step 4 
+			Select_TPStep "CloseHN1"
+			// 
+			Set_TPSignalBool "MainChannel.YHN1.Set" False
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" False
+			EndSelect
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderMastering" False
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+		CaseElse // Case SM_300ccm and SM_600ccm
+			// Step 4 
+			Select_TPStep "OpenAV1"
+			//
+			Set_TPSignalBool "MainChannel.YHN1.Set" True
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" True
+			EndSelect
+			Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" False
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderMastering" False
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+	EndSelect
+	
+	// Step 5 only used, when mastering is executed to max. position:
+	SelectCase OptionShotMeter
+		Case SM_300ccm  
+			// Step 5
+			Select_TPStep "MoveToWorkArea"
+			//
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" True
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 1200
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 280
+			Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 280 LessEqual 0
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" True True
+		Case SM_600ccm
+			// Step 5
+			Select_TPStep "MoveToWorkArea"
+			//
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" True
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 1200
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 580
+			Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 580 LessEqual 0
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" True True
+	EndSelect
+
+	// Step 6
+	Select_TPStep "GoHome"
+	// Modify only signals changed to step before
+	SelectCase OptionShotMeter
+		Case SM_113ccm 
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+		Case SM_590ccm 
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+		CaseElse // Case SM_300ccm and SM_600ccm
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+			Set_TPSignalBool "MainChannel.YHN1.Set" False
+			SelectCase Option20 // Shot Meter Single
+				Case 0  // If not selected, add following signal
+					Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" False
+			EndSelect
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" False
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 0
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 0
+			Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" False 0 GreaterEqual 0
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "pistonmaster" True
+Return

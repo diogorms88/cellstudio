@@ -1,0 +1,209 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 15.04.2014  | SMOH   | Option22 script converted to BoostAirSupply 
+//  v2_01.05.00  | 15.12.2014  | STL    | AddOn: Copy AB_GeneralSetValues file depending on nozzle exchanger
+//  v2_01.06.00  | 19.11.2015  | STL    | Change: Time program FlowCheck doesn't exist anymore --> Don't copy
+//  v2_01.07.00  | 12.05.2016  | STL    | AddOn: option Circulation
+//  v2_01.08.00  | 18.10.2016  | STL    | AddOn: option HelpGun1
+//  v2_01.09.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.10.00  | 12.12.2017  | KLCH   | Change: modified selection for circulation
+//  v2_01.11.00  | 10.07.2018  | KLCH   | Change: generate time programs (copy operation not needed)
+//  v2_01.12.00  | 05.10.2018  | KLCH   | Change: code optimization (use Common_CheckChannel_MaterialSupply1, ..2)
+//  v2_01.13.00  | 31.01.2019  | KLCH   | Change: adjustments due to structural changes (EA2.0)
+
+Imports Common NumberOfMainNeedles
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_MaterialValve1
+Call Common_Sealing_GeneralSetValues
+Call Common_Sealing_GenerateTimeProg
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_MaterialValve1
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL_PCL
+			Call MaterialValve1_2Materials
+		Case EcoDose_SM_PCL
+			Call MaterialValve1_2Materials
+		Case EcoDose_SM_SM
+			Call MaterialValve1_2Materials
+		CaseElse
+			Call MaterialValve1_1Material
+	EndSelect
+	
+	Call Main_NumberOfMainNeedles
+Return
+
+SubRoutine MaterialValve1_1Material
+	Call Common_CheckChannel_MaterialSupply1
+	
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.AYMV1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.AYMV1
+		Delete
+	Endif
+	
+	SelectCase MaterialValve1
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+			Call Common_AddDevice_YMV1
+			
+			FSCopy ..\SpecialOptions\MaterialValve\Yes\FB_Interlocks_MaterialValve1.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\Interlocks
+		Case 0
+			FSCopy ..\SpecialOptions\MaterialValve\No\FB_Interlocks_MaterialValve1.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\Interlocks
+	EndSelect
+Return
+
+SubRoutine MaterialValve1_2Materials
+	Call Common_CheckChannel_MaterialSupply1
+	Call Common_CheckChannel_MaterialSupply2
+	
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.AYMV1_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.AYMV1_1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.AYMV1_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.AYMV1_2
+		Delete
+	Endif
+	
+	SelectCase MaterialValve1
+		Case 1
+			
+			Message Signals for YMV1_1 and YMV1_2 have to be added to PLC interface
+			
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+			Call Common_AddDevice_YMV1_1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2
+			Call Common_AddDevice_YMV1_2
+			
+			FSCopy ..\SpecialOptions\MaterialValve\Yes\FB_Interlocks_MaterialValve1.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\Interlocks
+			
+			SelectCase Option1
+				Case EcoDose_PCL // Process type
+				Case EcoDose_SM
+				Case EcoDose_PM
+				Case EcoDose_ES
+				Case EcoDose_PCL_PCL
+				Case EcoDose_SM_PCL
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							Message Only shot meter single supported (MaterialValve)
+						Case 1
+							FSCopy ..\SpecialOptions\MaterialValve\Yes\circulation_sm1_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							FSCopy ..\SpecialOptions\MaterialValve\Yes\circulation_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							FSCopy ..\SpecialOptions\MaterialValve\Yes\circulation_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							SelectCase Circulation
+								Case No_Circulation
+									FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm1_sm2.tp
+									FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm1.tp
+									FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm2.tp
+									FSCopy ..\SpecialOptions\MaterialValve\Yes\Circulation\No\leakagecheck_sm1_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\Yes\Circulation\No\leakagecheck_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\Yes\Circulation\No\leakagecheck_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+								CaseElse
+									FSCopy ..\SpecialOptions\MaterialValve\Yes\Circulation\Yes\leakagecheck_sm1_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\Yes\Circulation\Yes\leakagecheck_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\Yes\Circulation\Yes\leakagecheck_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							EndSelect
+							SelectCase NumberOfMainNeedles
+								Case 2
+									SelectCase Circulation
+										Case No_Circulation
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\2\Circulation\No\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\2\Circulation\No\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\2\Circulation\No\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+										CaseElse
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\2\Circulation\Yes\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\2\Circulation\Yes\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\2\Circulation\Yes\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									EndSelect
+								Case 3
+									SelectCase Circulation
+										Case No_Circulation
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\3\Circulation\No\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\3\Circulation\No\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\3\Circulation\No\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+										CaseElse
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\3\Circulation\Yes\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\3\Circulation\Yes\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\Yes\MainNeedle\3\Circulation\Yes\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									EndSelect
+								CaseElse
+									Message NumberOfMainNeedles (MaterialValve)!!
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Wrong process type (MaterialValve)!!
+			EndSelect
+		Case 0
+			FSCopy ..\SpecialOptions\MaterialValve\No\FB_Interlocks_MaterialValve1.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\Interlocks
+			
+			SelectCase Option1
+				Case EcoDose_PCL // Process type
+				Case EcoDose_SM
+				Case EcoDose_PM
+				Case EcoDose_ES
+				Case EcoDose_PCL_PCL
+				Case EcoDose_SM_PCL
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							Message Only shot meter single supported (MaterialValve)
+						Case 1
+							FSCopy ..\SpecialOptions\MaterialValve\No\circulation_sm1_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							FSCopy ..\SpecialOptions\MaterialValve\No\circulation_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							FSCopy ..\SpecialOptions\MaterialValve\No\circulation_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							SelectCase Circulation
+								Case No_Circulation
+									FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm1_sm2.tp
+									FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm1.tp
+									FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm2.tp
+									FSCopy ..\SpecialOptions\MaterialValve\No\Circulation\No\leakagecheck_sm1_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\No\Circulation\No\leakagecheck_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\No\Circulation\No\leakagecheck_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+								CaseElse
+									FSCopy ..\SpecialOptions\MaterialValve\No\Circulation\Yes\leakagecheck_sm1_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\No\Circulation\Yes\leakagecheck_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									FSCopy ..\SpecialOptions\MaterialValve\No\Circulation\Yes\leakagecheck_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+							EndSelect
+							SelectCase NumberOfMainNeedles
+								Case 2
+									SelectCase Circulation
+										Case No_Circulation
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\2\Circulation\No\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\2\Circulation\No\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\2\Circulation\No\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+										CaseElse
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\2\Circulation\Yes\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\2\Circulation\Yes\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\2\Circulation\Yes\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									EndSelect
+								Case 3
+									SelectCase Circulation
+										Case No_Circulation
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\3\Circulation\No\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\3\Circulation\No\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\3\Circulation\No\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+										CaseElse
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\3\Circulation\Yes\releasepressure_sm1.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\3\Circulation\Yes\releasepressure_sm2.tp ..\..\..\..\..\application\control\PCU1\timeprog
+											FSCopy ..\SpecialOptions\MaterialValve\No\MainNeedle\3\Circulation\Yes\releasepressure.tp ..\..\..\..\..\application\control\PCU1\timeprog
+									EndSelect
+								CaseElse
+									Message NumberOfMainNeedles (MaterialValve)!!
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Wrong process type (MaterialValve)!!
+			EndSelect
+	EndSelect
+Return

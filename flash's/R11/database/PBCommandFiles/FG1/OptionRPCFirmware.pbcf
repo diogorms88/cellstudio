@@ -1,0 +1,613 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 23.04.2018  | PZB    | First release
+//  v2_01.01.00  | 02.10.2018  | KTO    | Change: structural modification
+//  v2_01.02.00  | 17.12.2018  | MWT    | Change: also delete profibusmaster and create compatibility folder
+//  v2_01.03.00  | 03.01.2019  | MWT    | Change: copy common files of D3 xml files to specific folder
+//  v2_01.04.00  | 10.01.2019  | MWT    | Change: for less redundancy in compatibility files there is now V1.40Common which will be copied for all V1.40 variants and additional files for safety
+//  v2_01.05.00  | 15.01.2019  | KTO    | Change: folder names for D3 files changed based on FW-version instead of tool version
+//  v2_01.06.00  | 16.01.2019  | MWT    | Bugfix: also copy IPC bus config to application
+//  v2_01.07.00  | 12.02.2019  | KLCH   | Change: create folder for RCU1 compatibility functions (avoid errors in ieccontrol)
+//  v2_01.08.00  | 18.02.2019  | MWT    | Bugfix: Slave bus interface has been moved to common location for all HW platforms
+//  v2_01.09.00  | 13.03.2019  | MWT    | Change: delete scp directory for all controllers, that don't need it
+//  v2_01.10.00  | 02.12.2019  | MWT    | AddOn:  Add item for firmware V1.55 and the compatibility files
+//  v2_01.11.00  | 11.12.2019  | KTO    | Bugfix: call subroutine for firmware V1.55
+//  v2_01.12.00  | 14.02.2020  | BIT    | AddOn:  Copy folder encoder_data with standard_motors.cfg for D3 platform
+//  v2_01.13.00  | 04.02.2021  | BIT    | AddOn:  Copy file connect_variables.tip to folder kin1\_global.tt\
+//  v2_01.14.00  | 19.09.2023  | BIT    | AddOn:  [ECORPC-1545] Copy file T_RCU2HMI.tu_iec to folder RCU1\CompatibilityFunctions
+//  v2_01.15.00  | 24.04.2024  | MUCH   | AddOn:  [ECORPC-1790] Copy T70 application according to selected firmware version
+
+Imports Common
+
+Parameter OptionRPCFirmware OptionSafetyType
+
+Call Main_RPCFirmware
+END
+
+SubRoutine Main_RPCFirmware
+	//delete old compatibility files in iec
+	FSDeleteFolder  ..\..\..\ieccontrol\system\CompatibilityFunctions
+	FSDeleteFolder  ..\..\..\ieccontrol\RCU1\CompatibilityFunctions
+	//delete old compatibility files in teachcontrol
+	FSDeleteFolder  ..\..\..\teachcontrol\_system.tt\FWCompatibility
+	FSDeleteFile ..\..\..\teachcontrol\kin1\_global.tt\connect_variables.tip
+	
+	//delete d3 identifier
+	FSDeleteFolder  ..\..\..\ccontrol
+    
+	//delete old hardware config
+	FSDeleteFile ..\..\..\config\*.bak						//backup files
+	FSDeleteFile ..\..\..\config\*.sci						//sercos3 master config
+	FSDeleteFile ..\..\..\config\sercos*.cfgr				//sercos2/3 master config
+	FSDeleteFile ..\..\..\config\profibusmaster.cfgr		//profibus master config
+	FSDeleteFile ..\..\..\config\*.pbm						//profibus master config
+	FSDeleteFile ..\..\..\config\ecat_readparams.cfg		//Ecat specific parameter file
+	FSDeleteFile ..\..\..\config\D3_SystemInfo.cfg			//D3 specific parameter file
+	FSDeleteFile ..\..\..\config\KeStudio.*					//D3 hardware config
+	FSDeleteFolder  ..\..\..\config\KeStudio_generated		//D3 hardware config
+	FSDeleteFolder  ..\..\..\config\setup					//D3 hardware config
+	FSDeleteFolder  ..\..\encoder_data						//EtherCat drive config
+	
+	SelectCase OptionRPCFirmware // rpc firmware version
+		Case RPC_V544d
+			Call Sub_RPC_V544d
+		Case RPC_V544e
+			Call Sub_RPC_V544
+		Case RPC_V544j
+			Call Sub_RPC_V544j
+		Case RPC_V612
+			Call Sub_RPC_V612
+		Case RPC_V624
+			Call Sub_RPC_V624
+		Case RPC_V624a
+			Call Sub_RPC_V624a
+		Case RPC_V630
+			Call Sub_RPC_V630
+		Case RPC_V140
+			Call Sub_RPC_V140
+		Case RPC_V155
+			Call Sub_RPC_V155
+		Case RPC_V186
+			Call Sub_RPC_V186
+		CaseElse
+			Message Firmware not supported.
+	EndSelect
+Return
+
+SubRoutine Sub_RPC_V544d
+	FSDeleteFile ..\..\..\config\s3_readparams.cfg			//Sercos specific parameter file
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\TCglobal\*.*		..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\TeachView\*.*		..\..\..\teachcontrol\_system.tt\mask\
+	FSCopy ..\..\..\..\ManagerProject\RPC_V2.x\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profibus
+Return
+
+SubRoutine Sub_RPC_V544e
+	FSDeleteFile ..\..\..\config\s3_readparams.cfg			//Sercos specific parameter file
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44e\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44e\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44e\TCglobal\*.*		..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44e\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44e\TeachView\*.*		..\..\..\teachcontrol\_system.tt\mask\
+	FSCopy ..\..\..\..\ManagerProject\RPC_V2.x\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44d\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44e\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profibus
+Return
+
+SubRoutine Sub_RPC_V544j
+	FSDeleteFile ..\..\..\config\s3_readparams.cfg			//Sercos specific parameter file
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\TCglobal\*.*		..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\TeachView\*.*		..\..\..\teachcontrol\_system.tt\mask\
+	FSCopy ..\..\..\..\ManagerProject\RPC_V2.x\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V5.44j\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profibus
+Return
+
+SubRoutine Sub_RPC_V612d
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\TCglobal\*.*		..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\ManagerProject\RPC_V3.1\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.12d\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profinet
+Return
+
+SubRoutine Sub_RPC_V624
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\TCglobal\*.*			..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\ManagerProject\RPC_V3.1\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profinet
+Return
+
+SubRoutine Sub_RPC_V624a
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\TCglobal\*.*		..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\ManagerProject\RPC_V3.1\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.24a\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profinet
+Return
+
+SubRoutine Sub_RPC_V630
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IECsystem\*.*		..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\TC\*.*				..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\TCglobal\*.*			..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\systemsettings\*.*	..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\ManagerProject\RPC_V3.1\config\*.*					..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+	FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+	FSDeleteFolder ..\..\..\..\ManagerProject\PB
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+	FSDeleteFolder ..\..\..\..\ManagerProject\XML\Python_Scripts
+	FSDeleteFolder ..\..\..\..\scp
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IEC\version.txt		..\..\..\ieccontrol\
+	
+	Call Sub_MakeDir_IECRCU1
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V6.30\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	// get correct slave interface for controller
+	FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V2.x_V3.1\*.* 		..\..\..\config\
+	FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+	SelectNode RPC1
+	ExportSlave Profinet
+Return
+
+SubRoutine Sub_RPC_V140
+	//create d3 identifier
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\ccontrol\*.*			..\..\..\ccontrol
+	
+	//copy compatibility files and firmware specific settings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\TC\*.*					..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\TCglobal\*.*			..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\systemsettings\*.*		..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\mmi\*.*				..\..\..\..\mmi\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\config\*.*				..\..\..\config\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IEC\version.txt		..\..\..\ieccontrol\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\encoder_data\*.*		..\..\..\..\encoder_data\config\
+	FSDeleteFile ..\..\..\config\profinetslave.*				            //delete profinetinterface
+	FSDeleteFile ..\..\..\config\profibusslave.*				            //delete profibusinterface
+	
+	SelectCase OptionSafetyType
+		Case Safety		//same as SafeRobotics
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC2\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//copy Safety specific compatibility files
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Safety\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Safety\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+			
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config\*.*								..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP2\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+		Case SafeRobotics		//same as Safety
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC2\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//copy Safety specific compatibility files
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Safety\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Safety\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+			
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config\*.*								..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP2\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+		CaseElse
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V3.3\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC_V3.3\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V3.3\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC_V3.3\config\*.*							..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			FSDeleteFolder ..\..\..\..\scp
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+			Call Sub_MakeDir_IECRCU1
+			
+	EndSelect
+	
+	//copy RCU specific compatibility files
+  FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.40Common\IECRCU1\*.*				..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			
+Return
+
+SubRoutine Sub_RPC_V155
+	//create d3 identifier
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\ccontrol\*.*			..\..\..\ccontrol
+	
+	//copy compatibility files and firmware specific settings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\TC\*.*					..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\TCglobal\*.*			..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\systemsettings\*.*		..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\mmi\*.*				..\..\..\..\mmi\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\config\*.*				..\..\..\config\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IEC\version.txt		..\..\..\ieccontrol\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\encoder_data\*.*		..\..\..\..\encoder_data\config\
+	FSDeleteFile ..\..\..\config\profinetslave.*				            //delete profinetinterface
+	FSDeleteFile ..\..\..\config\profibusslave.*				            //delete profibusinterface
+	
+	SelectCase OptionSafetyType
+		Case Safety		//same as SafeRobotics
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC2\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//copy Safety specific compatibility files
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+			
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config\*.*								..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP2\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+		Case SafeRobotics		//same as Safety
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC2\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//copy Safety specific compatibility files
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+			
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config\*.*								..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP2\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+		CaseElse
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V3.3\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC_V3.3\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V3.3\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC_V3.3\config\*.*							..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			FSDeleteFolder ..\..\..\..\scp
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+			Call Sub_MakeDir_IECRCU1
+			
+	EndSelect
+	
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\IECRCU1\*.*				..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	
+	//Copy firmware specific T70 application
+	SelectCase OptionTeachInPendant
+		Case T70
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\TeachInPendant\application.jar		..\..\..\teachcontrol\_system.tt\mask_t70\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\TeachInPendant\language.jar		..\..\..\teachcontrol\_system.tt\mask_t70\
+		Case T70ex
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\TeachInPendant\application.jar		..\..\..\teachcontrol\_system.tt\mask_t70\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Common\TeachInPendant\language.jar		..\..\..\teachcontrol\_system.tt\mask_t70\	
+	EndSelect	
+	
+Return
+
+SubRoutine Sub_RPC_V186
+	//create d3 identifier
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\ccontrol\*.*			..\..\..\ccontrol
+	
+	//copy compatibility files and firmware specific settings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\TC\*.*					..\..\..\teachcontrol\_system.tt\FWCompatibility\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\TCglobal\*.*			..\..\..\teachcontrol\kin1\_global.tt\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\systemsettings\*.*		..\..\..\..\..\systemsettings
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\mmi\*.*				..\..\..\..\mmi\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\config\*.*				..\..\..\config\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IEC\version.txt		..\..\..\ieccontrol\BCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IEC\version.txt		..\..\..\ieccontrol\PCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IEC\version.txt		..\..\..\ieccontrol\RCU1\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IEC\version.txt		..\..\..\ieccontrol\SCU\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IEC\version.txt		..\..\..\ieccontrol\system\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IEC\version.txt		..\..\..\ieccontrol\
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\encoder_data\*.*		..\..\..\..\encoder_data\config\
+	FSDeleteFile ..\..\..\config\profinetslave.*				            //delete profinetinterface
+	FSDeleteFile ..\..\..\config\profibusslave.*				            //delete profibusinterface
+	
+	SelectCase OptionSafetyType
+		Case Safety		//same as SafeRobotics
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC2\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//copy Safety specific compatibility files
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+			
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config\*.*								..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP2\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+		Case SafeRobotics		//same as Safety
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC2\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC2\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//copy Safety specific compatibility files
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECRCU1\*.*			..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.55Safety\IECsystem\*.*			..\..\..\ieccontrol\system\CompatibilityFunctions\
+			
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config\*.*								..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.3
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP2\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+		CaseElse
+			// get correct slave interface for controller
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V3.3\ProfiNet_Slave_Bus.cfgr		..\..\..\..\ManagerProject\RPC_V3.3\config\KeStudio_generated\PNIOS\
+			FSCopy ..\..\..\..\ManagerProject\SlaveInterface\RPC_V3.3\profinetslaveaddress.cfgr		..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\SlaveInterface
+			//get correct bus configuration and delete unused bus configurations and mappings
+			FSCopy ..\..\..\..\ManagerProject\RPC_V3.3\config\*.*							..\..\..\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V2.x
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC_V3.1
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2
+			FSDeleteFolder ..\..\..\..\ManagerProject\PB
+			FSDeleteFolder ..\..\..\..\scp
+			
+			//get common files for XML generation and delete other XML templates
+			FSCopy ..\..\..\..\ManagerProject\XML\D3_Common\*.* ..\..\..\..\ManagerProject\XML\V1.40_RCMP\
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\D3_Common
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V1.40_RCMP2
+			FSDeleteFolder ..\..\..\..\ManagerProject\XML\V3.4.4.8_CP36x
+			
+			Call Sub_MakeDir_IECRCU1
+			
+	EndSelect
+	
+	//copy RCU specific compatibility files
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\IECRCU1\*.*				..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	
+	//Copy firmware specific T70 application
+	SelectCase OptionTeachInPendant
+		Case T70
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\TeachInPendant\application.jar		..\..\..\teachcontrol\_system.tt\mask_t70\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\TeachInPendant\language.jar		..\..\..\teachcontrol\_system.tt\mask_t70\
+		Case T70ex
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\TeachInPendant\application.jar		..\..\..\teachcontrol\_system.tt\mask_t70\
+			FSCopy ..\..\..\..\..\CompatibilityFunctions\V1.86Common\TeachInPendant\language.jar		..\..\..\teachcontrol\_system.tt\mask_t70\	
+	EndSelect	
+	
+Return
+
+SubRoutine Sub_MakeDir_IECRCU1
+	// Only the directory is required
+	FSCopy ..\..\..\..\..\CompatibilityFunctions\_Firmware_specific_compatibility_functions.txt		..\..\..\ieccontrol\RCU1\CompatibilityFunctions\
+	FSDeleteFile ..\..\..\ieccontrol\RCU1\CompatibilityFunctions\*.*
+Return

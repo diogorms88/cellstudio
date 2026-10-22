@@ -1,0 +1,1484 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuVivaVision.tts                                           *
+*   Description: General Vision-System and handling of Vision-data            *
+*-----------------------------------------------------------------------------*
+*   27.03.08 BIT: 
+
+*)
+(************************************************************************
+* Variables
+*)
+
+TYPE GLOBAL
+   TCameraSystemType : (eCamOff, eCamFixed, eCamRobot, eCamMax);   
+   TPathCorrVendor   : (eVMT:=1, eISRA:=2, eISRA2:=3); 
+   
+   tsPathCorrIn :
+   STRUCT
+      bDisable      : BOOL;
+   END_STRUCT;
+   tsPathCorrOut :
+   STRUCT
+      iSystemState  : INT;
+      bDisabled     : BOOL;
+      bAdjustMode   : BOOL;
+      bAutoMode     : BOOL;
+      bSystemFault  : BOOL;
+      bCommFault    : BOOL;
+      bFailure      : BOOL;
+      iOpertingMode : INT;
+      iType         : INT;
+      iPath         : INT;
+   END_STRUCT;
+   
+   tsToolCorrIn :
+   STRUCT
+      bDisable      : BOOL;
+   END_STRUCT;
+   tsToolCorrOut :
+   STRUCT
+      iSystemState  : INT;
+      bDisabled     : BOOL;
+      bAdjustMode   : BOOL;
+      bAutoMode     : BOOL;
+      bSystemFault  : BOOL;
+      bCommFault    : BOOL;
+      tDataVision   : tsObject;
+      tDataRefTool  : tsObject;
+      tDataCorrTool : tsObject;
+   END_STRUCT;
+   
+END_TYPE
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  iLoggerNumber         : INT;
+  useDebugFunctions     : BOOL := TRUE;
+  iDebugVeloX           : REAL;
+  iDebugVeloY           : REAL;
+  iDebugVeloZ           : REAL;
+  
+  tTeachInObject        : OBJECT;
+  //teachview absolute
+  tVisionDataAbs        : OBJECT;
+  tObjectDataAbs        : OBJECT;
+   //teachview relative
+  tVisionDataRel        : OBJECT;
+  tObjectDataRel        : OBJECT;
+  
+  //user absolute, Teachview
+  bDataAbsSetByUser     : BOOL;
+  bUserAbsDataOk        : BOOL;
+  objectUserAbsData     : TMcuFrame;
+  
+  //user relative, Teachview
+  bDataRelSetByUser     : BOOL;
+  bUserRelDataOk        : BOOL;
+  objectUserRelData     : TMcuFrame;
+  
+  //camera absolute
+  bDataAbsSetByCamera   : BOOL;
+  bCameraAbsDataOk      : BOOL;
+  objectCamAbsData      : TMcuFrame;        // Displacement values from vision system
+  VisionAbsRetain       : MAPTO TMcuFrame;  // Displacement values RETAIN
+  VisionAbsSave         : TMcuFrame;        // Displacement values when RETAIN not available
+  
+  //camera relative
+  bDataRelSetByCamera   : BOOL;
+  bCameraRelDataOk      : BOOL;
+  objectCamRelData      : TMcuFrame;        // Displacement values from vision system
+  VisionRelRetain       : MAPTO TMcuFrame;  // Displacement values RETAIN
+  VisionRelSave         : TMcuFrame;        // Displacement values when RETAIN not available
+  
+  //show vision in usermenu
+  bShowVisionUserPage   : BOOL;
+  bShowVisionRelUserPage: BOOL;
+  bResetDataIntern      : BOOL;
+  
+  bCfgDataRead          : BOOL;
+
+  VisionViva            : TRcuVisionViva;
+  VisionRGS             : TRcuVisionRGS;
+  VisionPLC             : TRcuVisionPLC;
+  VisionTool            : TRcuVisionTool;
+  VisionSmartRay        : TRcuVisionSmartRay;
+  VisionBK              : TRcuVisionBK;
+  VisionZeiss           : TRcuVisionZeiss;
+  systemType            : TSystemType;     //type of Visionsystem
+  tVisionAbsolute       : TVisionInfo;
+  tVisionRelative       : TVisionInfo;
+   
+   bShiftA7Enable        : BOOL;
+   iShiftA7Direction     : DINT;      //   1 = X, 2 = Y, (3 = Z)
+   rShiftA7Sign          : REAL;      //   1.0 or -1.0
+   rShiftA7Value         : REAL;      //   value for A7 Shift Absolute + Relative
+   rShiftA7Abs           : REAL;      //   value for A7 Shift Absolute only
+   bUseEStopVisionSystem : BOOL;      //   Vision system sends EStop signal for door angle observation
+   bRetainAvailable      : BOOL;      //   Retain variables from IEC mapped successful
+   bUseExtendedInterface : BOOL;      // ordering of subtypes etc. and macro "RECEIVE_VISION" 
+   
+   bBKGhostMode          : BOOL;
+   bBKBootUpOk           : BOOL;
+   BK_MODUS              : MAPTO BK_MODE_TYPE;
+   iTypeBK               : TPathCorrVendor; // 1 ... VMT   2 ... ISRA
+   iTypeTC               : TPathCorrVendor; // 1 ... VMT   2 ... ISRA
+   iTypeTBox             : TPathCorrVendor; // 1 ... VMT   2 ... ISRA
+   bTCBootUpOk           : BOOL;
+   bTBoxBootUpOk         : BOOL;
+   TBOX_GhostNoVision    : BOOL;
+END_VAR
+
+
+
+//------------------------------------------------------------------------
+// Read configuration and map PB
+//------------------------------------------------------------------------
+ROUTINE ReadConfig(locRobot : TRcuRobot)
+   
+ VAR
+   bError          : BOOL;
+   bRetError       : BOOL;
+   iCatalogHdl     : DINT;    // handle of the Configuration directory
+   iTemp           : DINT;
+   rTemp           : REAL;
+   s               : STRING;
+ END_VAR
+    
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuVision_ErrMappKin, myRobot.kinListInx, 1, instId, "TRcuVision.ReadConfig");
+      RETURN;
+   END_IF; 
+   //get access to IEC Retain variables
+   VisionAbsRetain  := MAPX(cSV_VisionAbs[myRobot.kinListInx]);
+   VisionRelRetain  := MAPX(cSV_VisionRel[myRobot.kinListInx]);
+   bRetainAvailable := IS_MAPPED(VisionAbsRetain) AND IS_MAPPED(VisionRelRetain);
+     
+   //read robotcontrol.cfg
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision", iCatalogHdl) THEN
+      //Type of Visionsystem
+      IF NOT CatalogReadIntRange(iCatalogHdl, "TypeOfVisionSystem", iTemp, eOff, (eMax-1), FALSE) THEN
+         systemType := eOff;
+         RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 1, instId, "TRcuVision.ReadConfig", "TypeOfVisionSystem", "[RC.KINEMATIC:x.Vision]");
+         RETURN;
+      ELSE
+         systemType := TSystemType(iTemp);
+      END_IF;
+      IF systemType = eOff THEN
+         RETURN;
+      ELSE
+         IF CatalogReadInt(iCatalogHdl, "ShiftA7Enable",   iTemp , TRUE) THEN
+            IF iTemp = 1 THEN
+               bShiftA7Enable := TRUE;
+            ELSIF iTemp <> 0 THEN
+               RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 2, instId, "TRcuVision.ReadConfig", "ShiftA7Enable", "[RC.KINEMATIC:x.Vision]");
+               bError := TRUE;
+               bShiftA7Enable := FALSE;
+            ELSE
+               bShiftA7Enable := FALSE;
+            END_IF;
+         ELSE
+            bShiftA7Enable := FALSE;
+         END_IF;
+         IF bShiftA7Enable THEN
+            IF NOT CatalogReadIntRange(iCatalogHdl, "ShiftA7Direction", iShiftA7Direction, 1, 3, FALSE) THEN
+               bShiftA7Enable := FALSE;
+               bError := TRUE;
+            END_IF;
+            IF NOT CatalogReadIntRange(iCatalogHdl, "ShiftA7Invert", iTemp, 0, 1, FALSE) THEN
+               bShiftA7Enable := FALSE;
+               bError := TRUE;
+            ELSE
+               IF iTemp = 0 THEN
+                  rShiftA7Sign := 1.0;
+               ELSE
+                  rShiftA7Sign := -1.0;
+               END_IF;
+            END_IF;
+         END_IF;      
+      
+         //not optional - if EStop signal is not configured stop bootup
+        IF CatalogReadIntRange(iCatalogHdl, "UseEStopVisionSystem", iTemp, 0, 1, FALSE) THEN
+           bUseEStopVisionSystem := (iTemp = 1);
+        ELSE   
+           gbBootupError := TRUE;
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Error reading catalog - UseEStopVisionSystem - BootupError");
+           RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 3, instId, "TRcuVision.ReadConfig", "UseEStopVisionSystem", "[RC.KINEMATIC:x.Vision]");
+           RETURN;
+        END_IF;
+      
+         IF NOT CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision.Absolute", iCatalogHdl) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Error reading catalog-values");
+            RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 3, instId, "TRcuVision.ReadConfig", "[RC.KINEMATIC:x.Vision.Absolute]", "[RC.KINEMATIC:x.Vision.Absolute]");
+            bError := TRUE;
+         ELSE
+            CatalogReadRealRange(iCatalogHdl, "ScalingFactor_X", tVisionAbsolute.rScaling_X , 0.0, 1.0, FALSE);
+            CatalogReadRealRange(iCatalogHdl, "ScalingFactor_Y", tVisionAbsolute.rScaling_Y , 0.0, 1.0, FALSE);
+            CatalogReadRealRange(iCatalogHdl, "ScalingFactor_Z", tVisionAbsolute.rScaling_Z , 0.0, 1.0, FALSE);
+            CatalogReadRealRange(iCatalogHdl, "ScalingFactor_A", tVisionAbsolute.rScaling_A , 0.0, 1.0, FALSE);
+            CatalogReadRealRange(iCatalogHdl, "ScalingFactor_B", tVisionAbsolute.rScaling_B , 0.0, 1.0, FALSE);
+            CatalogReadRealRange(iCatalogHdl, "ScalingFactor_C", tVisionAbsolute.rScaling_C , 0.0, 1.0, FALSE);
+            CatalogReadReal(iCatalogHdl, "LinearLimit",   tVisionAbsolute.rLinLimit , FALSE);
+            CatalogReadReal(iCatalogHdl, "RotationLimit", tVisionAbsolute.rRotLimit , FALSE);
+         END_IF;      
+         
+         CASE systemType OF
+            eViva                    : bRetError := VisionViva.ReadConfig(myRobot);
+                                       iLoggerNumber := VisionViva.iLoggerNumber;
+            eRgsStandard, eRgsOnline : bRetError := VisionRGS.ReadConfig(myRobot);
+                                       iLoggerNumber := VisionRGS.iLoggerNumber;
+            eStandard                : bRetError := VisionPLC.GetVisionDataPLC(myRobot);
+                                       iLoggerNumber := VisionPLC.iLoggerNumber;
+         END_CASE;
+         IF bRetError THEN
+            bError := TRUE;
+         END_IF;
+      END_IF;
+   ELSE
+      bError := TRUE;
+   END_IF;
+   
+   IF bError THEN 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Error in configuration");// Fehlermeldung ersetzen!!!!
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 4, instId, "TRcuVision.ReadConfig");
+      PRINT("--------------------------------");
+      PRINT("----  Boot-up Vision failed ----");
+      PRINT("--------------------------------");
+      RETURN;
+   ELSE
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "catalog successfully read");
+      bCfgDataRead := TRUE;
+   END_IF;
+END_ROUTINE
+ 
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE InitVision()
+
+   IF NOT bCfgDataRead THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Error in initialization");// Fehlermeldung ersetzen!!!!
+      RETURN;
+   END_IF;
+   
+   bShowVisionUserPage := TRUE;
+   
+   WAIT myRobot.initKinComplete;
+   CASE systemType OF
+      eViva                    : VisionViva.InitVision(); 
+      eRgsStandard, eRgsOnline : ;
+      eStandard                : ;
+      eOff                     : ;
+   END_CASE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// PLC starts a program
+//------------------------------------------------------------------------
+ROUTINE PlcStartProgram(progNumber : INT)
+
+   CASE systemType OF
+      eViva                    : VisionViva.PlcStartProgram(progNumber); 
+      eRgsStandard, eRgsOnline : VisionRGS.PlcStartProgram(progNumber); 
+      eStandard                : ;  // FEHLER nicht implementiert
+      eOff                     : ;
+   END_CASE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// PLC init system - it is called when teachprogramm is canceled
+//------------------------------------------------------------------------
+ROUTINE PlcInitSystem()
+
+   CASE systemType OF
+      eViva                    : VisionViva.PlcInitSystem(); 
+      eRgsStandard, eRgsOnline : VisionRGS.PlcInitSystem(); 
+      eStandard                : ;  // FEHLER nicht implementiert
+      eOff                     : ;
+   END_CASE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Teachprog starts a program
+//------------------------------------------------------------------------
+ROUTINE MacroStartProgram(progNumber : INT; OPTIONAL frametype : TVisionSubSystemType)
+ 
+   CASE systemType OF
+      eViva                    : START VisionViva.MacroStartProgram(progNumber); 
+      eRgsStandard, eRgsOnline : START VisionRGS.MacroStartProgram(progNumber); 
+      eStandard                : IF IS_USED(frametype) THEN
+                                    VisionPLC.MacroStartProgram(progNumber, frametype); 
+                                 ELSE
+                                    VisionPLC.MacroStartProgram(progNumber); 
+                                 END_IF;
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk - End of measuring job
+//------------------------------------------------------------------------
+ROUTINE MacroSetEndOfPath()
+
+   CASE systemType OF
+      eViva                    : VisionViva.MacroSetEndOfPath(); 
+      eRgsStandard, eRgsOnline : ;  // FEHLER nicht implementiert
+      eStandard                : ;  // FEHLER nicht implementiert
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+//  set up measurement job called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetJob(job : SINT)
+
+   CASE systemType OF
+      eViva                    : VisionViva.MacroSetJob(job); 
+      eRgsStandard, eRgsOnline : VisionRGS.MacroSetJob(job); 
+      eStandard                : ;  // FEHLER nicht implementiert
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - request an object by sending the number to PLC
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOrder(CONST  inOrder : DINT; OPTIONAL frametype : TVisionSubSystemType)
+
+   CASE systemType OF
+      eViva                    : VisionViva.MacroSetOrder(inOrder); 
+      eRgsStandard, eRgsOnline : VisionRGS.MacroSetOrder(inOrder); 
+      eStandard                : IF IS_USED(frametype) THEN
+                                    VisionPLC.MacroSetOrder(inOrder, frametype); 
+                                 ELSE
+                                    VisionPLC.MacroSetOrder(inOrder); 
+                                 END_IF;
+   END_CASE;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - 
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOnlineCorr(CONST  State : IOTYPE)
+
+   CASE systemType OF
+      eViva                    : VisionViva.MacroSetOnlineCorr(State); 
+      eRgsStandard, eRgsOnline : ;//Fehler nicht implementiert
+      eStandard                : ;//Fehler nicht implementiert
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+//  robot is in measure position / last position called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetMeasurePos(bLastPos : BOOL)
+    
+   CASE systemType OF
+      eViva                    : VisionViva.MacroSetMeasurePos(bLastPos); 
+      eRgsStandard, eRgsOnline : VisionRGS.MacroSetMeasurePos(bLastPos); 
+      eStandard                : VisionPLC.MacroSetMeasurePos(bLastPos); 
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  Wait until ISRA gives the release for next measure position **************
+//----------------------------------------------------------------------------- 
+ROUTINE MacroReceiveNextCamPos() : BOOL
+
+   CASE systemType OF
+      eViva                    : RETURN VisionViva.MacroReceiveNextCamPos(); 
+      eRgsStandard, eRgsOnline : RETURN VisionRGS.MacroReceiveNextCamPos(); 
+      eStandard                : RETURN VisionPLC.MacroReceiveNextCamPos(); 
+   ELSE
+      RETURN FALSE; // Fehler
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+//  robot is in measure position and waits for release called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetCamPos(PosNr : BYTE)
+    
+   CASE systemType OF
+      eViva                    : ; // FEHLER nicht implementiert
+      eRgsStandard, eRgsOnline : ; // FEHLER nicht implementiert 
+      eStandard                : VisionPLC.MacroSetCamPos(PosNr); 
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+//-------------------------------------------------------------------------------
+//  Set sync request (PLC) vision is waiting sync release - called from EcoTalk
+//-------------------------------------------------------------------------------
+ROUTINE MacroSyncRobots(state : BOOL)
+ VAR
+   found : BOOL;
+ END_VAR
+
+   IF iTypeBK = eVMT THEN
+      VisionBK.SyncRobots(state);
+      found := TRUE;
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.SyncRobots(state);
+      found := TRUE;
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.SyncRobots(state);
+      found := TRUE;
+   END_IF;
+   IF myRobot.ToolMeasure.bConfigured THEN
+      myRobot.ToolMeasure.SyncRobots(state);
+      found := TRUE;
+   END_IF;
+   IF VisionZeiss.bZeissBootUpOk THEN
+      VisionZeiss.SyncRobots(state);
+      found := TRUE;
+   END_IF;
+   
+   IF NOT found THEN
+      RcuResetMessage(EcoTalk_WarBKMacroIgnored, myRobot.kinListInx, 16, 0, "TRcuVision.MacroSyncRobots", "SET_VISION(SyncRobots,..)");
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// set a trigger-signal to ISRA to take a picture set from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE SignalVisionCommand(commandData        : TMcuUserData; 
+                            pos                : TRcuTrigger;
+                            posInvalid         : BOOL; 
+                            VAR_IN triggerIdx  : DINT)
+
+   CASE systemType OF
+      eViva                    : ; // FEHLER nicht implementiert 
+      eRgsStandard, eRgsOnline : VisionRGS.SignalVisionCommand(commandData, pos, posInvalid, triggerIdx); 
+      eStandard                : VisionPLC.SignalVisionCommand(commandData, pos, posInvalid, triggerIdx); 
+   ELSE
+      // FEHLER kein Visionsystem konfiguriert
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and computes the data from PLC or TV
+//------------------------------------------------------------------------
+ROUTINE MacroReceiveVisionData(VAR_IN bRelative : BOOL; OPTIONAL iRetVal : VISION_STATE) : BOOL
+ VAR
+  dummy : VISION_STATE;
+ END_VAR
+
+   CASE systemType OF
+      eViva                    : RETURN VisionViva.MacroReceiveVisionData(bRelative); 
+      eRgsStandard, eRgsOnline : RETURN VisionRGS.MacroReceiveVisionData(bRelative); 
+      eStandard                : IF IS_USED(iRetVal) THEN
+                                    RETURN VisionPLC.MacroReceiveVisionData(bRelative, iRetVal);
+                                 ELSE
+                                    RETURN VisionPLC.MacroReceiveVisionData(bRelative, dummy);
+                                 END_IF;
+   ELSE
+      RETURN FALSE; // Fehler
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and computes the data from PLC or TV
+//------------------------------------------------------------------------
+ROUTINE MacroReceivePartShift(frame : FRAMESHIFT; Setpos : REAL; frametype : TVisionSubSystemType; iRetVal : VISION_STATE) : BOOL
+ VAR
+  dummy : VISION_STATE;
+ END_VAR
+
+   CASE systemType OF
+      eViva                    : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroReceivePartShift", "Viva", "MacroReceivePartShift");
+                                 RETURN FALSE;
+      eRgsStandard             : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroReceivePartShift", "RgsStandard", "MacroReceivePartShift");
+                                 RETURN FALSE;
+      eRgsOnline               : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroReceivePartShift", "RgsOnline", "MacroReceivePartShift");
+                                 RETURN FALSE;
+      eStandard                : RETURN VisionPLC.MacroReceivePartShift(frame, Setpos, frametype, iRetVal);
+   ELSE
+      RETURN FALSE; // Fehler
+      RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroReceivePartShift", STR(systemType), "MacroReceivePartShift");
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and calculate the displacement to a given object
+//------------------------------------------------------------------------
+ROUTINE MacroCalcObjectDisplacement(VAR_IN SubSystemType    : TVisionSubSystemType;
+                                           Org              : OBJECT;                      
+                                           Result           : OBJECT;
+                                           iRetVal          : VISION_STATE) : BOOL
+ VAR
+  dummy : VISION_STATE;
+ END_VAR                    
+
+   CASE systemType OF
+      eViva                    : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcObjectDisplacement", "Viva", "MacroCalcObjectDisplacement");
+                                 RETURN FALSE;
+      eRgsStandard             : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcObjectDisplacement", "RgsStandard", "MacroCalcObjectDisplacement");
+                                 RETURN FALSE;
+      eRgsOnline               : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcObjectDisplacement", "RgsOnline", "MacroCalcObjectDisplacement");
+                                 RETURN FALSE;
+      eStandard                : RETURN VisionPLC.CalcObjDisplacement(SubSystemType, Org, Result, iRetVal);
+                                 
+   ELSE
+      RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcObjectDisplacement", STR(systemType), "MacroCalcObjectDisplacement");
+      RETURN FALSE;
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and calculate the displacement to a given tool
+//------------------------------------------------------------------------
+ROUTINE MacroCalcToolDisplacement(VAR_IN SubSystemType : TVisionSubSystemType;
+                                  Org                  : TOOL;                      
+                                  Result               : TOOL;
+                                  iRetVal              : VISION_STATE) : BOOL
+ VAR
+  dummy : VISION_STATE;
+ END_VAR                       
+
+   IF bTBoxBootUpOk THEN
+      IF (myRobot.nozzleChange.nextNozzleNr > 0) THEN
+         IF TBOX_GhostNoVision THEN
+            iRetVal := DataOk;
+            RETURN TRUE;
+         END_IF;
+         STOPPOINT();
+         // ??????
+         RETURN VisionBK.TBoxCorr(myRobot.nozzleChange.nextNozzleNr, Org, Result, iRetVal);
+      ELSE
+         RcuSetMessageOnce(TRcuVision_ErrNozzleNrZero, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcToolDisplacement", STR(myRobot.nozzleChange.nextNozzleNr));
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      CASE systemType OF
+         eViva                    : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcToolDisplacement", "Viva", "MacroCalcToolDisplacement");
+                                    RETURN FALSE;
+         eRgsStandard             : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcToolDisplacement", "RgsStandard", "MacroCalcToolDisplacement");
+                                    RETURN FALSE;
+         eRgsOnline               : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcToolDisplacement", "RgsOnline", "MacroCalcToolDisplacement");
+                                    RETURN FALSE;
+         eStandard                : RETURN VisionPLC.CalcToolDisplacement(SubSystemType, Org, Result, iRetVal); 
+                                    
+      ELSE
+         RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcToolDisplacement", STR(systemType), "MacroCalcToolDisplacement");
+         RETURN FALSE;
+      END_CASE;
+   END_IF;
+ 
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and calculates the displacement to a given POINT
+//------------------------------------------------------------------------
+ROUTINE MacroCalcPointDisplacement(VAR_IN SubSystemType    : TVisionSubSystemType;
+                                           Org             : POINT;                      
+                                           Result          : POINT;
+                                           iRetVal         : VISION_STATE) : BOOL
+ VAR
+  dummy : VISION_STATE;
+ END_VAR                    
+
+   CASE systemType OF
+      eViva                    : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcPointDisplacement", "Viva", "MacroCalcPointDisplacement");
+                                 RETURN FALSE;
+      eRgsStandard             : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcPointDisplacement", "RgsStandard", "MacroCalcPointDisplacement");
+                                 RETURN FALSE;
+      eRgsOnline               : RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcPointDisplacement", "RgsOnline", "MacroCalcPointDisplacement");
+                                 RETURN FALSE;
+      eStandard                : RETURN VisionPLC.CalcPointDisplacement(SubSystemType, Org, Result, iRetVal);
+                                 
+   ELSE
+      RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.MacroCalcPointDisplacement", STR(systemType), "MacroCalcPointDisplacement");
+      RETURN FALSE;
+   END_CASE;
+END_ROUTINE
+
+
+ROUTINE BK_ReadConfig(locRobot : TRcuRobot) : BOOL
+   BK_MODUS := MAP(VisionBK.BK_MODUS);
+   IF NOT VisionBK.ReadConfig(locRobot) THEN
+      IF VisionIsraBK.ReadConfig(locRobot) THEN
+         iTypeBK := eISRA;
+         BK_MODUS := MAP(VisionIsraBK.BK_MODUS);
+         RETURN TRUE;
+      ELSIF VisionIsraBK2.ReadConfig(locRobot) THEN
+         iTypeBK := eISRA2;
+         BK_MODUS := MAP(VisionIsraBK2.BK_MODUS);
+         RETURN TRUE;
+      ELSE
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      iTypeBK := eVMT; 
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE BK_Init()
+   IF iTypeBK = eVMT THEN
+      VisionBK.Init();
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.Init();
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.Init();
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_BK_Init()
+   IF iTypeBK = eVMT THEN
+      VisionBK.BK_Init();
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.BK_Init();
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.BK_Init();
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_BK_Start(Typ : INT; Bahn : INT; Modus : BK_MODE_TYPE)
+   
+   IF iTypeBK = eVMT THEN
+      VisionBK.BK_Start(Typ, Bahn, Modus);
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.BK_Start(Typ, Bahn, Modus);
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.BK_Start(Typ, Bahn, Modus);
+   END_IF;
+END_ROUTINE
+
+ROUTINE PreRun_Macro_BK_Ende(AnzahlPunkte : INT)
+   
+   IF iTypeBK = eISRA THEN
+      VisionIsraBK.Prerun_BK_Ende(AnzahlPunkte);
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.Prerun_BK_Ende(AnzahlPunkte);
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_BK_Ende(AnzahlPunkte : INT ; OPTIONAL AnzahlKorrekturen : INT; OPTIONAL iRetVal : VISION_STATE) : BOOL
+   
+   IF iTypeBK = eVMT THEN
+      IF IS_USED(iRetVal) THEN
+         IF IS_USED(AnzahlKorrekturen) THEN
+            RETURN VisionBK.BK_Ende(AnzahlPunkte, AnzahlKorrekturen, iRetVal);
+         ELSE
+            RETURN VisionBK.BK_Ende(AnzahlPunkte, 1, iRetVal);
+         END_IF;
+      ELSE
+         IF IS_USED(AnzahlKorrekturen) THEN
+            RETURN VisionBK.BK_Ende(AnzahlPunkte, AnzahlKorrekturen);
+         ELSE
+            RETURN VisionBK.BK_Ende(AnzahlPunkte, 1);
+         END_IF;
+      END_IF;
+   ELSIF iTypeBK = eISRA THEN
+      IF IS_USED(iRetVal) THEN
+         RETURN VisionIsraBK.BK_Ende(AnzahlPunkte, iRetVal);
+      ELSE
+         RETURN VisionIsraBK.BK_Ende(AnzahlPunkte);
+      END_IF;
+   ELSIF iTypeBK = eISRA2 THEN
+      IF IS_USED(AnzahlKorrekturen) THEN
+         IF IS_USED(iRetVal) THEN
+            RETURN VisionIsraBK2.BK_Ende2(AnzahlPunkte, AnzahlKorrekturen, iRetVal);
+         ELSE
+            RETURN VisionIsraBK2.BK_Ende2(AnzahlPunkte, AnzahlKorrekturen);
+         END_IF;
+      ELSE   
+         IF IS_USED(iRetVal) THEN
+            RETURN VisionIsraBK2.BK_Ende(AnzahlPunkte, iRetVal);
+         ELSE
+            RETURN VisionIsraBK2.BK_Ende(AnzahlPunkte);
+         END_IF;
+      END_IF;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_BK_Ende_2(AnzahlPunkte : INT; AnzahlKorrekturen : INT; OPTIONAL iRetVal : VISION_STATE) : BOOL
+   
+   IF IS_USED(iRetVal) THEN
+      RETURN VisionIsraBK2.BK_Ende2(AnzahlPunkte, AnzahlKorrekturen, iRetVal);
+   ELSE
+      RETURN VisionIsraBK2.BK_Ende2(AnzahlPunkte, AnzahlKorrekturen);
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_BK_Korr(PunktNr : DINT)
+   
+   IF iTypeBK = eVMT THEN
+      VisionBK.BK_Korr(PunktNr);
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.BK_Korr(PunktNr);
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.BK_Korr(PunktNr);
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_BK_Action()
+   IF iTypeBK = eISRA THEN
+      VisionIsraBK.BK_Action();
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.BK_Action();
+   END_IF;
+END_ROUTINE
+
+ROUTINE TriggerDirectVmtBk(pointNumber : INT)
+   
+   IF iTypeBK = eVMT THEN
+      VisionBK.TriggerDirectVmtBk(pointNumber);
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.TriggerDirectVmtBk(pointNumber);
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.TriggerDirectVmtBk(pointNumber);
+   END_IF;
+END_ROUTINE
+
+ROUTINE BK_AutoCorr()   
+   
+   IF iTypeBK = eVMT THEN
+      VisionBK.BK_AutoCorr();
+   END_IF;
+END_ROUTINE
+
+ROUTINE BK_PP_Ref(pos : TMcuPosition)
+   
+   IF iTypeBK = eVMT THEN
+      IF (BK_MODUS = Mode_PP_Ref) THEN //VMT nur bei Bahnpunktreferenzfahrt
+         VisionBK.BK_PP_Ref(pos);
+      END_IF;
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.BK_PP_Ref(pos); // ISRA auch bei Applikationsfahrt
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.BK_PP_Ref(pos); // ISRA auch bei Applikationsfahrt
+   END_IF;
+END_ROUTINE
+
+ROUTINE SignalVmtBk(commandData : TMcuUserData; pos : TRcuTrigger;
+                            posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+   
+   IF iTypeBK = eVMT THEN
+      VisionBK.SignalVmtBk(commandData, pos, posInvalid, triggerIdx);
+   ELSIF iTypeBK = eISRA THEN
+      VisionIsraBK.SignalVmtBk(commandData, pos, posInvalid, triggerIdx);
+   ELSIF iTypeBK = eISRA2 THEN
+      VisionIsraBK2.SignalVmtBk(commandData, pos, posInvalid, triggerIdx);
+   END_IF;
+END_ROUTINE
+
+
+
+ROUTINE TC_ReadConfig(locRobot : TRcuRobot) : BOOL
+   IF NOT VisionTool.ReadConfig(locRobot) THEN
+      IF VisionIsraBK2.ReadConfigTool(locRobot) THEN
+         iTypeTC := eISRA2;
+         RETURN TRUE;
+      ELSE
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      iTypeTC := eVMT; 
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE TC_Init()
+   IF iTypeTC = eVMT THEN
+      VisionTool.Init();
+   ELSIF iTypeTC = eISRA2 THEN
+      VisionIsraBK2.InitTool();
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_TC_Start(ToolNr : DINT) : BOOL
+   
+   IF iTypeTC = eVMT THEN
+      RETURN VisionTool.TC_Start(ToolNr);
+   ELSIF iTypeTC = eISRA2 THEN
+      RETURN VisionIsraBK2.TC_Start(ToolNr);
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE Macro_TC_SetPos(PosNr : DINT)
+
+   IF iTypeTC = eVMT THEN
+      VisionTool.TC_SetPos(PosNr);
+   ELSIF iTypeTC = eISRA2 THEN
+      VisionIsraBK2.TC_SetPos(PosNr);
+   ELSE
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TC_ReceiveTool(refTool : TOOL; corrTool : TOOL; OPTIONAL iRetVal : VISION_STATE) : BOOL
+VAR
+   dummy : VISION_STATE;
+END_VAR
+
+   IF iTypeTC = eVMT THEN
+      RETURN VisionTool.TC_ReceiveTool(refTool, corrTool);
+   ELSIF iTypeTC = eISRA2 THEN
+      IF IS_USED(iRetVal) THEN
+         RETURN VisionIsraBK2.TC_ReceiveTool(refTool, corrTool, iRetVal);
+      ELSE
+         RETURN VisionIsraBK2.TC_ReceiveTool(refTool, corrTool, dummy);
+      END_IF;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE TBox_ReadConfig(locRobot : TRcuRobot) : BOOL
+   IF NOT VisionBK.ReadConfigTBox(locRobot) THEN
+      IF VisionIsraBK2.ReadConfigTBox(locRobot) THEN
+         iTypeTBox := eISRA2;
+         RETURN TRUE;
+      ELSE
+         RETURN FALSE;
+      END_IF;
+      RETURN FALSE;
+   ELSE
+      iTypeTBox := eVMT; 
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE InitTBox()
+   IF iTypeTBox = eVMT THEN
+      VisionBK.InitTBox();
+   ELSIF iTypeTBox = eISRA2 THEN
+      VisionIsraBK2.InitTBox();
+   END_IF;
+END_ROUTINE
+
+ROUTINE Macro_TBoxTcpStart(ToolNr : DINT) : BOOL
+
+   IF iTypeTBox = eVMT THEN
+      RETURN VisionBK.TBoxTcpStart(ToolNr);
+   ELSIF iTypeTBox = eISRA2 THEN
+      RETURN VisionIsraBK2.TBoxTcpStart(ToolNr);
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TBoxTcpPoint(PointNr : DINT) : BOOL 
+
+   IF iTypeTBox = eVMT THEN
+      RETURN VisionBK.TBoxTcpPoint(PointNr);
+   ELSIF iTypeTBox = eISRA2 THEN
+      RETURN VisionIsraBK2.TBoxTcpPoint(PointNr);
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TBoxTcpEnd(TBoxBase : OBJECT; ActTool : TOOL) : BOOL 
+
+   IF iTypeTBox = eVMT THEN
+      RETURN VisionBK.TBoxTcpEnd(TBoxBase, ActTool);
+   ELSIF iTypeTBox = eISRA2 THEN
+      RETURN VisionIsraBK2.TBoxTcpEnd(TBoxBase, ActTool);
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TBoxTcp1Shot(ToolNr : DINT; ActTool : TOOL) : BOOL 
+
+   IF iTypeTBox = eVMT THEN
+      RETURN VisionBK.TBoxTcp1Shot(ToolNr, ActTool);
+   ELSIF iTypeTBox = eISRA2 THEN
+      RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.Macro_TBoxTcp1Shot", "Isra BK", "TBOX_TCP_1SHOT");
+      RETURN FALSE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TBoxCheck(nozzleNr : DINT; ToolDiff : TOOL; iRetVal : VISION_STATE) : BOOL 
+
+   IF iTypeTBox = eVMT THEN
+      RETURN VisionBK.TBoxCheck(nozzleNr, ToolDiff, iRetVal);
+   ELSIF iTypeTBox = eISRA2 THEN
+      RcuSetMessageOnce(TRcuVision_ErrFuncCallNotValid, myRobot.kinListInx, 1, instId, "TRcuVision.Macro_TBoxCheck", "Isra BK", "TBOX_CHECK");
+      RETURN FALSE; 
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TBoxCorr(nozzleNr : DINT; RefTool : TOOL; CorrTool : TOOL; iRetVal : VISION_STATE) : BOOL 
+
+   IF iTypeTBox = eVMT THEN
+      RETURN VisionBK.TBoxCorr(nozzleNr, RefTool, CorrTool, iRetVal);
+   ELSIF iTypeTBox = eISRA2 THEN
+      RETURN VisionIsraBK2.TBoxCorr(nozzleNr, RefTool, CorrTool, iRetVal);
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Macro_TBOX_SetTolerance(LimitType : LIMIT_TYPE; x_min : REAL; x_max : REAL; y_min : REAL; y_max : REAL; z_min : REAL; z_max : REAL) 
+
+   IF iTypeTBox = eVMT THEN
+      VisionBK.TBOX_SetTolerance(LimitType, x_min, x_max, y_min, y_max, z_min, z_max);
+   ELSIF iTypeTBox = eISRA2 THEN
+      VisionIsraBK2.TBOX_SetTolerance(LimitType, x_min, x_max, y_min, y_max, z_min, z_max);
+   ELSE
+      RETURN;
+   END_IF;
+   
+END_ROUTINE
+
+
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - calculate this for teachview
+//-----------------------------------------------------------------------------
+ROUTINE SetActualObject(inObject : OBJECT)
+VAR
+zeroObject : OBJECT;
+END_VAR
+
+   IF systemType = eStandard THEN
+      VisionPLC.SetActualObject(inObject);
+   ELSE
+      tTeachInObject := inObject;
+(*
+      IF (bCameraAbsDataOk AND bCameraSlotsOk) OR bUserAbsDataOk THEN
+        CalcActualObject(tVisionDataAbs, FALSE);
+      ELSE
+        CalcActualObject(zeroObject, FALSE);
+      END_IF;
+*)
+      CalcActualObject();
+   END_IF;
+END_ROUTINE
+
+(*********************************************************************************
+                          TeachView
+*********************************************************************************)
+
+//------------------------------------------------------------------------
+//  Check if PLC data is in range 
+//------------------------------------------------------------------------
+ROUTINE CheckDataRange(inObject : TMcuFrame; relative : BOOL) : BOOL
+ VAR
+   bRangeOK : BOOL;
+   sLogText : STRING;
+ END_VAR
+   
+   sLogText := " X = " + STR(inObject.mPos.mValues[0]) + ", Y = " + STR(inObject.mPos.mValues[1]) + ", Z = " + STR(inObject.mPos.mValues[2]);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   sLogText := " Rx = " + STR(inObject.mOri.mValues[0]) + ", Ry = " + STR(inObject.mOri.mValues[1]) + ", Rz = " + STR(inObject.mOri.mValues[2]);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   myRobot.DebugPrint(eTraceVision,  "Vision-DATA: ");
+   myRobot.DebugPrint(eTraceVision,  " X = "  + STR(inObject.mPos.mValues[0]));
+   myRobot.DebugPrint(eTraceVision,  " Y = "  + STR(inObject.mPos.mValues[1]));
+   myRobot.DebugPrint(eTraceVision,  " Z = "  + STR(inObject.mPos.mValues[2]));
+   myRobot.DebugPrint(eTraceVision,  " Rx = " + STR(inObject.mOri.mValues[0]));
+   myRobot.DebugPrint(eTraceVision,  " Ry = " + STR(inObject.mOri.mValues[1]));
+   myRobot.DebugPrint(eTraceVision,  " Rz = " + STR(inObject.mOri.mValues[2]));
+   
+   IF relative THEN
+      IF (rAbs(inObject.mPos.mValues[0]) > tVisionRelative.rLinLimit) OR
+         (rAbs(inObject.mPos.mValues[1]) > tVisionRelative.rLinLimit) OR
+         (rAbs(inObject.mPos.mValues[2]) > tVisionRelative.rLinLimit) OR
+         (rAbs(inObject.mOri.mValues[0]) > tVisionRelative.rRotLimit) OR
+         (rAbs(inObject.mOri.mValues[1]) > tVisionRelative.rRotLimit) OR
+         (rAbs(inObject.mOri.mValues[2]) > tVisionRelative.rRotLimit) THEN
+
+         inObject.mPos.mValues[0] := 0.0;
+         inObject.mPos.mValues[1] := 0.0;
+         inObject.mPos.mValues[2] := 0.0;
+         inObject.mOri.mValues[0] := 0.0;
+         inObject.mOri.mValues[1] := 0.0;
+         inObject.mOri.mValues[2] := 0.0;
+         bRangeOK := FALSE;
+      ELSE
+         bRangeOK := TRUE;
+      END_IF;
+   ELSE
+      IF (rAbs(inObject.mPos.mValues[0]) > tVisionAbsolute.rLinLimit) OR
+         (rAbs(inObject.mPos.mValues[1]) > tVisionAbsolute.rLinLimit) OR
+         (rAbs(inObject.mPos.mValues[2]) > tVisionAbsolute.rLinLimit) OR
+         (rAbs(inObject.mOri.mValues[0]) > tVisionAbsolute.rRotLimit) OR
+         (rAbs(inObject.mOri.mValues[1]) > tVisionAbsolute.rRotLimit) OR
+         (rAbs(inObject.mOri.mValues[2]) > tVisionAbsolute.rRotLimit) THEN
+
+         inObject.mPos.mValues[0] := 0.0;
+         inObject.mPos.mValues[1] := 0.0;
+         inObject.mPos.mValues[2] := 0.0;
+         inObject.mOri.mValues[0] := 0.0;
+         inObject.mOri.mValues[1] := 0.0;
+         inObject.mOri.mValues[2] := 0.0;
+         bRangeOK := FALSE;
+      ELSE
+         bRangeOK := TRUE;
+      END_IF;
+   END_IF;
+      	
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "CheckDataRange - bRangeOK: " + STR(bRangeOK) );
+	
+   RETURN bRangeOK;    
+  
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+//  set data from teachview 
+//-----------------------------------------------------------------------------
+ROUTINE SetVisionDataFromTeachview(inObject : OBJECT; inRelative : BOOL)
+ VAR
+   object  : TMcuFrame;
+   iTmp    : INT;
+ END_VAR
+   
+  object.mPos.mValues[0] := inObject.X_mm;
+  object.mPos.mValues[1] := inObject.Y_mm;
+  object.mPos.mValues[2] := inObject.Z_mm;
+  object.mOri.mValues[0] := inObject.A_deg;
+  object.mOri.mValues[1] := inObject.B_deg;
+  object.mOri.mValues[2] := inObject.C_deg;
+  object.mFrameTyp       := gMcuFrameTyp;
+  
+  IF NOT inRelative THEN
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "TeachView - Set data Abs");
+     IF CheckDataRange(object, inRelative) THEN
+        iTmp := object.mPos.mValues[0] * 10.0;
+        objectUserAbsData.mPos.mValues[0] := iTmp / 10.0;
+        iTmp := object.mPos.mValues[1] * 10.0;
+        objectUserAbsData.mPos.mValues[1] := iTmp / 10.0;
+        iTmp := object.mPos.mValues[2] * 10.0;
+        objectUserAbsData.mPos.mValues[2] := iTmp / 10.0;
+        iTmp := object.mOri.mValues[0] * 1000.0;
+        objectUserAbsData.mOri.mValues[0] := iTmp / 1000.0;
+        iTmp := object.mOri.mValues[1] * 1000.0;
+        objectUserAbsData.mOri.mValues[1] := iTmp / 1000.0;
+        iTmp := object.mOri.mValues[2] * 1000.0;
+        objectUserAbsData.mOri.mValues[2] := iTmp / 1000.0;
+        bUserAbsDataOk      := TRUE; 
+        bDataAbsSetByUser   := TRUE; 
+        bDataAbsSetByCamera := FALSE;
+     ELSE
+        RcuSetMessageOnce(TRcuVision_ErrInvalidRange, myRobot.kinListInx, 1, instId, "TRcuVision.SetVisionDataFromTeachview");
+        bUserAbsDataOk      := FALSE; 
+        bDataAbsSetByUser   := FALSE; 
+     END_IF;
+  ELSE
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "TeachView - Set data Rel");
+     IF CheckDataRange(object, inRelative) THEN
+        iTmp := object.mPos.mValues[0] * 10.0;
+        objectUserRelData.mPos.mValues[0] := iTmp / 10.0;
+        iTmp := object.mPos.mValues[1] * 10.0;
+        objectUserRelData.mPos.mValues[1] := iTmp / 10.0;
+        iTmp := object.mPos.mValues[2] * 10.0;
+        objectUserRelData.mPos.mValues[2] := iTmp / 10.0;
+        iTmp := object.mOri.mValues[0] * 1000.0;
+        objectUserRelData.mOri.mValues[0] := iTmp / 1000.0;
+        iTmp := object.mOri.mValues[1] * 1000.0;
+        objectUserRelData.mOri.mValues[1] := iTmp / 1000.0;
+        iTmp := object.mOri.mValues[2] * 1000.0;
+        objectUserRelData.mOri.mValues[2] := iTmp / 1000.0;
+        bUserRelDataOk      := TRUE; 
+        bDataRelSetByUser   := TRUE; 
+        bDataRelSetByCamera := FALSE;
+     ELSE
+        RcuSetMessageOnce(TRcuVision_ErrInvalidRange, myRobot.kinListInx, 2, instId, "TRcuVision.SetVisionDataFromTeachview");
+        bUserRelDataOk      := FALSE; 
+        bDataRelSetByUser   := FALSE;
+     END_IF;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  read out global data to teachview
+//------------------------------------------------------------------------------
+ROUTINE ReadOutVisionDataToTeachview(inRelative : BOOL) : OBJECT
+ VAR
+  tObject : OBJECT;
+ END_VAR
+ 
+   IF NOT inRelative THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "TeachView - Read data Abs");
+      IF bRetainAvailable THEN 
+         tObject.X_mm  := VisionAbsRetain.mPos.mValues[0];
+         tObject.Y_mm  := VisionAbsRetain.mPos.mValues[1];
+         tObject.Z_mm  := VisionAbsRetain.mPos.mValues[2];
+         tObject.A_deg := VisionAbsRetain.mOri.mValues[0];
+         tObject.B_deg := VisionAbsRetain.mOri.mValues[1];
+         tObject.C_deg := VisionAbsRetain.mOri.mValues[2];
+      ELSE
+         tObject.X_mm  := VisionAbsSave.mPos.mValues[0];
+         tObject.Y_mm  := VisionAbsSave.mPos.mValues[1];
+         tObject.Z_mm  := VisionAbsSave.mPos.mValues[2];
+         tObject.A_deg := VisionAbsSave.mOri.mValues[0];
+         tObject.B_deg := VisionAbsSave.mOri.mValues[1];
+         tObject.C_deg := VisionAbsSave.mOri.mValues[2];
+      END_IF;
+      bDataAbsSetByUser   := FALSE;
+      IF NOT myRobot.mainModeMgr.externControl THEN
+         bDataAbsSetByCamera := FALSE;
+      END_IF;
+      RETURN tObject;
+   ELSE
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "TeachView - Read data Rel");
+      IF bRetainAvailable THEN 
+         tObject.X_mm  := VisionRelRetain.mPos.mValues[0];
+         tObject.Y_mm  := VisionRelRetain.mPos.mValues[1];
+         tObject.Z_mm  := VisionRelRetain.mPos.mValues[2];
+         tObject.A_deg := VisionRelRetain.mOri.mValues[0];
+         tObject.B_deg := VisionRelRetain.mOri.mValues[1];
+         tObject.C_deg := VisionRelRetain.mOri.mValues[2];
+      ELSE
+         tObject.X_mm  := VisionRelSave.mPos.mValues[0];
+         tObject.Y_mm  := VisionRelSave.mPos.mValues[1];
+         tObject.Z_mm  := VisionRelSave.mPos.mValues[2];
+         tObject.A_deg := VisionRelSave.mOri.mValues[0];
+         tObject.B_deg := VisionRelSave.mOri.mValues[1];
+         tObject.C_deg := VisionRelSave.mOri.mValues[2];
+      END_IF;
+      bDataRelSetByUser   := FALSE;
+      IF NOT myRobot.mainModeMgr.externControl THEN
+         bDataRelSetByCamera := FALSE;
+      END_IF;
+      RETURN tObject;
+   END_IF;
+   
+END_ROUTINE
+
+(*
+//-----------------------------------------------------------------------------
+//  calculate the object for teachview
+//-----------------------------------------------------------------------------
+ROUTINE CalcActualObject(actObject : OBJECT; inRelative : BOOL)
+ VAR
+   tObject        : TMcuTransformation;
+   tVisionObj     : TMcuTransformation;
+   visionSysMcuId : TMcuDbObjID;
+ END_VAR
+
+   tVisionObj.mFrame.mPos.mValues[0] := actObject.X_mm;
+   tVisionObj.mFrame.mPos.mValues[1] := actObject.Y_mm;
+   tVisionObj.mFrame.mPos.mValues[2] := actObject.Z_mm;
+   tVisionObj.mFrame.mOri.mValues[0] := actObject.A_deg;
+   tVisionObj.mFrame.mOri.mValues[1] := actObject.B_deg;
+   tVisionObj.mFrame.mOri.mValues[2] := actObject.C_deg;
+   tVisionObj.mFrame.mFrameTyp := gMcuFrameTyp;
+   tVisionObj.mDBObjTyp := eMcuPermanent;
+   tVisionObj.mName     := "actObject";
+
+   IF NOT inRelative THEN
+      RcuRefSysGetMcuId(myRobot.RcuRefSystemVisionAbs, tVisionObj.mRefSysID);
+      McuCreateTrsf(visionSysMcuId, tVisionObj);
+   ELSE  
+      RcuRefSysGetMcuId(myRobot.RcuRefSystemVisionRel, tVisionObj.mRefSysID);
+      McuCreateTrsf(visionSysMcuId, tVisionObj);
+   END_IF;
+   IF McuReadTrsfInWorld(visionSysMcuId, tObject) THEN
+      IF NOT inRelative THEN
+         tObjectDataAbs.X_mm := tObject.mFrame.mPos.mValues[0];
+         tObjectDataAbs.Y_mm := tObject.mFrame.mPos.mValues[1];
+         tObjectDataAbs.Z_mm := tObject.mFrame.mPos.mValues[2];
+         tObjectDataAbs.A_deg := tObject.mFrame.mOri.mValues[0];
+         tObjectDataAbs.B_deg := tObject.mFrame.mOri.mValues[1];
+         tObjectDataAbs.C_deg := tObject.mFrame.mOri.mValues[2];
+      ELSE   
+         tObjectDataRel.X_mm := tObject.mFrame.mPos.mValues[0];
+         tObjectDataRel.Y_mm := tObject.mFrame.mPos.mValues[1];
+         tObjectDataRel.Z_mm := tObject.mFrame.mPos.mValues[2];
+         tObjectDataRel.A_deg := tObject.mFrame.mOri.mValues[0];
+         tObjectDataRel.B_deg := tObject.mFrame.mOri.mValues[1];
+         tObjectDataRel.C_deg := tObject.mFrame.mOri.mValues[2];
+      END_IF;
+   END_IF;
+   McuReleaseDbObj(visionSysMcuId);
+   
+END_ROUTINE
+*)
+
+//-----------------------------------------------------------------------------
+//  calculate the object for teachview
+//-----------------------------------------------------------------------------
+ROUTINE CalcActualObject()
+ VAR
+   tObject        : TMcuTransformation;
+   tVisionObj     : TMcuTransformation;
+   visionSysMcuId : TMcuDbObjID;
+ END_VAR
+
+   tVisionObj.mFrame.mPos.mValues[0] := 0.0;
+   tVisionObj.mFrame.mPos.mValues[1] := 0.0;
+   tVisionObj.mFrame.mPos.mValues[2] := 0.0;
+   tVisionObj.mFrame.mOri.mValues[0] := 0.0;
+   tVisionObj.mFrame.mOri.mValues[1] := 0.0;
+   tVisionObj.mFrame.mOri.mValues[2] := 0.0;
+   tVisionObj.mFrame.mFrameTyp := gMcuFrameTyp;
+   tVisionObj.mDBObjTyp := eMcuPermanent;
+   tVisionObj.mName     := "actObject";
+
+   RcuRefSysGetMcuId(myRobot.RcuRefSystemVisionRel, tVisionObj.mRefSysID);
+   McuCreateTrsf(visionSysMcuId, tVisionObj);
+   IF McuReadTrsfInWorld(visionSysMcuId, tObject) THEN
+      tObjectDataAbs.X_mm := tObject.mFrame.mPos.mValues[0];
+      tObjectDataAbs.Y_mm := tObject.mFrame.mPos.mValues[1];
+      tObjectDataAbs.Z_mm := tObject.mFrame.mPos.mValues[2];
+      tObjectDataAbs.A_deg := tObject.mFrame.mOri.mValues[0];
+      tObjectDataAbs.B_deg := tObject.mFrame.mOri.mValues[1];
+      tObjectDataAbs.C_deg := tObject.mFrame.mOri.mValues[2];
+   END_IF;
+   McuReleaseDbObj(visionSysMcuId);
+   
+   RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, tVisionObj.mRefSysID);
+   McuCreateTrsf(visionSysMcuId, tVisionObj);
+   IF McuReadTrsfInWorld(visionSysMcuId, tObject) THEN
+      tObjectDataRel.X_mm := tObject.mFrame.mPos.mValues[0];
+      tObjectDataRel.Y_mm := tObject.mFrame.mPos.mValues[1];
+      tObjectDataRel.Z_mm := tObject.mFrame.mPos.mValues[2];
+      tObjectDataRel.A_deg := tObject.mFrame.mOri.mValues[0];
+      tObjectDataRel.B_deg := tObject.mFrame.mOri.mValues[1];
+      tObjectDataRel.C_deg := tObject.mFrame.mOri.mValues[2];
+   END_IF;
+   
+   McuReleaseDbObj(visionSysMcuId);
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  reset data from teachview
+//------------------------------------------------------------------------------
+ROUTINE ResetDataFromTeachview(inRelative : BOOL)
+
+  IF NOT inRelative THEN
+     tVisionDataAbs.X_mm  := 0.0;
+     tVisionDataAbs.Y_mm  := 0.0;
+     tVisionDataAbs.Z_mm  := 0.0;
+     tVisionDataAbs.A_deg := 0.0;
+     tVisionDataAbs.B_deg := 0.0;
+     tVisionDataAbs.C_deg := 0.0;
+(*
+     tObjectDataAbs.X_mm  := 0.0;
+     tObjectDataAbs.Y_mm  := 0.0;
+     tObjectDataAbs.Z_mm  := 0.0;
+     tObjectDataAbs.A_deg := 0.0;
+     tObjectDataAbs.B_deg := 0.0;
+     tObjectDataAbs.C_deg := 0.0;
+*)
+     bDataAbsSetByUser   := FALSE;
+     bDataAbsSetByCamera := FALSE;
+     
+     objectUserAbsData.mPos.mValues[0] := 0;
+     objectUserAbsData.mPos.mValues[1] := 0;
+     objectUserAbsData.mPos.mValues[2] := 0;
+     objectUserAbsData.mOri.mValues[0] := 0;
+     objectUserAbsData.mOri.mValues[1] := 0;
+     objectUserAbsData.mOri.mValues[2] := 0;
+     bUserAbsDataOk   := FALSE;
+    
+     objectCamAbsData.mPos.mValues[0] := 0;
+     objectCamAbsData.mPos.mValues[1] := 0;
+     objectCamAbsData.mPos.mValues[2] := 0;
+     objectCamAbsData.mOri.mValues[0] := 0;
+     objectCamAbsData.mOri.mValues[1] := 0;
+     objectCamAbsData.mOri.mValues[2] := 0;
+     bCameraAbsDataOk   := FALSE;
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "TeachView - Reset data Abs");
+  ELSE
+     tVisionDataRel.X_mm  := 0.0;
+     tVisionDataRel.Y_mm  := 0.0;
+     tVisionDataRel.Z_mm  := 0.0;
+     tVisionDataRel.A_deg := 0.0;
+     tVisionDataRel.B_deg := 0.0;
+     tVisionDataRel.C_deg := 0.0;
+(*
+     tObjectDataRel.X_mm  := 0.0;
+     tObjectDataRel.Y_mm  := 0.0;
+     tObjectDataRel.Z_mm  := 0.0;
+     tObjectDataRel.A_deg := 0.0;
+     tObjectDataRel.B_deg := 0.0;
+     tObjectDataRel.C_deg := 0.0;
+*)
+     bDataRelSetByUser   := FALSE;
+     bDataRelSetByCamera := FALSE;
+     
+     objectUserRelData.mPos.mValues[0] := 0;
+     objectUserRelData.mPos.mValues[1] := 0;
+     objectUserRelData.mPos.mValues[2] := 0;
+     objectUserRelData.mOri.mValues[0] := 0;
+     objectUserRelData.mOri.mValues[1] := 0;
+     objectUserRelData.mOri.mValues[2] := 0;
+     bUserRelDataOk   := FALSE;
+     
+     objectCamRelData.mPos.mValues[0] := 0;
+     objectCamRelData.mPos.mValues[1] := 0;
+     objectCamRelData.mPos.mValues[2] := 0;
+     objectCamRelData.mOri.mValues[0] := 0;
+     objectCamRelData.mOri.mValues[1] := 0;
+     objectCamRelData.mOri.mValues[2] := 0;
+     bCameraRelDataOk   := FALSE;
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "TeachView - Reset data Rel");
+  END_IF;
+  
+END_ROUTINE
+
+
+(************************************************************************
+* Types
+*)
+TYPE PRIVATE
+   TSystemType   : (eOff, eStandard, eRgsStandard, eRgsOnline, eViva, eMax);
+   TMainModes : (eNoMode, eSemiAuto, eAuto, eSimWithVal, eCalibration, eOffline);
+   TJob : (eNoJob, ePosition, eSlot, ePositionSlot);
+   TSlotValues  : STRUCT
+   rSlotVal   : REAL; 
+   rConcision : REAL;
+   END_STRUCT; 
+   TVisionInfo :
+   STRUCT
+      tCameraType     : TCameraSystemType;
+      rScaling_X      : REAL := 0.1;
+      rScaling_Y      : REAL := 0.1;
+      rScaling_Z      : REAL := 0.1;
+      rScaling_A      : REAL := 0.001;
+      rScaling_B      : REAL := 0.001;
+      rScaling_C      : REAL := 0.001;
+      rLinLimit       : REAL := 50;
+      rRotLimit       : REAL :=  5;
+      bMultiObject    : BOOL;
+      bTrigPicture    : BOOL;
+      bMultiTrigger   : BOOL;
+   END_STRUCT;
+END_TYPE
+
+(************************************************************************
+* Constants
+*)
+CONSTANT PRIVATE   
+   cSequenceTime    : INT  :=  1000;   //timeout for Sequence feedback 1000ms = 1sec
+   cFeedbackTime    : INT  := 10000;   //timeout for RGS feedback 10000ms = 10sec
+   cPictureTime     : INT  :=  5000;   //timeout to take one picture 5000ms = 5sec
+   cDispValueTime   : INT  :=  3000;   //timeout to receive displacementvalues 3000ms = 3sec
+   cTrgSignalTime   : INT  :=    40;   //after this time Triggersignal is reset 40ms
+END_CONSTANT
+
+
+(************************************************************************
+* Variables
+*)
+VAR PRIVATE
+
+  myRobot           : MAPTO TRcuRobot;
+  instId            : DINT;    // instance identification number
+  
+  VisionIsraBK      : TRcuVisionIsraBK;
+  VisionIsraBK2     : TRcuVisionIsraBK2;
+  //Operating-data
+  bFatalError       : BOOL;
+  bErrorPending     : BOOL;
+  bCheckNewErrors   : BOOL;
+  bErrorQuit        : BOOL;
+  iCntTriggers      : SINT;
+                      
+  bCameraSlotsOk    : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------
+//  save data in global frame 
+//------------------------------------------------------------------------
+ROUTINE SaveDataGlobalFrame(inObject : TMcuFrame; VAR_IN bRelative : BOOL)
+
+  IF bRetainAvailable THEN
+     IF NOT bRelative THEN
+        VisionAbsRetain := inObject;
+     ELSE
+        VisionRelRetain := inObject;
+     END_IF;
+  ELSE
+     IF NOT bRelative THEN
+        VisionAbsSave := inObject;
+     ELSE
+        VisionRelSave := inObject;
+     END_IF;
+  END_IF;
+  
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+//  set data to teachview 
+//-----------------------------------------------------------------------------
+ROUTINE SetVisionDataToTeachview(inObject : TMcuFrame; VAR_IN inRelative : BOOL)
+  
+  IF NOT inRelative THEN
+     tVisionDataAbs.X_mm  := inObject.mPos.mValues[0];
+     tVisionDataAbs.Y_mm  := inObject.mPos.mValues[1];
+     tVisionDataAbs.Z_mm  := inObject.mPos.mValues[2];
+     tVisionDataAbs.A_deg := inObject.mOri.mValues[0];
+     tVisionDataAbs.B_deg := inObject.mOri.mValues[1];
+     tVisionDataAbs.C_deg := inObject.mOri.mValues[2];
+  ELSE
+     tVisionDataRel.X_mm  := inObject.mPos.mValues[0];
+     tVisionDataRel.Y_mm  := inObject.mPos.mValues[1];
+     tVisionDataRel.Z_mm  := inObject.mPos.mValues[2];
+     tVisionDataRel.A_deg := inObject.mOri.mValues[0];
+     tVisionDataRel.B_deg := inObject.mOri.mValues[1];
+     tVisionDataRel.C_deg := inObject.mOri.mValues[2];
+  END_IF;
+  
+END_ROUTINE
+

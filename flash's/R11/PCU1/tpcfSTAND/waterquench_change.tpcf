@@ -1,0 +1,86 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2018-06-11  | KLCH      | First release
+//  v2_01.01.00  | 2019-03-25  | KLCH      | Change: new tp naming convention
+//  v2_01.02.00  | 2021-09-16  | KLCH      | Change: disable simulation time
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "Water quench - change water" "" 7 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "WaterQuench.YSWVR1.Set"
+	Add_TPSignal "WaterQuench.YSWVV1.Set"
+	Add_TPSignal "WaterQuench.BSW1.ActValue"
+	Add_TPSignal "WaterQuench.BSW2.ActValue"
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepTime "FlushWater" 40 True "Step for flushing water completely out of cleaner. This time has to be adapted so that the cleaner is empty."
+	Add_TPStepTime "BreakTime" 0.2 True "Wait time for closing outlet valve YSWVR1."
+	Add_TPStepEvent "FillWater" False 180 False 0 True True Warning 3 Or False 0 "" "Step for filling water into cleaner until lower Initiator BSW1 is active. If initiator BSW1 is broken then water will be filled until BWS2 is active (security reasons)."
+	Add_TPStepTime "DelayToStop" 10 True "Follow-up step for filling more water into cleaner. This time has to be adapted so that all nozzles are covered with water."
+	Add_TPStepEvent "CheckOverflow" False 0.01 False 0 True True Warning 3 And False 0 "" "Checking if water level is between BSW2 (overflow initiator) and BSW1 (initiator for cleaner full). Warning is sent if water level is over BSW2. Pervious step time has to be reduced."
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "FlushWater"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "WaterQuench.YSWVR1.Set" True
+	Set_TPSignalBool "WaterQuench.YSWVV1.Set" False
+	Act_TPSignalBool "WaterQuench.BSW1.ActValue" False False
+	Act_TPSignalBool "WaterQuench.BSW2.ActValue" False False
+
+	// Step 2
+	Select_TPStep "BreakTime"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "WaterQuench.YSWVR1.Set" False
+
+	// Step 3
+	Select_TPStep "FillWater"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "WaterQuench.YSWVV1.Set" True
+	Act_TPSignalBool "WaterQuench.BSW1.ActValue" True True
+	Act_TPSignalBool "WaterQuench.BSW2.ActValue" True True
+
+	// Step 4
+	Select_TPStep "DelayToStop"
+	// Modify only signals changed to step before
+	Act_TPSignalBool "WaterQuench.BSW1.ActValue" False True
+	Act_TPSignalBool "WaterQuench.BSW2.ActValue" False False
+
+	// Step 5
+	Select_TPStep "CheckOverflow"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "WaterQuench.YSWVV1.Set" False
+	Act_TPSignalBool "WaterQuench.BSW1.ActValue" True True
+	Act_TPSignalBool "WaterQuench.BSW2.ActValue" True False
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "waterquench_change" True
+Return

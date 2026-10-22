@@ -1,0 +1,560 @@
+//  Version     | ReleaseDate | Respon  | Changes
+//  -----------------------------------------------------------------------------------------------
+//  V2_01.00.00 | 2013-09-30  | STL     | First release
+//  V2_01.01.00 | 2013-12-09  | SMOH    | AddOn:  TimeOff, TimeOn cfg Values entered for ShotMeter
+//  V2_01.02.00 | 2014-01-28  | SMOH    | Change: Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  V2_01.03.00 | 2014-02-14  | SMOH    | Change: Remove Option6
+//  V2_01.04.00 | 2014-02-17  | SMOH    | Change: HoseCompensation Option is used by default in all the variants
+//  V2_01.05.00 | 2014-03-17  | SMOH    | Change: Activated Optional Parameter "GainPressureInside" for Device 'Pistons' in SM Processes with double dosing units +
+//              |             |         |         Overwriting of Parameters ShotMeter.ExtensionChannelGroup and MatManager1.DeviceNames.PressureSensor avoided
+//  V2_01.06.00 | 2014-04-10  | PZB     | AddOn:  Enable time program group 73 (release overpressure)
+//  V2_01.07.00 | 2014-04-15  | SMOH    | Change: Option22 script converted to BoostAirSupply 
+//  V2_01.08.00 | 2014-12-15  | STL     | AddOn:  Nozzle exchanger
+//  V2_01.09.00 | 2015-01-20  | STL     | AddOn:  Enable seam check
+//  V2_01.10.00 | 2015-04-15  | STL     | Change: Pressure controlled piston
+//  V2_01.11.00 | 2015-09-01  | KLCH    | Change: rename PB database
+//  V2_01.12.00 | 2015-10-27  | RHI     | Change: LV1 and LV2 from family Valve to family MainValve (needed for new BMK convention)
+//  V2_01.13.00 | 2015-11-03  | KLCH    | Bugfix: correction of PCU descriptions
+//  V2_01.14.00 | 2016-01-21  | STL     | Change: disable hose compensation
+//  V2_01.15.00 | 2016-05-12  | STL     | AddOn:  option circulation
+//  V2_01.16.00 | 2016-11-21  | KLCH    | Change: redesign; new options OptionShotMeter, OptionGun, OptionElectricalVersion
+//  V2_01.17.00 | 2016-12-21  | RHI     | AddOn:  Option Cooling Device to build process
+//  V2_01.18.00 | 2017-08-28  | KLCH    | AddOn:  export of brush and override definition file
+//  V2_01.19.00 | 2017-09-27  | KLCH    | Change: move Common_Sealing_ConfigureBCUCfg, Common_Sealing_ConfigureSCUCfg to Common-script
+//  V2_01.20.00 | 2017-10-10  | KLCH    | AddOn:  generate time programs
+//  V2_01.21.00 | 2018-04-06  | KTO     | AddOn:  Option KeStudio
+//  V2_01.22.00 | 2018-04-24  | KLCH    | AddOn:  OptionRobType; OptionSafetyType
+//  V2_01.23.00 | 2018-06-14  | STL     | AddOn:  FillingVolumeTol and FillingVolumeInPerc as OptionalUsed parameters for ShotMeter device
+//  V2_01.24.00 | 2018-10-02  | KLCH    | Change: rename option (OptionRobType -> RobType)
+//  V2_01.25.00 | 2019-01-09  | MWT     | AddOn:  Option PDA to copy empty file to correct location and copy right RPC2 bus config to expected location
+//  V2_01.26.00 | 2019-01-16  | MWT     | AddOn:  Call Common_Sealing_ConfigureSystemCfg
+//  V2_01.27.00 | 2019-01-31  | KLCH    | Change: adjustments due to structural changes (EA2.0)
+//  V2_01.28.00 | 2019-02-15  | STL     | AddOn:  Nozzle head exchanger
+//  V2_01.29.00 | 2020-03-03  | KLCH    | Change: rename air supply
+//  V2_01.30.00 | 2021-01-26  | BIT     | AddOn:  call of subroutine Common_ConfigureRCUCfg
+//  V2_01.31.00 | 2021-06-22  | PZB     | Change: [ECORPC-579] switch to BMK2 as default
+//  V2_01.32.00 | 2021-08-09  | MUCH    | AddOn:  call of subroutine Main_TeachInPendant
+//  V2_01.33.00 | 2021-12-06  | KLCH    | Change: [ECORPC-1111] remove device tag (BMK) from configuration parameters
+//  V2_01.34.00 | 2022-01-25  | KLCH    | Change: [ECORPC-1137] adaptions to reduce variant/ option dependent software blocks
+//  V2_02.00.00 | 2022-02-22  | KLCH    | Change: [ECORPC-1148] harmonization of all Sealing build scripts
+//  V2_02.01.00 | 2022-08-25  | PZB     | Change: Set number of types to 330
+//  V2_02.02.00 | 2024-02-14  | BUSC    | Bugfix: [ECORPC-1715] Call script for NozzleExchanger and NozzleHeadExchanger if the option is set
+//  V2_02.03.00 | 2024-07-11  | KLCH    | Change: [ECORPC-1837] new option 31 to enable initiator of EcoShot Meter (end position)
+
+// Script generates complete standard process depending on all relevant options configured
+
+Imports Common Material1 Material2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 Option31 BoostAirSupply EcoTempAxis1 EcoTempAxis3 MaterialValve1 NumberOfMainNeedles TempHE TempHE_2 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9 NozzleExchanger NozzleHeadExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionCoolingDevice OptionKeStudio OptionRobType OptionPDA OptionRPCFirmware OptionSafetyType OptionTeachInPendant
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 Option31 MaterialValve1 NumberOfMainNeedles NozzleExchanger NozzleHeadExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion BoostAirSupply EcoTempAxis1 EcoTempAxis3 TempHE TempHE_2 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9 OptionCoolingDevice OptionKeStudio OptionPDA OptionRPCFirmware OptionSafetyType OptionRCMPGen OptionTeachInPendant
+
+Call Main_BuildProcess
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_BuildProcess
+	// ***** General information *****
+	LoadDeviceTypeDB ..\..\EcoRPCDeviceTypes.dtc
+	
+	SelectNode RPC1
+	// ***** Set RPC1 parameters *****
+	//SelectTab [Properties]
+	Description Ecopaint Sealing
+	NoOfTypes 330
+	FifoSize 6
+	GoHomeCheck 1 0 0 0 0 0 0
+	BMKConvention 1
+	PLCInterfaceIn 96
+	PLCInterfaceOut 64
+	SelectNode RPC1.R11
+	Delete
+	SelectNode RPC1
+	AddFG R11
+	// ***** Set function group parameters *****
+	SelectNode RPC1.R11
+	SelectTab [Properties]
+	Description Ecopaint Robot EcoRS
+	Master 1
+	// ***** Set function unit BCU1 parameters *****
+	SelectNode RPC1.R11.BCU1
+	Description Body control unit
+	// ***** Set function unit RCU1 parameters *****
+	SelectNode RPC1.R11.RCU1
+	RCUNumber 1
+	Description Robot control unit
+	KinematicType KinControlTypeRPC
+	//Parameter1:	- NoKinematic
+	//		- KinControlTypeRPC
+	//		- KinControlTypeKRC
+	//		- KinControlTypeVKRC
+	// ***** Add process control unit *****
+	SelectNode RPC1.R11
+	AddPCU
+	SelectNode RPC1.R11.PCU1
+	SelectTab [Properties]
+	// ***** Set process control unit parameters *****
+	PCUNumber 1
+	
+	SelectCase Option1
+		Case EcoDose_SM
+			ProcessType EcoDoseSM
+		Case EcoDose_SM_SM
+			ProcessType EcoDoseSM
+		Case EcoDose_SM_PCL
+			ProcessType EcoDoseSM
+		Case EcoDose_PCL
+			ProcessType EcoDosePCL
+		Case EcoDose_PCL_PCL
+			ProcessType EcoDosePCL
+		CaseElse
+			Message Process type not supported (Option1)! (Main_BuildProcess)
+	EndSelect
+	
+	// ***** Call all standard properties *****
+	Call Common_Description_PCU
+	
+	Call Build_ChannelsAndDevices_AirSupply
+	Call Build_ChannelsAndDevices_MainChannel
+	
+	Call Build_ActivateTimeProgGroups
+	Call Build_ConfigureLogChannels_MainChannel
+	Call Build_ConfigureResetChannelStates_MainChannel
+	Call Build_ConfigureChannelInfluence
+	Call Build_ConfigureTriggerBrush
+	
+	Call Build_ConfigurePCUCfg
+	
+	SelectCase Option1
+		Case EcoDose_SM
+			Call Build_ConfigurePCUCfg_SM
+			Call Main_Material1
+			Call Main_Option20
+			Call Build_CopyCorrectBusConfigToPath_SM
+		Case EcoDose_SM_SM
+			Call Build_ConfigurePCUCfg_SM
+			Call Main_Material1
+			Call Main_Material2
+			Call Main_Option20
+			Call Build_CopyCorrectBusConfigToPath_SM
+		Case EcoDose_SM_PCL
+			Call Build_ConfigurePCUCfg_SM
+			Call Main_Material1
+			Call Main_Option20
+			Call Build_CopyCorrectBusConfigToPath_SM
+			Call Main_HelpGun1
+		Case EcoDose_PCL
+			Call Build_ConfigurePCUCfg_PCL
+			Call Main_Material1
+			Call Main_HelpGun1
+		Case EcoDose_PCL_PCL
+			Call Build_ConfigurePCUCfg_PCL
+			Call Main_HelpGun1
+		CaseElse
+			Message Process type not supported (Option1)! (Main_BuildProcess)
+	EndSelect
+	
+	Call Main_BoostAirSupply
+	Call Main_Option18
+	Call Main_Option21
+	Call Main_Circulation
+	Call Main_Option14
+	
+	Call Common_Sealing_GeneralSetValues
+	Call Common_Sealing_Interlocks
+	Call Common_Sealing_MainChannel
+	Call Common_Sealing_Materials
+	
+	//Check Option for NozzleExchanger and NozzleHeadExchanger
+	SelectCase NozzleExchanger
+		Case 0
+			SelectCase NozzleHeadExchanger
+				Case 0
+				CaseElse
+					Call Main_NozzleHeadExchanger
+			EndSelect
+		CaseElse
+			Call Main_NozzleExchanger
+	EndSelect
+
+	Call Build_ConfigureFixpositions
+	Call Common_Sealing_Simulation
+	
+	Call Build_ConfigureBCUCfg
+	Call Common_ConfigureRCUCfg
+	Call Build_ConfigureSCUCfg
+	Call Common_Sealing_ConfigureSystemCfg
+	
+	Call Common_Sealing_Configuration
+	
+	Call Main_OptionCoolingDevice
+	Call Main_KeStudio
+	Call Main_SafetyType
+	Call Main_OptionPDA
+	Call Main_RPCFirmware
+	
+	SelectNode RPC1
+	
+	ExportBrushDefFiles 1
+	ExportOverrideDefFiles 1
+	
+	Call Common_Sealing_Save_Database
+	Call Common_Sealing_GenerateTimeProg
+	Call Common_SwitchToBMK2
+	Call Main_TeachInPendant
+Return
+
+SubRoutine Build_ChannelsAndDevices_AirSupply
+	//******** Add AirSupply channel ************
+	Call Common_AddChannel_AirSupply
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+	Call Common_AddDeviceSealing_YLV2_Main
+Return
+
+SubRoutine Build_ChannelsAndDevices_MainChannel
+	//******** Add Main channel************
+	Call Common_AddChannel_MainChannel
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_AModesInterface
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_AFIXPOS
+Return
+
+SubRoutine Build_ConfigureResetChannelStates_MainChannel
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	SelectTab [ResetChannelStates]
+	ResetChannelState 2r 73a 1
+	ResetChannelState 2r 73r 1
+Return
+
+SubRoutine Build_ConfigureChannelInfluence
+	SelectNode RPC1.R11.PCU1
+	SelectTab [ChannelInfluence]
+	
+	//SelectInfluenceDevice YF.Set
+	//SetChannelInfluencePurged MainChannel 1
+	//SetChannelInfluenceOthers MainChannel 1
+Return
+
+SubRoutine Build_ConfigureLogChannels_MainChannel
+	//Add logical main channel
+	//*********** Logic Main channel***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	AddLogChannel LogMainChannel
+	LogChannelDescription Logical main channel
+	LogChannelPropertyPaintRelevant 1
+	LogChannelPropertyMixedMaterial 0
+	
+	//Add physical channels to logical main channel
+	//*********** Add physical MainChannel***************
+	SelectLogChannel PCU1.LogMainChannel
+	LogChannelAddPhysChannel MainChannel
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 1
+	LogChannelPropertyOverallStateRelevant 1
+	
+	//Add all supply groups
+	//*********** Add supply group for StockPaint components***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectSupplyGroup PCU1
+	AddSupplyGroup SGR_Material
+	SupplyGroupDescription Supply group for material
+	SupplyGroupPropertyDosingVariant OnlyOneChannel
+	//Parameter 1: Selection dosing variant
+	//-	Continue
+	//-	DiscontinueSingle
+	//-	DiscontinueSeveral
+	//-	OnlyOneChannel
+	//***** Add logical channel for preparation (and for paint) to supply group AllColors*******
+	SelectSupplyGroup PCU1.SGR_Material
+	SupplyGroupAddLogChannel LogMainChannel
+Return
+
+SubRoutine Build_ConfigureTriggerBrush
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	SelectTab [BrushTriggerConfiguration]
+	MaxNoOfBrushes 255
+	MaxNoOfColorGroups 1
+	
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			BrushSourceEnabled PaintFlow1 1
+			BrushSourceEnabled OffsetInitialPressure1 1
+			BrushSourceEnabled InitialPressure1 1
+			BrushSourceEnabled DelayStop1 1
+			BrushSourceEnabled DelayStart1 1
+			BrushSourceEnabled PaintPressure1 1
+			BrushSourceEnabled ControlType1 1
+		Case EcoDose_SM_SM
+			BrushSourceEnabled PaintFlow1 1
+			BrushSourceEnabled OffsetInitialPressure1 1
+			BrushSourceEnabled InitialPressure1 1
+			BrushSourceEnabled DelayStop1 1
+			BrushSourceEnabled DelayStart1 1
+			BrushSourceEnabled PaintPressure1 1
+			BrushSourceEnabled ControlType1 1
+		Case EcoDose_SM_PCL
+			BrushSourceEnabled PaintPressure1 1
+			BrushSourceEnabled PaintFlow1 1
+			BrushSourceEnabled Calibration1 1
+			BrushSourceEnabled OffsetInitialPressure1 1
+			BrushSourceEnabled InitialPressure1 1
+			BrushSourceEnabled VelocityCompensation1 1
+			BrushSourceEnabled DelayStop1 1
+			BrushSourceEnabled DelayStart1 1
+		Case EcoDose_PCL
+			BrushSourceEnabled PaintPressure1 1
+			BrushSourceEnabled PaintFlow1 1
+			BrushSourceEnabled OffsetInitialPressure1 1
+			BrushSourceEnabled ControlType1 1
+		Case EcoDose_PCL_PCL
+			BrushSourceEnabled PaintPressure1 1
+			BrushSourceEnabled PaintFlow1 1
+			BrushSourceEnabled Calibration1 1
+		Case EcoDose_ES
+			BrushSourceEnabled PaintPressure1 1
+			BrushSourceEnabled PaintFlow1 1
+			BrushSourceEnabled Calibration1 1
+			BrushSourceEnabled OffsetInitialPressure1 1
+		CaseElse
+			Message Process type not supported (Option1)! (Build_ConfigureTriggerBrush)
+	EndSelect
+Return
+
+SubRoutine Build_ConfigureTriggerBrush_VelComp_SM
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	SelectTab [BrushTriggerConfiguration]
+	BrushSourceEnabled VelocityCompensation1 1
+	
+	NotResetBrushAtEnd BShotMeter1.SetVelocityComp 0
+	BrushSource BShotMeter1.SetQuantity VelocityCompensation1
+	IdleBrush1Enable BShotMeter1.SetVelocityComp 0
+	IdleBrush1Value BShotMeter1.SetVelocityComp 0
+	IdleBrush2Enable BShotMeter1.SetVelocityComp 0
+	IdleBrush2Value BShotMeter1.SetVelocityComp 0
+	OverrideEnable BShotMeter1.SetVelocityComp 0
+Return
+
+SubRoutine Build_ActivateTimeProgGroups
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	//*** Activate time program groups and set "used"/"unused" in reset channel state for states "aborted" and "ready" ***
+	// time program group 0 (undefined)
+	ActivateTimeProgramGroup 0 1
+	SetResetStateAborted 0 unused
+	SetResetStateReady 0 unused
+	// time program group 2 (painting)
+	ActivateTimeProgramGroup 2 1
+	SetResetStateAborted 2 used
+	SetResetStateReady 2 used
+	// time program group 24 (Purge atomizer)
+	ActivateTimeProgramGroup 24 1
+	SetResetStateAborted 24 unused
+	SetResetStateReady 24 unused
+	// time program group 57 (release pressure)
+	ActivateTimeProgramGroup 57 1
+	SetResetStateAborted 57 unused
+	SetResetStateReady 57 unused
+	// time program group 60 (circulation)
+	ActivateTimeProgramGroup 60 1
+	SetResetStateAborted 60 unused
+	SetResetStateReady 60 unused
+	// time program group 62 (calibration)
+	ActivateTimeProgramGroup 62 1
+	SetResetStateAborted 62 unused
+	SetResetStateReady 62 unused
+	// time program group 73 (release overpressure)
+	ActivateTimeProgramGroup 73 1
+	SetResetStateAborted 73 used
+	SetResetStateReady 73 used
+	
+	SelectCase Option1
+		Case EcoDose_SM
+			Call Build_ActivateTPGroups_SM
+		Case EcoDose_SM_SM
+			Call Build_ActivateTPGroups_SM
+		Case EcoDose_SM_PCL
+			Call Build_ActivateTPGroups_SM
+		Case EcoDose_PCL
+		Case EcoDose_PCL_PCL
+		CaseElse
+			Message Process type not supported (Option1)! (Build_ActivateTimeProgGroups)
+	EndSelect
+	
+	Call Common_Sealing_OptionalTPGroups
+Return
+
+SubRoutine Build_ActivateTPGroups_SM
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	// time program group 10 (Flow check)
+	ActivateTimeProgramGroup 10 1
+	SetResetStateAborted 10 unused
+	SetResetStateReady 10 unused
+	// time program group 14 (Piston fill)
+	ActivateTimeProgramGroup 14 1
+	SetResetStateAborted 14 unused
+	SetResetStateReady 14 unused
+	// time program group 48 (Error check)
+	ActivateTimeProgramGroup 48 1
+	SetResetStateAborted 48 unused
+	SetResetStateReady 48 unused
+	// time program group 50 (Leakage check)
+	ActivateTimeProgramGroup 50 1
+	SetResetStateAborted 50 unused
+	SetResetStateReady 50 unused
+	// time program group 55 (Piston master)
+	ActivateTimeProgramGroup 55 1
+	SetResetStateAborted 55 unused
+	SetResetStateReady 55 unused
+Return
+
+SubRoutine Build_ConfigurePCUCfg
+	SelectNode RPC1.R11.PCU1
+	// Select tab cfg parameter 
+	SelectTab [CfgParameter]
+	//************* Enable PotTime cfg group ********************
+	// Enable optional cfg group PotTime
+	SelectCfg PCU1.PotTime
+	OptionalUsed 1
+	SelectCfg PCU1.PotTime.Enable
+	Value 1
+	SelectCfg PCU1.PotTime.UsePcaTimeout
+	Value 0
+	SelectCfg PCU1.PotTime.AlarmTime
+	OptionalUsed 1
+	SelectCfg PCU1.PotTime.WarnTime
+	OptionalUsed 1
+	SelectCfg PCU1.Trigger_Brush.Global.BrushConcept
+	Value 1
+	SelectCfg PCU1.Releases
+	OptionalUsed 1
+Return
+
+SubRoutine Build_ConfigurePCUCfg_PCL
+	SelectNode RPC1.R11.PCU1
+	// Select tab cfg parameter 
+	SelectTab [CfgParameter]
+	// Enable optional cfg group Statistics
+	SelectCfg PCU1.Statistics
+	OptionalUsed 1
+	SelectCfg PCU1.Statistics.DefaultSeamTolerance
+	Value 20	// PCL specific
+	SelectCfg PCU1.Statistics.EnableModulName
+	OptionalUsed 1
+Return
+
+SubRoutine Build_ConfigurePCUCfg_SM
+	SelectNode RPC1.R11.PCU1
+	// Select tab cfg parameter 
+	SelectTab [CfgParameter]
+	// Enable optional cfg group Statistics
+	SelectCfg PCU1.Statistics
+	OptionalUsed 1
+	SelectCfg PCU1.Statistics.DefaultSeamTolerance
+	Value 10	// SM specific
+	SelectCfg PCU1.Statistics.EnableModulName
+	OptionalUsed 1
+	// SM specific - start
+	SelectCfg PCU1.WriteCheckProtocolToFile
+	OptionalUsed 1
+	SelectCfg PCU1.WriteCheckProtocolToFile.FileCount
+	OptionalUsed 1
+	SelectCfg PCU1.WriteCheckProtocolToFile.FileName
+	OptionalUsed 1
+	SelectCfg PCU1.WriteCheckProtocolToFile.FileSize
+	OptionalUsed 1
+	SelectCfg PCU1.WriteCheckProtocolToFile.Path
+	OptionalUsed 1
+	// SM specific - end
+Return
+
+SubRoutine Build_ConfigureBCUCfg
+	SelectNode RPC1.R11.BCU1
+	SelectTab [CfgParameter]
+	SelectCfg BCU1.T2Process
+	OptionalUsed 1
+	SelectCfg BCU1.T2Process.Enable
+	OptionalUsed 1
+	Value 1
+	SelectCfg BCU1.T2Process.Type
+	OptionalUsed 1
+	Value 1
+	
+	Call Common_Sealing_OptionalBCUCfg_ProgStart
+Return
+
+SubRoutine Build_ConfigureSCUCfg
+	SelectNode RPC1.SCU
+	SelectTab [CfgParameter]
+	SelectCfg SCU.StationConfig.FifoSizeZone
+	Value 2
+	SelectCfg SCU.StationConfig.HighTension
+	Value 0
+	SelectCfg SCU.StationConfig.Sealing
+	Value 1
+Return
+
+SubRoutine Build_ConfigureFixpositions
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	
+	//*********** set prefix *******************************
+	FixposPrefix R
+	//*********** Activate standard fixpositions ***********
+	FixposEnabled Home 1
+	FixposUsedInTP Home 1
+	FixposEnabled Maintenance 1
+	FixposEnabled Clean 1
+	FixposEnabled Bypass 1
+	FixposEnabled Unselect 1
+	FixposEnabled ZeroPosition 1
+	FixposEnabled FlowCheck 1
+	FixposUsedInTP FlowCheck 1
+	FixposEnabled BrakeCheck 1
+	
+	//*********** Additional fixpositions ******************
+	FixposAdd PrePos
+	FixposEnabled PrePos 1
+	FixposUsedInTP PrePos 0
+	FixposAdd SavePos
+	FixposEnabled SavePos 1
+	FixposUsedInTP SavePos 0
+	FixposAdd Calib
+	FixposEnabled Calib 1
+	FixposUsedInTP Calib 0
+	
+	FixposAdd BlowOutHN1
+	FixposAdd BlowOutHN2
+	FixposAdd BlowOutHN3
+	
+	//*********** Additional fixpositions for SCP **********
+	FixposAdd RefSCP
+	FixposEnabled RefSCP 0
+	FixposType RefSCP ReferenceSCP
+	FixposAdd SyncSCP
+	FixposEnabled SyncSCP 0
+	FixposType SyncSCP SyncSCP
+	
+	//*********** Additional fixpositions for NozzleChange **********
+	FixposAdd NozzleChange
+	
+	Call Common_Sealing_OptionalFixpos
+Return
+
+SubRoutine Build_CopyCorrectBusConfigToPath_SM
+	SelectCase Option20 // Shot meter single
+		Case 1	//single
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config_single\*.*								..\..\..\..\ManagerProject\RPC2\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2\config_single
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2\config_double
+		Case 0	//double
+			FSCopy ..\..\..\..\ManagerProject\RPC2\config_double\*.*								..\..\..\..\ManagerProject\RPC2\config\
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2\config_single
+			FSDeleteFolder ..\..\..\..\ManagerProject\RPC2\config_double
+	EndSelect
+Return

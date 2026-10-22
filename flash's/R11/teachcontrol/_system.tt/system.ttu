@@ -1,0 +1,620 @@
+GLOBAL
+
+   // Types
+   TYPE
+      POS : STRUCT
+         X : TUserReal;
+         Y : TUserReal;
+         Z : TUserReal;
+         A : TUserReal;
+         B : TUserReal;
+         C : TUserReal;
+      END_STRUCT;
+      COORDTYPE : (Invalid:=0, World:=1, Axis:=2, Object:=3);
+      RAMPTYPE : (Trapez:=1, SinusQuad:=2, Triangle:=3);
+      IOTYPE : (High:=0, Low:=1, Data:=2);
+      ORDER : (Calibrate:=0, Gain:=1, MaxLimit:=2, MaxLimitOff:=3, MinLimit:=4, MinLimitOff:=5, SearchCycle:=6, CheckPart:=7, Stop:=8, Active:=9, PartPresent:=10);
+      GAIN : (c7_5:=0, c15_0:=1, c30_0:=2, c60_0:=3, cUndef:=4, cHard:=5, cFine:=6);
+      INTERPOLATIONTYPE : (WRISTJOINT:=0, ZROTATION:=1, ZROTATIONCIRC:=2);
+      TRcuTrackingCmd : (Off:=0, On:=1, Resume:=2, Finished:=3, End:=4);
+      TRcuTrackingMode : (LineTracking:=0, RailTracking:=1);
+      TRcuGreaterSmaller : (GREATER:=0, SMALLER:=1, EQUAL:=2);
+      TRcuPreMainRun : (MainRun:=0, PreRun:=1, Stopp:=2);
+      TRcuAppendLateMR : (AppendLate:=0, InMainRun:=1);
+      TRcuMotionGroup : (InBellCleaner:=0, InCapCleaner:=1, HomingActive:=2, GrindBrake:=3, TorqueMon:=4, BrakeCheck:=5, BodyFixation:=6);
+      TRcuMotionJob : (Robot:=0, True:=1, False:=2, Joint1:=3, Joint2:=4, Joint3:=5, Joint4:=6, Joint5:=7, Joint6:=8, Joint7:=9, Joint8:=10, Joint9:=11, Joint21:=12);
+      TRcuProcessGroup : (Hightension:=0, GoHomeAtEnd:=1, NoPaint:=2, AbortBody:=3, AtomizerCollision:=4, PistonChange:=5, TankStop:=6, MD_InUse:=7, MD_DeskOrder:=8, MD_Cover:=9, MD_Coupling:=10, MD_MaskGripper:=11, MD_AtIni:=12, PivotingBracketInPos:=13, Handling:=14, PostProcess:=15);
+      TRcuProcessJob : (ON:=0, OFF:=1, CouplingErrorOn:=2, CouplingErrorOff:=3, RefillCleaner:=4, CleanTool:=5, CleanerFilled:=6, CollFine:=7, CollHard:=8);
+      TRcuProcessGroup_BCC : (ToolDeskStatus:=0, Couple:=1, Uncouple:=2, Lift:=3, Lower:=4, PrcStart:=5, PrcDone:=6, Collision:=7, CheckNozzle:=8, CheckAllNozzles:=9);
+      TRcuProcessGroup_PI : (PlacePlug:=0, CheckPlug:=1, StartFilling:=2, FillingDone:=3, Couple_PI:=4, Uncouple_PI:=5, ToolDeskStatus_PI:=6, Collision_PI:=7, GetPlug:=8, DiscargePlugMagazin:=9, PlugCheck:=10, PlugMagazinDischarged:=11);
+      TRcuBccCheckJob : (PlaceIsOccupied:=0, PlaceIsFree:=1, HeadIsCoupled:=2, HeadIsUncoupled:=3);
+      TRcuBccGetJob : (DeskSideActive:=0, FreePlace:=1, HeadEnabled:=2, NozzleEnabled:=3, NozzleOk:=4);
+      TRcuBccSetJob : (CoupleHead:=0, UncoupleHead:=1, LiftNozzle:=2, LowerNozzle:=3, StartProcess:=4, CollisionType:=5, NozzleCheckError:=6, NozzleCheckWarning:=7);
+      TRcuBccWaitJob : (HeadCoupled:=0, HeadUncoupled:=1, NozzleLifted:=2, NozzleLowered:=3, ProcessDone:=4);
+      DATARECORDINGCMD : (REC_ON:=0, REC_OFF:=1);
+      TORQUEORDER : (ObserveMaxLimit:=0, ObserveMinLimit:=1, PartDetectPosDir:=2, PartDetectNegDir:=3, ObserveMaxLimitSym:=4);
+      TORQUECHECK : (StartCheck:=0, StopCheck:=1);
+      STARTSTOP : (StartLogging:=0, StopLogging:=1);
+      AXISNAME : (Axis1:=0, Axis2:=1, Axis3:=2, Axis4:=3, Axis5:=4, Axis6:=5, Axis7:=6, Axis8:=7, Axis9:=8);
+      APP_POS : (Undef:=0, Vertical:=1, Pivot:=2, ValvesOff:=3);
+      PACCCOMMAND : (Enable:=0, Disable:=1, WriteFile:=2, AllPoints:=3, OneShot:=4);
+      BK_MODE_TYPE : (ModeMeasure:=1, ModeApplication:=2, Mode_MP_Ref:=11, Mode_PP_Ref:=12, Mode_ApplTest:=20, Mode_AEC_Measure:=30, Mode_AEC_Application:=31, Mode_Off:=99);
+      TVisionSubSystemType : (Absolute:=1, Relative:=2);
+      TRcuHandlerState : (IsNotHandler:=0, IsHandler:=1);
+      TRcuFunctionUnit : (PCUx:=0, RCUx:=1, BCUx:=2, FUsystem:=3);
+      TRcuResetAtProgEnd : (ResetAtProgEnd:=0, NoResetAtProgEnd:=1);
+      NC_ErrorCase : (NoPlaceToStore:=0, NoPlaceToUnlock:=1, NoNozzleToTake:=2);
+      NC_Switch : (SwitchOn:=0, SwitchOff:=1);
+      NC_State : (StateOK:=0, StateNOK:=1);
+      NC_StatePlace : (Empty:=0, Occupied:=1);
+      NC_FixationCmd : (Lock:=0, Unlock:=1, Mount:=2, Discard:=3, WaitUnlocked:=4, WaitRelease:=5, WaitMounted:=6, WaitDiscarded:=7);
+      NC_DoorState : (GetState:=0, SetState:=1);
+      CHECK : (CheckOff:=0, CheckOn:=1);
+      VISION_STATE : (Failure:=0, DataOk:=1, GoHome:=2, Remeasure:=3, Continue:=4);
+      TOOLDIR : (DirX:=0, DirY:=1, DirZ:=2);
+      USER_VAR : (VarNr1:=0, VarNr2:=1, VarNr3:=2, VarNr4:=3, VarNr5:=4, VarNr6:=5, VarNr7:=6, VarNr8:=7, VarNr9:=8, VarNr10:=9, VarNr11:=10, VarNr12:=11, VarNr13:=12, VarNr14:=13, VarNr15:=14, VarNr16:=15, VarNr17:=16, VarNr18:=17, VarNr19:=18, VarNr20:=19, VarNr21:=20, VarNr22:=21, VarNr23:=22, VarNr24:=23, VarNr25:=24, VarNr26:=25, VarNr27:=26, VarNr28:=27, VarNr29:=28, VarNr30:=29, VarNr31:=30, VarNr32:=31);
+      TRcuCpvMeasureType : (CPV_Thickness:=0, CPV_Reference:=1, CPV_FrequencyCalib:=2, CPV_SiliconStandard:=3, CPV_FusedSilicaStandard:=4, CPV_StartupSequence:=5, CPV_Background:=6, CPV_HealthCheck:=7, CPV_PositionCheck:=8, CPV_MaxType:=9);
+      TRcuCpvStates : (CPV_ReferenceRequired:=1);
+      TRcuCpvInfoMsg : (CPV_InfoStart:=0, CPV_InfoEnd:=1, CPV_InfoType:=2, CPV_InfoColor:=3);
+      Z_MEASURE_MODE : (Z_Mode_Measure:=3, Z_Mode_PhysAlign:=16);
+      Z_TRIGGER_MODE : (Z_NoTrigger:=1, Z_ForceTrigger:=2, Z_TrigIfUntrig:=3, Z_TrigNoRes:=4);
+      Z_RESULT_MODE : (Z_NoResult:=1, Z_WaitResult:=2, Z_AlignResult:=3, Z_EvalResult:=4, Z_ReuseResult:=5);
+      SplineType : (CubicBessel:=2, CubicAkima:=3, Line:=4);
+      SMODE : (SR_DISTANCE:=0, SR_POS:=1, SR_BEGIN:=2);
+      SR_SIGNAL : (SR_START:=0, SR_FINDCONTOUR:=1, SR_TRACK:=2, SR_AIR1:=3, SR_AIR2:=4);
+      OVERLAPMODE : (Fine:=0, Vel:=1, Pos:=2, ConstPos:=3, Cart:=4, PTPVel:=5);
+      GUNONOFF : (GunOn:=0, GunOff:=1);
+      GUNNO : (GUN1:=0, GUN2:=1, GUN3:=2, GUN4:=3);
+      VISION_CPV_JOB : (cpv_start:=0, cpv_stop:=1, cpv_coll_mute_on:=2, cpv_coll_mute_off:=3);
+      VISION_ZEISS_AIMAX_JOB : (z_trigger_hw_sw:=0, z_trigger_hw:=1);
+      DEGRADEROB : (Robot11:=1, Robot21:=2, Robot12:=3, Robot22:=4, Robot13:=5, Robot23:=6, Robot14:=7, Robot24:=8, Robot15:=9, Robot25:=10, DoorOpener11:=11, DoorOpener21:=12, DoorOpener12:=13, DoorOpener22:=14, HoodOpener11:=15, HoodOpener21:=16);
+      VARIANT : (RightHandDrive:=1, SunRoof:=2, FourWheelDrive:=3, Fair_Press:=4);
+      REPAIRTYPE : (NoRepair:=0, FrontDoor_Int_L:=1, RearDoor_Int_L:=2, FrontDoor_Int_R:=3, RearDoor_Int_R:=4, Hood_Int:=5, TrunkLid_Int:=6, Spare_7:=7, Spare_8:=8, Hood_Ext:=9, Roof_Ext:=10, Spare_11:=11, TrunkLid_Ext:=12, Spare_13:=13, Spare_14:=14, Spare_15:=15, Spare_16:=16, FrontFender_Ext_L:=17, FrontDoor_Ext_L:=18, RearDoor_Ext_L:=19, RearFender_Ext_L:=20, Spare_21:=21, Spare_22:=22, Spare_23:=23, Spare_24:=24, FrontFender_Ext_R:=25, FrontDoor_Ext_R:=26, RearDoor_Ext_R:=27, RearFender_Ext_R:=28, Spare_29:=29, Spare_30:=30, Spare_31:=31, Spare_32:=32);
+      IONAME : (Collision1:=1, Collision2:=2, Collision3:=3, Collision4:=4, Collision5:=5, Collision6:=6, Collision7:=7, Collision8:=8, Collision9:=9, Collision10:=10, Collision11:=11, Collision12:=12, Collision13:=13, Collision14:=14, Collision15:=15, Collision16:=16, VISION:=17);
+      VISIONORDER : (JobNo_1:=1, JobNo_2:=2, JobNo_3:=3, JobNo_100:=100, ReqDataNo_1:=101, ReqDataNo_2:=102, ReqDataNo_3:=103, ReqDataNo_100:=200, SyncRobots:=250, CamPos:=251, LastCamPos:=252, NextCamPos:=253, VisionData:=254, ResetData:=255);
+      ROBOT : (NotUsed:=0, UnusedRob1:=1, R12:=2, UnusedRob3:=3, UnusedRob4:=4, R11:=5, UnusedRob6:=6);
+      HANDLER : (ReservedHandler:=0, H12:=1, UnusedHan2:=2, D12:=3, D11:=4, UnusedHan5:=5, H21:=6);
+      PART : (ReservedPart:=0, FrontHood:=1, FrontDoorL:=2, RearDoorL:=3, FrontDoorR:=4, RearDoorR:=5, RearHood:=6, UnusedPart7:=7, UnusedPart8:=8);
+      POSITION : (Delete:=0, HalfOpen:=1, FullOpen:=2, HalfClose:=3, FullClose:=4, SparePos5:=5, SparePos6:=6, SparePos7:=7, HandlingOff:=8);
+      UNIT : (Unit1:=0, Unit2:=1, Unit3:=2, Unit4:=3, Unit5:=4);
+      PLCORDER : (M002_Load_UnlockFixingUnit:=2, M003_Load_IPTinWorkpos:=3, M004_Load_GripperOn:=4, M005_Load_SetVisionTask1:=5, M006_Load_LockIPT:=6, M007_Load_UnlockIPT:=7, M008_Load_SetVisionTask_TCP:=8, M009_Load_GripperOnStep2:=9, M010_Check_AirShield:=10, M011_Check_TransportSafety:=11, M012_Check_RoofConvCameraInHome:=12, M019_Unload_IPTinWorkpos:=19, M020_Unload_VaccumOffStartBlow:=20, M021_Unload_Step2:=21, M024_Unload_StopBlow:=24, M025_Unload_MoveCSToHomePos:=25, M033_CLHandling_CLEnabled:=33, M034_CLHandling_AppOk:=34, M035_CLHandling_GoShow:=35, M051_Glue_ActivateBeadCheck:=51, M052_Glue_DeactivateBeadCheck:=52, M053_Glue_BeadCheckState:=53, M054_Glue_BeadCheckEnabled:=54, M055_Glue_GoShow:=55, M056_Glue_VisionAssemblyEnabled:=56, M065_Assembly_BodyInPos:=65, M066_Assembly_SetVisionTask2:=66, M068_Assembly_VaccumOffStartBlow:=68, M069_Assembly_Step2:=69, M072_Assembly_StopBlow:=72, M074_Assembly_SetVisionTask3:=74, M076_Assembly_GetGlassOutOfCar:=76, M084_Show_WaitPrimer:=84, M085_Show_WaitGlue:=85, M099_Output_OPTinWorkpos:=99, M100_Output_VaccumOffStartBlow:=100, M104_Output_StopBlow:=104, M105_Output_LockOPT:=105, M106_Output_UnlockOPT:=106, M128_CLProc_FeltPresentCheck:=128, M129_CLProc_FeltAttemptsExceeded:=129, M130_CLProc_FeltCycleExceeded:=130, M131_CLProc_Wet_Felt:=131, M132_CLProc_Humidity_OK:=132, M133_CLProc_HandlingRob_inCL_Pos:=133, M134_CLProc_RemoveFelt:=134, M137_CLProc_FeltPresentService:=137, M138_CLProc_FeltPresentGripper:=138, M139_CLProc_FeltHumiAttempts:=139, M231_Vision_CheckCamera1:=231, M232_Vision_CheckCamera2:=232, M233_Vision_CheckCamera3:=233, M234_Vision_CheckCamera4:=234, M235_Vision_CheckCamera5:=235, M236_Vision_CheckCamera6:=236, M237_Vision_CheckCamera7:=237);
+      COMMAND : (EndOfBody:=0, DoSoftPurge:=1, TurningMaskOn:=2, TurningMaskOff:=3, BlowingAirOn:=4, BlowingAirOff:=5, BCC_StartProcess:=8, GluingPrimerGunOn:=20, GluingPrimerGunOff:=21, PLCTriger2On:=22, PLCTriger2Off:=23, PLCTriger3On:=24, PLCTriger3Off:=25, GluingPrimerPumpOn:=26, GluingPrimerPumpOff:=27, BeadCheckOn:=40, BeadCheckOff:=41, VisionTrigger:=101, LastVisionTrigger:=102);
+      ProcessOrder : (Reset:=1000, RunTimeprogSequence:=1001, RunCircAllMaterials:=2001, RunCircMaterial1:=3001, RunCircMaterial2:=3002);
+      NOZZLE : (NoNozzleHead:=0, NozzleHead_M00000001:=1, NozzleHead_M00000002:=2, NozzleHead_M00000003:=3, NozzleHead_M00000004:=4, NozzleHead_M00000005:=5, NozzleHead_M00000006:=6, NozzleHead_M00000007:=7, NozzleHead_M00000008:=8, NozzleHead_M00000009:=9, NozzleHead_M00000010:=10, NozzleHead_M00000011:=11, NozzleHead_M00000012:=12, NozzleHead_M00000013:=13, NozzleHead_M00000014:=14, NozzleHead_M00000015:=15, NozzleHead_M00000016:=16, NozzleHead_M00000017:=17, NozzleHead_M00000018:=18, NozzleHead_M00000019:=19, NozzleHead_M00000020:=20);
+      DECORPART : (Decor_1:=1, Decor_2:=2, Decor_3:=3, Decor_4:=4, Decor_5:=5, Decor_6:=6, Decor_7:=7, Decor_8:=8, Decor_9:=9, Decor_10:=10, Decor_11:=11, Decor_12:=12, Decor_13:=13, Decor_14:=14, Decor_15:=15, Decor_16:=16, Decor_17:=17, Decor_18:=18, Decor_19:=19, Decor_20:=20, Decor_21:=21, Decor_22:=22, Decor_23:=23, Decor_24:=24, Decor_25:=25, Decor_26:=26, Decor_27:=27, Decor_28:=28, Decor_29:=29, Decor_30:=30, Decor_31:=31, Decor_32:=32);
+      TRcuInterfaceFromPCU : (MOVE_INTO_CLEANER:=1, MOVE_TO_PURGEPOS:=2, START_GUNTURN:=3, OPEN_HN_LASTTIME:=4, HT_IS_OFF:=5, FROM_PCU_6:=6, FROM_PCU_7:=7, FROM_PCU_8:=8, FROM_PCU_9:=9, FROM_PCU_10:=10, FROM_PCU_11:=11, FROM_PCU_12:=12, FROM_PCU_13:=13, FROM_PCU_14:=14, FROM_PCU_15:=15, FROM_PCU_16:=16);
+      TRcuInterfaceToPCU : (ATOMIZER_IN_CLEANER:=1, TO_PCU_2:=2, TO_PCU_3:=3, HN_OPEN_LASTTIME:=4, TO_PCU_5:=5, TO_PCU_6:=6, TO_PCU_7:=7, TO_PCU_8:=8, TO_PCU_9:=9, TO_PCU_10:=10, TO_PCU_11:=11, TO_PCU_12:=12, TO_PCU_13:=13, TO_PCU_14:=14, TO_PCU_15:=15, TO_PCU_16:=16);
+      PLANE : (NOPLANE:=0, XY:=1, XZ:=2, YZ:=3);
+      TRcJogOvr : (Override:=-1, Override_100:=0, Override_50:=1, Override_25:=2, Override_10:=3, Override_1:=4, Override_01:=5);
+      MP_TYPE : (MPUNDEF:=0, MPLEFT:=1, MPRIGHT:=2, MPSTART:=3, MPEND:=4, MPDATA:=5, MPABS:=6);
+      TRIGGER_DIRECT_TYP_ECOTALK : (HW:=0);
+      SFA_CMD : (PressureOff:=1, Pressure1:=2, Pressure2:=3, ZYlForward:=4, ZYlBackward:=5, ZY2Forward:=6, ZY2Backward:=7, ZY3Forward:=8, ZY3Backward:=9, DriveOff:=10, DriveOnConst:=11, DriveOnCtrl:=12, ZCheckOn:=13, ZCheckOff:=14);
+      SFA_STATE : (ZYlEV:=1, ZYlER:=2, ZY2EV:=3, ZY2ER:=4, ZY3EV:=5, ZY3ER:=6);
+      PNEUORDER : (HomePosPinDown:=-3, HomePosPinUp:=-2, CleaningPos:=-1, NoOrder:=0, CylinderUp:=1, CylinderDown:=2, Foot1Back:=3, Foot1Front:=4, Foot2Back:=5, Foot2Front:=6, Foot3Back:=7, Foot3Front:=8, AllFeetBack:=9, AllFeetFront:=10);
+      DIRECTION : (Xplus:=0, Xminus:=1, Yplus:=2, Yminus:=3, Zplus:=4, Zminus:=5);
+      COORD : (X1:=0, X2:=1, Y1:=2, Y2:=3, Z1:=4, Z2:=5);
+      TOOLTYPE : (RefTool:=0, CorrTool:=1);
+      TOOLID : (Tool1:=0, Tool2:=1, Tool3:=2);
+      LIMIT_TYPE : (AlarmLimit:=0, WarningLimit:=1);
+      TOOLVALS : ARRAY [1..3] OF POS;
+      DELTAVALS : ARRAY [1..3] OF TUserReal;
+      TUserReal : REAL;
+   END_TYPE
+
+   // Variables
+   VAR
+      HN1 : GUNS;
+      HN1_L : GUNS;
+      HN1_R : GUNS;
+      HN1_LR : GUNS;
+      HN_OFF : GUNS;
+      jogOvrSelected : TRcJogOvr;
+   END_VAR
+
+   // Routines
+   ROUTINE PTP (point : POINT) { macro="MOVEMENT" };
+   ROUTINE PTP_MODE (point : POINT_M) { macro="MOVEMENT" };
+   ROUTINE PTP_RAILATCURRENTPOS (point : POINT) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bHasProcess" };
+   ROUTINE LIN (point : POINT) { macro="MOVEMENT" };
+   ROUTINE LIN_RAILATSIGNAL (point : POINT; bit : TRcuInterfaceFromPCU) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bHasProcess" };
+   ROUTINE LIN_RAILATCURRENTPOS (point : POINT) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bHasProcess" };
+   ROUTINE START_SMOOTH (factor : TUserReal; VeloFlag : BOOL) { macro="MOVEMENT"|enable="_system.gbSmoothAvailable" };
+   ROUTINE END_SMOOTH () { macro="MOVEMENT"|enable="_system.gbSmoothAvailable" };
+   ROUTINE CIRC (helpPoint : POINT; point : POINT) { macro="MOVEMENT" };
+   ROUTINE SPLINE_START_TANG (splinePoint : POINT; VAR_IN param : TUserReal; VAR_IN type : SplineType; tangentPoint : POINT) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bEnableSpline" };
+   ROUTINE SPLINE (splinePoint : POINT; VAR_IN param : TUserReal; VAR_IN type : SplineType) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bEnableSpline" };
+   ROUTINE SPLINE_END () { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bEnableSpline" };
+   ROUTINE SPLINE_END_TANG (splinePoint : POINT; VAR_IN param : TUserReal; VAR_IN type : SplineType; tangentPoint : POINT) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bEnableSpline" };
+   ROUTINE SHIFT (Shift : SSHIFT) { macro="MOVEMENT" };
+   ROUTINE RESHIFT () { macro="MOVEMENT" };
+   ROUTINE SHIFT_EXT (ShiftExt : SSHIFT_EXT) { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bEnableShiftExt" };
+   ROUTINE RESHIFT_EXT () { macro="MOVEMENT"|enable="_system.gRcuFocusedRobot.bEnableShiftExt" };
+   ROUTINE VEL (x : VELOCITY) { macro="DYNAMIC" };
+   ROUTINE ACC (x : ACCELERATION) { macro="DYNAMIC" };
+   ROUTINE JERK (x : JERKDCL) { macro="DYNAMIC" };
+   ROUTINE RAMP (x : RAMPDCL) { macro="DYNAMIC" };
+   ROUTINE OVERLAP (Overlap : OVERLAPDCL) { macro="GEOMETRIC" };
+   ROUTINE SETOBJECT (object : OBJECT) { macro="GEOMETRIC" };
+   ROUTINE SETTOOL (Tool : TOOL) { macro="GEOMETRIC" };
+   ROUTINE SETEXTTOOL (Tool : TOOL) { macro="GEOMETRIC" };
+   ROUTINE SETINTMODE (mode : INTERPOLATIONTYPE) { macro="GEOMETRIC" };
+   ROUTINE GUN (Number : GUNNO; Command : GUNONOFF; point : POINT; Trigger : TRIGGERFRAME) { macro="PROCESS" };
+   ROUTINE GUN_DIRECT (Number : GUNNO; Command : GUNONOFF) { macro="PROCESS" };
+   ROUTINE MULTIGUN (guns : GUNS; point : POINT; Trigger : TRIGGERFRAME) { macro="PROCESS" };
+   ROUTINE MULTIGUN_DIRECT (guns : GUNS) { macro="PROCESS" };
+   ROUTINE SETBRUSH (Number : GUNNO; Brush : DINT; point : POINT; Trigger : TRIGGERFRAME) { macro="PROCESS" };
+   ROUTINE SETBRUSH_DIRECT (Number : GUNNO; Brush : DINT) { macro="PROCESS" };
+   ROUTINE SETBRUSH_MULTIGUN (guns : GUNS; Brush : DINT; point : POINT; Trigger : TRIGGERFRAME) { macro="PROCESS" };
+   ROUTINE SETBRUSH_MULTIGUN_DIRECT (guns : GUNS; Brush : DINT) { macro="PROCESS" };
+   ROUTINE CPV_INIT () : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bShowCpvIsraFischer" };
+   ROUTINE CPV_STATIC_ACQ (rParam : TUserReal) { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.VisionIsraCPV.bEnabled" };
+   ROUTINE CPV_END () { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_TRIGGER (job : VISION_CPV_JOB; point : POINT; trigger : TRIGGERFRAME) { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.VisionIsraCPV.bEnabled" };
+   ROUTINE CPV_CONNECT () : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_SET_POS (CONST pointID : DINT; CONST mesPoint : POINT; corrPoint : POINT) : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_GET_POS_CORR (point : POINT; OPTIONAL corrValuesOk : BOOL) : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_CORR_POINT (CONST pointID : DINT; CONST orgPoint : POINT; corrPoint : POINT; OPTIONAL corrValuesOk : BOOL) : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.VisionDasNano.bEnabled" };
+   ROUTINE CPV_MEASURE () : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_MEASURE_TYPE (type : TRcuCpvMeasureType) { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_GET_COLOR_NR (colorNr : DINT) : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.VisionTerascope.bEnabled" };
+   ROUTINE CPV_RUN_TASK (task : TRcuCpvMeasureType) : VISION_STATE { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.bCPV_Enabled" };
+   ROUTINE CPV_GET_STATE (state : TRcuCpvStates) : BOOL { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.VisionDasNano.bEnabled" };
+   ROUTINE CPV_SET_INFO (infoMsg : TRcuCpvInfoMsg) { macro="CPV"|enable="_system.gRcuFocusedRobot.vision.VisionDasNano.bEnabled" };
+   ROUTINE SETPROCESSCOMMAND (Command : COMMAND; point : POINT; Trigger : TRIGGERFRAME; OPTIONAL Number : DINT) { macro="PROCESS" };
+   ROUTINE SETPROCESSCOMMAND_DIRECT (Command : COMMAND; OPTIONAL Number : DINT) { macro="PROCESS" };
+   ROUTINE WAIT_PROCESS_READY () { macro="PROCESS" };
+   ROUTINE SET_SEAMTOLERANCE (value : TUserReal) { macro="PROCESS" };
+   ROUTINE COLORGROUP_ACTIVE (colorGroup : INT) : BOOL { macro="PROCESS"|enable="_system.gRcuFocusedRobot.bHasProcess" };
+   ROUTINE TRACKING (Cmd : TRcuTrackingCmd) { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE SETTRACKINGMODE (mode : TRcuTrackingMode) { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE WAIT_CONVEYOR (Conveyor : TUserReal) { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE CHECK_CONVEYOR (Conveyor : TUserReal) : BOOL { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE CONVEYOR_INCLINE_AT (Conveyor : TUserReal) { macro="Tracking"|enable="_system.gRcuFocusedRobot.tracking.bEnableConveyorTable" };
+   ROUTINE TRACKING_USE_Z_OFFSET (Active : BOOL) { macro="Tracking"|enable="_system.gRcuFocusedRobot.RcuInterfaceToBCU.bUseOffsetZ" };
+   ROUTINE WAIT_PAINTPOSITION (Paintposition : TUserReal) { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE WAIT_CLEANONPAINTPOS (Paintposition : TUserReal) : BOOL { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE CONVEYOR_STOP_AT (Paintposition : TUserReal) { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE CONVEYOR_START () { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE GET_PAINTPOSITION (GreaterSmaller : TRcuGreaterSmaller; Paintposition : TUserReal) : BOOL { macro="Tracking"|enable="_system.gbIsTrackingStation" };
+   ROUTINE GET_NEXTPREPOS (P : POINT) : BOOL { macro="OTHER" };
+   ROUTINE RECEIVE_ORDER (SourcePartTV : PART; SourcePosTV : POSITION; DestPartTV : PART; DestPosTV : POSITION) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE RECEIVE_PARTORDER (rob1 : ROBOT; rob2 : ROBOT; part : PART; pos : POSITION) : BOOL { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerBody" };
+   ROUTINE SET_ORDER (handler : HANDLER; part : PART; pos : POSITION) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.isOrderer" };
+   ROUTINE SET_POSCODE (part : PART; pos : POSITION) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerBody" };
+   ROUTINE RECEIVE_HANDLERPOS (handler : HANDLER; part : PART; pos : POSITION) : BOOL { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE RECEIVE_PARTPOS (handler : HANDLER; part : PART; pos : POSITION) : BOOL { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerBody" };
+   ROUTINE SET_INIPOS (part : PART; pos : POSITION) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE SET_ENDPOS (part : PART; pos : POSITION) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE SET_MODULE (SourcePartTV : PART; SourcePosTV : POSITION; DestPartTV : PART; DestPosTV : POSITION; modName : STRING) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE WAIT_HANDLER_STATE (handler : HANDLER; state : TRcuHandlerState) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE GET_HANDLER_STATE (handler : HANDLER) : BOOL { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.partPosPerHandler" };
+   ROUTINE SET_SENSOR (Unit : UNIT; Order : ORDER; OPTIONAL GainVal : GAIN; OPTIONAL Cycles : SINT) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE SET_CHECK (Unit : UNIT; Order : ORDER; OPTIONAL VAR_IN Value : SENSORVALUE) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE GET_PART (Unit : UNIT; Order : ORDER; OPTIONAL Value : SENSORVALUE) : BOOL { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE GET_SEARCH_CNT (Unit : UNIT) : DINT { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE PART_SHIFT (Unit : UNIT; Shift : SSHIFT) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE SET_TOOL_STATE (Unit : UNIT; Order : PNEUORDER) { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE WAIT_TOOL_STATE (Unit : UNIT; Order : PNEUORDER) : BOOL { macro="HANDLER"|enable="_system.gRcuFocusedRobot.handler.tool.bEnabled" };
+   ROUTINE CHECK_TORQUE (Order : TORQUEORDER; Activate : TORQUECHECK; Axis : INT; Boundary : TUserReal; OnlyMonitoring : BOOL) { macro="HANDLER" };
+   ROUTINE CHECK_TORQUE_GENERAL (Order : TORQUEORDER; Activate : TORQUECHECK; Axis : INT; Boundary : TUserReal; OnlyMonitoring : BOOL) { macro="OTHER" };
+   ROUTINE TORQUEMONITOR (Command : STARTSTOP; AxisNumber : AXISNAME) { macro="OTHER" };
+   ROUTINE ACTIVATE_PAC (Command : PACCCOMMAND) { macro="CHECKER"|enable="_system.gRcuFocusedRobot.paintChecker.type <> eRcuPaintCheckerOff" };
+   ROUTINE RSELECT (name : STRING) { macro="OTHER" };
+   ROUTINE RDESELECT (name : STRING) { macro="OTHER" };
+   ROUTINE SIMULATION_RUNNING () : BOOL { macro="OTHER" };
+   ROUTINE SET (BitNr : IONAME; State : IOTYPE) { macro="OTHER" };
+   ROUTINE SET_CAMPOS (PosNr : BYTE) { macro="OTHER" };
+   ROUTINE RECEIVE (Pin : IONAME; State : IOTYPE) : BOOL { macro="OTHER" };
+   ROUTINE SET_VISION (order : VISIONORDER; frametype : TVisionSubSystemType) { macro="OTHER"|enable="_system.gRcuFocusedRobot.vision.bUseExtendedInterface" };
+   ROUTINE RECEIVE_VISION (order : VISIONORDER; frametype : TVisionSubSystemType) : VISION_STATE { macro="OTHER"|enable="_system.gRcuFocusedRobot.vision.bUseExtendedInterface" };
+   ROUTINE RECEIVE_PARTSHIFT (frame : FRAMESHIFT; Setpos : TUserReal; frametype : TVisionSubSystemType) : VISION_STATE { macro="OTHER"|enable="_system.gRcuFocusedRobot.vision.bUseExtendedInterface" };
+   ROUTINE GET (Pin : IONAME; state : IOTYPE) : BOOL { macro="OTHER" };
+   ROUTINE GET_DEGRADE_MODE (DegradeRob : DEGRADEROB) : BOOL { macro="OTHER" };
+   ROUTINE GET_VARIANT (Variant : VARIANT) : BOOL { macro="OTHER" };
+   ROUTINE GET_REPAIRTYPE (RepairType : REPAIRTYPE) : BOOL { macro="OTHER" };
+   ROUTINE GET_LAYER_NO () : DINT { macro="OTHER"|enable="_system.gRcuFocusedRobot.RcuInterfaceToBCU.bLayerNoMapped" };
+   ROUTINE SET_MOTION_STATE (Group : TRcuMotionGroup; Job : TRcuMotionJob; Run : TRcuPreMainRun) { macro="OTHER" };
+   ROUTINE GET_MOTION_STATE (Group : TRcuMotionGroup; Job : TRcuMotionJob) : BOOL { macro="OTHER" };
+   ROUTINE WAIT_MOTION_STATE (Group : TRcuMotionGroup; Job : TRcuMotionJob) : BOOL { macro="OTHER" };
+   ROUTINE SET_PROCESS_STATE (Group : TRcuProcessGroup; Job : TRcuProcessJob; Run : TRcuPreMainRun) { macro="OTHER" };
+   ROUTINE GET_PROCESS_STATE (Group : TRcuProcessGroup; Job : TRcuProcessJob) : BOOL { macro="OTHER" };
+   ROUTINE WAIT_PROCESS_STATE (Group : TRcuProcessGroup; Job : TRcuProcessJob) : BOOL { macro="OTHER" };
+   ROUTINE SET_BOOL_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varname : STRING; state : IOTYPE; resetAtProgEnd : TRcuResetAtProgEnd) { macro="OTHER" };
+   ROUTINE GET_BOOL_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varname : STRING; state : IOTYPE; OPTIONAL execMode : TRcuAppendLateMR) : BOOL { macro="OTHER" };
+   ROUTINE WAIT_BOOL_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varname : STRING; state : IOTYPE) { macro="OTHER" };
+   ROUTINE SET_INT_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varName : STRING; value : INT; resetAtProgEnd : TRcuResetAtProgEnd) { macro="OTHER" };
+   ROUTINE SET_DINT_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varName : STRING; value : DINT; resetAtProgEnd : TRcuResetAtProgEnd) { macro="OTHER" };
+   ROUTINE GET_INT_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varName : STRING; OPTIONAL execMode : TRcuAppendLateMR) : INT { macro="OTHER" };
+   ROUTINE GET_DINT_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varName : STRING; OPTIONAL execMode : TRcuAppendLateMR) : DINT { macro="OTHER" };
+   ROUTINE WAIT_INT_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varName : STRING; value : INT) { macro="OTHER" };
+   ROUTINE WAIT_DINT_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varName : STRING; value : DINT) { macro="OTHER" };
+   ROUTINE TRIGGER_SYSTEMVAR (functionUnit : TRcuFunctionUnit; varname : STRING; state : IOTYPE; resetAtProgEnd : TRcuResetAtProgEnd; point : POINT; Trigger : TRIGGERFRAME) { macro="OTHER" };
+   ROUTINE DELAY (t : TUserReal) { macro="OTHER" };
+   ROUTINE PRINTSTR (s : STRING) { macro="OTHER" };
+   ROUTINE MAINRUN () { macro="OTHER" };
+   ROUTINE TCP_SPEED_CHECK (OnOff : BOOL; Limit : TUserReal) { macro="OTHER" };
+   ROUTINE STOP_IN_TEACHMODE () { macro="OTHER" };
+   ROUTINE HOMING (s : STRING) : BOOL { macro="OTHER"|enable="_system.gRcuFocusedRobot.homing.tType = eStandard" };
+   ROUTINE SET_HOMING_MODULE (modName : STRING) { macro="OTHER"|enable="_system.gRcuFocusedRobot.homing.tType = eSafeToHome" };
+   ROUTINE SET_HOMING_PATH (number : INT) { macro="OTHER"|enable="_system.gRcuFocusedRobot.homing.tType = eSafeToHome" };
+   ROUTINE GET_HOMING_PATH () : INT { macro="OTHER"|enable="_system.gRcuFocusedRobot.homing.tType = eSafeToHome" };
+   ROUTINE NC_DOOR_OPENED (state : NC_DoorState) : BOOL { macro="OTHER" };
+   ROUTINE TIMERSTART () { macro="Timer" };
+   ROUTINE TIMERSTOP (t : DINT) { macro="Timer" };
+   ROUTINE SET_PLC_ORDER (Step : PLCORDER; Run : TRcuPreMainRun) { macro="OTHER"|enable="_system.gRcuFocusedRobot.bEnablePlcOrderByte" };
+   ROUTINE GET_PLC_STATE (Step : PLCORDER; Run : TRcuPreMainRun) : BOOL { macro="OTHER"|enable="_system.gRcuFocusedRobot.bEnablePlcOrderByte" };
+   ROUTINE RECEIVE_PLC_STATE (Step : PLCORDER; Run : TRcuPreMainRun) : DINT { macro="OTHER"|enable="_system.gRcuFocusedRobot.bEnablePlcOrderByte" };
+   ROUTINE SET_PROCESS_ORDER (Step : ProcessOrder; Run : TRcuPreMainRun) { macro="PROCESS" };
+   ROUTINE RECEIVE_PROCESS_STATE (Step : ProcessOrder; Run : TRcuPreMainRun) : DINT { macro="PROCESS" };
+   ROUTINE SET_PROCESS_INTERFACE (bit : TRcuInterfaceToPCU; state : IOTYPE; run : TRcuPreMainRun; resetAtProgEnd : TRcuResetAtProgEnd) { macro="PROCESS" };
+   ROUTINE GET_PROCESS_INTERFACE (bit : TRcuInterfaceFromPCU; run : TRcuPreMainRun) : BOOL { macro="PROCESS" };
+   ROUTINE WAIT_PROCESS_INTERFACE (bit : TRcuInterfaceFromPCU; state : IOTYPE; run : TRcuPreMainRun) { macro="PROCESS" };
+   ROUTINE SET_APPLICATOR_POSITION (Position : APP_POS) { macro="GLUING"|enable="_system.gRcuFocusedRobot.gluingRobot" };
+   ROUTINE WAIT_APPLICATOR_IN_POSITION (Position : APP_POS) { macro="GLUING"|enable="_system.gRcuFocusedRobot.gluingRobot" };
+   ROUTINE IS_IN_FIXPOS (Fixpos : POINT) : BOOL { macro="OTHER" };
+   ROUTINE CHECK_MASTER_SENSOR (OnOff : CHECK; AxisNumber : AXISNAME) { macro="OTHER" };
+   ROUTINE CONFIG3D (Step1 : BOOL; PlaneStep1 : PLANE; Step2 : BOOL; PlaneStep2 : PLANE; Step3 : BOOL; PlaneStep3 : PLANE) { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE INIT3DOBJECT (P1 : POINT; P2 : POINT; P3 : POINT; P4 : POINT; P5 : POINT; P6 : POINT; OBJ : OBJECT) { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE CALC3DSTEP1 (P1 : POINT; P2 : POINT; P3 : POINT; OBJ : OBJECT) : BOOL { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE CALC3DSTEP2 (P4 : POINT; P5 : POINT; OBJ : OBJECT) : BOOL { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE CALC3DSTEP3 (P6 : POINT; OBJ : OBJECT) : BOOL { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE DEFINE3DOBJECT (PXMIN : POINT; PXMAX : POINT; PY : POINT; OBJ_REF : OBJECT) { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE CALC3DTRAFO (OBJ_REF : OBJECT; OBJ_MEASURE : OBJECT; OBJ_ORG : OBJECT; OBJ_RESULT : OBJECT) { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE RECEIVEPOS3D (P : POINT) : BOOL { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE SET_LASER (State : TRcuProcessJob) { macro="3D"|enable="_system.gRcuFocusedRobot.objMeasure.bBootUpOk" };
+   ROUTINE BK_INIT () { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE BK_START (typeNr : DINT; pathID : DINT; mode : BK_MODE_TYPE) { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE BK_FINISH (numberOfTrPoint : DINT; OPTIONAL iRetVal : VISION_STATE; OPTIONAL numberOfCorr : DINT) : BOOL { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE BK_FINISH_ISRA2 (numberOfTrPoint : DINT; numberOfCorrPoint : DINT; OPTIONAL iRetVal : VISION_STATE) : BOOL { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE BK_ACTION (point : POINT; pointNumber : DINT; trigger : TRIGGERFRAME) { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE BK_ACTION_DIRECT (pointNumber : DINT) { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE BK_CORR (pointNumber : DINT) { macro="BK"|enable="_system.gRcuFocusedRobot.vision.bBKBootUpOk" };
+   ROUTINE TBOX_TCP_START (ToolNr : DINT) : BOOL { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE TBOX_TCP_POINT (PointNr : DINT) : BOOL { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE TBOX_TCP_END (TBoxBase : OBJECT; ActTool : TOOL) : BOOL { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE TBOX_TCP_1SHOT (ToolNr : DINT; ActTool : TOOL) : BOOL { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE TBOX_CHECK (nozzle : NOZZLE; ToolDiff : TOOL; OPTIONAL iRetVal : VISION_STATE) : BOOL { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE TBOX_CORR (nozzle : NOZZLE; RefTool : TOOL; CorrTool : TOOL; OPTIONAL iRetVal : VISION_STATE) : BOOL { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE TBOX_SETTOLERANCE (LimitType : LIMIT_TYPE; x_min : TUserReal; x_max : TUserReal; y_min : TUserReal; y_max : TUserReal; z_min : TUserReal; z_max : TUserReal) { macro="TBOX"|enable="_system.gRcuFocusedRobot.vision.bTBoxBootUpOk" };
+   ROUTINE SETLANE (Lane : DINT; point : POINT) { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE SETLANE_DIRECT (Lane : DINT) { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE CAMERA_TCP_START (ToolNr : DINT) : BOOL { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.vision.bJetInspectBootUpOk" };
+   ROUTINE CAMERA_TCP_POINT (PointNr : DINT) : BOOL { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.vision.bJetInspectBootUpOk" };
+   ROUTINE CAMERA_TCP_END () : BOOL { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.vision.bJetInspectBootUpOk" };
+   ROUTINE JET_INSPECT_START (typeNr : DINT) { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.vision.bJetInspectBootUpOk" };
+   ROUTINE JET_INSPECT_END (iRetVal : VISION_STATE) : BOOL { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.vision.bJetInspectBootUpOk" };
+   ROUTINE LOAD_PAINTJET (progName : STRING) { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE GET_PAINTJET_READY () : BOOL { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE WAIT_PAINTJET_READY () { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE SET_DECORPART (part : DECORPART) { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE GET_DECORPART (part : DECORPART) : BOOL { macro="PAINTJET"|enable="_system.gRcuFocusedRobot.RcuInterfaceToProcess.sPaintJet.bUsed" };
+   ROUTINE RECEIVEVAL (ToolNr : TOOLID; currenttooltype : TOOLTYPE; movingdirection : DIRECTION; tooldirection : DIRECTION) : BOOL { macro="MEASURE"|enable="_system.gRcuFocusedRobot.ToolMeasure.bConfigured" };
+   ROUTINE SAVETOOL (ToolNr : TOOLID; currenttooltype : TOOLTYPE; refTool : TOOL; corrTool : TOOL; OPTIONAL retVal : VISION_STATE) { macro="MEASURE"|enable="_system.gRcuFocusedRobot.ToolMeasure.bConfigured" };
+   ROUTINE SETTOLERANCE (ToolNr : TOOLID; LimitType : LIMIT_TYPE; x_min : TUserReal; x_max : TUserReal; y_min : TUserReal; y_max : TUserReal; z_min : TUserReal; z_max : TUserReal) { macro="MEASURE"|enable="_system.gRcuFocusedRobot.ToolMeasure.bConfigured" };
+   ROUTINE RECEIVE_LL_BASE (recordValue : COORD; object_LL : OBJECT) { macro="MEASURE"|enable="_system.gRcuFocusedRobot.ToolMeasure.bConfigured" };
+   ROUTINE CALC_DISPLACED_OBJECT (VAR_IN SubSystemType : TVisionSubSystemType; VAR_IN Org : OBJECT; Result : OBJECT; OPTIONAL iRetVal : VISION_STATE) : BOOL { macro="GEOMETRIC" };
+   ROUTINE CALC_DISPLACED_TOOL (VAR_IN SubSystemType : TVisionSubSystemType; Org : TOOL; Result : TOOL; OPTIONAL iRetVal : VISION_STATE) : BOOL { macro="GEOMETRIC" };
+   ROUTINE CALC_TOOL_OFFSET (Org : TOOL; Dir : TOOLDIR; Offset : TUserReal; Result : TOOL) { macro="GEOMETRIC" };
+   ROUTINE CALC_DISPLACED_POINT (VAR_IN SubSystemType : TVisionSubSystemType; Org : POINT; Result : POINT; iRetVal : VISION_STATE) : BOOL { macro="OTHER"|enable="_system.gRcuFocusedRobot.vision.bUseExtendedInterface" };
+   ROUTINE CALC_TRANSFORMED_POINT (Org : POINT; Result : POINT; Frame : FRAMESHIFT) : BOOL { macro="OTHER" };
+   ROUTINE TC_START (ToolNr : DINT) : BOOL { macro="TC"|enable="_system.gRcuFocusedRobot.vision.bTCBootUpOk" };
+   ROUTINE TC_SET_POS (PosNr : DINT) { macro="TC"|enable="_system.gRcuFocusedRobot.vision.bTCBootUpOk" };
+   ROUTINE TC_RECEIVE_TOOL (refTool : TOOL; corrTool : TOOL; OPTIONAL iRetVal : VISION_STATE) : BOOL { macro="TC"|enable="_system.gRcuFocusedRobot.vision.bTCBootUpOk" };
+   ROUTINE RESET_SFA_COUNTER (Run : TRcuPreMainRun) { macro="SFA"|enable="_system.gRcuFocusedRobot.sfaRobot" };
+   ROUTINE CHECK_SFA_COUNTER (min : DINT; max : DINT) : BOOL { macro="SFA"|enable="_system.gRcuFocusedRobot.sfaRobot" };
+   ROUTINE END_OF_TAPE () : BOOL { macro="SFA"|enable="_system.gRcuFocusedRobot.sfaRobot" };
+   ROUTINE PULSE_SFA_DRIVE (timer : DINT) { macro="SFA"|enable="_system.gRcuFocusedRobot.sfaRobot" };
+   ROUTINE SET_SFA_CMD (Cmd : SFA_CMD; Run : TRcuPreMainRun) { macro="SFA"|enable="_system.gRcuFocusedRobot.sfaRobot" };
+   ROUTINE WAIT_SFA_STATE (state : SFA_STATE; Run : TRcuPreMainRun) { macro="SFA"|enable="_system.gRcuFocusedRobot.sfaRobot" };
+   ROUTINE SR_SETSIGNAL (Signal : SR_SIGNAL; State : IOTYPE) { macro="SmartRay"|enable="_system.gRcuFocusedRobot.vision.VisionSmartRay.bCfgDataRead" };
+   ROUTINE SR_CONTROL (State : IOTYPE) { macro="SmartRay"|enable="_system.gRcuFocusedRobot.vision.VisionSmartRay.bCfgDataRead" };
+   ROUTINE SR_SEARCH (SearchMode : SMODE) { macro="SmartRay"|enable="_system.gRcuFocusedRobot.vision.VisionSmartRay.bCfgDataRead" };
+   ROUTINE SR_SEARCHRESULT (P : POINT) : BOOL { macro="SmartRay"|enable="_system.gRcuFocusedRobot.vision.VisionSmartRay.bCfgDataRead" };
+   ROUTINE CHECK_BCC (job : TRcuBccCheckJob; number : DINT) { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypeIEC" };
+   ROUTINE GET_BCC (job : TRcuBccGetJob; number : DINT) : BOOL { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypeIEC" };
+   ROUTINE SET_BCC (job : TRcuBccSetJob; number : DINT) { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypeIEC" };
+   ROUTINE WAIT_BCC (job : TRcuBccWaitJob; number : DINT) { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypeIEC" };
+   ROUTINE GET_PROCESS_STATE_BCC (Group : TRcuProcessGroup_BCC; Job : DINT) : INT { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypePLC" };
+   ROUTINE SET_PROCESS_STATE_BCC (Group : TRcuProcessGroup_BCC; Job : DINT) { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypePLC" };
+   ROUTINE WAIT_PROCESS_STATE_BCC (Group : TRcuProcessGroup_BCC; Job : DINT) : BOOL { macro="BCC"|enable="_system.gRcuFocusedRobot.cavityCoating.bBccTypePLC" };
+   ROUTINE WAIT_PROCESS_STATE_PI (Group : TRcuProcessGroup_PI) : BOOL { macro="PI"|enable="_system.gRcuFocusedRobot.cavityCoating.bPlacePlugActivate" };
+   ROUTINE SET_PROCESS_STATE_PI (Group : TRcuProcessGroup_PI; Job : DINT) { macro="PI"|enable="_system.gRcuFocusedRobot.cavityCoating.bPlacePlugActivate" };
+   ROUTINE GET_PROCESS_STATE_PI (Group : TRcuProcessGroup_PI) : INT { macro="PI"|enable="_system.gRcuFocusedRobot.cavityCoating.bPlacePlugActivate" };
+   ROUTINE NC_SET_NOZZLE (Number : GUNNO; nozzle : NOZZLE) : DINT { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_GET_NEXT_FREE_PLACE () : DINT { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_SPECIAL_PLACE_FREE (changerPlace : DINT) : BOOL { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_NOZZLE_IN_PLACE (changerPlace : DINT) : BOOL { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_CHECK_PLACE (place : DINT; state : NC_StatePlace; setErrorMsg : BOOL) : BOOL { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_GET_NOZZLE_NR (Number : GUNNO) : NOZZLE { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_GET_ACT_NOZZLE (Number : GUNNO) : NOZZLE { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_NOZZLE_AT_ROBOT (wristState : NC_StatePlace) : BOOL { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_SET_NOZZLE_STATE (Number : GUNNO; state : NC_State) { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_SET_HEAD_STATE (state : NC_State) { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_ERROR_NOZZLE_CHANGE (errorCase : NC_ErrorCase) { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_NOZZLE_FIXATION (order : NC_FixationCmd; place : DINT) { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_PURGE_REQUIRED () : BOOL { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE NC_SET_BLOWAIR (switch : NC_Switch) { macro="NC"|enable="_system.gRcuFocusedRobot.nozzleChange.hasNozzleChanger" };
+   ROUTINE RECEIVE_ALIGNMENT () { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE RESET_ALIGNMENT (AreaResetAligment : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE SET_ALIGNMENT (AreaSetAligment : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_MEASURESTART (Mode : DINT; Type : DINT; OPTIONAL Area : DINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_MEASUREAREA (Area : DINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_MEASUREFINISH () : VISION_STATE { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE ACTIVATE_ZEISS_IN_GHOST () { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_TRIGGER (point : POINT; pointNumber : DINT; trigger : TRIGGERFRAME; mptype : MP_TYPE) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_TRIGGER_WITHOUT_RESULT (pointNumber : DINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE VEL_COMP_START () { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE VEL_COMP_END () { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE SET_COLORCOMBI (OPTIONAL BaseColor : STRING; OPTIONAL DecorColor : STRING) : VISION_STATE { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE GET_SENSORTRAFO (Trigger_pos : DINT; Trigger_ori : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_TRIGGER_DIRECT (pointNumber : DINT; mptype : MP_TYPE; OPTIONAL hw_conf : TRIGGER_DIRECT_TYP_ECOTALK) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_CORRSTART (Area : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_CORRFINISH (OPTIONAL Area : DINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_CORR_DATA (CorrPart : STRING; Area : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_CORR (POrg : POINT; PCorr : POINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_TESTDATA (pointNumber : INT; DX : TUserReal; DY : TUserReal; DZ : TUserReal) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_ASSIGN_MEASUREMENT (point : POINT; pointNumber : DINT; mptype : MP_TYPE; pointNumberMeasurement : DINT; OPTIONAL FromArea : DINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_ASSIGN_DATA (point : POINT; pointNumber : INT; mptype : MP_TYPE; DX : TUserReal; DY : TUserReal; DZ : TUserReal) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_RESET () { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_WRITE_TOOLDATA (Tool : TOOL; VisionSystem : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeiss.bZeissBootUpOk" };
+   ROUTINE Z_START_CYCLE (mode : Z_MEASURE_MODE; type : DINT) : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeissGOM.bEnabled" };
+   ROUTINE Z_TRIGGER_GROUP (pointNumber : DINT; triggerMode : Z_TRIGGER_MODE; resultMode : Z_RESULT_MODE; OPTIONAL delayMs : DINT) { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeissGOM.bEnabled" };
+   ROUTINE Z_END_CYCLE () : BOOL { macro="ZEISS"|enable="_system.gRcuFocusedRobot.vision.VisionZeissGOM.bEnabled" };
+   ROUTINE CONNECT_BOOL_VAR (robNr : DINT; varNr : USER_VAR; boolVar : MAPTO BOOL) { macro="OTHER" };
+   ROUTINE CONNECT_DINT_VAR (robNr : DINT; varNr : USER_VAR; dintVar : MAPTO DINT) { macro="OTHER" };
+   ROUTINE CONNECT_REAL_VAR (robNr : DINT; varNr : USER_VAR; realVar : MAPTO REAL) { macro="OTHER" };
+   ROUTINE Sleep (CONST time : DINT);
+
+END_GLOBAL
+
+BLOCK OBJECT { prefix="obj" }
+
+   // Variables
+   VAR
+      X_mm : TUserReal;
+      Y_mm : TUserReal;
+      Z_mm : TUserReal;
+      A_deg : TUserReal;
+      B_deg : TUserReal;
+      C_deg : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK ACCELERATION { prefix="acce" }
+
+   // Variables
+   VAR
+      Path_Acc : TUserReal;
+      Path_Dcc : TUserReal;
+      Rot_Val : TUserReal;
+      RotZ_Val : TUserReal;
+      PTP_PERC : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK TOOL { prefix="tool" }
+
+   // Variables
+   VAR
+      X_mm : TUserReal;
+      Y_mm : TUserReal;
+      Z_mm : TUserReal;
+      A_deg : TUserReal;
+      B_deg : TUserReal;
+      C_deg : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK POLYPOINT { prefix="P" }
+
+   // Variables
+   VAR
+      A : TUserReal;
+      B : TUserReal;
+      C : TUserReal;
+      D : TUserReal;
+      E : TUserReal;
+      F : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK GUNS { prefix="MultiGun" }
+
+   // Variables
+   VAR
+      N1 : GUNONOFF;
+      N2 : GUNONOFF;
+      N3 : GUNONOFF;
+      N4 : GUNONOFF;
+      N5 : GUNONOFF;
+      N6 : GUNONOFF;
+      N7 : GUNONOFF;
+      N8 : GUNONOFF;
+      N9 : GUNONOFF;
+      N10 : GUNONOFF;
+      N11 : GUNONOFF;
+      N12 : GUNONOFF;
+      N13 : GUNONOFF;
+      N14 : GUNONOFF;
+      N15 : GUNONOFF;
+      N16 : GUNONOFF;
+   END_VAR
+
+END_BLOCK
+
+BLOCK VELOCITY { prefix="velo" }
+
+   // Variables
+   VAR
+      Path_Val : TUserReal;
+      Rot_Val : TUserReal;
+      RotZ_Val : TUserReal;
+      PTP_PERC : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK FRAMESHIFT { prefix="frame" }
+
+   // Variables
+   VAR
+      X_mm : TUserReal;
+      Y_mm : TUserReal;
+      Z_mm : TUserReal;
+      A_deg : TUserReal;
+      B_deg : TUserReal;
+      C_deg : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK POINT { prefix="P" }
+
+   // Variables
+   VAR
+      Coord : COORDTYPE := Object;
+      A : TUserReal;
+      B : TUserReal;
+      C : TUserReal;
+      D : TUserReal;
+      E : TUserReal;
+      F : TUserReal;
+      Aux1 : TUserReal;
+      Aux2 : TUserReal;
+      Aux3 : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK RAMPDCL { prefix="ramp" }
+
+   // Variables
+   VAR
+      RampType : RAMPTYPE := Trapez;
+      RampFactor : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK POINT_M { prefix="P_M" }
+
+   // Variables
+   VAR
+      Coord : COORDTYPE := Object;
+      A : TUserReal;
+      B : TUserReal;
+      C : TUserReal;
+      D : TUserReal;
+      E : TUserReal;
+      F : TUserReal;
+      Aux1 : TUserReal;
+      Aux2 : TUserReal;
+      Aux3 : TUserReal;
+      MODE : DINT;
+      NR_TURNS : DINT;
+      TURNS : ARRAY [0..15] OF DINT;
+   END_VAR
+
+END_BLOCK
+
+BLOCK JERKDCL { prefix="jerk" }
+
+   // Variables
+   VAR
+      Path_Val : TUserReal;
+      Rot_Val : TUserReal;
+      RotZ_Val : TUserReal;
+      PTP_PERC : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK SSHIFT { prefix="ssh" }
+
+   // Variables
+   VAR
+      X_mm : TUserReal;
+      Y_mm : TUserReal;
+      Z_mm : TUserReal;
+      A7_mm : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK SENSORVALUE { prefix="SensorValue" }
+
+   // Variables
+   VAR
+      X_Pos : DINT;
+      X_Neg : DINT;
+      Y_Pos : DINT;
+      Y_Neg : DINT;
+   END_VAR
+
+END_BLOCK
+
+BLOCK SSHIFT_EXT { prefix="sshx" }
+
+   // Variables
+   VAR
+      X_mm : TUserReal;
+      Y_mm : TUserReal;
+      Z_mm : TUserReal;
+      A7_mm : TUserReal;
+      A8_deg : TUserReal;
+      A9_deg : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK OVERLAPDCL { prefix="ovl" }
+
+   // Variables
+   VAR
+      Mode : OVERLAPMODE;
+      Vel_Perc : TUserReal;
+      Path_Val : TUserReal;
+      Rot_Val : TUserReal;
+      RotZ_Val : TUserReal;
+      Axis_Perc : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+BLOCK TRIGGERFRAME { prefix="trigger" }
+
+   // Variables
+   VAR
+      Coord : COORDTYPE := Object;
+      Nx : TUserReal;
+      Ny : TUserReal;
+      Nz : TUserReal;
+      Dist : TUserReal;
+   END_VAR
+
+END_BLOCK
+
+PROGRAM rcutils
+
+   // Variables
+   VAR
+      bBrowseVersions : BOOL;
+   END_VAR
+
+END_PROGRAM
+
+PROGRAM rcuuserpagevars
+
+   // Variables
+   VAR
+      bShowMsgBoxLogIn : BOOL;
+   END_VAR
+
+   // Routines
+   ROUTINE * ();
+
+END_PROGRAM

@@ -1,0 +1,1353 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       _systemvars.ttp                                              *
+*   Description:  systemvariables and Hardware endpoints                      *
+*-----------------------------------------------------------------------------*
+*   25.10.05  BIT: 
+*)
+
+
+// T_FgAssignment.tu
+CONSTANT
+ cFgArraySize : INT := 4 (* upper bound of functiongroup-array [1..n] *);
+END_CONSTANT
+
+TYPE
+ tsFgBodycontrol : 
+   STRUCT 
+    iNumber : INT (* number of assigned FU *);
+    zName : STRING[255] (* name of assigned bodycontrol-unit - e.a.'BCU1' *);
+    mInitDone : BOOL (* initialisation of bodycontrol-unit is done *);
+   END_STRUCT;
+ tsFgKinematic : 
+   STRUCT 
+    mAssigned : BOOL (* a robot-control-unit (kinematic/RCU) is assigned to this functiongroup *);
+    iNumber : INT (* number of assigned FU *);
+    zName : STRING[255] (* name of assigned motioncontrol-unit - e.a. 'RCU1' *);
+    nKinControlType : tsKinControlTypes; 
+    mInitDone:BOOL (*initialisation of motioncontrol-unit is done*);
+   END_STRUCT;
+ tsFgProcess : 
+   STRUCT 
+    mAssigned : BOOL (* a process-control-unit is assigned to this functiongroup *);
+    iNumber : INT (* number of assigned FU *);
+    zName : STRING[255] (* name of assigned processcontrol-unit - e.a. 'PCU1' *);
+    mInitDone : BOOL (* initialisation of processcontrol-unit is done *);
+    nProcessType : tsProcessTypes;
+   END_STRUCT;
+ tsFgAssignmentPage : 
+   STRUCT 
+    mMaster : BOOL (* this is the primary functiongroup of this EcoRpc (used for message-system) *);
+    zFgName : STRING[255] (* name of this functiongroup- e.a. 'R11' *);
+    sBodycontrol : tsFgBodycontrol;
+    sKinematic : tsFgKinematic;
+    sProcess : tsFgProcess;
+   END_STRUCT;
+ tyFgAssignment : ARRAY  [1..cFgArraySize] OF tsFgAssignmentPage (* FG-assignment-array *);
+ tsFgAssignment : 
+   STRUCT 
+    mValid : BOOL := FALSE (* data in table is valid *);
+    iNumberOfFGs : INT (* number of functiongroups on this RPC [1..n] *);
+    iNumberOfKinematics : INT (* number of kinematics (RCUs) - information used by motion only *);
+    iNumberOfProcesses : INT (* total number of processes (PCUs) *);
+    zNameOfMasterFG : STRING[255] (* name of master functiongroup - e.a. 'R11' *);
+    iIndexOfMasterFG : INT (* index of master functiongroup *);
+    yFG : tyFgAssignment (* parameters of all functiongroups *);
+   END_STRUCT (* FG-assignment-table - associated units of all functiongroups of this RPC *);   
+ tsFgParam : 
+   STRUCT 
+    mValid       : BOOL (* paramters of this structure have been initialized, are valid and may be used *);
+    iFgNumber    : INT (* number of this functiongroup *);
+    zFgName      : STRING[255] (* name of functiongroup - e.a. 'R11' *);
+    iBcuNumber   : INT (* number of assigned BCU *);
+    zBcuName     : STRING[255] (* name of assigned BCU - e.a. BCU1 *);
+    mPcuAssigned : BOOL (* a process-control-unit is assigned to this functiongroup *);
+    iPcuNumber   : INT (* number of assigned PCU *);
+    zPcuName     : STRING[255] (* name of assigned PCU - e.a. PCU1 *);
+    mRcuAssigned : BOOL (* a robot-control unit (kinematic/RCU) is assigned to this functiongroup *);
+    iRcuNumber   : INT (* number of assigned RCU *);
+    zRcuName     : STRING[255] (* name of assigned RCU - e.a. RCU1 *);
+    nRcuControlTpye : tsKinControlTypes;
+    nProcessTpye : tsProcessTypes;
+   END_STRUCT (* local functiongroup-parameters - are declared as VAR_GLOBAL in each FU - initialized in FB_Init *);
+ tsProcessTypes :  (NoProcess := 0);   
+ tsKinControlTypes :  (NoKinematic := 0);
+END_TYPE
+
+
+VAR GLOBAL
+   //---------------------------------------------------------------------------------------------------
+   //---------------  Hardware-endpoint Inputs from safety-PLC (RcuSimulatePLCPaint, emergencyStop) ----
+   //----------------- (RcuAutoControlPaint, RcuAutoControlSealing, RcuSimulatePLCSealing) -------------
+   cHW_mEmergencyStop : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mEmergencyStop : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_FireAlarm      : STRING;
+   cHW_PowerOnPaint   : STRING;
+   cHW_DeadmanPaint   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_BrakeRelDevice : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_zOutBrakeVoltReduction : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // TRcuAutoControl
+   cSV_bDownloadReq              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bDownloadReqAck           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_HomingRetain              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_PositionRetain            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+      // TRcuTypeList
+   cSV_TypeListSelect            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_TypeListDataY             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_TypeListDataKey           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   // RcuInterfaceToPaint
+   cSV_yTriggerPaint                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iNumberOfActualBrushPaint    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mMotionActivePaint           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mProcessReadyPaint           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mProcessContinue             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mProcessActivePaint          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mRobotMovingPaint            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_rTcpVelocityPaint            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mDoSoftPurgePaint            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_zProgramMainRunPaint         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_zProgramPreRunPaint          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_zProgramPrewarnPaint         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_zGunTriggerPaint             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_zBrushTriggerPaint           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mHTOff                       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mWaitingTrackingPos          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mInBellCleaner               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mInCapCleaner                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mTurnMaskOn                  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iProcessCmd                  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iProcessCmdAck               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iProcessState                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mBlowingAirOn                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_wCheckSumProject             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iGunNumberOfActualBrushPaint : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mPistonChange                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mPistonDegrade               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mTankStop                    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mCover                       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mCoverIni                    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mCoupling                    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mCouplingIni                 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mMaskingDeviceInUse          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mMaskingDeviceAtIni          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mPivotingBracketInPos        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mMotionAbortPushOut          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EcoTalkReqHtOff              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EcoTalkHtIsOff               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iHtExists                    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mHtDischargeCheck            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iAtomState                   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iActualColGrpState           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iActualColorGroup            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iCleaningDeviceExists        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mAtomizerInCleaner           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // RcuInterfaceToBCU
+   cSV_B2M_tProgramnumber          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_iMotionIndexFifoZone    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_rActualconveyorposition : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mAbort                  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mInterrupt              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mStartBrakeCheck        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_iLastProgramnumber      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mGoHomeAtEnd            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mHeartbeat              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mConnection2HMIOK       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mNoPaint                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_wDegrade                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   cSV_B2M_mStartProg              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mStopProg               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mSwitchOffDrives        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_mConvStopDueToProcess   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_B2M_iNextPrePos             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_M2B_mMotionrelease          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mMotionactive           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mRobotmoving            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mMotionerror            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mBypass                 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mHomeposition           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mBrakeCheckPos          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mPreposition            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mEndOfBody              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mReleaseConveyor        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mSetConveyorStartvalue  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_iActualFixPosition      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_rConveyorStartvalue     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mBrakeCheckRunning      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mBrakeCheckFinished     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mNormalEndofProgram     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_iExtFixPosNumber        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_iNextFixPosNumber       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_zProjectName            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_zProgramName            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mHeartbeat              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mAbortBody              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mDeadMan                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_wDegrade                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_M2B_iVersion                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mAckBodyData            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mBadBodyData            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mBadStartProg           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mOpenFixation           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_M2B_mDrivesSwitchedOff      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_PP_mPositionRefill          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_PP_mRefillCleaner           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_PP_mCleanTool               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_sFifoZone        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneAmount  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneProgNr  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoAmount      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoProgNr      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sSimFifoAmount   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sSimFifoProgNr   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sRobotIsStopped  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sConveyorRelease : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sMainMode        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // RcuInterfaceToBCU special for PaintChecker
+   cSV_sFifoZoneUniqueBodyId   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneSkidNo         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZonePIN            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneTypeCode_IECV1 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneTypeCode_IECV2 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneColorNo        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneVariantHigh  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneExtVariants    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sFifoZoneExtPartareas   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   // TRcuRobot
+   cSV_ActualPositions : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_ActualTcp       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_ActualObject    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_ActualTool      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_DriveParam      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_ActualExtTool   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_ExtToolActive   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // RcuTracking
+   cSV_ActTrackingPos   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_WaitConveyor     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_TrackingStyle    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_Inbound          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_Outbound         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_Preposition      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_TrackingStartPos : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // RcuMessageManager
+   cSV_MotionAllowed : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // main
+   cSV_SerialNr          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_MotionReady       : STRING;
+   cSV_BootUpFinished    : STRING;
+   cSV_MessageFilterData : STRING;
+   
+   // RcuMasterProg
+   cHW_mMasterSig1_Kuka   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_mMasterSig2_Kuka   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_mMasterSig_Duerr   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // equipment
+   cSV_ErrorQuit : STRING;
+   cSV_iPrewarnTime : STRING;
+
+   // Gluing
+   cSV_iActAppPos   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iSetAppPos   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //limit switches axis
+   cHW_mLimitSwitchAxis : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //---------------  Hardware-endpoint Inputs from handlersensor (TRcuSensor) -------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_InSensVal1 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InSensVal2 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Hardware-endpoint Outputs to handlersensor (TRcuSensor) -------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_OutCalib : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutSens0 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutSens1 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Hardware-endpoint Inputs to handlersensor (TRcuSwitch) --------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_InSwitch1 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InSwitch2 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InSwitch3 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InSwitch4 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Hardware-endpoint pneumatic handler tool (TRcuPneuTool) -------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_InBoltIn        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InBoltOut       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutMoveBoltIn   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutMoveBoltOut  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InToolAngleRaw  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutToolUp       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutToolDown     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Hardware-endpoint In/Outputs for handler pneumatic unit (TRcuPneuUnit) ----------
+   //---------------------------------------------------------------------------------------------------
+   cHWI_CylinderIsUp     : ARRAY[cgiRcuMaxKinematics, cgiMaxCylSystem] OF STRING;
+   cHWI_CylinderIsDown   : ARRAY[cgiRcuMaxKinematics, cgiMaxCylSystem] OF STRING;
+   cHWO_MoveCylinderUp   : ARRAY[cgiRcuMaxKinematics, cgiMaxCylSystem] OF STRING;
+   cHWO_MoveCylinderDown : ARRAY[cgiRcuMaxKinematics, cgiMaxCylSystem] OF STRING;
+   cHWI_FootIsInFront    : ARRAY[cgiRcuMaxKinematics, cgiMaxFeetSystem] OF STRING;
+   cHWI_FootIsInBack     : ARRAY[cgiRcuMaxKinematics, cgiMaxFeetSystem] OF STRING;
+   cHWO_MoveFootToFront  : ARRAY[cgiRcuMaxKinematics, cgiMaxFeetSystem] OF STRING;
+   cHWO_MoveFootToBack   : ARRAY[cgiRcuMaxKinematics, cgiMaxFeetSystem] OF STRING;
+   cSV_ModeBCU           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Hardware-endpoint In/Outputs for stromagbrake (TRcuSensor, TRcuStromag) ---------
+   //---------------------------------------------------------------------------------------------------
+   cHW_OutputOn      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InputPressure : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Hardware-endpoint Outputs to Vision (TRcuVision) -------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_OutVisionTrigger : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_VisionAbs        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_VisionRel        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  kinematic to EcoScreen (TRcuEps) -----------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_RcMode                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutActualModulName : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutDrivesState     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutAxisPos         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSInWriteStarep      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutStarepProgress  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_FixposNumber          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iActOverridePaint     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iActBrushNumber       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_Collisionbits         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_CurrentLanguageSystem : STRING;
+   cSV_CurrentLanguage       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_UserPermission        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_RobotMoving           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_Bypass                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_Unselect              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_AtomCollision         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_RobotOverride         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_VirtWallCrc           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_VirtWallCrcError      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_VirtWallCrcToEps      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  Virtual wall (Safety)            -----------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_RCU_Safety            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  handling <--> EcoScreen (TRcuHandler) ------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSOrders           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSReqPartPos       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSReqOrder         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSIsOrderer        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSIsHandler        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   //---------------------------------------------------------------------------------------------------
+   //----------------  EcoScreen to handlertool (TRcuHandlerTool)  -------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSInCalibSensor      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSInDeactivateSensor : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSInSetPartFound     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSInDeactivateSwitch : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSInPneuUnit         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  handlertool to EcoScreen (TRcuHandlerTool) -------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSOutSensorCalibRuns : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutSensorInactive  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutSensorPartSet   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutActValueDir0    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutActValueDir1    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutSwitchInactive  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutSwitchSignal    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutIgnorePartCtrl  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutAirSupplyOK     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutPneuUnit        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_TriggerInfo               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_MessageInfo               : STRING;
+   cSV_DataRecordingActive       : STRING; 
+   cSV_ActivateDataRecording     : STRING;
+   cSV_DataRecordingReqSignalset : STRING;
+   cSV_ReadyForDRCommand         : STRING;
+   cSV_DRCommand                 : STRING;
+   cSV_ResponseDRCommand         : STRING;
+   cSV_StiffnessValue            : STRING;
+   cSV_StiffnessForAxisNr        : STRING;
+   cSV_FocusedKinematic          : STRING;
+   cSV_SimulateDrives            : STRING; 
+   cSV_SimulateDrivesV2          : STRING; 
+   cSV_FieldbusSimulationSystem  : STRING; 
+   cSV_FieldbusSimulationSystemV2: STRING; 
+   cSV_EstopFromBusMaster        : STRING;
+   cSV_EstopFromBusMasterV2      : STRING;
+   cSV_Sercos3Enabled            : STRING;
+   cSV_S3DeviceNames             : STRING;
+   cSV_S3Device                  : STRING;
+   cSV_EventProtocol             : STRING;
+   cSV_EventDriveProtocol        : STRING;
+   cSV_EventDriveInfoUpdate      : STRING;
+   cSV_EventDataRecorder         : STRING;
+   cSV_SlaveCommOk               : STRING;
+   cSV_EcatDeviceNames           : STRING;
+   cSV_EcatDeviceDataRetain      : STRING;
+   cSV_PowerSupplyCabinetOk      : STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  brake check <--> EcoScreen (TRcuBrakeCheck) ------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSbrakeCheck       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_BrakeCheckLowSpeed  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  TRcuVisionBk --> EcoScreen               ---------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSInPathCorr          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutPathCorr         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSInToolCorr          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutToolCorr         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+                                           
+   //---------------------------------------------------------------------------------------------------
+   //-----------------  TRcuToolMeasure --> EcoScreen               ------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSOutToolMeasLightBar : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutToolMeasureOk    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSOutToolMeasureFail  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+      
+   //---------------------------------------------------------------------------------------------------
+   //---------------  Hardware-endpoint ToolMessGabel  -------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_mToolDetect         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  EcoScreen to TRcuTorqueCheck  ---------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSDeactivateTorqueCheck    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_EPSDeactivateTorqueCheckRes : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   //---------------------------------------------------------------------------------------------------
+   //----------------  EcoScreen to TRcuHoming  --------------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_EPSOutHoming                 : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   //---------------------------------------------------------------------------------------------------
+   //----------------  PaintChecker - RCU to EcoScreen  ------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_bDownloadPaintAssNewFile     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bDownloadPaintAssNewFileAck  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bDownloadPaintAssNewFileBack : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bDownloadPaintAssNewName     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+      
+   cSV_bUploadNewPacData            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bUploadNewPacDataAck         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_strUploadNewPacDataFile      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   cSV_bPacFromPTPSoftwareReady     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPTPReadyForOrder     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iPacFromPTPErrorNo           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPTPCsvFileWritten    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPTPInStandbyMode     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPTPInEmissionMode    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iPacFromPTPFilmThickness     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   cSV_iPacToPTPToken               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iPacToPTPPaintCode           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacToPTPReleaseSingleMeas   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacToPTPNewMeasSeq          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacToPTPLaserOn             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   cSV_bPacToPLCLaserOn             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPLCLaserOn           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPLCLaserStandbyMode  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacFromPLCLaserEmissionMode : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_iPacToHmiState               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_bPacToHmiEnable              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   cSV_HmiSfa                       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   cSV_ObjMeas                      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Gluing - RCU to seam check system  ----------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_OutSeamCheckActivate      : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_OutSeamCheckActPathVelo   : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Sealing - atomizer collision  ---------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_InAtomCollision1          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_InAtomCollision2          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_InSensorCheck             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_OutSensorCheck            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   //---------------------------------------------------------------------------------------------------
+   //----------------  PDA - Primas  -------------------------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cHW_PDAModulname              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDAAxisSetPos             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDAAxisActPos             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   // Extensions MB Rastatt 01-03-2016
+   cHW_PDASercosError            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDADrivesReady            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDADrivesBB               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDATCPVeloAbs             : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDATCPVeloProg            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDATCPCartPosX            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDATCPCartPosY            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cHW_PDATCPCartPosZ            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   // nozzle change   
+   cSV_sNozzleChangerUsed        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sChangerPlaces            : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sMainNeedles              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iNrOfPlaces               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iNozzleGun                : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mEntranceRequest          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mAckEntranceRequest       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mSetBlowAir               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mPurge                    : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sRobotToProcess           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  ToolCleaner handler  ------------------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_mCatalogChanged           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iCleaningStrokes          : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mBlowAirTool              : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mGapPurgingActive         : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mCleanerFilled_Retain     : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_iReplenishXBodies_Retain  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_sToolCleanerHmi           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mReleaseProcess           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mEnableHighTension        : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   cSV_mReleaseHighTension       : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   
+   //---------------------------------------------------------------------------------------------------
+   //----------------  Pneumatic handler tool  ---------------------------------------------------------
+   //---------------------------------------------------------------------------------------------------
+   cSV_sHandlerToolHmi           : ARRAY[cgiRcuMaxKinematics] OF STRING;
+
+   //---------------------------------------------------------------------------------------------------
+   //----------------  TRcuLogger  ---------------------------------------------------------------------
+   cSV_SlaveBodyID               : ARRAY[cgiRcuMaxKinematics] OF STRING;
+   //----------------  TRcuDataRecorder  ---------------------------------------------------------------
+   cSV_CyclicValuesDataRecorder  : ARRAY[cgiRcuMaxKinematics] OF STRING;
+END_VAR
+
+VAR PRIVATE
+   Sym_PowerOnPaint          : STRING;
+   Sym_DeadmanPaint          : STRING;
+   Sym_BrakeRelDevice        : STRING;
+   Sym_mEmergencyStop        : STRING;
+   Sym_mMasterSig1_Kuka      : STRING;
+   Sym_mMasterSig2_Kuka      : STRING;
+   Sym_mMasterSig_Duerr      : STRING;
+   Sym_InSensorValue1        : STRING;
+   Sym_InSensorValue2        : STRING;
+   Sym_OutCalib              : STRING;
+   Sym_OutSens0              : STRING;
+   Sym_OutSens1              : STRING;
+   Sym_InSwitch1             : STRING;
+   Sym_InSwitch2             : STRING;
+   Sym_InSwitch3             : STRING;
+   Sym_InSwitch4             : STRING;
+   Sym_InBoltIn            : STRING;
+   Sym_InBoltOut           : STRING;
+   Sym_OutMoveBoltIn       : STRING;
+   Sym_OutMoveBoltOut      : STRING;
+   Sym_InToolAngleRaw      : STRING;
+   Sym_OutToolUp           : STRING;
+   Sym_OutToolDown         : STRING;
+   Sym_OutputOn              : STRING;
+   Sym_InputPressure         : STRING;
+   Sym_OutVisionTrigger      : STRING;
+   Sym_InToolDetect          : STRING;
+   Sym_mLimitSwitchAxis      : STRING;
+   Sym_mAtomCollision1       : STRING;
+   Sym_mAtomCollision2       : STRING;
+   SymInCylinderIsUp         : ARRAY [cgiMaxCylSystem] OF STRING;
+   SymInCylinderIsDown       : ARRAY [cgiMaxCylSystem] OF STRING; 
+   SymOutMoveCylinderUp      : ARRAY [cgiMaxCylSystem] OF STRING;
+   SymOutMoveCylinderDown    : ARRAY [cgiMaxCylSystem] OF STRING;
+   SymInFootIsInFront        : ARRAY [cgiMaxFeetSystem] OF STRING;
+   SymInFootIsInBack         : ARRAY [cgiMaxFeetSystem] OF STRING; 
+   SymOutMoveFootToFront     : ARRAY [cgiMaxFeetSystem] OF STRING;
+   SymOutMoveFootToBack      : ARRAY [cgiMaxFeetSystem] OF STRING;
+   FgParam                   : MAPTO tsFgParam;
+   FgAssignment              : MAPTO tsFgAssignment;
+END_VAR
+
+ROUTINE RcuReadSymbols() : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      name : STRING;
+      i      : SINT;
+   END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "_systemvars.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      IF NOT CatalogReadString(dirHdl, "Sym_PowerOnPaint", Sym_PowerOnPaint, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "PowerOnPaint");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_DeadmanPaint", Sym_DeadmanPaint, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "DeadmanPaint");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BrakeRelDevice", Sym_BrakeRelDevice, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "BrakeRelDevice");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_mEmergencyStop", Sym_mEmergencyStop, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "mEmergencyStop");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_mMasterSig1_Kuka", Sym_mMasterSig1_Kuka, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_mMasterSig1_Kuka");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_mMasterSig2_Kuka", Sym_mMasterSig2_Kuka, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_mMasterSig2_Kuka");
+      END_IF;
+     IF NOT CatalogReadString(dirHdl, "Sym_mMasterSig_Duerr", Sym_mMasterSig_Duerr, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_mMasterSig_Duerr");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_OutCalib", Sym_OutCalib, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "OutCalib");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InSensorValue1", Sym_InSensorValue1, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InSensorValue1");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InSensorValue2", Sym_InSensorValue2, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InSensorValue2");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_OutSens0", Sym_OutSens0, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutSens0");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_OutSens1", Sym_OutSens1, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutSens1");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InSwitch1", Sym_InSwitch1, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InSwitch1");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InSwitch2", Sym_InSwitch2, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InSwitch2");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InSwitch3", Sym_InSwitch3, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InSwitch3");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InSwitch4", Sym_InSwitch4, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InSwitch4");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InBoltIn", Sym_InBoltIn, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InBoltIn");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InBoltOut", Sym_InBoltOut, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InBoltOut");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_OutMoveBoltIn", Sym_OutMoveBoltIn, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutMoveBolt");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_OutMoveBoltOut", Sym_OutMoveBoltOut, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutMoveBolt");
+      END_IF; 
+      IF NOT CatalogReadString(dirHdl, "Sym_InToolAngleRaw", Sym_InToolAngleRaw, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InToolAngleRaw");
+      END_IF;  
+      IF NOT CatalogReadString(dirHdl, "Sym_OutToolUp", Sym_OutToolUp, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutToolUp");
+      END_IF; 
+      IF NOT CatalogReadString(dirHdl, "Sym_OutToolDown", Sym_OutToolDown, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutToolDown");
+      END_IF;   
+      IF NOT CatalogReadString(dirHdl, "Sym_OutputOn", Sym_OutputOn, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "OutputOn");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InputPressure", Sym_InputPressure, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "InputPressure");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_OutVisionTrigger", Sym_OutVisionTrigger, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_OutVisionTrigger");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_mLimitSwitchAxis", Sym_mLimitSwitchAxis, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_mLimitSwitchAxis");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_mAtomCollision1", Sym_mAtomCollision1, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_mAtomCollision1");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_mAtomCollision2", Sym_mAtomCollision2, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_mAtomCollision2");
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_InToolDetect", Sym_InToolDetect, TRUE) THEN
+         RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", "Sym_InToolDetect");
+      END_IF;
+      FOR i:=0 TO (cgiMaxCylSystem-1) DO
+         name := "Sym_InCylinderIsUp" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymInCylinderIsUp[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+         name := "Sym_InCylinderIsDown" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymInCylinderIsDown[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+         name := "Sym_OutMoveCylUp" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymOutMoveCylinderUp[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+         name := "Sym_OutMoveCylDown" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymOutMoveCylinderDown[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;      
+      END_FOR;
+      FOR i:=0 TO (cgiMaxFeetSystem-1) DO   
+         name := "Sym_InFootIsInFront" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymInFootIsInFront[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+         name := "Sym_InFootIsInBack" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymInFootIsInBack[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+         name := "Sym_OutMoveFootToFront" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymOutMoveFootToFront[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+         name := "Sym_OutMoveFootToBack" + STR(i+1);
+         IF NOT CatalogReadString(dirHdl, name, SymOutMoveFootToBack[i], TRUE) THEN
+            RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "_systemvars.RcuReadSymbols", name);
+         END_IF;
+      END_FOR;
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "_systemvars.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+RETURN TRUE;
+
+END_ROUTINE
+
+
+ROUTINE ReadFgAssignments() PRIVATE
+   VAR
+      i : INT;
+      sFgParam : STRING;
+      sFgAssignment : STRING;
+   END_VAR;
+   
+   sFgAssignment := "system.SV_sFgAssignment";
+   FgAssignment  := MAPX(sFgAssignment);
+   
+   IF IS_MAPPED(FgAssignment) THEN
+      WAIT FgAssignment.mValid;
+      DebugPrint(eTraceCommon, " _systemvars: sFgAssignment = " + sFgAssignment);
+      DebugPrint(eTraceCommon, " _systemvars: FgAssignment.mValid = " + STR(FgAssignment.mValid));
+      DebugPrint(eTraceCommon, " _systemvars: FgAssignment.iNumberOfKinematics = " + STR(FgAssignment.iNumberOfKinematics));
+      giAnzKin := FgAssignment.iNumberOfKinematics;
+      FOR i:=1 TO giAnzKin DO
+         DebugPrint(eTraceCommon, " _systemvars: FgAssignment.yFG[i].sKinematic.zName = " + FgAssignment.yFG[i].sKinematic.zName);
+         IF FgAssignment.yFG[i].mMaster THEN
+            giNrMasterRobot := i-1;
+            gsMasterName    := FgAssignment.yFG[i].zFgName;
+         END_IF;
+      END_FOR;
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrVarNotMapped, -1, 1, 0, "_systemvars.ReadFgAssignments", sFgAssignment);
+      RETURN;
+   END_IF;
+  
+   FOR i:=0 TO giAnzKin-1 DO
+      sFgParam :="RCU" + STR(i+1) + ".SV_sFgParam";
+      FgParam := MAPX(sFgParam);
+      IF IS_MAPPED(FgParam) THEN
+         WAIT FgParam.mValid;
+         DebugPrint(eTraceCommon, " _systemvars: sFgParam = " + sFgParam);
+         DebugPrint(eTraceCommon, " _systemvars: FgParam.mValid = " + STR(FgParam.mValid));
+         DebugPrint(eTraceCommon, " _systemvars: FgParam.iRcuNumber = " + STR(FgParam.iRcuNumber));
+         DebugPrint(eTraceCommon, " _systemvars: FgParam.iBcuNumber = " + STR(FgParam.iBcuNumber));
+         DebugPrint(eTraceCommon, " _systemvars: FgParam.iPcuNumber = " + STR(FgParam.iPcuNumber));
+         gyiNrRcu[i] := FgParam.iRcuNumber;
+         gyiNrBcu[i] := FgParam.iBcuNumber;
+         gyiNrPcu[i] := FgParam.iPcuNumber;
+      ELSE
+         RcuSetMessageOnce(_systemvars_ErrVarNotMapped, -1, 1, 1, "_systemvars.ReadFgAssignments", sFgParam);
+      END_IF;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE GetFgName(iFGNr : DINT) : STRING GLOBAL
+  RETURN FgAssignment.yFG[iFGNr+1].zFgName;
+END_ROUTINE
+
+ROUTINE Mappings() PRIVATE
+
+   mDataRecordingActive := MAPX(cSV_DataRecordingActive);
+   IF NOT IS_MAPPED(mDataRecordingActive) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 1, 0, "_systemvars.Mappings", cSV_DataRecordingActive);
+   END_IF;
+
+   mActivateDataRecording := MAPX(cSV_ActivateDataRecording);         
+   IF NOT IS_MAPPED(mActivateDataRecording) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 2, 0, "_systemvars.Mappings", cSV_ActivateDataRecording);
+   END_IF;
+
+   mDataRecordingRequestedSignalset := MAPX(cSV_DataRecordingReqSignalset);
+   IF NOT IS_MAPPED(mDataRecordingRequestedSignalset) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 3, 0, "_systemvars.Mappings", cSV_DataRecordingReqSignalset);
+   END_IF;
+   
+   gbReadyForDRCommand := MAPX(cSV_ReadyForDRCommand);
+   IF NOT IS_MAPPED(gbReadyForDRCommand) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 4, 0, "_systemvars.Mappings", cSV_ReadyForDRCommand);
+   END_IF;
+   
+   giDRCommand := MAPX(cSV_DRCommand);
+   IF NOT IS_MAPPED(giDRCommand) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 5, 0, "_systemvars.Mappings", cSV_DRCommand);
+   END_IF;
+   
+   giResponseDRCommand := MAPX(cSV_ResponseDRCommand);
+   IF NOT IS_MAPPED(giResponseDRCommand) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 6, 0, "_systemvars.Mappings", cSV_ResponseDRCommand);
+   END_IF;
+   
+   grStiffnessValue := MAPX(cSV_StiffnessValue);
+   IF NOT IS_MAPPED(grStiffnessValue) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 7, 0, "_systemvars.Mappings", cSV_StiffnessValue);
+   END_IF;
+   
+   giStiffnessForAxisNr := MAPX(cSV_StiffnessForAxisNr);
+   IF NOT IS_MAPPED(giStiffnessForAxisNr) THEN
+      RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 8, 0, "_systemvars.Mappings", cSV_StiffnessForAxisNr);
+   END_IF;
+   
+   gbSERCOSinSimu := MAPX(cSV_SimulateDrives);
+   IF NOT IS_MAPPED(gbSERCOSinSimu) THEN
+      gbSERCOSinSimu := MAPX(cSV_SimulateDrivesV2);
+      IF NOT IS_MAPPED(gbSERCOSinSimu) THEN
+         RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 9, 0, "_systemvars.Mappings", cSV_SimulateDrives + "/" + cSV_SimulateDrivesV2);
+      END_IF;   
+   END_IF;
+   
+   gbFBSSActive := MAPX(cSV_FieldbusSimulationSystem);
+   IF NOT IS_MAPPED(gbFBSSActive) THEN
+      gbFBSSActive := MAPX(cSV_FieldbusSimulationSystemV2);
+      IF NOT IS_MAPPED(gbFBSSActive) THEN
+         RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 10, 0, "_systemvars.Mappings", cSV_FieldbusSimulationSystem + "/" + cSV_FieldbusSimulationSystemV2);
+      END_IF;  
+   END_IF;
+   
+   gbEstopFromBusMaster := MAPX(cSV_EstopFromBusMaster);
+   IF NOT IS_MAPPED(gbEstopFromBusMaster) THEN
+     gbEstopFromBusMaster := MAPX(cSV_EstopFromBusMasterV2);    
+     IF NOT IS_MAPPED(gbEstopFromBusMaster) THEN    
+         RcuSetMessageOnce(equipment_WarSysVarNotMapped, -1, 11, 0, "_systemvars.Mappings", cSV_EstopFromBusMaster + "/" + cSV_EstopFromBusMasterV2);
+      END_IF;  
+   END_IF;
+   
+   gbSercos3Enabled := MAPX(cSV_Sercos3Enabled);
+   yS3DeviceNames := MAPX(cSV_S3DeviceNames);
+   yECATDeviceNames := MAPX(cSV_EcatDeviceNames);
+  
+END_ROUTINE
+
+ROUTINE NEW()
+   
+   VAR
+      s     : STRING;
+      i     : INT;
+      j     : SINT;
+   END_VAR
+   
+   ReadFgAssignments();
+   
+   RcuReadSymbols();
+   
+   cHW_PowerOnPaint              := "system." + Sym_PowerOnPaint;
+   cHW_FireAlarm                 := "system." + cHW_SLI_mFireAlarm;
+   cSV_MotionReady               := "system.SV_ControlState.mMotionReady";
+   cSV_BootUpFinished            := "system.SV_ControlState.mBootupFinished";
+   cSV_ErrorQuit                 := "system.SV_Messagesystem.sGlobal.mErrorQuitMotion";
+   cSV_iPrewarnTime              := "system.SV_iPrewarnTime";
+   cSV_MessageInfo               := "system.SV_MessageInfos";
+   cSV_MessageFilterData         := "system.SV_MessageFilterData";
+   cSV_ActivateDataRecording     := "system.SV_System2HMI.tCommon.sOut.o_mActivateDataRecording";
+   cSV_DataRecordingReqSignalset := "system.SV_System2HMI.tCommon.sOut.o_iDataRecordingReqSignalset";
+   cSV_DataRecordingActive       := "system.SV_System2HMI.tCommon.sIn.i_mDataRecordingActive";
+   cSV_ReadyForDRCommand         := "system.SV_System2HMI.tCommon.sOut.o_mReadyForDRCommand";
+   cSV_DRCommand                 := "system.SV_System2HMI.tCommon.sIn.i_iDRCommand";
+   cSV_ResponseDRCommand         := "system.SV_System2HMI.tCommon.sOut.o_iResponseDRCommand";
+   cSV_StiffnessValue            := "system.SV_System2HMI.tCommon.sIn.i_rStiffnessValue";
+   cSV_StiffnessForAxisNr        := "system.SV_System2HMI.tCommon.sIn.i_iStiffnessForAxisNr";
+   cSV_FocusedKinematic          := "system.SV_FocusedKinematic";
+   cSV_SimulateDrives            := "system.SV_mSimulateDrives";
+   cSV_SimulateDrivesV2          := "system.SV_sGeneralSystemCfg.mSimulateDrives";
+   cSV_FieldbusSimulationSystem  := "system.SV_mFieldbusSimulationSystem";
+   cSV_FieldbusSimulationSystemV2:= "system.SV_sGeneralSystemCfg.mFieldbusSimulationSystem";
+   cSV_EstopFromBusMaster        := "system.SV_mCfgEstopFromBusMaster";
+   cSV_EstopFromBusMasterV2      := "system.SV_sGeneralSystemCfg.mEStopFromBusMaster";   
+   cSV_Sercos3Enabled            := "system.SV_sGeneralSystemCfg.sDevicePaths.sSercos3.mEnabled";
+   cSV_S3DeviceNames             := "system.SV_yS3DeviceNames";
+   cSV_S3Device                  := "system.SV_yS3Device";
+   cSV_EcatDeviceNames           := "system.SV_yEcatDeviceNames";
+   cSV_EcatDeviceDataRetain      := "system.SV_yEcatDeviceDataRetain";
+   cSV_EventProtocol             := "system.EventProtocolTC";
+   cSV_EventDriveProtocol        := "system.EventDriveProtocolTC";
+   cSV_EventDriveInfoUpdate      := "system.EventDriveInfoTC";
+   cSV_EventDataRecorder         := "system.SO_evMachineProtocolTC";
+   cSV_CurrentLanguageSystem     := "system.SV_System2HMI.tCommon.sIn.i_zCurrentLanguage";
+   cSV_SlaveCommOk               := "system.SV_mStateOK"; 
+   cSV_PowerSupplyCabinetOk      := "system.SV_sGeneralSystemCfg.mPowerSupplyCabinetOk";
+
+   Mappings();
+
+   FOR i := 0 TO giAnzKin-1 DO
+      
+      cSV_rTcpVelocityPaint[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_rTcpVelocity";
+      // TRcuRobot
+      cSV_ActualPositions[i]       := "RCU" + STR(gyiNrRcu[i]) + ".SV_ActualPositions";
+      cSV_ActualTcp[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SV_ActualTcp";
+      cSV_ActualObject[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_ActualObject";
+      cSV_ActualTool[i]            := "RCU" + STR(gyiNrRcu[i]) + ".SV_ActualTool";
+      cSV_DriveParam[i]            := "RCU" + STR(gyiNrRcu[i]) + ".SV_DriveParam";
+      cSV_ActualExtTool[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_ActualExtTool";
+      cSV_ExtToolActive[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_ExtToolActive";
+      // RcuTracking
+      cSV_ActTrackingPos[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_rActTrackingPos";
+      cSV_WaitConveyor[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_rWaitConveyor";
+      cSV_TrackingStyle[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_iTrackingStyle";
+      cSV_Inbound[i]               := "RCU" + STR(gyiNrRcu[i]) + ".SV_rInbound";
+      cSV_Outbound[i]              := "RCU" + STR(gyiNrRcu[i]) + ".SV_rOutbound";
+      cSV_Preposition[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_mPreposition";
+      cSV_TrackingStartPos[i]      := "BCU" + STR(gyiNrRcu[i]) + ".SV_rTrackingStartPosition";
+      // main
+      cSV_SerialNr[i]              := "RCU" + STR(gyiNrRcu[i]) + ".SV_SerialNumber";
+      // TRcuEps
+      cSV_RcMode[i]                := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_iRcMode";
+      cSV_EPSOutActualModulName[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_zActModulName";
+      cSV_EPSOutDrivesState[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_iDrivesState";
+      cSV_EPSOutAxisPos[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tAxis";
+      cSV_EPSInWriteStarep[i]      := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sIn.i_mWriteStarep";
+      cSV_EPSOutStarepProgress[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_iProgressStarep";
+      cSV_FixposNumber[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_iFixPosNr";
+      cSV_iActOverridePaint[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_iActOverride";
+      cSV_iActBrushNumber[i]       := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_iActBrushNr";
+      cSV_Collisionbits[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_yCollisionBits";
+      cSV_CurrentLanguage[i]       := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sIn.i_zCurrentLanguage";
+      cSV_UserPermission[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tUserPermission.sIn.yUserLevel";      
+      cSV_RobotMoving[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_mRobotMoving";
+      cSV_Bypass[i]                := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_mBypass";
+      cSV_Unselect[i]              := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_mUnselect";
+      cSV_AtomCollision[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_yAtomCollision";
+      cSV_RobotOverride[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RobotOverride";
+      cSV_VirtWallCrc[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sIn.i_dVirtWallCrc";
+      cSV_VirtWallCrcError[i]      := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_mVirtWallCrcError";
+      cSV_VirtWallCrcToEps[i]      := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tCommon.sOut.o_dVirtWallCrc";
+      cSV_RCU_Safety[i]            := "RCU" + STR(gyiNrRcu[i]) + ".SV_sRCU_Safety";
+      
+      //TRcuHandler
+      cSV_EPSOrders[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.yOrder";
+      cSV_EPSReqPartPos[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.sReqPartPos";
+      cSV_EPSReqOrder[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.sReqOrder";
+      cSV_EPSIsOrderer[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.mIsOrderer";
+      cSV_EPSIsHandler[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.mIsHandler";
+      
+      // TRcuHandlerTool
+      cSV_EPSInCalibSensor[i]      := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sIn.i_mSensorCalibrate";
+      cSV_EPSInDeactivateSensor[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sIn.i_mSensorDeactivate";
+      cSV_EPSInSetPartFound[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sIn.i_mSensorSetPartFound";
+      cSV_EPSInDeactivateSwitch[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sIn.i_mSwitchDeactivate";
+      cSV_EPSInPneuUnit[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sIn.yPneuUnit";
+      cSV_EPSOutSensorCalibRuns[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_mSensorCalibrationRuns";
+      cSV_EPSOutSensorInactive[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_mSensorInactive";
+      cSV_EPSOutSensorPartSet[i]   := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_mSensorPartFound";
+      cSV_EPSOutActValueDir0[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_iActValueDir0";
+      cSV_EPSOutActValueDir1[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_iActValueDir1";
+      cSV_EPSOutSwitchInactive[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_mSwitchInactive";
+      cSV_EPSOutSwitchSignal[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.yHandlerSwitch";
+      cSV_EPSOutIgnorePartCtrl[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.o_mIgnorePartControl";
+      cSV_EPSOutPneuUnit[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sOut.yPneuUnit";
+            
+      // TRcuBrakeCheck) 
+      cSV_EPSbrakeCheck[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tBrakeCheck";
+      cSV_BrakeCheckLowSpeed[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_mBrakeCheckLowSpeed";
+   
+      // TRcuVisionBk
+      cSV_EPSInToolCorr[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sIn.sToolCorr";  
+      cSV_EPSOutToolCorr[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sOut.sToolCorr"; 
+      cSV_EPSInPathCorr[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sIn.sPathCorr";  
+      cSV_EPSOutPathCorr[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sOut.sPathCorr"; 
+
+      // TRcuToolMeasure
+      cSV_EPSOutToolMeasLightBar[i]:= "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sOut.sToolMeasure.mLightBarrier";
+      cSV_EPSOutToolMeasureOk[i]   := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sOut.sToolMeasure.mMeasureOk";
+      cSV_EPSOutToolMeasureFail[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tVision.sOut.sToolMeasure.mFailure";
+
+      cHW_DeadmanPaint[i]          := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_DeadmanPaint;
+      cHW_BrakeRelDevice[i]        := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_BrakeRelDevice;
+      cSV_zOutBrakeVoltReduction[i]:= "RCU" + STR(gyiNrRcu[i]) + ".SV_zOutBrakeVoltageReduction";
+
+      // TRcuAutoControl
+      cSV_bDownloadReq[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_ProjectChanges_Download.i_mStrobe";
+      cSV_bDownloadReqAck[i]       := "RCU" + STR(gyiNrRcu[i]) + ".SV_ProjectChanges_Download.o_mAck";
+      cSV_HomingRetain[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_Homing";
+      cSV_PositionRetain[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_Position";
+      
+      // TRcuTypeList
+      cSV_TypeListSelect[i]              := "RCU" + STR(gyiNrRcu[i]) + ".SV_TypeList.Select";
+      cSV_TypeListDataY[i]               := "RCU" + STR(gyiNrRcu[i]) + ".SV_TypeList.Data[].y[]";
+      cSV_TypeListDataKey[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SV_TypeList.Data[].Key";
+
+      // RcuInterfaceToBCU
+      cSV_B2M_tProgramnumber[i]          := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.tProgramnumber";
+      cSV_B2M_iMotionIndexFifoZone[i]    := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.iMotionIndexFifoZone";
+      cSV_B2M_rActualconveyorposition[i] := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.rActualconveyorposition";
+      cSV_B2M_mAbort[i]                  := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mAbort";
+      cSV_B2M_mInterrupt[i]              := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mInterrupt";
+      cSV_B2M_mStartBrakeCheck[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mStartBrakeCheck";
+      cSV_B2M_iLastProgramnumber[i]      := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.iLastProgramnumber";
+      cSV_B2M_mGoHomeAtEnd[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mGoHomeAtEnd";
+      cSV_B2M_mHeartbeat[i]              := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mHeartbeat";
+      cSV_B2M_mConnection2HMIOK[i]       := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mConnection2HMIOK";
+      cSV_B2M_mNoPaint[i]                := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mNoPaint";
+      cSV_B2M_wDegrade[i]                := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.wDegrade";
+ 
+      cSV_B2M_mStartProg[i]              := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tBCUtoMotion.mStartProg";
+      cSV_B2M_mStopProg[i]               := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tBCUtoMotion.mStopProg";
+      cSV_B2M_mSwitchOffDrives[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mSwitchOffDrives";
+      cSV_B2M_mConvStopDueToProcess[i]   := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.mConvStopDueToProcess";
+      cSV_B2M_iNextPrePos[i]             := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tBCUtoMotion.iNextPrePos";
+      
+      cSV_M2B_mMotionrelease[i]          := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mMotionrelease";
+      cSV_M2B_mMotionactive[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mMotionactive";
+      cSV_M2B_mRobotmoving[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mRobotmoving";
+      cSV_M2B_mMotionerror[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mMotionerror";
+      cSV_M2B_mBypass[i]                 := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mBypass";
+      cSV_M2B_mHomeposition[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mHomeposition";
+      cSV_M2B_mBrakeCheckPos[i]          := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mBrakeCheckPos";
+      cSV_M2B_mPreposition[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mPreposition";
+      cSV_M2B_mEndOfBody[i]              := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mEndOfBody";
+      cSV_M2B_mReleaseConveyor[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mReleaseConveyor";
+      cSV_M2B_mSetConveyorStartvalue[i]  := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mSetConveyorStartvalue";
+      cSV_M2B_iActualFixPosition[i]      := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.iActualFixPosition";
+      cSV_M2B_rConveyorStartvalue[i]     := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.rConveyorStartvalue";
+      cSV_M2B_mBrakeCheckRunning[i]      := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mBrakeCheckRunning";
+      cSV_M2B_mBrakeCheckFinished[i]     := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mBrakeCheckFinished";
+      cSV_M2B_mNormalEndofProgram[i]     := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mNormalEndofProgram";
+      cSV_M2B_iExtFixPosNumber[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.iExtFixPosNumber";
+      cSV_M2B_iNextFixPosNumber[i]       := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.iNextFixPosNumber";
+      cSV_M2B_zProjectName[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.zProjectName";
+      cSV_M2B_zProgramName[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.zProgramName";
+      cSV_M2B_mHeartbeat[i]              := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mHeartbeat";
+      cSV_M2B_mAbortBody[i]              := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mAbortBody";
+      cSV_M2B_mDeadMan[i]                := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mDeadman";
+      cSV_M2B_wDegrade[i]                := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.wDegrade";
+      cSV_M2B_mDrivesSwitchedOff[i]      := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_Interface.tMotiontoBCU.mDrivesSwitchedOff";
+      
+      cSV_M2B_iVersion[i]                := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tMotiontoBCU.iVersion";
+      cSV_M2B_mAckBodyData[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tMotiontoBCU.mAckBodyData";
+      cSV_M2B_mBadBodyData[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tMotiontoBCU.mBadBodyData";
+      cSV_M2B_mBadStartProg[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tMotiontoBCU.mBadStartProg";
+      cSV_M2B_mOpenFixation[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tMotiontoBCU.mOpenFixation";
+      
+      cSV_PP_mPositionRefill[i]          := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tPostProcess.mPositionRefill";
+      cSV_PP_mRefillCleaner[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tPostProcess.mRefillCleaner";
+      cSV_PP_mCleanTool[i]               := "BCU" + STR(gyiNrBcu[i]) + ".SV_Motion_ExtInterface.tPostProcess.mCleanTool";
+      cSV_mGapPurgingActive[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_sPCU2BCU.mGapPurgingActive";
+      cSV_mReleaseProcess[i]             := "BCU" + STR(gyiNrBcu[i]) + ".SV_sPCU2BCU.mReleaseProcess";
+      
+      cSV_sFifoZone[i]             := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sRCUData";
+      cSV_sFifoZoneAmount[i]       := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.iActualAmount";
+      cSV_sFifoZoneProgNr[i]       := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sExternalBodyData.iExtTypNr";
+      cSV_sFifoAmount[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifo.iActualAmount";
+      cSV_sFifoProgNr[i]           := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifo.Data[].sExternalBodyData.iExtTypNr";
+      cSV_sSimFifoAmount[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_sSimFifo.iActualAmount";
+      cSV_sSimFifoProgNr[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_sSimFifo.Data[].sExternalBodyData.iExtTypNr";
+      cSV_sRobotIsStopped[i]       := "BCU" + STR(gyiNrBcu[i]) + ".SV_mRobotIsStopped";
+      cSV_sConveyorRelease[i]      := "BCU" + STR(gyiNrBcu[i]) + ".SV_mRcuConveyorRelease";
+      cSV_sFifoZoneVariantHigh[i]  := "BCU" + STR(gyiNrBcu[i]) + ".SV_yBodyZoneVariantHIGH32[]";
+      cSV_sFifoZoneExtVariants[i]  := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZoneExtData[].Variants[]";
+      cSV_sFifoZoneExtPartareas[i] := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZoneExtData[].Partareas[]";
+      cSV_sMainMode[i]             := "BCU" + STR(gyiNrBcu[i]) + ".SV_sModes.nMainState";
+      
+      // RcuInterfaceToBCU special for PaintChecker
+      cSV_sFifoZoneUniqueBodyId[i]   := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sExternalBodyData.iBodyID";
+      cSV_sFifoZoneSkidNo[i]         := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sExternalBodyData.zSkidNumber";
+      cSV_sFifoZonePIN[i]            := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sExternalBodyData.zPIN";
+      cSV_sFifoZoneTypeCode_IECV1[i] := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sInternalBodyData.TypeName";
+      cSV_sFifoZoneTypeCode_IECV2[i] := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sExternalBodyData.TypeName";
+      cSV_sFifoZoneColorNo[i]        := "BCU" + STR(gyiNrBcu[i]) + ".SV_sFifoZone.Data[].sExternalBodyData.iExtColNr";
+      
+      // TRcuKinematic
+      cSV_MotionAllowed[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_mMotionAllowed";
+      // TRcuMasterprog
+      cHW_mMasterSig1_Kuka[i]      := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_mMasterSig1_Kuka;
+      cHW_mMasterSig2_Kuka[i]      := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_mMasterSig2_Kuka;
+      cHW_mMasterSig_Duerr[i]      := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_mMasterSig_Duerr;
+      // RcuInterfaceToProcess
+      cSV_mInBellCleaner[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_mInBellCleaner";
+      cSV_mInCapCleaner[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_mInCapCleaner";
+      cSV_iActualColGrpState[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_iFG_Depent_Status";
+      cSV_iActualColorGroup[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_iFG_Depent_GroupNr";
+      
+      //---------------------------------------------------------------------------------------------------
+      //---------------  Hardware-endpoint Inputs from handlersensor (TRcuSensor) -------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_InSensVal1[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InSensorValue1;
+      cHW_InSensVal2[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InSensorValue2;
+
+      //---------------------------------------------------------------------------------------------------
+      //----------------  Hardware-endpoint Outputs to handlersensor (TRcuSensor) -------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_OutCalib[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutCalib;
+      cHW_OutSens0[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutSens0;
+      cHW_OutSens1[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutSens1;
+      
+      //---------------------------------------------------------------------------------------------------
+      //----------------  Hardware-endpoint pneumatic handler tool (TRcuPneuTool) -------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_InBoltIn[i]         := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InBoltIn;   
+      cHW_InBoltOut[i]        := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InBoltOut;  
+      cHW_OutMoveBoltIn[i]    := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutMoveBoltIn;
+      cHW_OutMoveBoltOut[i]   := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutMoveBoltOut;
+      cHW_InToolAngleRaw[i]   := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InToolAngleRaw;
+      cHW_OutToolUp[i]        := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutToolUp;  
+      cHW_OutToolDown[i]      := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutToolDown;
+      cSV_sHandlerToolHmi[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sPneuTool";
+      
+      //---------------------------------------------------------------------------------------------------
+      //---------------  Hardware-endpoint Inputs from handlersensor (TRcuSensor) -------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_InSwitch1[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InSwitch1;
+      cHW_InSwitch2[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InSwitch2;
+      cHW_InSwitch3[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InSwitch3;
+      cHW_InSwitch4[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InSwitch4;
+      
+      //---------------------------------------------------------------------------------------------------
+      //----------------  Hardware-endpoint In/Outputs for handler pneumatic unit (TRcuPneuUnit) ----------
+      //---------------------------------------------------------------------------------------------------
+      FOR j:=0 TO (cgiMaxCylSystem-1) DO
+          cHWI_CylinderIsUp[i][j]     := "RCU" + STR(gyiNrRcu[i]) + "." + SymInCylinderIsUp[j];
+          cHWI_CylinderIsDown[i][j]   := "RCU" + STR(gyiNrRcu[i]) + "." + SymInCylinderIsDown[j];
+          cHWO_MoveCylinderUp[i][j]   := "RCU" + STR(gyiNrRcu[i]) + "." + SymOutMoveCylinderUp[j];
+          cHWO_MoveCylinderDown[i][j] := "RCU" + STR(gyiNrRcu[i]) + "." + SymOutMoveCylinderDown[j];
+      END_FOR;    
+      FOR j:=0 TO (cgiMaxFeetSystem-1) DO
+          cHWI_FootIsInFront[i][j]   := "RCU" + STR(gyiNrRcu[i]) + "." +  SymInFootIsInFront[j];
+          cHWI_FootIsInBack[i][j]    := "RCU" + STR(gyiNrRcu[i]) + "." +  SymInFootIsInBack[j];
+          cHWO_MoveFootToFront[i][j] := "RCU" + STR(gyiNrRcu[i]) + "." +  SymOutMoveFootToFront[j];
+          cHWO_MoveFootToBack[i][j]  := "RCU" + STR(gyiNrRcu[i]) + "." +  SymOutMoveFootToBack[j];
+      END_FOR;
+      cSV_ModeBCU[i] := "BCU" + STR(gyiNrBcu[i]) + ".SV_sModes.nMainState";
+      
+      //---------------------------------------------------------------------------------------------------
+      //----------------  Hardware-endpoint Outputs to vision (TRcuVision) -------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_OutVisionTrigger[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutVisionTrigger;
+      cSV_VisionAbs[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_VisionAbs";
+      cSV_VisionRel[i]        := "RCU" + STR(gyiNrRcu[i]) + ".SV_VisionRel";
+      
+      // TEmergencyStop
+      cHW_mEmergencyStop[i] := "BCU" + STR(gyiNrBcu[i]) + "." + Sym_mEmergencyStop;
+      cSV_mEmergencyStop[i] := "BCU" + STR(gyiNrBcu[i]) + "." + cHW_SLI_mEmergencyStop;
+      
+      //---------------------------------------------------------------------------------------------------
+      //---------------  Hardware-endpoint ToolMessGabel  -------------------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_mToolDetect[i]    := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InToolDetect;
+      
+      // TRcuTorqueCheck
+      cSV_EPSDeactivateTorqueCheck[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tTorqueCheck.i_mDeactivateTorqueCheck";
+      cSV_EPSDeactivateTorqueCheckRes[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tTorqueCheck.o_mDeactivateTorqueCheck";
+
+      //TRcuHoming
+      cSV_EPSOutHoming[i]                 := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHoming.sOut";
+
+      // TRcuPaintChecker
+      cSV_bDownloadPaintAssNewFile[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.SV_PaintAss_Download.i_mNewFile";
+      cSV_bDownloadPaintAssNewFileAck[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.SV_PaintAss_Download.o_mNewFileACK";
+      cSV_bDownloadPaintAssNewFileBack[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.SV_PaintAss_Download.o_mNewFileBACK";
+      cSV_bDownloadPaintAssNewName[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.SV_PaintAss_Download.i_zNewName";
+      
+      cSV_bUploadNewPacData[i]            := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Upload.o_mNewData";
+      cSV_bUploadNewPacDataAck[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Upload.i_mNewDataAck";
+      cSV_strUploadNewPacDataFile[i]      := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Upload.o_zFileName";
+
+      cSV_bPacFromPTPSoftwareReady[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_mPTPSoftwareReady";
+      cSV_bPacFromPTPReadyForOrder[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_mPTPReadyForOrder";
+      cSV_iPacFromPTPErrorNo[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_iPTPError";
+      cSV_bPacFromPTPCsvFileWritten[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_mPTPCsvFileWritten";
+      cSV_bPacFromPTPInStandbyMode[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_mPTPInStandbyMode";
+      cSV_bPacFromPTPInEmissionMode[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_mPTPInEmissionMode";
+      cSV_iPacFromPTPFilmThickness[i]     := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataIn.i_iPTPFilmThickness";
+
+      cSV_iPacToPTPToken[i]               := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataOut.o_iPTPToken";
+      cSV_iPacToPTPPaintCode[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataOut.o_iPTPPaintCode";
+      cSV_bPacToPTPReleaseSingleMeas[i]   := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataOut.o_mPTPReleaseSingleMeas";
+      cSV_bPacToPTPNewMeasSeq[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataOut.o_mPTPNewMeasSeq";
+      cSV_bPacToPTPLaserOn[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.Phototerm.DataOut.o_mPTPLaserOn";
+
+      cSV_bPacToPLCLaserOn[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.PLC.DataOut.o_mLaserRelease";
+      cSV_bPacFromPLCLaserOn[i]           := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.PLC.DataIn.i_mLaserRelease";
+      cSV_bPacFromPLCLaserStandbyMode[i]  := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.PLC.DataIn.i_mLaserStandbyMode";
+      cSV_bPacFromPLCLaserEmissionMode[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.PLC.DataIn.i_mLaserEmissionMode";
+      
+      cSV_iPacToHmiState[i]               := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.HmiData.sOut.o_iState";
+      cSV_bPacToHmiEnable[i]              := "RCU" + STR(gyiNrRcu[i]) + ".SV_PaintChecker.HmiData.sIn.i_mEnable";
+
+      // SFA Tool
+      cSV_HmiSfa[i]                       := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tSFA";
+
+      cSV_ObjMeas[i]                      := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tObjMeasure";
+      
+      //---------------------------------------------------------------------------------------------------
+      //---------------  Hardware-endpoints gluing --------------------------------------------------------
+      //---------------------------------------------------------------------------------------------------
+      cHW_OutSeamCheckActivate[i]      := "RCU" + STR(gyiNrRcu[i]) + ".HWO_bSeamCheckActivate";
+      cHW_OutSeamCheckActPathVelo[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wSeamCheckActPathVelo";
+      
+      //---------------------------------------------------------------------------------------------------
+      //----------------  Hardware-endpoint In/Outputs for stromagbrake (TRcuSensor, TRcuStromag) ---------
+      //---------------------------------------------------------------------------------------------------
+      cHW_OutputOn[i]      := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_OutputOn;
+      cHW_InputPressure[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_InputPressure;
+      
+      //limit switches axis
+      cHW_mLimitSwitchAxis[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_mLimitSwitchAxis;
+      //atomizer collision
+      cHW_InAtomCollision1[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_mAtomCollision1;   
+      cHW_InAtomCollision2[i] := "RCU" + STR(gyiNrRcu[i]) + "." + Sym_mAtomCollision2;
+      //sensor check (ISRA, VMT etc)
+      cSV_InSensorCheck[i]    := "RCU" + STR(gyiNrRcu[i]) + "." + "SV_RCU2HMI.tVision.sIn.i_mSensorCheck";
+      cSV_OutSensorCheck[i]   := "RCU" + STR(gyiNrRcu[i]) + "." + "SV_RCU2HMI.tVision.sOut.o_mSensorCheckOk";
+      
+      //PDA - Primas
+      cHW_PDAModulname[i]     := "RCU" + STR(gyiNrRcu[i]) + ".HWO_bModulnamePda";
+      cHW_PDAAxisSetPos[i]    := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wAxisSetPosPda";
+      cHW_PDAAxisActPos[i]    := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wAxisActPosPda";
+      // Extensions MB Rastatt 01-03-2016
+      cHW_PDASercosError[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_mSercosError";
+      cHW_PDADrivesReady[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_mDrivesReady";
+      cHW_PDADrivesBB[i]      := "RCU" + STR(gyiNrRcu[i]) + ".HWO_mDrivesBB";
+      cHW_PDATCPVeloAbs[i]    := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wTCPVeloAbs";
+      cHW_PDATCPVeloProg[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wTCPVeloProg";
+      cHW_PDATCPCartPosX[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wTCPCartPosX";
+      cHW_PDATCPCartPosY[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wTCPCartPosY";
+      cHW_PDATCPCartPosZ[i]   := "RCU" + STR(gyiNrRcu[i]) + ".HWO_wTCPCartPosZ";
+      
+      //ToolCleaner handler
+      cSV_mCatalogChanged[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_mCatalogChanged";
+      cSV_iCleaningStrokes[i]         := "RCU" + STR(gyiNrRcu[i]) + ".SV_iCleaningStrokes";  
+      cSV_mBlowAirTool[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SV_mBlowAirTool";
+      cSV_mCleanerFilled_Retain[i]    := "RCU" + STR(gyiNrRcu[i]) + ".SV_mToolCleanerFilled";
+      cSV_iReplenishXBodies_Retain[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_iReplenishXBodies";
+      cSV_sToolCleanerHmi[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SV_RCU2HMI.tHandler.sToolCleaner";
+      //TRcuLogger
+      cSV_SlaveBodyID[i]              := "BCU" + STR(gyiNrRcu[i]) + ".SLO_dBodyID";
+      //TRcuDataRecorder
+      cSV_CyclicValuesDataRecorder[i] := "RCU" + STR(gyiNrRcu[i]) + ".SV_DataRecorderValues";
+      
+      IF gyiNrPcu[i] <> 0 THEN
+         //---------------------------------------------------------------------------------------------------
+         //---------------  Hardware-endpoint Inputs from safety-PLC (RcuSimulatePLCPaint, emergencyStop) ----
+         //----------------- (RcuAutoControlPaint, RcuAutoControlSealing, RcuSimulatePLCSealing) -------------
+         
+         // RcuInterfaceToPaint
+         cSV_yTriggerPaint[i]                := "PCU" + STR(gyiNrPcu[i]) + ".SV_yTrigger";
+         cSV_iNumberOfActualBrushPaint[i]    := "PCU" + STR(gyiNrPcu[i]) + ".SV_iNumberOfActualBrush";
+         cSV_mMotionActivePaint[i]           := "PCU" + STR(gyiNrPcu[i]) + ".SV_mMotionActive";
+         cSV_mProcessReadyPaint[i]           := "PCU" + STR(gyiNrPcu[i]) + ".SV_mProcessReady";
+         cSV_mProcessContinue[i]             := "PCU" + STR(gyiNrPcu[i]) + ".SV_mProcessContinue";
+         cSV_mProcessActivePaint[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_mProcessActive";
+         cSV_mRobotMovingPaint[i]            := "PCU" + STR(gyiNrPcu[i]) + ".SV_mRobotMoving";
+         cSV_mDoSoftPurgePaint[i]            := "PCU" + STR(gyiNrPcu[i]) + ".SV_mDoSoftPurge";
+         cSV_zProgramMainRunPaint[i]         := "PCU" + STR(gyiNrPcu[i]) + ".SV_zProgramMainRun";
+         cSV_zProgramPreRunPaint[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_zProgramPreRun";
+         cSV_zProgramPrewarnPaint[i]         := "PCU" + STR(gyiNrPcu[i]) + ".SV_zProgramPrewarn";
+         cSV_zGunTriggerPaint[i]             := "PCU" + STR(gyiNrPcu[i]) + ".SV_zGunTrigger";
+         cSV_zBrushTriggerPaint[i]           := "PCU" + STR(gyiNrPcu[i]) + ".SV_zBrushTrigger";
+         cSV_mHTOff[i]                       := "PCU" + STR(gyiNrPcu[i]) + ".SV_mHTOff"; 
+         cSV_TriggerInfo[i]                  := "PCU" + STR(gyiNrPcu[i]) + ".SV_TriggerInfos";
+         cSV_mWaitingTrackingPos[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_mWaitTrackingPos";
+         cSV_mTurnMaskOn[i]                  := "PCU" + STR(gyiNrPcu[i]) + ".SV_mTurnMaskOn";      
+         cSV_iProcessCmd[i]                  := "PCU" + STR(gyiNrPcu[i]) + ".SV_iProcessCmd";
+         cSV_iProcessCmdAck[i]               := "PCU" + STR(gyiNrPcu[i]) + ".SV_iProcessCmdAck";
+         cSV_iProcessState[i]                := "PCU" + STR(gyiNrPcu[i]) + ".SV_iProcessState";     
+         cSV_mBlowingAirOn[i]                := "PCU" + STR(gyiNrPcu[i]) + ".SV_mBlowingAirOn";
+         cSV_wCheckSumProject[i]             := "PCU" + STR(gyiNrPcu[i]) + ".SV_wCheckSumProject";
+         cSV_iGunNumberOfActualBrushPaint[i] := "PCU" + STR(gyiNrPcu[i]) + ".SV_iGunNumberOfActualBrush";
+         cSV_mTankStop[i]                    := "PCU" + STR(gyiNrPcu[i]) + ".SV_mTankStop";
+         cSV_mPistonDegrade[i]               := "PCU" + STR(gyiNrPcu[i]) + ".SV_mPistonDegrade";
+         cSV_mPistonChange[i]                := "PCU" + STR(gyiNrPcu[i]) + ".SV_mPistonChange";
+         cSV_mCover[i]                       := "PCU" + STR(gyiNrPcu[i]) + ".SV_mCover";
+         cSV_mCoverIni[i]                    := "PCU" + STR(gyiNrPcu[i]) + ".SV_mCoverIni";
+         cSV_mCoupling[i]                    := "PCU" + STR(gyiNrPcu[i]) + ".SV_mCoupling";
+         cSV_mCouplingIni[i]                 := "PCU" + STR(gyiNrPcu[i]) + ".SV_mCouplingIni";
+         cSV_mMaskingDeviceInUse[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_mMaskingDeviceInUse";
+         cSV_mMaskingDeviceAtIni[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_mMaskingDeviceAtIni";
+         cSV_mPivotingBracketInPos[i]        := "PCU" + STR(gyiNrPcu[i]) + ".PivotingBracketInMiddlePos";
+         cSV_mMotionAbortPushOut[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_mMotionAbortPushOut";
+         cSV_EcoTalkReqHtOff[i]              := "PCU" + STR(gyiNrPcu[i]) + ".SV_mEcotalk_ReqHtOff";
+         cSV_EcoTalkHtIsOff[i]               := "PCU" + STR(gyiNrPcu[i]) + ".SV_mEcotalk_RelHtOff";
+         cSV_iHtExists[i]                    := "PCU" + STR(gyiNrPcu[i]) + ".SV_iHtExists";
+         cSV_mHtDischargeCheck[i]            := "PCU" + STR(gyiNrPcu[i]) + ".SV_mHtDischargeCheck";
+         cSV_iAtomState[i]                   := "PCU" + STR(gyiNrPcu[i]) + ".SV_PCU2HMI.tCommon.sOut.o_iAtomState";
+         cSV_iCleaningDeviceExists[i]        := "PCU" + STR(gyiNrPcu[i]) + ".SV_iCleaningDeviceExists";
+         cSV_mAtomizerInCleaner[i]           := "PCU" + STR(gyiNrPcu[i]) + ".SV_mAtomizerInCleaner";
+         
+         // Gluing: Applicator position 
+         cSV_iActAppPos[i]                    := "PCU" + STR(gyiNrPcu[i]) + ".SV_iActAppPos";
+         cSV_iSetAppPos[i]                    := "PCU" + STR(gyiNrPcu[i]) + ".SV_iSetAppPos";
+         
+         // nozzle change
+         cSV_sNozzleChangerUsed[i]           := "PCU" + STR(gyiNrPcu[i]) + ".SV_mNozzleChangerUsed";
+         cSV_sChangerPlaces[i]               := "PCU" + STR(gyiNrPcu[i]) + ".SV_yNozzleChangerPlace";
+         cSV_sMainNeedles[i]                 := "PCU" + STR(gyiNrPcu[i]) + ".SV_yNozzleGun";
+         cSV_iNrOfPlaces[i]                  := "PCU" + STR(gyiNrPcu[i]) + ".SV_iNozzleExchangerPlaces";
+         cSV_iNozzleGun[i]                   := "PCU" + STR(gyiNrPcu[i]) + ".SV_iNozzleGun";
+         cSV_mSetBlowAir[i]                  := "PCU" + STR(gyiNrPcu[i]) + ".SV_mSet_BlowAir";
+         cSV_mPurge[i]                       := "PCU" + STR(gyiNrPcu[i]) + ".SV_mPurge";
+         cSV_mEntranceRequest[i]             := "RCU" + STR(gyiNrRcu[i]) + ".SLI_mEntranceRequest";
+         cSV_mAckEntranceRequest[i]          := "RCU" + STR(gyiNrRcu[i]) + ".SLO_mAckEntranceRequest";
+         cSV_sRobotToProcess[i]              := "PCU" + STR(gyiNrPcu[i]) + ".SV_sRobotToProcess";
+         cSV_mEnableHighTension[i]           := "PCU" + STR(gyiNrPcu[i]) + ".SV_PLC2PCU.tReleases.mEnableHighTension";
+         cSV_mReleaseHighTension[i]          := "PCU" + STR(gyiNrPcu[i]) + ".SV_PLC2PCU.tReleases.mReleaseHighTension";
+      END_IF;
+   END_FOR;
+   
+END_ROUTINE
+

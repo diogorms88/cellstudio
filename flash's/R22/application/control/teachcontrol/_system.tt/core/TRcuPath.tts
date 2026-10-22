@@ -1,0 +1,1726 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuPath.tts
+*  First Author : pen
+*  Date         : 15.11.2001
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Representation of a Path
+*------------------------------------------------------------------------------
+* 19.09.04 nmr: new variable myRobot, to get access to the drives from path
+*               (if kinematic is a robot).
+* 07.11.04 nmr: endPosId will be set after appending segments
+* 20.01.05 nmr: Changes, allowing to achieve triggerpositions
+* 16.02.05 nmr: Changes for goldenRepos (new routine AppendSegmentWithJobSet), 
+*               recording of cancelFlipFlop with Kemroscope possible,
+*               change-over to traceWord-controlled debugoutputs
+* 22.03.05 nmr: with McuCreatePosFromPathPos generated positions must be explicit
+*               released, at creating a path a pathposition as well as a "real" 
+*               position will be saved
+* 17.06.05 sbj: choose orientation interpolation dependent on the kinematic-type
+* 05.07.05 nmr: correction at generating of a new path
+* 24.08.05 nmr: several bugfixes concerning golden repos and backward movemnent
+* 26.08.05 nmr: added returnvalue to AppendSegmentWithJobSet (useful for 
+*               backward movement)
+* 08.09.05 nmr: changes for Teachview 2.14
+* 03.10.05 nmr: improvements concerning backward movement
+* 02.12.05 BMA: modifications in AppendSegmentWithJobSet(). If bAppendToMotionBuffer
+*               is TRUE then the segments are appended to a motion buffer.
+*               new routine TransferBufferToPathWithCheck()
+* 02.11.06 BMA: modifications for tracking phase 1 with macros SECTION, ...
+*)
+
+
+VAR
+   pathMcuId    : TMcuDbObjID; // Id of the Path-Object
+   pathPosMcuId : TMcuDbObjID; // Id of an associated path-position (for repositioning)
+   (*$$$$$* spline *$$$$$*)             
+   newPathPosMcuId : TMcuDbObjID;
+   oldPathPosMcuId : TMcuDbObjID;
+
+   segmentMcuId : TMcuDbObjID; // Id of an associated segment (for repositioning and
+                               // restoring of actual settings)
+   segmentMcuParam : REAL;
+   reposSegmentMcuId : TMcuDbObjID;   // Id of an associated segment (for repositioning and
+                          // restoring of actual settings)
+   reposSegmentMcuParam : REAL;
+   myKinematic : MAPTO TRcuKinematic; // the kinematic to which the path belongs
+   myRobot     : MAPTO TRcuRobot;
+   
+   segHdl  : TMcuSegHdl;  // segmenthandler which will be used to append segments
+   oriType : TMcuOriTyp;  // the orientation-interpolationtype for this path
+   dynamic : TMcuDynamic; // dynamic data
+
+   cfgDyn : TMcuDynamic;  // default dynamic as configured in the catalog
+   
+   smooth : TMcuSmoothGeometry;
+   rSmoothMR : REAL;
+   
+   endPosId : TMcuDbObjID; // Id of the startposition for the next segment
+   (*$$$$$* spline *$$$$$*)             
+   endSegId : TMcuDbObjID;
+   startPosValid : BOOL;
+   circSegParamStart : REAL;
+   isTriggerSegment  : BOOL;
+   lastNonTriggerSegmentId : TMcuDbObjID;
+   instId : DINT;         // instance identification number (for errors)
+   segmentReady : BOOL;
+   signalOvl : BOOL;
+   nextOvl   : TMcuOverlap;
+   nextOvlId : TMcuDbObjID;
+  
+   // a change of this variable indicates that all open motioncommands and macros
+   // must be cancelled
+   cancelFlipFlop : BOOL;   
+   
+   lastPosId      : TMcuDbObjID;
+   lastHelpPosId  : TMcuDbObjID;
+   lastPosFromPathPosId : TMcuDbObjID;
+   lastEndPosId : TMcuDbObjID; 
+   setToolInStepMode     : BOOL;
+   VeloChgInStepMode     : BOOL;
+   AccChgInStepMode      : BOOL;
+   JerkChgInStepMode     : BOOL;
+   RampChgInStepMode     : BOOL;
+   cmdCount              : DINT; // number of active motion commands. Can not exceed gcRcuMaxCmd
+END_VAR
+
+
+// Create the path, generates Mcu-Objects and sets default data
+ROUTINE Create(kin : TRcuKinematic)
+   VAR
+      appendFreeHdlName : TMcuString;
+   END_VAR
+
+   // connection to the kinematic
+   myKinematic := MAP(kin);
+
+   IF IS_INSTANCE(kin, TRcuRobot) THEN
+      myRobot := MAP(kin);
+   END_IF;
+
+   McuReleaseDbObj(pathMcuId);
+   // generation of the path-Object
+   CreatePathObject();
+
+   // connection to the appendFree signal
+   McuReadAppendFreeHdlName(pathMcuId, appendFreeHdlName);
+   appendFree := MAPX(appendFreeHdlName);
+
+   // defaultsettings
+   IF myKinematic.allDegreesOfFreedom THEN
+      oriType := eMcuZRotation;
+   ELSE
+      oriType := eMcuWristJoints;
+   END_IF;
+END_ROUTINE
+
+
+// Append a segment to the path
+ROUTINE AppendSegment(
+   posId : TMcuDbObjID;              // Mcu-Id of the endposition
+   helpPosId : TMcuDbObjID;          // Mcu-Id of a helpposition (for circle segment)
+   useExtTool : BOOL;         // Use an external Tool
+   segType : TMcuSegmentTyp;  // type of the segment (lin, ptp, circ)
+   jobParam : REAL;           // parameter in the segment at which a signal
+                              // will be generated
+   signal : BOOL;             // variable which will be set by the signal
+   dynId : TMcuDbObjID;               // Mcu-Id of the dynamic to use, 0 for the
+                              // dynamic stored with the path.
+   OPTIONAL delete : BOOL;             // variable which will be set by the signal
+   (*$$$$$* spline *$$$$$*)             
+   OPTIONAL spline : TMcuSegSpline
+   )
+   VAR
+      jobSet : TMcuJobSet;
+      signal2 : BOOL;
+   END_VAR
+   
+   IF IS_USED(delete) THEN
+      AppendSegmentWithJobSet(posId, helpPosId, useExtTool, segType, jobParam, signal, dynId, jobSet, , delete);
+   ELSE
+      AppendSegmentWithJobSet(posId, helpPosId, useExtTool, segType, jobParam, signal, dynId, jobSet, , signal2);
+   END_IF;
+END_ROUTINE
+
+
+// Append a segment with a given set of jobs to the path
+// this routine is necessary to avoid manipulating the global segment handler
+ROUTINE AppendSegmentWithJobSet(
+   posId : TMcuDbObjID;              // Mcu-Id of the endposition
+   helpPosId : TMcuDbObjID;          // Mcu-Id of a helpposition (for circle segment)
+   useExtTool : BOOL;         // Use an external Tool
+   segType : TMcuSegmentTyp;  // type of the segment (lin, ptp, circ)
+   jobParam : REAL;           // parameter in the segment at which a signal
+                              // will be generated
+   signal : BOOL;             // variable which will be set by the signal
+   dynId : TMcuDbObjID;               // Mcu-Id of the dynamic to use, 0 for the
+                              // dynamic stored with the path.
+   jobSet : TMcuJobSet;
+   OPTIONAL userData : TMcuUserData;
+   OPTIONAL delete : BOOL;             // variable which will be set by the signal
+   (*$$$$$* spline *$$$$$*)             
+   OPTIONAL spline : TMcuSegSpline
+   ) : TMcuDbObjID
+   VAR
+      locSegHdl : TMcuSegHdl; // local copy of the segmenthandler
+      helpParam : REAL;
+      tmpSeg : TMcuSegment;
+      newSegmentID : TMcuDbObjID;
+      tmpDyn : TMcuDynamic;
+      stackHdl : DINT;
+   END_VAR
+   
+   // local copy of the segmenthandler
+   locSegHdl := segHdl;
+   locSegHdl.mJobSet := jobSet;
+   
+   segment.mUseExternalTool := useExtTool;
+   myKinematic.lastUseExtTool := useExtTool;
+   
+   // T E S T
+   IF useExtTool THEN
+      myKinematic.DebugPrint(eTraceExtTool, "mUseExternalTool := TRUE set for segment");
+   END_IF;
+         
+         
+   // set dynamic
+   IF dynId = 0 THEN // use dynamic stored in the path
+      IF dynamicChg THEN
+         dynamic.mUseJointLimForCartSeg := myKinematic.bUseJointLimForCartSeg;
+         // dynamic for cartesian movements without limitation to the
+         // programmed values in VEL, ACCEL, JERK
+         cartDynamic := dynamic;
+         cartDynamic.mJoint.mVelo := 1.0;
+         cartDynamic.mJoint.mDece := 1.0;
+         cartDynamic.mJoint.mAcce := 1.0;
+         cartDynamic.mJoint.mJerk := 1.0;
+         
+         // store values for ReadMcuSettingsFromSegHdl
+         cartDynamic.mUserData.mFloatValidLen := 4;
+         cartDynamic.mUserData.mDataFloat[0] := dynamic.mJoint.mVelo;
+         cartDynamic.mUserData.mDataFloat[1] := dynamic.mJoint.mDece;
+         cartDynamic.mUserData.mDataFloat[2] := dynamic.mJoint.mAcce;
+         cartDynamic.mUserData.mDataFloat[3] := dynamic.mJoint.mJerk;
+         
+         IF (cartDynamicId <> dynamicId) AND (cartDynamicId <> defaultCartDynMcuId) AND (cartDynamicId <> defaultDynMcuId) THEN
+            myKinematic.DebugPrint(eTraceReposDebug, "AppendSegmentWithJobSet: McuReleaseDbObj cartDynamicId = " + STR(cartDynamicId));
+            McuReleaseDbObj(cartDynamicId);
+         END_IF;
+         IF (dynamicId <> defaultCartDynMcuId) AND (dynamicId <> defaultDynMcuId) THEN
+            myKinematic.DebugPrint(eTraceReposDebug, "AppendSegmentWithJobSet: McuReleaseDbObj dynamicId = " + STR(dynamicId));
+            McuReleaseDbObj(dynamicId);
+         END_IF;
+         dynamic.mName := CreateDBname(myKinematic.kinListInx, "TRcuPath.AppSegW.dynamic");
+         dynamic.mName := "Joint-" + dynamic.mName;
+         IF NOT McuCreateDynamic(dynamicId, dynamic) THEN
+            IF myKinematic.progPath.pathMcuId = pathMcuId THEN // no MAINRUN on reposPath
+               WAIT MAIN_RUN;      
+            END_IF;
+            RcuSetMessageOnce(TRcuPath_ErrCreateDynFail, myKinematic.kinListInx, 1, instId, 
+               "TRcuPath.AppendSegmentWithJobSet", GetSource());
+            myKinematic.ErrorReaction(TRUE);
+         END_IF;
+         myKinematic.DebugPrint(eTraceReposDebug, "AppendSegmentWithJobSet: McuCreateDynamic dynamicId = " + STR(dynamicId));
+         cartDynamic.mName := CreateDBname(myKinematic.kinListInx, "TRcuPath.AppSegW.cartDynamic");
+         cartDynamic.mName := "Cart-" + cartDynamic.mName;
+         IF NOT McuCreateDynamic(cartDynamicId, cartDynamic) THEN
+            IF myKinematic.progPath.pathMcuId = pathMcuId THEN // no MAINRUN on reposPath
+               WAIT MAIN_RUN;      
+            END_IF;
+            RcuSetMessageOnce(TRcuPath_ErrCreateDynFail, myKinematic.kinListInx, 2, instId, 
+               "TRcuPath.AppendSegmentWithJobSet", GetSource());
+            myKinematic.ErrorReaction(TRUE);
+         END_IF;  
+         myKinematic.DebugPrint(eTraceReposDebug, "AppendSegmentWithJobSet: McuCreateDynamic cartDynamicId = " + STR(cartDynamicId));
+      ELSE
+         // release added - caused an overflow of mc-db in long-run repos-test
+         // release original objects if appropriate
+         IF (segHdl.mDynamicID <> dynamicId) AND (segHdl.mDynamicID <> cartDynamicId) // locSegHdl = segHdl
+               AND (segHdl.mDynamicID <> defaultCartDynMcuId) 
+               AND (segHdl.mDynamicID <> defaultDynMcuId) THEN
+            myKinematic.DebugPrint(eTraceReposDebug, "AppendSegmentWithJobSet: McuReleaseDbObj segHdl.mDynamicID = " + STR(segHdl.mDynamicID));
+            McuReleaseDbObj(segHdl.mDynamicID);
+         END_IF;
+      END_IF;
+
+      IF segType = eMcuPTP THEN
+         segHdl.mDynamicID := dynamicId;
+         locSegHdl.mDynamicID := dynamicId;
+      ELSE // cartesian move
+         segHdl.mDynamicID := cartDynamicId;
+         locSegHdl.mDynamicID := cartDynamicId;
+      END_IF;
+      dynamicChg := FALSE;
+   ELSE // use special dynamic
+      locSegHdl.mDynamicID := dynId;
+   END_IF;
+   
+   // locSegHdl.mSmoothGeometry := smooth;
+   IF gbSmoothAvailable THEN
+      SetSmoothInSegHdl(locSegHdl, smooth);
+   END_IF;
+   
+   // set segment
+   segment.mSegTyp := segType;
+   segment.mPosEnd := posId;
+   segment.mOri := oriType;
+   IF (segType = eMcuCirc) THEN
+//      use special z-rotation for circ segments
+//      IF segment.mOri = eMcuZRotation THEN
+//         segment.mOri := eMcuZRotationCirc;
+//      END_IF;
+      // modify help-pos when using triggerpoints as pathpoints
+      IF (circSegParamStart > 0.0) AND NOT isTriggerSegment THEN
+         helpParam := (circSegParamStart + 1.0) / 2.0;
+         McuReadSegment(lastNonTriggerSegmentId, tmpSeg);
+         segment.mPosStart := tmpSeg.mPosEnd;
+         segment.mCirc.mHelpPos := helpPosId;
+         IF McuCreateSegment(newSegmentID, segment, myKinematic.kinematicMcuId) THEN
+            RcuCreatePosOnNewPathSpecial(newSegmentID, helpParam, myKinematic, helpPosId, lastNonTriggerSegmentId, locSegHdl);
+         ELSE
+            IF myKinematic.progPath.pathMcuId = pathMcuId THEN // no MAINRUN on reposPath
+               WAIT MAIN_RUN;      
+            END_IF;
+            RcuSetMessageOnce(TRcuPath_ErrMcuCreateSeg, myKinematic.kinListInx, 1, instId, 
+               "TRcuPath.AppendSegmentWithJobSet", myKinematic.robotName, GetSource());
+            myKinematic.ErrorReaction(TRUE);
+         END_IF;
+      END_IF;
+   ELSE // no CIRC
+      IF (oriType = eMcuZRotationCirc) THEN
+         segment.mOri := eMcuZRotation;
+      END_IF;
+   END_IF;   
+   
+   IF endPosId = 0 THEN
+      IF lastEndPosId <> 0 THEN
+         McuReleaseDbObj(lastEndPosId);
+         lastEndPosId := 0;
+      END_IF;
+      IF McuCreatePosFromPathPos(pathPosMcuId, lastEndPosId) THEN
+         endPosId := lastEndPosId;
+      ELSE
+         myKinematic.DebugPrint(eTraceCommon, "McuCreatePosFromPathPos failed");
+         iCntMinorError := iCntMinorError + 1;         
+      END_IF;
+   END_IF;
+   segment.mPosStart := endPosId;
+   IF IS_USED(userData) THEN
+      segment.mUserData := userData;
+   ELSE
+      IF myKinematic.bSetOrderFlag THEN
+         segment.mUserData.mDataInt[eSegSpecialState] := 1;
+         myKinematic.bSetOrderFlag := FALSE;
+      ELSIF myKinematic.handler.bJobRunning THEN
+         segment.mUserData.mDataInt[eSegSpecialState] := 2;
+      ELSE
+         segment.mUserData.mDataInt[eSegSpecialState] := 0;      
+      END_IF;
+      IF myKinematic.trackingActive THEN
+         segment.mUserData.mDataInt[eSegSpecialState] := segment.mUserData.mDataInt[eSegSpecialState] +10;
+      END_IF;
+      IF StoreUserProgCallStack(stackHdl) = eStoreOK THEN
+         segment.mUserData.mDataInt[eSegOvlId] := locSegHdl.mOverlapID;
+         segment.mUserData.mDataInt[eSegNextOvlId] := nextOvlId;
+         segment.mUserData.mDataInt[eSegStackHdl] := stackHdl;
+         segment.mUserData.mIntValidLen := 4;
+         RcuPrintUserProgCallStack(stackHdl, segment.mName, eTraceSegment);
+      ELSE
+         segment.mUserData.mDataInt[eSegOvlId] := locSegHdl.mOverlapID;
+         segment.mUserData.mDataInt[eSegNextOvlId] := nextOvlId;
+         segment.mUserData.mIntValidLen := 3;
+      END_IF;
+   END_IF;
+   
+   McuReadDynamic(locSegHdl.mDynamicID, tmpDyn);
+
+   IF segType = eMcuCirc THEN
+      segment.mCirc.mHelpPos := helpPosId;
+   (*$$$$$* spline *$$$$$*)             
+   ELSIF segType = eMcuSpline THEN
+      IF IS_USED(spline) THEN
+         segment.mSpline := spline;
+      ELSE
+//         RcuSetMessage(TRcuPath_ErrSplineParam, instId, INSTANCE_NAME());
+         RcuSetMessageOnce(TRcuPath_ErrSplineParam, myKinematic.kinListInx, 1, instId, 
+               "TRcuPath.AppendSegmentWithJobSet", INSTANCE_NAME());
+         myKinematic.ErrorReaction(TRUE);
+      END_IF;
+   END_IF;
+   IF NOT McuCreateSegment(locSegHdl.mSegmentID, segment, myKinematic.kinematicMcuId) THEN
+      IF myKinematic.progPath.pathMcuId = pathMcuId THEN // no MAINRUN on reposPath
+         WAIT MAIN_RUN;      
+      END_IF;
+      RcuSetMessageOnce(TRcuPath_ErrMcuCreateSeg, myKinematic.kinListInx, 1, instId, 
+         "TRcuPath.AppendSegmentWithJobSet", myKinematic.robotName, GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;         
+
+   IF helpPosId <> 0 THEN
+      McuReleaseDbObj(helpPosId);
+      lastHelpPosId := 0;
+   END_IF;
+   IF posId <> 0 THEN
+      IF (segment.mPosStart <> segment.mPosEnd) OR (posId = lastPosFromPathPosId) 
+            OR (posId = lastPosId) OR (posId = lastEndPosId) THEN
+         McuReleaseDbObj(posId);
+      ELSE
+         ; // zero-segment with identical start- end endPos - don't release twice 
+           // (would be no problem but makes debugging more complicated)
+      END_IF;
+      IF posId = lastPosFromPathPosId THEN
+         lastPosFromPathPosId := 0;
+      END_IF;
+      IF posId = lastPosId THEN
+         lastPosId := 0;
+      END_IF;
+      IF posId = lastEndPosId THEN
+         lastEndPosId := 0;
+      END_IF;
+   END_IF;
+ 
+   // set parameter-job (none if jobParam negative)
+   IF jobParam >= 0 THEN
+      job.mEvent.mEventHdl := InternalHandle(signal);
+      job.mName := "segment-param (" + STR(jobParam) + ") job";
+      job.mGeo.mValue := jobParam;
+      McuCreateJob(locSegHdl.mJobSet.mJobIDs[locSegHdl.mJobSet.mValidLen], job);
+      locSegHdl.mJobSet.mValidLen := locSegHdl.mJobSet.mValidLen + 1;
+   END_IF;
+
+   locSegHdl.mGripperID := myKinematic.kinGripperMcuId;
+
+   // wait until append possible, then append the segment
+   WAIT appendFree;
+
+   myKinematic.DebugPrint(eTraceSegment, segment.mName+" ("+STR(locSegHdl.mSegmentID)+") "+STR(endPosId)+"->"+STR(posId));
+   myKinematic.DebugPrint(eTraceSegment, segment.mName+" (Tool: "+STR(locSegHdl.mRobotToolID) + 
+      ", 0vlId: " + STR(locSegHdl.mOverlapID) + ")");
+   
+   IF myKinematic.bAppendToMotionBuffer THEN
+      IF (myKinematic.bManualStopPos AND myKinematic.bBehindSideStep) THEN
+         // First move in the path behind END_SIDE_STEP is not added to the motion buffer
+         myKinematic.motionBuffer[myKinematic.iActMotionBuffer].startPosId := endPosId;
+         myKinematic.DebugPrint(eTraceTracking, segment.mName+" behind END_SIDE endPosId = "+STR(endPosId));
+         myKinematic.motionBuffer[myKinematic.iActMotionBuffer].startSegHdl := locSegHdl;
+         McuReadDynamic(locSegHdl.mDynamicID,myKinematic.motionBuffer[myKinematic.iActMotionBuffer].startDyn);
+         myKinematic.bBehindSideStep := FALSE;
+         McuReleaseDbObj(endPosId);
+         endPosId := posId;
+      ELSE
+         IF McuAppendToMotionBuffer(myKinematic.motionBuffer[myKinematic.iActMotionBuffer].motionBufId, 
+                                    locSegHdl) THEN
+            McuReleaseDbObj(endPosId); 
+            endPosId := posId;
+            myKinematic.motionBuffer[myKinematic.iActMotionBuffer].lastPosId := posId;
+//         PRINT(segment.mName+" McuAppendToMotionBuffer = "+STR(myKinematic.iActMotionBuffer)
+//               +" startPosId = "+STR(segment.mPosStart)+" endPosId = "+STR(segment.mPosEnd));
+            myKinematic.motionBuffer[myKinematic.iActMotionBuffer].lastSegHdl := locSegHdl;
+            myKinematic.motionBuffer[myKinematic.iActMotionBuffer].iCmdCounter := 
+               myKinematic.motionBuffer[myKinematic.iActMotionBuffer].iCmdCounter + 1;
+            myKinematic.motionBuffer[myKinematic.iActMotionBuffer].bMotionBufferEmpty := FALSE;
+            IF (NOT myKinematic.bManualStopPos AND myKinematic.bGunOffReached) THEN
+               // Phase 1 without SECTION
+               TransferBufferToPathWithCheck(myKinematic.iActMotionBuffer);
+            END_IF;
+            IF myKinematic.motionBuffer[myKinematic.iActMotionBuffer].iCmdCounter >= giRcuMaxCmd THEN
+               RcuSetMessageOnce(TRcuPath_WarNrElInMotionBuffer, myKinematic.kinListInx, 1, instId, 
+                  "TRcuPath.AppendSegmentWithJobSet", INSTANCE_NAME());
+               TransferBufferToPathWithCheck(myKinematic.iActMotionBuffer); // ????????
+            END_IF;
+            IF myKinematic.bManualStopPos THEN
+               // Phase 1 with SECTION
+               IF IS_USED(delete) THEN
+                  START WaitReleaseMotionBuffer(myKinematic.iActMotionBuffer, signal, delete, segment.mName);
+               END_IF;
+            END_IF;
+         ELSE
+            WAIT MAIN_RUN;
+            RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 1, instId, 
+               "TRcuPath.AppendSegmentWithJobSet", "McuAppendToMotionBuffer", GetSource());
+            myKinematic.ErrorReaction(TRUE);
+         END_IF;
+      END_IF;
+      
+      IF myKinematic.bEndSection AND myKinematic.bSectionActive THEN
+         IF myKinematic.bGunOffReached THEN
+            myKinematic.DebugPrint(eTraceTracking, "Special case Gun OFF after END_SECTION ");
+            START CheckSectionPath(myKinematic.iBufActSection);
+            WAIT myKinematic.motionBuffer[myKinematic.iBufActSection].bPathReachable OR
+                 myKinematic.progPath.tNeedNextSM.mNeedNextSeg;
+            IF NOT myKinematic.motionBuffer[myKinematic.iBufActSection].bPathReachable THEN
+               PrintMotionBufInfo(myKinematic.iBufSideStepWait);
+               TransferBufferToPath(myKinematic.iBufSideStepWait);
+               PrintMotionBufInfo(myKinematic.iBufSideStepWait);
+               WAIT myKinematic.motionBuffer[myKinematic.iBufActSection].bPathReachable;
+               START CheckSectionPath(myKinematic.iBufSideStepCont);
+               WAIT myKinematic.motionBuffer[myKinematic.iBufSideStepCont].bPathReachable;
+               
+               TransferBufferToPath(myKinematic.iBufSideStepCont);
+               ConnectMotionBuf(myKinematic.iBufSideStepCont, myKinematic.iBufActSection);
+               TransferBufferToPath(myKinematic.iBufActSection);
+            ELSE
+               ReleaseMotionBuffer(myKinematic.iBufSideStepWait);
+               ConnectMotionBuf(myKinematic.iBufBeforeActSection, myKinematic.iBufActSection);
+               TransferBufferToPath(myKinematic.iBufActSection);
+            END_IF;
+            
+            CreateNextBuffer();
+            myKinematic.bBehindSection := FALSE;
+            myKinematic.bManualStopPos := FALSE;
+            myKinematic.bSectionActive := FALSE;
+            myKinematic.bEndSection := FALSE;
+         END_IF;
+      END_IF;
+   ELSE
+      IF McuAppendToPath(myKinematic.kinematicMcuId, pathMcuId, locSegHdl) THEN
+         endPosId := posId;
+         (*$$$$$* spline *$$$$$*)             
+         endSegId := locSegHdl.mSegmentID;
+         setToolInStepMode := FALSE;
+         VeloChgInStepMode := FALSE;
+         AccChgInStepMode  := FALSE;
+         JerkChgInStepMode := FALSE;
+         RampChgInStepMode := FALSE;
+      ELSE
+         IF myKinematic.progPath.pathMcuId = pathMcuId THEN // no MAINRUN on reposPath
+            WAIT MAIN_RUN;     
+         END_IF;
+         RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 2, instId, 
+            "TRcuPath.AppendSegmentWithJobSet", "McuAppendToPath", GetSource());
+         myKinematic.ErrorReaction(TRUE);
+      END_IF;
+   END_IF;
+   IF lastEndPosId <> 0 THEN
+      McuReleaseDbObj(lastEndPosId);
+      lastEndPosId := 0;
+   END_IF;
+   IF lastPosFromPathPosId <> 0 THEN
+      McuReleaseDbObj(lastPosFromPathPosId);
+      lastPosFromPathPosId := 0;
+   END_IF;
+   
+   IF NOT isTriggerSegment THEN
+      lastNonTriggerSegmentId := locSegHdl.mSegmentID;
+   END_IF;
+   isTriggerSegment := FALSE;
+   circSegParamStart := 0.0;
+   IF signalOvl THEN
+      segmentReady := TRUE;
+      WAIT NOT segmentReady;
+   END_IF;
+   RETURN locSegHdl.mSegmentID;
+END_ROUTINE
+
+// if a motionbuffer is released in  case of alternative paths, the 
+// WaitFinished routines in TRcuProgPath have to be stopped
+ROUTINE WaitReleaseMotionBuffer(index : INT; signal : BOOL; delete : BOOL; segName : STRING)
+VAR
+   bRel : MAPTO BOOL;
+   s : STRING;
+   sig : MAPTO BOOL;
+   del : MAPTO BOOL;
+END_VAR 
+  
+   bRel := MAP(myKinematic.motionBuffer[index].bRelease);
+   s := segName;
+   sig := MAP(signal);
+   del := MAP(delete);
+   
+   WAIT bRel OR sig;
+   IF bRel THEN
+      del := TRUE;
+   END_IF;
+   
+END_ROUTINE
+
+
+// Transfer the motion buffer to the path with check of reachability
+ROUTINE TransferBufferToPathWithCheck(CONST index : INT)
+   VAR
+      eventReachable : TMcuSyncHdl;
+      isReachable    : BOOL;
+      timeout: BOOL;
+   END_VAR
+   
+   IF myKinematic.motionBuffer[index].bMotionBufferEmpty THEN
+      RETURN; // nothing to do
+   END_IF;
+   myKinematic.DebugPrint(eTraceTracking, "TransferBufferToPathWithCheck Index ="+STR(index));
+   
+   IF myKinematic.motionBuffer[index].bCheckMotionBuffer THEN
+      RcuSetMessageOnce(TRcuPath_InfMotionBufCheckActiv, myKinematic.kinListInx, 1, instId, "TRcuPath.TransferBufferToPathWithCheck", INSTANCE_NAME());
+      WAIT NOT myKinematic.motionBuffer[index].bCheckMotionBuffer; // ???????????????????
+      RETURN;
+   END_IF;
+   
+   myKinematic.motionBuffer[index].bCheckMotionBuffer := TRUE;
+   eventReachable := InternalHandle(isReachable);
+   IF NOT McuCheckPathIsReachable(myKinematic.motionBuffer[index].motionBufId, eventReachable, 1, 1) THEN
+      RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 2, instId, "TRcuPath.TransferBufferToPathWithCheck", "McuCheckPathIsReachable",
+      INSTANCE_NAME());
+      RETURN;
+   END_IF;
+   myKinematic.DebugPrint(eTraceTracking, "Check of MotionBuffer "+STR(index)+" begins");
+   WHILE NOT isReachable DO
+      SysTimerSet(5000, timeout);
+      WAIT isReachable OR timeout; 
+      IF NOT isReachable THEN
+         myKinematic.DebugPrint(eTraceTracking, "Check of MotionBuffer "+STR(index)+" active");
+         timeout := FALSE;
+      END_IF;
+   END_WHILE;
+   myKinematic.motionBuffer[index].bCheckMotionBuffer := FALSE;   
+   myKinematic.DebugPrint(eTraceTracking, "Check of MotionBuffer "+STR(index)+" ends");
+   TransferBufferToPath(index);
+   CreateNextBuffer();
+END_ROUTINE
+
+
+// Check the reachability of the motion buffer 
+ROUTINE CheckSectionPath(CONST index : INT)
+   VAR
+      eventReachable : TMcuSyncHdl;
+      isReachable    : BOOL;
+      timeout: BOOL;
+   END_VAR
+   
+   myKinematic.DebugPrint(eTraceTracking, "CheckSectionPath Index ="+STR(index));
+   PrintMotionBufInfo(index);
+   IF myKinematic.motionBuffer[index].bMotionBufferEmpty THEN
+      myKinematic.motionBuffer[index].bPathReachable := TRUE;
+      myKinematic.DebugPrint(eTraceTracking, "Check of SectionPath "+STR(index)+" Buffer is empty");
+      myKinematic.DebugPrint(eTraceTracking, "Check of SectionPath "+STR(index)+" ends");
+      RETURN; // nothing to do
+   END_IF;
+   
+   IF myKinematic.motionBuffer[index].bCheckMotionBuffer THEN
+      RcuSetMessageOnce(TRcuPath_InfMotionBufCheckActiv, myKinematic.kinListInx, 2, instId, "TRcuPath.CheckSectionPath", INSTANCE_NAME());
+      RETURN;
+   END_IF;
+   
+   myKinematic.motionBuffer[index].bCheckMotionBuffer := TRUE;
+   eventReachable := InternalHandle(isReachable);
+   IF NOT McuCheckPathIsReachable(myKinematic.motionBuffer[index].motionBufId,
+                                  eventReachable, 1, 1) THEN
+      RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 3, instId, "TRcuPath.CheckSectionPath", "McuCheckPathIsReachable",
+         INSTANCE_NAME());
+      RETURN;
+   END_IF;
+   myKinematic.DebugPrint(eTraceTracking, "Check of SectionPath "+STR(index)+" begins");
+   WHILE NOT isReachable DO
+      SysTimerSet(5000, timeout);
+      WAIT isReachable OR timeout; 
+      IF NOT isReachable THEN
+         myKinematic.DebugPrint(eTraceTracking, "Check of SectionPath "+STR(index)+" active");
+         timeout := FALSE;
+      END_IF;
+   END_WHILE;
+   McuTerminateMotionBuffer(myKinematic.motionBuffer[index].motionBufId);
+      PrintMotionBufInfo(index);
+   myKinematic.motionBuffer[index].bPathReachable := TRUE;
+   myKinematic.DebugPrint(eTraceTracking, "Check of SectionPath "+STR(index)+" ends");
+   myKinematic.motionBuffer[index].bCheckMotionBuffer := FALSE;
+   RETURN;
+   
+END_ROUTINE
+
+
+// Transfer the motion buffer to the path
+ROUTINE TransferBufferToPath(CONST index : INT)
+VAR
+   i: INT;
+END_VAR
+
+   IF myKinematic.motionBuffer[index].bMotionBufferEmpty THEN
+      RETURN; // nothing to do
+   END_IF;
+   
+   myKinematic.DebugPrint(eTraceTracking, "TransferBufferToPath Index ="+STR(index));
+
+   // wait until append possible, then transfer the buffer to the path
+   WAIT appendFree;
+   IF NOT McuTransferBufferToPath(myKinematic.motionBuffer[index].motionBufId, pathMcuId) THEN
+      FOR i:=0 TO cgiNrMotionBuffer-1 DO
+         PrintMotionBufInfo(i);
+      END_FOR;
+      RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 4, instId, 
+         "TRcuPath.TransferBufferToPath", "McuTransferBufferToPath", INSTANCE_NAME());
+   ELSE
+      PrintMotionBufInfo(index);
+      myKinematic.motionBuffer[index].bCheckMotionBuffer := FALSE;
+      myKinematic.motionBuffer[index].motionBufId :=0;
+      myKinematic.motionBuffer[index].bMotionBufferEmpty := TRUE;
+      myKinematic.motionBuffer[index].iCmdCounter := 0;
+   END_IF;
+
+   McuReleaseDbObj(myKinematic.motionBuffer[index].motionBufId);
+   myKinematic.bGunOffReached := FALSE;
+
+END_ROUTINE
+
+ROUTINE ConnectMotionBuf(first : INT; second : INT)
+   VAR
+      locSegHdl : TMcuSegHdl;
+      locStartSeg : TMcuSegment;
+   END_VAR
+   
+   locSegHdl := myKinematic.motionBuffer[second].startSegHdl;
+   McuReadSegment(locSegHdl.mSegmentID, locStartSeg);
+   locStartSeg.mName := "MB"+STR(first)+"_to_MB"+STR(second);
+   locStartSeg.mPosStart := myKinematic.motionBuffer[first].lastPosId;
+   McuCreateDynamic(locSegHdl.mDynamicID,myKinematic.motionBuffer[second].startDyn);
+
+   McuCreateSegment(locSegHdl.mSegmentID, locStartSeg, myKinematic.kinematicMcuId);
+   WAIT appendFree;
+   myKinematic.DebugPrint(eTraceTracking, locStartSeg.mName+" ConnectMotionBuf mPosStart = "+STR(locStartSeg.mPosStart));
+   myKinematic.DebugPrint(eTraceTracking, locStartSeg.mName+" ConnectMotionBuf endPosId = "+STR(locStartSeg.mPosEnd));
+   IF NOT McuAppendToPath(myKinematic.kinematicMcuId ,pathMcuId, locSegHdl) THEN
+      myKinematic.ErrorReaction(FALSE);
+   END_IF;
+   McuReleaseDbObj(locSegHdl.mDynamicID);
+
+END_ROUTINE
+
+ROUTINE PrintMotionBufInfo(CONST i: INT)
+VAR
+   MotionBufState : TMcuMotionBufState;
+END_VAR
+
+   IF myKinematic.motionBuffer[i].motionBufId <> 0 THEN
+      McuReadMotionBufferState(myKinematic.motionBuffer[i].motionBufId,
+                            MotionBufState);
+      myKinematic.DebugPrint(eTraceTracking, "MotionBufState "+STR(i)+" : motionBufId   = "+STR(myKinematic.motionBuffer[i].motionBufId));
+      myKinematic.DebugPrint(eTraceTracking, "                 mIsReachable  = "+STR(MotionBufState.mIsReachable));
+      myKinematic.DebugPrint(eTraceTracking, "                 mActSegEndPos = "+STR(MotionBufState.mActSegEndPos));
+      myKinematic.DebugPrint(eTraceTracking, "                 mErrorMsg     = "+STR(MotionBufState.mErrorMsg));
+   ELSE
+      myKinematic.DebugPrint(eTraceTracking, "MotionBufState "+STR(i)+" : motionBufId   = "+STR(myKinematic.motionBuffer[i].motionBufId));
+   END_IF;
+END_ROUTINE
+
+
+// Create next motion buffer
+ROUTINE CreateNextBuffer()
+   
+   myKinematic.iActMotionBuffer := myKinematic.iActMotionBuffer + 1;
+   IF myKinematic.iActMotionBuffer > cgiNrMotionBuffer-1 THEN
+      myKinematic.iActMotionBuffer := 0;
+   END_IF;
+   myKinematic.DebugPrint(eTraceTracking, "CreateNextBuffer Index ="+STR(myKinematic.iActMotionBuffer));
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].bCheckMotionBuffer := FALSE;
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].bPathReachable := FALSE;
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].bRelease := FALSE;
+   myKinematic.bGunOffReached := FALSE;
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].bMotionBufferEmpty := TRUE;
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].iCmdCounter := 0;
+  //create motionbuffers
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].mcuMotionBuffer.mDBObjTyp := eMcuPermanent;
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].mcuMotionBuffer.mName := "Buffer" + STR(myKinematic.iActMotionBuffer);
+   myKinematic.motionBuffer[myKinematic.iActMotionBuffer].mcuMotionBuffer.mKinematicID := myKinematic.kinematicMcuId;
+   IF NOT McuCreateMotionBuffer(myKinematic.motionBuffer[myKinematic.iActMotionBuffer].motionBufId, 
+                         myKinematic.motionBuffer[myKinematic.iActMotionBuffer].mcuMotionBuffer) THEN
+      RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 5, instId, "TRcuPath.CreateNextBuffer", "McuCreateMotionBuffer",
+         INSTANCE_NAME());
+   ELSE
+      myKinematic.DebugPrint(eTraceTracking, "McuCreateMotionBuffer iActMotionBuffer = " + STR(myKinematic.iActMotionBuffer)); 
+   END_IF;
+END_ROUTINE
+
+
+// Release the motion buffer
+ROUTINE ReleaseMotionBuffer(index : INT)
+   
+   IF myKinematic.motionBuffer[index].bCheckMotionBuffer THEN
+      myKinematic.DebugPrint(eTraceTracking, "ReleaseMotionBuffer Index ="+STR(index));
+      IF McuTerminateMotionBuffer(myKinematic.motionBuffer[index].motionBufId) THEN
+         McuReleaseDbObj(myKinematic.motionBuffer[index].motionBufId);
+         myKinematic.motionBuffer[index].bCheckMotionBuffer := FALSE;
+         myKinematic.motionBuffer[index].motionBufId :=0;
+         myKinematic.bGunOffReached := FALSE;
+         myKinematic.motionBuffer[index].bMotionBufferEmpty := TRUE;
+         myKinematic.motionBuffer[index].iCmdCounter := 0;
+         myKinematic.DebugPrint(eTraceTracking, "McuTerminateMotionBuffer iActMotionBuffer = " + STR(index));
+      ELSE
+         RcuSetMessageOnce(TRcuPath_ErrMcuFuncFailed, myKinematic.kinListInx, 6, instId, "TRcuPath.ReleaseMotionBuffer", "McuTerminateMotionBuffer",
+         INSTANCE_NAME());
+      END_IF;
+   ELSE
+      IF myKinematic.motionBuffer[index].motionBufId <> 0 THEN
+         myKinematic.DebugPrint(eTraceTracking, "ReleaseMotionBuffer Index ="+STR(index));
+         McuReleaseDbObj(myKinematic.motionBuffer[index].motionBufId);
+         myKinematic.motionBuffer[index].bCheckMotionBuffer := FALSE;
+         myKinematic.motionBuffer[index].motionBufId :=0;
+         myKinematic.motionBuffer[index].bMotionBufferEmpty := TRUE;
+         myKinematic.motionBuffer[index].iCmdCounter := 0;
+      END_IF;
+   END_IF;
+   myKinematic.motionBuffer[index].bRelease := TRUE;
+   
+END_ROUTINE
+
+
+// Release all motion buffers
+ROUTINE ReleaseAllMotionBuffers()
+VAR
+   i : INT;
+END_VAR
+
+   FOR i:=0 TO cgiNrMotionBuffer-1 DO
+      ReleaseMotionBuffer(i);
+   END_FOR;
+   
+END_ROUTINE
+
+
+// end all motioncommands within this path and simultanously all routines waiting
+// for motion related events (WaitForMainRun, WaitForJobSignal)
+ROUTINE EndMotionCommands()
+
+   cancelFlipFlop := NOT cancelFlipFlop;
+   cmdCount := 0;
+   cmdLimitReached := FALSE;
+END_ROUTINE
+
+// Reset the path, release all segments, restore defaultsettings. Returns FALSE
+// when the kinematic is on this path (reset impossible), TRUE otherwise
+ROUTINE Reset() : BOOL
+
+   IF NOT Clear() THEN
+      RETURN FALSE;
+   END_IF;
+   myKinematic.DebugPrint(eTraceMotionModesFine, "Reset "+INSTANCE_NAME()+" (pathId: "+STR(pathMcuId) + ")");
+   ReleasePathObjects();
+
+   // restore default-settings
+   IF (defaultCartDynMcuId = 0) OR (defaultDynMcuId = 0) OR (defaultOvlMcuId = 0) OR (defaultToolMcuId = 0) THEN
+      RcuSetMessageOnce(TRcuPath_ErrPathDefltMiss, myKinematic.kinListInx, 1, instId, "TRcuPath.Reset", INSTANCE_NAME());
+      myKinematic.ErrorReaction(FALSE);
+   END_IF;
+   segHdl.mDynamicID := defaultDynMcuId;
+   
+   dynamicId := defaultDynMcuId;
+   cartDynamicId := defaultCartDynMcuId;
+   
+   segHdl.mOverlapID := defaultOvlMcuId;
+   segHdl.mRobotToolID := defaultToolMcuId;
+   
+   // use SetCustomGripperId because it could be necessary to calculate the
+   // gripper in the toolsystem
+   SetCustomGripperId(defaultCustomGripperMcuId);
+   defaultGripperMcuId := segHdl.mGripperID;
+
+   McuReadDynamic(segHdl.mDynamicID, dynamic);
+   dynamic.mDBObjTyp := eMcuPermanent;
+   dynamicChg := FALSE; // inhibit creation of the dynamic
+   IF myKinematic.allDegreesOfFreedom THEN
+      oriType := eMcuZRotation;
+   ELSE
+      oriType := eMcuWristJoints;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Release the path and create it again, release all pathobjects. Returns FALSE when the kinematic
+// is on this path (clear impossible), TRUE otherwise.
+ROUTINE Clear() : BOOL
+
+   myKinematic.DebugPrint(eTraceMotionModesFine, "Clear "+INSTANCE_NAME()+" (pathId: "+STR(pathMcuId) + ")");
+   IF myKinematic.actExecData.mActPathID = pathMcuId THEN
+      RETURN FALSE;
+   END_IF;
+
+   myKinematic.DebugPrint(eTraceMotionModesFine, "Release pathPosMcuId: "+STR(pathPosMcuId));
+   IF NOT McuReleaseDbObj(pathPosMcuId) THEN
+      RcuResetMessage(TRcuPath_WarPathPosReleaseFail, myKinematic.kinListInx, 1, instId, "TRcuPath.Clear", INSTANCE_NAME());
+   END_IF;
+   IF lastEndPosId <> 0 THEN
+      McuReleaseDbObj(lastEndPosId);
+      lastEndPosId := 0;
+   END_IF;
+   IF lastPosFromPathPosId <> 0 THEN
+      McuReleaseDbObj(lastPosFromPathPosId);
+      lastPosFromPathPosId := 0;
+   END_IF;
+   IF lastPosId <> 0 THEN
+      McuReleaseDbObj(lastPosId);
+      lastPosId := 0;
+   END_IF;
+   McuReleaseDbObj(pathMcuId);
+   
+   CreatePathObject();
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Give defaultsettings for the dynamic, the overlap and the tool. These settings will be
+// restored by the Reset method. CAUTION: the presented Mcu-objects will be released when
+// the path is deleted
+ROUTINE SetDefault(dynId : TMcuDbObjID; ovlId : TMcuDbObjID; toolId : TMcuDbObjID)
+
+   IF defaultSet THEN
+      RcuSetMessageOnce(TRcuPath_WarPathSetDefaultCall, myKinematic.kinListInx, 1, instId, "TRcuPath.SetDefault", INSTANCE_NAME());
+   END_IF;
+   IF (dynId = 0) OR (ovlId = 0) OR (toolId = 0) THEN
+      RcuSetMessageOnce(TRcuPath_WarPathSettingsInsuff, myKinematic.kinListInx, 1, instId, "TRcuPath.SetDefault", INSTANCE_NAME());
+   ELSE
+      defaultSet := TRUE;
+   END_IF;
+
+   segHdl.mDynamicID := dynId;
+   dynamicId := dynId;
+   
+   segHdl.mOverlapID := ovlId;
+   segHdl.mRobotToolID := toolId;
+
+   defaultDynMcuId := dynId;  
+   
+   defaultOvlMcuId := ovlId;
+   defaultToolMcuId := toolId;
+   defaultCustomGripperMcuId := 0;
+   defaultGripperMcuId := 0;
+
+   IF dynId <> 0 THEN
+      McuReadDynamic(dynId, dynamic);
+      defaultAcceRampMcuId := dynamic.mAcceRamp;
+      defaultDeceRampMcuId := dynamic.mDeceRamp;
+   END_IF;
+   dynamic.mDBObjTyp := eMcuPermanent;   
+   
+   // dynamic for cartesian movements without limitation to the
+   // programmed values in VEL, ACCEL, JERK
+   cartDynamic := dynamic;
+   cartDynamic.mUseJointLimForCartSeg := myKinematic.bUseJointLimForCartSeg;
+   cartDynamic.mJoint.mVelo := 1.0;
+   cartDynamic.mJoint.mDece := 1.0;
+   cartDynamic.mJoint.mAcce := 1.0;
+   cartDynamic.mJoint.mJerk := 1.0;
+   IF NOT McuCreateDynamic(defaultCartDynMcuId, cartDynamic) THEN
+      RcuSetMessageOnce(TRcuPath_ErrCreateDynFail, myKinematic.kinListInx, 3, instId, "TRcuPath.AppendSegmentWithJobSet", INSTANCE_NAME());
+      myKinematic.ErrorReaction(FALSE);
+   END_IF;
+   cartDynamicId := defaultCartDynMcuId;
+
+   dynamicChg := FALSE; // inhibit creation of the dynamic
+END_ROUTINE
+
+
+// set a default tool-Id for this path
+ROUTINE SetToolIdDefault(CONST id : TMcuDbObjID)
+
+   // pass to lower level
+   SetToolId(id);
+   // only at changes
+   IF id <> defaultToolMcuId THEN
+      // release current defaultId if appropriate
+      IF (defaultToolMcuId <> myKinematic.kinToolMcuId) AND
+            (defaultToolMcuId <> 0) THEN
+         McuReleaseDbObj(defaultToolMcuId);
+      END_IF;
+      // register new Id
+      defaultToolMcuId := id;
+   END_IF;
+END_ROUTINE
+
+
+// set a default gripper-Id for this path, the incoming gripper is defined in the
+// system according to myKinematic.flangeGripper
+ROUTINE SetCustomGripperIdDefault(CONST id : TMcuDbObjID)
+
+   // pass to lower level
+   SetCustomGripperId(id);
+   // only at changes
+   IF id <> defaultCustomGripperMcuId THEN
+      // release current defaultCustomGripperId if appropriate
+      IF (defaultCustomGripperMcuId <> myKinematic.kinGripperMcuId) AND
+         (defaultCustomGripperMcuId <> 0) THEN
+         McuReleaseDbObj(defaultCustomGripperMcuId);
+      END_IF;
+      // release current defaultGripperId if different and present
+      IF (defaultGripperMcuId <> defaultCustomGripperMcuId) AND
+         (defaultGripperMcuId <> 0) THEN
+         McuReleaseDbObj(defaultGripperMcuId);
+      END_IF;
+      // register new Id
+      defaultCustomGripperMcuId := id;
+      // copy new toolgripper id
+      defaultGripperMcuId := segHdl.mGripperID;
+   END_IF;
+END_ROUTINE
+
+
+(*
+// returns the name of the instance
+ROUTINE GetName() : STRING
+   
+   RETURN INSTANCE_NAME();
+END_ROUTINE
+*)
+
+(*******************************************************************************
+* technology commands
+*******************************************************************************)
+
+// set the orientation-interpolation type
+ROUTINE Ori(type : TMcuOriTyp)
+   oriType := type;
+   IF ((oriType = eMcuZRotation) OR (oriType = eMcuZRotationCirc)) AND NOT myKinematic.allDegreesOfFreedom THEN
+      RcuResetMessage(TRcuPath_WarIntTypeUnexpect, myKinematic.kinListInx, 1, instId, "TRcuPath.Ori", myKinematic.robotName, INSTANCE_NAME());
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE GetSource() : STRING
+   VAR
+      stackHdl : DINT;
+      stmtKind : TStmtKind;
+      text     : STRING;
+      param    : STRING;
+      prgText  : STRING;
+      progName : STRING;
+      lineNr   : DINT;
+      progHdl  : DINT;
+   END_VAR
+   
+      StoreUserProgCallStack(stackHdl);
+      GetStatementInfo(stackHdl, stmtKind, text, param);
+      GetUserProgInfo(progName, lineNr, progHdl);
+      prgText := progName + " : " + STR(lineNr) + " " + text + "(" + param + ")";
+      RETURN prgText;
+END_ROUTINE
+
+
+// set the joint-velocity in percent of the limiting values
+ROUTINE Vel(x : REAL)
+   
+   IF (x < 0.0) OR (x > 100.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 1, instId, "TRcuPath.Vel", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   dynamic.mJoint.mVelo := x / 100.0;
+END_ROUTINE
+
+
+// set the cartesian velocity in m/s
+ROUTINE PathVel(v : REAL)
+
+   IF (v <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 2, instId, "TRcuPath.PathVel", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   dynamic.mCart.mVelo := v;
+END_ROUTINE
+
+
+// set the turn-velocity in degrees/s
+ROUTINE TurnVel(x : REAL)
+
+   IF (x <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 3, instId, "TRcuPath.TurnVel", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   dynamic.mTurn.mVelo := x;
+END_ROUTINE
+
+// set the joint-acceleration (xAcce) and deceleration (xDece) in percent of
+// the limiting values
+ROUTINE Accel(xAcce : REAL; xDece : REAL)
+
+   IF (xAcce <= 0.0) OR (xAcce > 100.0) OR (xDece <= 0.0) OR (xDece > 100.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 4, instId, "TRcuPath.Accel", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   dynamic.mJoint.mAcce := xAcce / 100.0;
+   dynamic.mJoint.mDece := xDece / 100.0;
+END_ROUTINE
+
+
+// set the cartesian acceleration (aAcce) and deceleration (aDece) in m/s2
+ROUTINE PathAccel(aAcce : REAL; aDece : REAL)
+
+   IF (aAcce <= 0.0) OR (aDece <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 5, instId, "TRcuPath.PathAccel", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   dynamic.mCart.mAcce := aAcce;
+   dynamic.mCart.mDece := aDece;
+END_ROUTINE
+
+
+// set the cartesian acceleration (xAcce) and deceleration (xDece) in degrees/s2
+ROUTINE TurnAccel(xAcce : REAL; xDece : REAL)
+
+   IF (xAcce <= 0.0) OR (xDece <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 6, instId, "TRcuPath.TurnAccel", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   dynamic.mTurn.mAcce := xAcce;
+   dynamic.mTurn.mDece := xDece;
+END_ROUTINE
+
+
+// set the joint-jerk (xJerk) in percent of
+// the limiting values
+ROUTINE Jerk(xJerk : REAL)
+
+   IF (xJerk <= 0.0) OR (xJerk > 100.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 7, instId, "TRcuPath.Jerk", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   dynamic.mJoint.mJerk := xJerk / 100.0;
+END_ROUTINE
+
+
+// set the cartesian jerk (aJerk) in m/s3
+ROUTINE PathJerk(aJerk : REAL)
+
+   IF (aJerk <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 8, instId, "TRcuPath.PathJerk", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   dynamic.mCart.mJerk := aJerk;
+END_ROUTINE
+
+
+// set the cartesian jerk (xJerk) in degrees/s3
+ROUTINE TurnJerk(xJerk : REAL)
+
+   IF (xJerk <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 9, instId, "TRcuPath.TurnJerk", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   dynamic.mTurn.mJerk := xJerk;
+END_ROUTINE
+
+
+// set overlap-type and -parameters, generic interface
+ROUTINE Overlap(type : TMcuOvlTyp; defType : TMcuOvlDefTyp; paramPrev : REAL; paramThis : REAL)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   ovl.mOvlTyp := type;
+   ovl.mOvlDefTyp := defType;
+   ovl.mOvlStartPrevSeg := paramPrev;
+   ovl.mOvlEndOnThisSeg := paramThis;
+   ovl.mName := "Overlap(" + STR(type) + "," + STR(defType) + "," + STR(paramPrev)
+      + "," + STR(paramThis) + ")";  // set name shown in statusreport, no Ecotalk-Overlap
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+// Use dynamic velocity overlapping, the parameter gives the path used for overlapping
+// in percent of the path necessary for complete overlapping (usually 100 percent).
+// Dynamic overlapping optimizes the time-requirements, the pathvelocities can
+// differ from the programmed values.
+ROUTINE OvlDynVelo(x : REAL)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   IF (x < 0.0) OR (x > 100.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 10, instId, "TRcuPath.OvlDynVelo", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   
+   ovl.mOvlTyp := eMcuDynOvl;
+   ovl.mOvlDefTyp := eMcuVelo;
+   ovl.mOvlStartPrevSeg := x / 100.0;
+   ovl.mOvlEndOnThisSeg := 1.0;
+   ovl.mName := "OVERLAP(Vel,"+STR(x)+")"; // set name shown in statusreport according to Ecotalk-makro
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+// Use dynamic overlapping with a given distance. The parameter gives the
+// distance from points on the path within which overlapping can happen.
+ROUTINE OvlDynDist(s : REAL)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   IF (s < 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 11, instId, "TRcuPath.OvlDynDist", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   
+   ovl.mOvlTyp := eMcuDynOvl;
+   ovl.mOvlDefTyp := eMcuDistance;
+   ovl.mOvlStartPrevSeg := s;
+   ovl.mOvlEndOnThisSeg := 1.0;
+   ovl.mName := "OvlDynDist("+STR(s)+")"; // set name shown in statusreport, no Ecotalk-Overlap
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+// Use dynamic overlapping with a given distance. The parameter gives the
+// allowed deviation from the programmed path.
+ROUTINE OvlDynDeviation(s : REAL)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   IF (s < 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 12, instId, "TRcuPath.OvlDynDeviation", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   
+   ovl.mOvlTyp := eMcuDynOvl;
+   ovl.mOvlDefTyp := eMcuDeviation;
+   ovl.mOvlStartPrevSeg := s;
+   ovl.mOvlEndOnThisSeg := 1.0;
+   ovl.mName := "OvlDynDeviation("+STR(s)+")"; // set name shown in statusreport, no Ecotalk-Overlap
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+// Use cartesian overlapping, the parameter gives the distance from points
+// on the path within which overlapping can happen. Cartesian Overlapping
+// tries to keep the path-velocity constant during overlapping.
+(*seperate adjustable acceleration for kartesian overlap: The acceleration,
+used in overlap can be adjusted with second parameter (mOvlEndOnThisSeg)
+in overlapdata structure (TMcuOverlap).
+This parameter is the ratio between maximum kartesian acceleration and
+programmed acceleration (ovl.mOvlEndOnThisSeg := accRel;, 1.0 means equal
+acceleration as PATHACCE, 0.5 = 50 percent of programmed acceleration
+*)
+ROUTINE OvlCart(s : REAL; accRel : REAL)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   IF (s < 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 13, instId, "TRcuPath.OvlCart", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   IF (accRel <= 0.0) THEN // sbj: removed condition "> 1.0"
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 14, instId, "TRcuPath.OvlCart", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   
+   ovl.mOvlTyp := eMcuCartOvl;
+   ovl.mOvlDefTyp := eMcuDistance;
+   ovl.mOvlStartPrevSeg := s;
+   ovl.mOvlEndOnThisSeg := accRel;
+   ovl.mName := "OVERLAP(Cart,"+STR(s)+")"; // set name shown in statusreport according to Ecotalk-makro
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+ROUTINE OvlCartAcc(s : REAL; accRel : REAL)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+   
+   IF (s < 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 15, instId, "TRcuPath.OvlCartAcc", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   IF (accRel <= 0.0) THEN // sbj: removed condition "> 1.0"
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 16, instId, "TRcuPath.OvlCartAcc", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   
+   ovl.mOvlTyp := eMcuCartOvl;
+   ovl.mOvlDefTyp := eMcuDistanceAcc;
+   ovl.mOvlStartPrevSeg := s;
+   ovl.mOvlEndOnThisSeg := accRel/100;
+   ovl.mName := "OVERLAP(CartAcc,"+STR(s)+")"; // set name shown in statusreport according to Ecotalk-makro
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+// do not use overlapping
+ROUTINE OvlNone()
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   ovl.mOvlTyp := eMcuNoOvl;
+   ovl.mOvlDefTyp := eMcuSegParam; // necessary for valid overlap structure
+   ovl.mName := "OVERLAP(Fine)";  // set name shown in statusreport according to Ecotalk-makro
+   NewOverlap(ovl);
+END_ROUTINE
+
+
+// wait some time
+ROUTINE OvlNoneWait(CONST waitingTime : REAL; CONST pathOverlapID : TMcuDbObjID)
+   VAR
+      ovl : TMcuOverlap;
+   END_VAR
+
+   IF (waitingTime <= 0.0) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 17, instId, "TRcuPath.OvlNoneWait", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   
+   ovl.mOvlTyp := eMcuNoOvlWait;
+   ovl.mOvlDefTyp := eMcuSegParam; // necessary for valid overlap structure
+   ovl.mOvlStartPrevSeg := waitingTime;
+
+   ovl.mDBObjTyp := eMcuPermanent;
+   // use the default dynamik for overlapping
+   ovl.mOvlDynamic := defaultDynMcuId;
+   ovl.mUserData.mDataInt[0] := pathOverlapID; // store previous path-overlap for later restoration (setPC, ...)
+   ovl.mUserData.mIntValidLen := 1;
+   ovl.mName := "DELAY(" + STR(waitingTime) + ")"; // set name shown in statusreport according to Ecotalk-makro
+   // create the new overlap
+   IF (segHdl.mOverlapID <> defaultOvlMcuId) AND (segHdl.mOverlapID <> pathOverlapID) THEN
+      McuReleaseDbObj(segHdl.mOverlapID);
+   END_IF;
+   McuCreateOverlap(segHdl.mOverlapID, ovl);
+END_ROUTINE
+
+
+// set acceleration ramp
+ROUTINE AcceRamp(type : TMcuRampTyp; param : REAL; param2 : REAL)
+   VAR
+      ramp : TMcuRamp;
+      id : TMcuDbObjID;
+   END_VAR
+
+   IF (param <= 0) OR (param >= 1) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 18, instId, "TRcuPath.AcceRamp", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   IF (type = eMcuTrapez) AND ((param2 <= 0) OR (param2 >= 1)) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuPath_ErrPathParOutORng, myKinematic.kinListInx, 19, instId, "TRcuPath.AcceRamp", GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   ramp.mRampParam := param;
+   ramp.mRampParam2 := param2;
+   ramp.mTyp := type;
+   ramp.mDBObjTyp := eMcuPermanent;
+   CASE type OF
+      eMcuTrapez : 
+         IF (param = 0.5) AND (param2 = 0.5) THEN
+            ramp.mName := "RAMP(Triangle)";
+         ELSE
+            ramp.mName := "RAMP(Trapez,"+STR(param)+")";
+         END_IF;
+      eMcuSinusQuadrat : ramp.mName := "RAMP(SinusQuad,"+STR(param)+")";
+      eMcuSinus        : ramp.mName := "RAMP(Sinus)";   // no Ecotalk-ramp
+      eMcuMinimumJerk  : ramp.mName := "RAMP(MinJerk)"; // no Ecotalk-ramp
+   END_CASE;
+      
+   // create the new ramp
+   IF dynamic.mAcceRamp <> defaultAcceRampMcuId THEN
+      McuReleaseDbObj(dynamic.mAcceRamp);
+   END_IF;
+   McuCreateRamp(id, ramp);
+   dynamic.mAcceRamp := id; // not directly in McuCreateRamp (signalization!)
+END_ROUTINE
+
+
+// set deceleration ramp
+ROUTINE DeceRamp(type : TMcuRampTyp; param : REAL; param2 : REAL)
+   VAR
+      ramp : TMcuRamp;
+      id : TMcuDbObjID;
+   END_VAR
+
+   ramp.mRampParam := param;
+   ramp.mRampParam2 := param2;
+   ramp.mTyp := type;
+   ramp.mDBObjTyp := eMcuPermanent;
+   CASE type OF
+      eMcuTrapez : 
+         IF (param = 0.5) AND (param2 = 0.5) THEN
+            ramp.mName := "RAMP(Triangle)";
+         ELSE
+            ramp.mName := "RAMP(Trapez,"+STR(param)+")";
+         END_IF;
+      eMcuSinusQuadrat : ramp.mName := "RAMP(SinusQuad,"+STR(param)+")";
+      eMcuSinus        : ramp.mName := "RAMP(Sinus)";   // no Ecotalk-ramp
+      eMcuMinimumJerk  : ramp.mName := "RAMP(MinJerk)"; // no Ecotalk-ramp
+   END_CASE;
+   
+   // create the new ramp
+   IF dynamic.mDeceRamp <> defaultDeceRampMcuId THEN
+      McuReleaseDbObj(dynamic.mDeceRamp);
+   END_IF;
+   McuCreateRamp(id, ramp);
+   dynamic.mDeceRamp := id; // not directly in McuCreateRamp (signalization!)
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*******************************************************************************)
+
+VAR PRIVATE
+   defaultDynMcuId : TMcuDbObjID; // Dynamic to be restored by the Reset method
+   defaultCartDynMcuId : TMcuDbObjID; // Dynamic to be restored by the Reset method
+   defaultOvlMcuId : TMcuDbObjID; // Overlap to be restored by the Reset method
+   defaultToolMcuId : TMcuDbObjID; // Tool to be restored by the Reset method
+   defaultCustomGripperMcuId : TMcuDbObjID; // Gripper to be restored by the Reset method,
+   // defined in the system according to myKinematic.flangeGripper
+   defaultGripperMcuId : TMcuDbObjID; // the toolGripper-id belonging to defaultCustomGripperMcuId
+
+   defaultAcceRampMcuId : TMcuDbObjID; // Acceleration-ramp to be restored by the Reset method
+   defaultDeceRampMcuId : TMcuDbObjID; // Deceleration-ramp to be restored by the Reset method
+   defaultSet : BOOL; // SetDefault has already been called successfully
+   endPosName : STRING; // Name of the startposition for the next segment
+   dynamicChg : BOOL; // registration of changes in the member dynamic
+   appendFree : MAPTO BOOL; // true if append segment possible
+   noLookAhead : BOOL; // deactivates lookahead for this path
+
+   // static data to avoid frequent allocation
+   segment : TMcuSegment; // static segmentdata
+   job : TMcuJob; // static jobdata 
+   
+   cartDynamic : TMcuDynamic; // for cartesian segments
+   cartDynamicId : TMcuDbObjID; // ID of dynamic used for cartesian movements 
+   dynamicId : TMcuDbObjID; // ID of dynamic for PTP
+
+   oldOvlMcuId : TMcuDbObjID;
+
+   // if TRUE no additional motion commands are allowed
+   cmdLimitReached : BOOL;
+   bSetPcError : BOOL;
+END_VAR
+
+
+ROUTINE WaitFinished(finished : BOOL; delete : BOOL) PRIVATE
+
+   // Wait until the motion command is finished
+   WAIT finished;
+END_ROUTINE
+
+
+ROUTINE NewOverlap(ovl : TMcuOverlap) PRIVATE
+
+   nextOvl := ovl;
+   
+   // dynamic in Overlap not used in MCU !!
+   nextOvl.mDBObjTyp := eMcuPermanent;
+   // use the default dynamik for overlapping
+   nextOvl.mOvlDynamic := defaultDynMcuId;
+   // create the new overlap
+   IF (nextOvlId <> defaultOvlMcuId) AND (nextOvlId <> oldOvlMcuId) AND (nextOvlId <> 0) THEN
+      McuReleaseDbObj(nextOvlId);
+      myKinematic.DebugPrint(eTraceReposDebug, "NewOverlap McuReleaseDbObj() nextOvlId = " +STR(nextOvlId));
+   END_IF;
+   McuCreateOverlap(nextOvlId, nextOvl);
+   myKinematic.DebugPrint(eTraceReposDebug, "NewOverlap McuCreateOverlap() nextOvlId = " +STR(nextOvlId));   
+   
+   signalOvl := TRUE;
+END_ROUTINE
+
+
+// define a new overlap for the path
+ROUTINE SetNewOverlap() PRIVATE
+
+   WHILE TRUE DO
+      //WAIT signalOvl;
+      WAIT segmentReady;
+
+      IF (segHdl.mOverlapID <> defaultOvlMcuId) AND (segHdl.mOverlapID <> oldOvlMcuId) THEN
+         McuReleaseDbObj(segHdl.mOverlapID);
+         myKinematic.DebugPrint(eTraceReposDebug, "SetNewOverlap McuReleaseDbObj() segHdl.mOverlapID = " +STR(segHdl.mOverlapID));
+      END_IF;
+      segHdl.mOverlapID := nextOvlId;
+      nextOvlId := 0;
+      myKinematic.DebugPrint(eTraceReposDebug, "SetNewOverlap segHdl.mOverlapID = " +STR(segHdl.mOverlapID));
+      signalOvl := FALSE;
+      segmentReady := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE CreatePathObject() PRIVATE
+   VAR
+      path : TMcuPath;
+   END_VAR
+
+   // generation of the path-Object
+   path.mDBObjTyp := eMcuPermanent;
+   path.mKinematicID := myKinematic.kinematicMcuId;
+   path.mNoLookAhead := noLookAhead;
+   IF IS_INSTANCE(SELF, TRcuProgPath) AND (ProjectName <> "") THEN
+      path.mName := myKinematic.robotName;
+   ELSE
+      path.mName := INSTANCE_NAME();
+   END_IF;
+   McuCreatePath(pathMcuId, path);
+   // initial PathPos, settings
+   pathPosMcuId := McuGetInitPathPosID(pathMcuId);
+   (*$$$$$* spline *$$$$$*)             
+   newPathPosMcuId := 0;
+   endPosId := 0;
+   (*$$$$$* spline *$$$$$*)             
+   endSegId := 0;
+   endPosName := INSTANCE_NAME() + "_InitPos";
+   segmentMcuId := 0;
+END_ROUTINE
+
+
+// release all Mcu Objects belonging to the path unless they are the default objects
+ROUTINE ReleasePathObjects() PRIVATE
+
+   IF (cartDynamicId <> dynamicId) AND (cartDynamicId <> defaultDynMcuId) AND (cartDynamicId <> defaultCartDynMcuId) THEN
+      McuReleaseDbObj(cartDynamicId);
+   END_IF;
+   IF (dynamicId <> defaultDynMcuId) AND (dynamicId <> defaultCartDynMcuId) THEN
+      McuReleaseDbObj(dynamicId);
+   END_IF;
+   IF (segHdl.mDynamicID <> defaultDynMcuId) AND (segHdl.mDynamicID <> defaultCartDynMcuId) AND
+         (segHdl.mDynamicID <> dynamicId) AND (segHdl.mDynamicID <> cartDynamicId) THEN
+      McuReleaseDbObj(segHdl.mDynamicID);
+   END_IF;
+   IF (oldOvlMcuId <> defaultOvlMcuId) AND (oldOvlMcuId <> segHdl.mOverlapID) AND (oldOvlMcuId <> 0) THEN
+      McuReleaseDbObj(oldOvlMcuId);
+   END_IF;
+   IF segHdl.mOverlapID <> defaultOvlMcuId THEN
+      McuReleaseDbObj(segHdl.mOverlapID);
+//      myKinematic.DebugPrint(eTraceReposDebug, "ReleasePathObjects McuReleaseDbObj() segHdl.mOverlapID = " +STR(segHdl.mOverlapID));
+   END_IF;
+   IF (segHdl.mRobotToolID <> defaultToolMcuId) AND (segHdl.mRobotToolID <> 0) THEN
+      myKinematic.DebugPrint(eTraceReposDebug, "ReleasePathObjects: McuReleaseDbObj toolId = "+ STR(segHdl.mRobotToolID));
+      McuReleaseDbObj(segHdl.mRobotToolID);
+   END_IF;
+   IF (segHdl.mGripperID <> defaultCustomGripperMcuId) AND
+      (segHdl.mGripperID <> defaultGripperMcuId) AND
+      (segHdl.mGripperID <> 0) THEN
+      McuReleaseDbObj(segHdl.mGripperID);
+   END_IF;
+
+   IF dynamic.mAcceRamp <> defaultAcceRampMcuId THEN
+      McuReleaseDbObj(dynamic.mAcceRamp);
+   END_IF;
+   IF (dynamic.mDeceRamp <> defaultDeceRampMcuId) AND (dynamic.mDeceRamp <> dynamic.mAcceRamp) THEN
+      McuReleaseDbObj(dynamic.mDeceRamp);
+   END_IF;
+   IF lastEndPosId <> 0 THEN
+      McuReleaseDbObj(lastEndPosId);
+      lastEndPosId := 0;
+   END_IF;
+   IF lastPosFromPathPosId <> 0 THEN
+      McuReleaseDbObj(lastPosFromPathPosId);
+      lastPosFromPathPosId := 0;
+   END_IF;
+   IF lastPosId <> 0 THEN
+      McuReleaseDbObj(lastPosId);
+      lastPosId := 0;
+   END_IF;
+END_ROUTINE
+
+
+// set a tool-Id for this path
+ROUTINE SetToolId(CONST id : TMcuDbObjID) PRIVATE
+
+   // only at changes
+   IF id <> segHdl.mRobotToolID THEN
+
+      // release current toolId if appropriate
+      IF (segHdl.mRobotToolID <> defaultToolMcuId) AND
+         (segHdl.mRobotToolID <> myKinematic.kinToolMcuId) AND
+         (segHdl.mRobotToolID <> 0) THEN
+         myKinematic.DebugPrint(eTraceReposDebug, "SetToolId: McuReleaseDbObj toolId = "+ STR(segHdl.mRobotToolID));
+         McuReleaseDbObj(segHdl.mRobotToolID);
+      END_IF;
+
+      // register new tool Id
+      myKinematic.DebugPrint(eTraceReposDebug, "SetToolId: NEU segHdl.mRobotToolID = "+ STR(segHdl.mRobotToolID));
+      segHdl.mRobotToolID := id;
+
+   END_IF;
+END_ROUTINE
+
+
+// set a gripper-Id for this path, the incoming gripper is defined in the tool-system
+ROUTINE SetGripperId(CONST id : TMcuDbObjID) PRIVATE
+
+   // only at changes
+   IF id <> segHdl.mGripperID THEN
+      // release current gripperId if appropriate
+      IF (segHdl.mGripperID <> defaultCustomGripperMcuId) AND
+         (segHdl.mGripperID <> defaultGripperMcuId) AND
+         (segHdl.mGripperID <> 0) THEN
+         McuReleaseDbObj(segHdl.mGripperID);
+      END_IF;
+      // register new Id
+      segHdl.mGripperID := id;
+   END_IF;
+END_ROUTINE
+
+
+// set a gripper-Id for this path, the incoming gripper is defined in the system
+// according to myKinematic.flangeGripper
+ROUTINE SetCustomGripperId(VAR_IN id : TMcuDbObjID) PRIVATE
+
+   // return if nothing to do
+   IF (id = segHdl.mGripperID) THEN // relies on unique Mcu-Ids
+      RETURN;
+   END_IF;
+
+   // set the toolgripper id
+   SetGripperId(id);
+END_ROUTINE
+
+
+// set the program counter without stop
+ROUTINE SetPcWithoutStop(CONST iStackHdl : DINT; 
+   CONST tStackInfo : TUserProgStackInfo) : BOOL PRIVATE
+VAR
+   tSema        : TRcuSemaphore;
+   bInterrupted : BOOL;
+   bRestored    : BOOL;
+END_VAR
+
+   IF (iStackHdl = 0) OR (tStackInfo.depth = 0) THEN
+      myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetInstructionPointer not possible - no callstack information available");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN FALSE;
+   END_IF;
+   tSema.Lock(eFlowSemaphore);
+   myKinematic.noStopAtInterrupt := TRUE;
+   myKinematic.SetPcWithoutStopActive := TRUE;
+   myKinematic.DebugPrint(eTraceGoldenRepos, "SetPcWithoutStop InterruptProgSignal(myKinematic.selectingFlow.flowId, bInterrupted)");
+   InterruptProgSignal(myKinematic.selectingFlow.flowId, bInterrupted);
+   WAIT bInterrupted;
+   bRestored := RestoreUserProgCallStack(iStackHdl);
+   IF bRestored THEN
+      myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetInstructionPointer - Program: "
+         + tStackInfo.progNames[tStackInfo.depth-1] + ", LineNr: " + STR(tStackInfo.lineNrs[tStackInfo.depth-1]));
+      //BIT 21.03.06 GoldenRepos from MainProg back to SubProg - 2 times RDESELECT
+      IF (tStackInfo.depth - 1) <> myKinematic.iSubSelectLevels THEN
+         myKinematic.iSubSelectLevels := tStackInfo.depth-1;
+         myKinematic.mainRunSubSelectLevel := myKinematic.iSubSelectLevels;
+      END_IF;
+      myKinematic.UpdateProgInfo(TRUE, tStackInfo); // update teachview state line
+   ELSE
+      bSetPcError := TRUE;
+      EndMotionCommands();
+      myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetInstructionPointer failed - Program: "
+         + tStackInfo.progNames[tStackInfo.depth-1] + ", LineNr: " + STR(tStackInfo.lineNrs[tStackInfo.depth-1]));
+      iCntMinorError := iCntMinorError + 1;
+   END_IF;
+   myKinematic.DebugPrint(eTraceGoldenRepos, "SetPcWithoutStop ContinueProg(myKinematic.selectingFlow.flowId)");
+   ContinueProg(myKinematic.selectingFlow.flowId);
+   
+   myKinematic.SetPcWithoutStopActive := FALSE;
+   tSema.Unlock();
+   RETURN bRestored;
+END_ROUTINE
+
+(*******************************************************************************
+* Systemroutines
+*******************************************************************************)
+
+ROUTINE NEW()
+   VAR
+      s : STRING;
+   END_VAR
+   
+   instId := RcuGetInstanceId();
+
+   // initialization of static segment-data
+   segment.mDBObjTyp := eMcuTemp;
+
+   // initialization of static job-data
+   job.mDBObjTyp := eMcuTemp;
+   job.mPreWarnActiv := FALSE;
+   job.mJobTyp := eMcuJobParam;
+   job.mIsActive := TRUE;
+   job.mEvent.mIsActiv := TRUE;
+
+   // set change-indication
+   dynamicChg := IS_CHANGED(dynamic);
+   segment.mName := INSTANCE_NAME() + "_InitSeg";
+   endPosName := INSTANCE_NAME() + "_InitPos";
+   
+   s :=  INSTANCE_NAME() + ".cancelFlipFlop";
+   SwoAddBoolVariable(cancelFlipFlop, s);
+   
+   START SetNewOverlap();
+END_ROUTINE
+
+
+ROUTINE DELETE()
+   VAR
+      s : STRING;
+   END_VAR
+   
+   IF IS_MAPPED(myKinematic) THEN
+   IF NOT McuReleaseDbObj(pathPosMcuId) THEN
+      RcuSetMessageOnce(TRcuPath_WarPathPosReleaseFail, myKinematic.kinListInx, 2, instId, "TRcuPath.DELETE", INSTANCE_NAME());
+   END_IF;
+   ReleasePathObjects();
+   IF (defaultDynMcuId <> myKinematic.defaultDynMcuId) AND (defaultDynMcuId <> 0) THEN
+      McuReleaseDbObj(defaultDynMcuId);
+   END_IF;
+   IF (defaultCartDynMcuId <> defaultDynMcuId) AND (defaultCartDynMcuId <> myKinematic.defaultDynMcuId) AND (defaultCartDynMcuId <> 0) THEN
+      McuReleaseDbObj(defaultCartDynMcuId);
+   END_IF;
+   IF (defaultOvlMcuId <> myKinematic.defaultOvlMcuId) AND (defaultOvlMcuId <> 0) THEN
+      McuReleaseDbObj(defaultOvlMcuId);
+   END_IF;
+   IF (defaultToolMcuId <> myKinematic.kinToolMcuId) AND (defaultToolMcuId <> 0) THEN
+      McuReleaseDbObj(defaultToolMcuId);
+   END_IF;
+   IF (defaultCustomGripperMcuId <> myKinematic.kinGripperMcuId) AND (defaultCustomGripperMcuId <> 0) THEN
+      McuReleaseDbObj(defaultCustomGripperMcuId);
+   END_IF;
+   IF (defaultGripperMcuId <> defaultCustomGripperMcuId) AND
+      (defaultGripperMcuId <> 0) THEN
+      McuReleaseDbObj(defaultGripperMcuId);
+   END_IF;
+   IF (defaultAcceRampMcuId <> myKinematic.defaultAcceRampMcuId) AND (defaultAcceRampMcuId <> 0) THEN
+      McuReleaseDbObj(defaultAcceRampMcuId);
+   END_IF;
+   IF (defaultDeceRampMcuId <> myKinematic.defaultDeceRampMcuId) AND (defaultDeceRampMcuId <> 0) AND
+      (defaultDeceRampMcuId <> defaultAcceRampMcuId) THEN
+      McuReleaseDbObj(defaultDeceRampMcuId);
+   END_IF;
+   END_IF;
+   IF pathMcuId <> 0 THEN
+      McuReleaseDbObj(pathMcuId);
+   END_IF;
+
+   s :=  INSTANCE_NAME() + ".cancelFlipFlop";
+   SwoRemoveVariable(s);
+END_ROUTINE
+
+
+ROUTINE RELEASE()
+   
+   // releasing the path closes all active motion commands
+   EndMotionCommands();
+   signalOvl := FALSE;
+END_ROUTINE
+

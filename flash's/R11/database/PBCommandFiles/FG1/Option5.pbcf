@@ -1,0 +1,260 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.03.00  | 17.10.2016  | STL    | Change: new PCL
+//  v2_01.04.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_Option5
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option5
+	SelectNode RPC1.R11
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL
+			Call Option5_AddDeviceToMaterial1
+		Case EcoDose_PCL_PCL
+			Call Option5_AddDeviceToMaterial1_Multi
+			Call Option5_AddDeviceToMaterial2_Multi
+		Case EcoDose_SM_PCL
+			Call Option5_AddDeviceToMaterial2_Multi
+		CaseElse
+			Message Wrong process type (Main_Option5)!!
+	EndSelect
+Return
+
+SubRoutine Option5_AddDeviceToMaterial1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase Option5
+		Case 1
+			Call Common_AddDevice_BMV2PE
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "MV2PE"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "MV2PE"
+				SelectCfg AMatManager1.Characteristics.MinPressureDiff
+				Value 25.0
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "''"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "''"
+				SelectCfg AMatManager1.Characteristics.MinPressureDiff
+				Value 0.0
+			Endif
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2PE
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PE
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PE
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option5_AddDeviceToMaterial1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BMV2PE)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option5_AddDeviceToMaterial1_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE_1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase Option5
+		Case 1
+			Call Common_AddDevice_BMV2PE_1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_1.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "MV2PE_1"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "MV2PE_1"
+				SelectCfg AMatManager1.Characteristics.MinPressureDiff
+				Value 25.0
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_1.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "''"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "''"
+				SelectCfg AMatManager1.Characteristics.MinPressureDiff
+				Value 0.0
+			Endif
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PE_1
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2PE_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PE_1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PE_1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option5_AddDeviceToMaterial1_Multi)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BMV2PE_1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option5_AddDeviceToMaterial2_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PE_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PE_2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectCase Option5
+		Case 1
+			Call Common_AddDevice_BMV2PE_2
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_2.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "MV2PE_2"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager2.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "MV2PE_2"
+				SelectCfg AMatManager2.Characteristics.MinPressureDiff
+				Value 25.0
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_2.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "''"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager2.DeviceNames.PressureSensorInput
+				OptionalUsed 1
+				Value "''"
+				SelectCfg AMatManager2.Characteristics.MinPressureDiff
+				Value 0.0
+			Endif
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PE_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PE_2
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2PE_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PE_2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PE_2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option5_AddDeviceToMaterial2_Multi)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BMV2PE_2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return

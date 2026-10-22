@@ -1,0 +1,2781 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : _RcuConfiguration.ttp
+*  First Author : pen
+*  Date         : 23.4.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  global Variables and Routines for the configuration of the RCU
+*------------------------------------------------------------------------------
+* 19.08.04 nmr: added configuration entry "useSingleOvr" to
+*               choose between one common override and two separate
+*               overrides for jogging and automatic
+* 26.08.04 BMA: kin.mainModeMgr.gbPLCPowerOn replaced by kin.mainModeMgr.gbPLCRelease
+* 16.02.05 nmr: possibility to use new notation in configurationfiles
+*               [Rcu.Kinematics.KINEMATIC:X]
+*               global flag gbRcuUseReadBackVals to notify, whether ReadBackValues
+*               are used for showing actual values
+* 25.02.05 BMA: Read in limits for "bypass"-check
+* 08.04.05 nmr: RcuReadGeneralConfig divided into CfgReadGeneralConfig and
+*               CfgReadMcuConfig. These routines are called from NEW-Routine and
+*               read in all kinematic independent settings
+* 20.04.05 BMA: New function RcuReadConfigConveyor to read in configurationdata for
+*               tracking
+* 25.04.05 nmr: Insertion of a new tolerancetime (reposPath.reposToleranceTime) 
+*               for GoldenRepos und segmentlength (reposPath.backwardSegLength)
+*                for driving backwards on path
+* 25.04.05 BMA: Read in parameters for mastering
+* 04.06.05 nmr: reposToleranceTime deleted, instead repositioning on point of
+*               brakestart
+* 17.06.05 sbj: Changes to configure number of axis
+* 05.07.05 kto: translated into english
+* 08.09.05 nmr: changes for Teachview 2.14
+* 13.10.05 BMA: gyRcuBufferName extended for Warning, Info
+* 14.10.05 BMA: extension of parameters in RcuReadConfigTracking()
+* 09.08.06 BMA changes for v4.02a configuration velolimits
+* 25.09.06 BMA: New routines CfgReadArea() and CfgReadGripper() 
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+CONSTANT GLOBAL
+    cgiSealing : SINT := 0;
+    cgiPaint   : SINT := 1;
+    gcrDefaultPreWarnTime : REAL := 0.17;
+    cgiHT601ExOffset : DINT := 32; 
+END_CONSTANT
+
+VAR GLOBAL
+   gsOsName        : STRING;
+   gbSimulationOS  : BOOL;
+   // Anzahl der Kinematiken aus Katalog in TRcuKinematic ermittelt
+   giNumberOfRobots : DINT; 
+      
+   // Indices der Kinematiken aus Katalog ausgelesen
+   gyIndexOfKinematics : ARRAY[5] OF DINT;
+   gbIsTVB : BOOL;   
+   bEnablePannelJogging : BOOL;
+END_VAR
+
+TYPE PRIVATE
+   
+   BARR4  : ARRAY[1..4]  OF BYTE;
+   DATTYP : (TBYTEARR4, TUINT32, TINT32, TFLOAT32);
+   
+   VARTYP4 : STRUCT
+      CASE dTyp : DATTYP OF
+         TUINT32     : (tUint32  : DWORD);
+         TINT32      : (tInt32   : DINT);
+         TFLOAT32    : (tFloat32 : REAL);
+         TBYTEARR4   : (bArr     : BARR4);
+   END_STRUCT;
+END_TYPE
+
+
+
+(*-----------------------------------------------------------------------------
+* Read a reference system from the configuration and create it
+*)
+ROUTINE RcuReadConfigRefSys(CONST refSys : TRcuReferenceSystem) : BOOL GLOBAL
+   VAR
+      baseHdl         : DINT;   // handle of the base directory
+      refSysName      : STRING;
+      frame           : TMcuFrame;
+      baseRefSys      : TRcuReferenceSystem;
+      tracking        : BOOL;
+      specialTracking : TMcuUpdateTyp;
+      i               : DINT;
+   END_VAR
+
+   IF NOT CatalogGetHandleRelative(giRcBaseHdl, "ReferenceSystems", baseHdl) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarConfNoRS, -1, 1, 0, "_RcuConfiguration.RcuReadConfigRefSys");
+      RETURN FALSE;
+   END_IF;
+
+   refSysName := "RefSys" + STR(refSys);
+   IF CatalogGetHandleRelative(baseHdl, refSysName, baseHdl) THEN
+
+      IF CatalogReadInt(baseHdl, "baseRefSys", i, TRUE) THEN
+         baseRefSys := TRcuReferenceSystem(i);
+      END_IF;
+
+      IF CatalogReadInt(baseHdl, "specialTracking", i, TRUE) THEN
+         specialTracking := TMcuUpdateTyp(i);
+         RETURN RcuRefSysSetSpecial(refSys, baseRefSys, specialTracking, refSysName);
+      END_IF;
+
+      CatalogReadInt(baseHdl, "tracking", i, TRUE);
+      tracking := i <> 0;
+      IF NOT tracking THEN
+         CfgReadFrame(baseHdl, frame);
+      END_IF;
+      frame.mFrameTyp := gMcuFrameTyp;
+      RETURN RcuRefSysSet(refSys, frame, baseRefSys, tracking, refSysName);
+   ELSE
+      RcuSetMessageOnce(_RcuConfiguration_WarConfRSNC, -1, 1, 0, "_RcuConfiguration.RcuReadConfigRefSys", refSysName);
+      RETURN FALSE;
+   END_IF;
+
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read a reference system for the conveyor from the configuration and create it
+*)
+ROUTINE RcuReadConfigTrackingGeneral() : BOOL GLOBAL
+   VAR
+      baseHdl : DINT;   // handle of the base directory
+      i : DINT;
+      frame : TMcuFrame;
+      frame1 : TMcuFrame;
+      baseRefSys : TRcuReferenceSystem;
+      jointsOffset : TMcuJointsOffset;
+      hdlName: TMcuString;
+      style : DINT;
+   END_VAR
+
+   IF NOT CatalogGetHandleRelative(giRcBaseHdl, "Tracking", baseHdl) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, -1, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "Tracking");
+      gRcuStationType := eStopAndGo;
+      RETURN FALSE;
+   END_IF;
+
+   CatalogReadInt(baseHdl, "tracking", i, TRUE);
+   gRcuStationType := eStopAndGo;
+   CASE i OF
+      0 : gRcuStationType := eStopAndGo;
+      1 : gRcuStationType := eLineTracking;
+      2 : gRcuStationType := eRailTracking;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, -1, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "tracking");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+   END_CASE;
+
+   IF (gRcuStationType = eLineTracking) OR (gRcuStationType = eRailTracking) THEN
+      gbIsTrackingStation := TRUE;
+      IF NOT CatalogReadInt(baseHdl, "trackingStyle", i, FALSE) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, -1, 2, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "trackingStyle");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      ELSE
+         giRcuTrackingStyle := i;
+      END_IF;
+      
+      IF NOT CatalogReadInt(baseHdl, "enableWaitConvTolerance", i, FALSE) THEN
+         gbEnableWaitConvTolerance := FALSE;
+      ELSE
+         gbEnableWaitConvTolerance := i=1;
+      END_IF;
+      IF gbEnableWaitConvTolerance THEN
+         IF NOT CatalogReadReal(baseHdl, "waitConvTolerance", grWaitConvTolerance, FALSE) THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, -1, 9, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "waitConvTolerance");
+            gbBootupError := TRUE;
+            RETURN FALSE;
+         END_IF;
+         IF NOT CatalogReadReal(baseHdl, "conveyorDelayTime", grConveyorDelayTime, FALSE) THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, -1, 10, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "conveyorDelayTime");
+            gbBootupError := TRUE;
+            RETURN FALSE;
+         END_IF;
+      END_IF;
+      
+      IF NOT CatalogGetHandleRelative(giRcBaseHdl, "Tracking.ConveyorPreLink", baseHdl) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, -1, 3, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "ConveyorPreLink");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      CfgReadFrame(baseHdl, frame);
+      frame.mFrameTyp := gMcuFrameTyp;
+      IF NOT RcuRefSysSet(eRcuRefSystemConveyorBase, frame, eRcuRefSystemWorld, FALSE, "ConveyorBase") THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrRefSys, -1, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "ConveyorBase");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+
+      FOR i:=0 TO giNumberOfRobots - 1 DO
+         frame1.mFrameTyp := gMcuFrameTyp;
+         IF NOT RcuRefSysSet(PaintRobot[i].RcuRefSystemConveyor, frame1, eRcuRefSystemConveyorBase, TRUE, "Conveyor") THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrRefSys, -1, 2, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "Conveyor");
+            gbBootupError := TRUE;
+            RETURN FALSE;
+         END_IF;
+         RcuRefSysActivate(PaintRobot[i].RcuRefSystemConveyor);
+
+         IF NOT CatalogGetHandleRelative(giRcBaseHdl, "Tracking.ConveyorPostLink", baseHdl) THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, -1, 4, 0, "_RcuConfiguration.RcuReadConfigTrackingGeneral", "ConveyorPostLink");
+            gbBootupError := TRUE;
+            RETURN FALSE;
+         END_IF;
+         CfgReadFrame(baseHdl, frame);
+         frame.mFrameTyp := gMcuFrameTyp;
+         IF NOT RcuRefSysSet(PaintRobot[i].RcuRefSystemConveyorPostLink, frame, PaintRobot[i].RcuRefSystemConveyor, FALSE, "ConveyorPostLink") THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrRefSys, -1, 3, 0, "_RcuConfiguration.RcuReadConfigTracking", "ConveyorPostLink");
+            gbBootupError := TRUE;
+            RETURN FALSE;
+         END_IF;
+      END_FOR;
+   END_IF;
+   
+   RETURN TRUE;
+
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Read a reference system for the conveyor from the configuration and create it
+*)
+ROUTINE RcuReadConfigTrackingKin(kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      baseHdl : DINT;   // handle of the base directory
+      refSysName : STRING;
+      frame : TMcuFrame;
+      frame1 : TMcuFrame;
+      baseRefSys : TRcuReferenceSystem;
+      i : DINT;
+      jointsOffset : TMcuJointsOffset;
+      hdlName: TMcuString;
+      style : DINT;
+   END_VAR
+
+   IF NOT CatalogGetHandleRelative(giRcBaseHdl, "Tracking", baseHdl) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "Tracking");
+      RETURN FALSE;
+   END_IF;
+   
+   kin.lineTracking := FALSE;
+   kin.railTracking := FALSE;
+   kin.railTrackingActive := FALSE;
+
+   //BIT 23.10.07 in -/outbound not needed in Phase0
+   IF (giRcuTrackingStyle <> 0) AND (gRcuStationType = eRailTracking) THEN
+      IF NOT CatalogGetHandleRelative(kin.rcCatHdl, "Tracking", baseHdl) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, kin.kinListInx, 5, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "Tracking");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF NOT CatalogReadReal(baseHdl, "inbound", kin.inbound, FALSE) THEN
+         RETURN FALSE;
+      END_IF;
+      IF NOT CatalogReadReal(baseHdl, "outbound", kin.outbound, FALSE) THEN
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   
+   IF (gRcuStationType = eLineTracking) THEN
+      kin.lineTracking := TRUE;
+   END_IF;
+   
+   IF (gRcuStationType = eRailTracking) THEN //Railtracking
+      kin.lineTracking := TRUE;
+      IF NOT CatalogGetHandleRelative(kin.rcCatHdl, "Tracking", baseHdl) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, kin.kinListInx, 6, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "Tracking");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF NOT CatalogReadInt(baseHdl, "railAxisNr", kin.railAxisNr, FALSE) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, kin.kinListInx, 7, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "railAxisNr");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF NOT CatalogReadReal(baseHdl, "signOfRail", kin.signOfRail, FALSE) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrTrackCnf, kin.kinListInx, 8, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "signOfRail");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      jointsOffset.mName := "RailTracking";
+      jointsOffset.mDBObjTyp := eMcuPermanent;
+      jointsOffset.mUpdTyp := eMcuUpdateSMemIntern;
+      jointsOffset.mKinematicID := kin.kinematicMcuId;
+      IF McuCreateJointsOffset(kin.offsetID, jointsOffset) THEN
+         kin.DebugPrint(eTraceRcuConfig, "McuCreateJointsOffset successful");
+         IF McuReadJointsOffsetHdlName(kin.offsetID, hdlName) THEN
+            kin.DebugPrint(eTraceRcuConfig, "McuReadJointsOffsetHdlName successful. hdlName = " + hdlName);
+            kin.railAxisVector := MAPX(hdlName);
+            kin.railTracking := TRUE;
+            kin.railTrackingActive := TRUE;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_FaErrMcuFunc, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "McuReadJointsOffsetHdlName");
+            gbBootupError := TRUE;
+            RETURN FALSE;
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_FaErrMcuFunc, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuReadConfigTrackingKin", "McuCreateJointsOffset");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+      
+   RETURN TRUE;
+
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read a conveyortable from the configuration
+*)
+ROUTINE RcuReadConfigTrackingConvTab(kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      baseHdl : DINT;   // handle of the base directory
+      rowHdl : DINT;
+      refSysName : STRING;
+      frame : TMcuFrame;
+      frame1 : TMcuFrame;
+      i : DINT;
+   END_VAR
+
+   IF NOT CatalogGetHandleRelative(kin.rcCatHdl, "Tracking", baseHdl) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingConvTab", "Tracking");
+      RETURN FALSE;
+   END_IF;
+
+   CatalogReadInt(baseHdl, "enableConveyorTable", i, TRUE);
+   IF (i = 1) THEN
+      kin.tracking.bEnableConveyorTable := TRUE;
+   ELSE
+      kin.tracking.bEnableConveyorTable := FALSE;
+      RETURN FALSE;
+   END_IF;
+   
+   IF NOT CatalogGetHandleRelative(giRcBaseHdl, "Tracking.ConveyorTable", baseHdl) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingConvTab", "Tracking.ConveyorTable");
+      RETURN FALSE;
+   END_IF;
+   
+   CatalogReadInt(baseHdl, "nrOfRows", kin.tracking.iNrConvTabEntries, FALSE);
+   IF kin.tracking.iNrConvTabEntries > cgiMaxConvTabEntries THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigTrackingConvTab", 
+                         STR(kin.tracking.iNrConvTabEntries), "[RC.Tracking.ConveyorTable] nrOfRows");
+      kin.tracking.iNrConvTabEntries := cgiMaxConvTabEntries;
+   END_IF;
+   
+   FOR i := 1 TO  kin.tracking.iNrConvTabEntries DO
+      IF NOT CatalogGetHandleRelative(baseHdl, "Row"+STR(i), rowHdl) THEN
+         RcuSetMessageOnce(_RcuConfiguration_ErrNInKinConf, kin.kinListInx, 1, 1, "_RcuConfiguration.RcuReadConfigTrackingConvTab", "Row"+STR(i));
+         kin.tracking.bEnableConveyorTable := FALSE;
+         RETURN FALSE;
+      END_IF;
+      CatalogReadReal(rowHdl, "ConvValue", kin.tracking.convTab[i].rConvVal, FALSE);
+      CatalogReadReal(rowHdl, "TransZ",    kin.tracking.convTab[i].rTransZ, FALSE);
+      kin.tracking.convTab[i].rTransZ := -1.0 * kin.tracking.convTab[i].rTransZ; // X-Axis of trackingframe = -Z-Axis of World
+      CatalogReadReal(rowHdl, "RotY",      kin.tracking.convTab[i].rRotY, FALSE);
+      kin.tracking.convTab[i].rRotY   := -1.0 * kin.tracking.convTab[i].rRotY; // sign of rotation
+   END_FOR;
+   
+   RETURN TRUE;
+
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read a working area from the configuration and create it
+*)
+ROUTINE RcuReadConfigWorkArea(area : TRcuWorkingArea;
+   CONST kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      baseHdl : DINT;   // handle of the base directory for the working area
+      dirHdl : DINT;   // handle of a subdirectory
+      frame : TMcuFrame;
+      s : STRING;
+      i : DINT;
+   END_VAR
+
+   // search directory
+   s := "WorkingAreas." + area.GetResourceName();
+   IF NOT CatalogGetHandleRelative(giRcBaseHdl, s, baseHdl) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuReadConfigWorkArea", s);
+      RETURN FALSE;
+   END_IF;
+
+   // read data
+   CatalogReadInt(baseHdl, "areaType", i, TRUE);
+   area.areaType := TMcuAreaType(i);
+   CatalogReadInt(baseHdl, "areaShape", i, TRUE);
+   area.areaShape := TMcuAreaShape(i);
+   CatalogReadInt(baseHdl, "refSys", i, TRUE);
+   area.refSys := TRcuReferenceSystem(i);
+   CatalogReadInt(baseHdl, "inMainInterp", i, TRUE);
+   area.inMainInterp := i <> 0;
+   CatalogReadInt(baseHdl, "inForwardInterp", i, TRUE);
+   area.inForwardInterp := i <> 0;
+   CatalogReadInt(baseHdl, "inOfflineList", i, TRUE);
+   area.inOfflineList := i <> 0;
+   IF CatalogGetHandleRelative(baseHdl, "basePos", dirHdl) THEN
+      CfgReadFrame(dirHdl, area.basePos);
+   END_IF;
+   IF CatalogGetHandleRelative(baseHdl, "size", dirHdl) THEN
+      CfgReadFrame(dirHdl, frame);
+      area.size := frame.mPos;
+   END_IF;
+
+   // create working area
+   RETURN area.Create(kin);
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read configured default data for a certain robot (and its drives respectively)
+*)
+ROUTINE RcuReadConfigRob(rob : TRcuRobot) : BOOL GLOBAL
+   VAR
+      i : DINT;
+      baseHdl : DINT; // handle of the base directory for the drive
+      name : STRING;
+      r : REAL;
+      j : DINT;
+      s : STRING;
+      k : INT;
+      hasProcess : DINT;
+      hdl       : DINT;
+      rCycleMs   : REAL;
+      missParam : STRING;
+      dragParamRead : BOOL;
+      controlTimeRead : BOOL;
+      lagParamRead : BOOL;
+      lagTimeRead : BOOL;
+      sApplPath    : STRING;
+      sFilePath    : STRING;
+      SN           : STRING;
+      hdlFile      : DINT := -1;
+      s2 : STRING;
+      s3 : STRING;
+      s4 : STRING;
+   END_VAR
+   
+   // Configuration of kinematic essentials
+   IF NOT RcuReadConfigKin(rob) THEN
+      RETURN FALSE;
+   END_IF;
+
+   IF rob.rcCatHdl <> 0 THEN
+      //look for parameters under "[RC]" in config
+      IF CatalogReadIntRange(giRcBaseHdl, "useDragErrorObservation", i, 0, 1, TRUE) THEN
+         rob.bUseDragErrorObservation := i = 1;
+         dragParamRead := TRUE;
+      END_IF;
+      IF CatalogReadIntRange(giRcBaseHdl, "useLagErrorObservation", i, 0, 1, TRUE) THEN
+         rob.bUseLagErrorObservation := i = 1;
+         lagParamRead := TRUE;
+      END_IF;
+      IF rob.bUseDragErrorObservation THEN
+         i := INT(grCycleTime * 1000.0);
+         s := "driveControlTime" + STR(i) + "ms";
+         IF CatalogReadIntRange(giRcBaseHdl, s, i, 0, 200, TRUE) THEN
+            rob.iDriveControlTime := i;
+            controlTimeRead := TRUE;
+         END_IF;
+      END_IF;   
+      IF rob.bUseLagErrorObservation THEN
+         IF CatalogReadIntRange(giRcBaseHdl, "driveInPositionLagTime", i, 0, 500, TRUE) THEN
+            rob.iDriveInPositionLagTime := i;
+            lagTimeRead := TRUE;
+         END_IF;
+      END_IF;  
+      //if rehau config and parameters for drag-/lagerrorobservation not found under "[RC]" jet
+      IF (giFieldBusSlaveType = 1) AND NOT (lagParamRead AND dragParamRead) THEN
+         //not read already
+         IF NOT dragParamRead THEN
+            IF CatalogReadIntRange(rob.rcCatHdl, "useDragErrorObservation", i, 0, 1, TRUE) THEN
+               rob.bUseDragErrorObservation := i = 1;
+               dragParamRead := TRUE;
+            END_IF;
+         END_IF;
+         //not read already
+         IF NOT lagParamRead THEN
+            IF CatalogReadIntRange(rob.rcCatHdl, "useLagErrorObservation", i, 0, 1, TRUE) THEN
+               rob.bUseLagErrorObservation := i = 1;
+               lagParamRead := TRUE;
+            END_IF;
+         END_IF;
+      END_IF;
+      //parameter not found --> bootup error
+      IF NOT (lagParamRead AND dragParamRead) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrNInConf1, rob.kinListInx, 1, i, "_RcuConfiguration.RcuReadConfigRob", "[RC] / [RC.KINEMATIC:" + STR(rob.kinListInx) + "] Param: useDragErrorObservation - useLagErrorObservation");
+         gbBootupError := TRUE; 
+      END_IF;
+      //parameter for driveControlTime not found under "[RC]" jet
+      IF rob.bUseDragErrorObservation THEN
+         IF NOT controlTimeRead THEN
+            i := INT(grCycleTime * 1000.0);
+            s := "driveControlTime" + STR(i) + "ms";
+            IF CatalogReadIntRange(rob.rcCatHdl, s, i, 0, 200, TRUE) THEN
+               rob.iDriveControlTime := i;
+               controlTimeRead := TRUE;
+            END_IF;
+         END_IF;
+         //parameter not found --> bootup error
+         IF NOT controlTimeRead THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 1, 0, "_RcuConfiguration.CfgReadGeneralConfig", "[RC] / [RC.KINEMATIC:" + STR(rob.kinListInx) + "] Param: " + s);
+            gbBootupError := TRUE; 
+         END_IF;
+      END_IF;
+      //parameter for driveInPositionLagTime not found under "[RC]" jet
+      IF rob.bUseLagErrorObservation THEN
+         IF NOT lagTimeRead THEN
+            IF CatalogReadIntRange(rob.rcCatHdl, "driveInPositionLagTime", i, 0, 500, TRUE) THEN
+               rob.iDriveInPositionLagTime := i;
+               lagTimeRead := TRUE;
+            END_IF;
+         END_IF;
+         //parameter not found --> bootup error
+         IF NOT lagTimeRead THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 2, 0, "_RcuConfiguration.CfgReadGeneralConfig", "[RC] / [RC.KINEMATIC:" + STR(rob.kinListInx) + "] Param: driveInPositionLagTime");
+            gbBootupError := TRUE; 
+         END_IF;
+      END_IF;
+      
+      // drive configuration (optional)
+      FOR i := 0 TO rob.kinematic.mNrOfJoints - 1 DO
+         IF IS_MAPPED(rob.drive[i]) THEN
+            name := "Joint" + STR(i+1);
+            IF CatalogGetHandleRelative(rob.rcCatHdl, name, baseHdl) THEN
+               // activate absolute drag error observation
+               IF rob.bUseDragErrorObservation THEN
+                  IF CatalogReadReal(baseHdl, "dragControlValue", r, TRUE) THEN
+                     rob.drive[i].driveDragControlValue := rAbs(r);
+                     IF (rob.iDriveControlTime > 0) AND (rob.drive[i].driveDragControlValue > 0) THEN
+                        rCycleMs := rob.iDriveControlTime / INT((grCycleTime * 1000.0) * 2);
+                        rob.drive[i].driveUpdateDelayCycles := INT(rCycleMs);
+                        rob.drive[i].StartDragObservationAbs(i);
+                        //RcuSetMessageOnce(_RcuConfiguration_InfDragObsAct, 1, i, "_RcuConfiguration.RcuReadConfigRob", name);
+                     END_IF;
+                  END_IF;
+               END_IF;                    
+               // activate lag error observation   
+               IF rob.bUseLagErrorObservation THEN
+                  IF CatalogReadRealRange(baseHdl, "lagControlValue", r , 0.0, 15.0, TRUE) THEN
+                     rob.drive[i].drivePositionLagValue := rAbs(r);
+                     IF (rob.drive[i].drivePositionLagValue > 0.0) AND (rob.iDriveInPositionLagTime > 0) THEN
+                        rob.drive[i].StartLagErrorObservation(i);
+                     END_IF;
+                  END_IF;   
+               END_IF;
+               IF rob.bUseDragErrorObservation OR rob.bUseLagErrorObservation THEN
+                  START rob.drive[i].ManageObservations();                
+               END_IF;
+               //limit switch axis
+               IF CatalogReadIntRange(baseHdl, "limitSwitchMin", j, 0, 1, FALSE) THEN
+                  rob.drive[i].useLimitSwitchMin := (j=1);
+               ELSE
+                  gbBootupError := TRUE;
+               END_IF;
+               IF CatalogReadIntRange(baseHdl, "limitSwitchMax", j, 0, 1, FALSE) THEN
+                  rob.drive[i].useLimitSwitchMax := (j=1);
+               ELSE
+                  gbBootupError := TRUE;
+               END_IF;
+               (* limit motor temperature => is now realized in drive controller
+               IF rob.drive[i].bEtherCAT THEN                  
+                  IF NOT CatalogReadReal(baseHdl, "limitTemperature", rob.drive[i].rLimitTemp, TRUE) THEN
+                     RcuSetMessageOnce(_RcuConfiguration_ErrNotInConf2, rob.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigRob", "limitTemperature");
+                  END_IF;
+               END_IF;
+               *)
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrCnfDrvNMap, rob.kinListInx, 1, i, "_RcuConfiguration.RcuReadConfigRob", STR(i));
+         END_IF;
+      END_FOR;
+      
+      
+      // mastering configuration - read from robotcontrol.cfg used for whole robot
+      IF NOT CatalogReadIntRange(rob.rcCatHdl, "masteringType", j, eType(eKuka), eType(eDuerr), TRUE) THEN
+         //default
+         FOR i := 0 TO rob.kinematic.mNrOfJoints - 1 DO
+             IF IS_MAPPED(rob.drive[i]) THEN
+                rob.drive[i].masteringType  := eKuka; 
+                rob.drive[i].masteringPar   := FALSE;
+                rob.drive[i].masteringKuka  := TRUE;
+                rob.drive[i].masteringDuerr := FALSE;
+             END_IF;
+         END_FOR;    
+         RcuSetMessageOnce(_RcuConfiguration_ErrNotInConf2, rob.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigRob", "masteringType");
+      ELSE   
+         FOR i := 0 TO rob.kinematic.mNrOfJoints - 1 DO
+             IF IS_MAPPED(rob.drive[i]) THEN
+                rob.drive[i].masteringPar  := TRUE;
+                IF (j = eDuerr) THEN
+                   rob.drive[i].masteringType  := eDuerr;
+                   rob.drive[i].masteringKuka  := FALSE;
+                   rob.drive[i].masteringDuerr := TRUE;
+                ELSE
+                   rob.drive[i].masteringType  := eKuka;
+                   rob.drive[i].masteringKuka  := TRUE;
+                   rob.drive[i].masteringDuerr := FALSE;
+                END_IF;
+             END_IF;
+         END_FOR;
+      END_IF; //IF NOT CatalogReadIntRange
+      
+      IF CatalogReadIntRange(rob.rcCatHdl, "masteringShowDialog", j, 0, 1, TRUE) THEN
+         rob.masterProg.bShowDialogTV := (j=1);
+      END_IF;
+      //check if a single joint has different type than global masteringtype
+      FOR i := 0 TO rob.kinematic.mNrOfJoints - 1 DO
+         IF IS_MAPPED(rob.drive[i]) THEN
+            name := "Joint" + STR(i+1);
+            IF CatalogGetHandleRelative(rob.rcCatHdl, name, baseHdl) THEN
+               IF CatalogReadIntRange(baseHdl, "masteringType", j, eType(eKuka), eType(eDuerr), TRUE) THEN
+                  rob.drive[i].masteringPar  := TRUE;
+                  IF (j = eDuerr) THEN
+                     rob.drive[i].masteringType  := eDuerr;
+                     rob.drive[i].masteringKuka  := FALSE;
+                     rob.drive[i].masteringDuerr := TRUE;
+                  ELSE
+                     rob.drive[i].masteringType  := eKuka;
+                     rob.drive[i].masteringKuka  := TRUE;
+                     rob.drive[i].masteringDuerr := FALSE;
+                  END_IF;
+               END_IF;
+            END_IF;   
+         END_IF;
+      END_FOR;                       
+      
+      // configuration for ATEX brake check
+      IF CatalogGetHandleRelative(rob.rcCatHdl, "BrakeCheck", baseHdl) THEN
+          IF CatalogReadIntRange(baseHdl, "ActivateATEXbrakeCheck", j, 0, 1, TRUE) THEN
+             rob.bUseATEXbrakeCheck := (j=1);
+             IF rob.bUseATEXbrakeCheck THEN
+                IF CatalogReadIntRange(baseHdl, "OnlyATEXphase1Test", j, 0, 1, TRUE) THEN
+                   rob.brakeCheck.bOnlyPhaseOne := (j=1);
+                END_IF;
+                IF CatalogReadIntRange(baseHdl, "UseATEXtimer", j, 0, 1, TRUE) THEN
+                   rob.brakeCheck.bUseTimer := (j=1);
+                   rob.brakeCheck.bNoTimer  := (j<>1);
+                END_IF;
+             END_IF;
+          ELSE
+             rob.bUseATEXbrakeCheck := FALSE;
+             RcuSetMessageOnce(_RcuConfiguration_ErrNotInConf2, rob.kinListInx, 3, 0, "_RcuConfiguration.RcuReadConfigRob", "ActivateATEXbrakeCheck");
+          END_IF;
+          IF CatalogReadIntRange(baseHdl, "ReleaseDeviceIsUsed", j, 0, 1, TRUE) THEN
+             rob.bBrakeRelDevIsUsed := (j=1);
+          ELSE
+             rob.bBrakeRelDevIsUsed := FALSE;
+             RcuSetMessageOnce(_RcuConfiguration_ErrNotInConf2, rob.kinListInx, 5, 0, "_RcuConfiguration.RcuReadConfigRob", "ReleaseDeviceIsUsed");
+          END_IF;
+      END_IF;
+      
+      FOR i := 0 TO rob.kinematic.mNrOfJoints - 1 DO
+            name := "Joint" + STR(i+1);
+            IF CatalogGetHandleRelative(rob.rcCatHdl, name, baseHdl) THEN
+               rob.DebugPrint(eTraceRcuConfig, "Read parameters for mastering " + rob.drive[i].axesName);
+               
+               //mastering-offset S0052 
+               IF CatalogReadReal(baseHdl, "masteringS0052M", r, TRUE) THEN
+                  rob.drive[i].driveZeroOffsetConfigManu := r;
+               ELSE
+                  missParam := "masteringS0052M";
+                  RcuSetMessageOnce(_RcuConfiguration_WarNoMaParams, rob.kinListInx, 1, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName, missParam);
+                  rob.drive[i].driveZeroOffsetConfigManu := 0.0;
+               END_IF;
+               
+               IF CatalogReadIntRange(baseHdl, "masteringAuto", j, 0, 1, TRUE) THEN
+                  rob.drive[i].masteringExist := (j=1);
+               ELSE
+                  rob.drive[i].masteringExist := FALSE;
+                  RcuSetMessageOnce(_RcuConfiguration_WarNoMaParams, rob.kinListInx, 2, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName, "masteringAuto");
+               END_IF;
+               
+               IF rob.masterProg.bShowDialogTV THEN
+                  IF CatalogReadReal(baseHdl, "masteringDiffLimit", r, TRUE) THEN
+                     rob.drive[i].masteringDiffLimit := r;
+                  ELSE   
+                     missParam := "masteringDiffLimit";
+                     k := k+1; // error
+                  END_IF;   
+               END_IF;
+               
+               IF rob.drive[i].masteringExist THEN
+                  k := 0;
+                  IF CatalogReadReal(baseHdl, "masteringDelta", r, TRUE) THEN
+                     rob.drive[i].masteringDelta := r;
+                  ELSE
+                     missParam := "masteringDelta";
+                     k := k+1; // error
+                  END_IF;
+                  
+                  IF CatalogReadReal(baseHdl, "masteringVelocity", r, TRUE) THEN
+                     rob.drive[i].masteringVel := r;
+                  ELSE
+                     missParam := "masteringVelocity";
+                     k := k+1; // error
+                  END_IF;
+                  
+                  IF CatalogReadReal(baseHdl, "masteringS0052A", r, TRUE) THEN
+                     rob.drive[i].driveZeroOffsetConfigAuto := r;
+                  ELSE
+                     missParam := "masteringS0052A";
+                     k := k+1; // error
+                  END_IF;
+               END_IF;
+               
+               IF k > 0 THEN
+                  rob.drive[i].masteringExist := FALSE;
+                  RcuSetMessageOnce(_RcuConfiguration_WarNoMaParams, rob.kinListInx, 1, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName, missParam);
+               END_IF;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_WarNoMaParams, rob.kinListInx, 2, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName);
+            END_IF;
+      END_FOR;
+   ELSE
+      RcuSetMessageOnce(_RcuConfiguration_ErrNoCatHdl, rob.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigRob");
+   END_IF;
+   
+   IF CatalogReadInt(rob.rcCatHdl, "simulatesDriveState", i, TRUE) THEN
+      rob.bRcuSimulatesDriveState := i <> 0;
+   END_IF;
+   IF CatalogReadInt(rob.rcCatHdl, "useGoldenRepos", i, TRUE) THEN
+      rob.bUseGoldenRepos := i <> 0;
+   END_IF;
+   IF CatalogReadInt(rob.rcCatHdl, "enableSplineInterpolation", i, TRUE) THEN
+      rob.bEnableSpline := i <> 0;
+   ELSE
+      rob.bEnableSpline := FALSE; // default = 0
+   END_IF;
+   CatalogReadReal(rob.rcCatHdl, "triggerPlaneDiameter",rob.triggerPlaneDiameter, TRUE);
+   CatalogReadReal(rob.rcCatHdl, "minAbsDeviFromSegEnd",rob.minDist, TRUE);
+   CatalogReadReal(rob.rcCatHdl, "minRelDeviFromSegEnd",rob.eps, TRUE);
+   
+   // read serialNr from robotcontrol.cfg
+   IF rob.bRcuSimulatesAllDrives THEN
+      rob.iSerialNr := -2;
+   ELSE
+      IF CatalogReadInt(rob.rcCatHdl, "serialNr", rob.iSerialNr, FALSE) THEN
+         IF rob.iSerialNr < 0 THEN
+            RcuSetMessageOnce(_RcuConfiguration_FaErrSerNrInv, rob.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigRob");
+            rob.iSerialNr := -1;
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 3, 0, "_RcuConfiguration.RcuReadConfigRob", "serialNr");
+         rob.iSerialNr := -1;
+      END_IF;
+   END_IF;
+   
+   IF CatalogReadInt(rob.rcCatHdl, "torqueReductionT1", i, TRUE) THEN
+      IF i=0 THEN
+         rob.torqueReductionT1 := FALSE;
+      ELSE
+         rob.torqueReductionT1 := TRUE;
+      END_IF;
+   ELSE
+      rob.torqueReductionT1 := TRUE;
+   END_IF;
+   
+   IF CatalogReadInt(giRcBaseHdl, "driveTorqueUnitNm", i, TRUE) THEN
+      IF i=1 THEN
+         rob.driveTorqueUnitNm := TRUE;
+      ELSE
+         rob.driveTorqueUnitNm := FALSE;
+      END_IF;
+   ELSE
+      rob.driveTorqueUnitNm := FALSE;
+   END_IF;
+   
+   IF (rob.mcCatHdl <> 0) AND (rob.rcCatHdl <> 0) THEN
+      FOR i := 0 TO rob.kinematic.mNrOfJoints - 1 DO
+         IF IS_MAPPED(rob.drive[i]) THEN
+            IF NOT rob.drive[i].ioSimulated THEN
+               IF NOT rob.driveTorqueUnitNm THEN
+                  // MC
+                  name := "Joint:" + STR(i);
+                  IF CatalogGetHandleRelative(rob.mcCatHdl, name, baseHdl) THEN                              
+                     IF NOT CatalogReadReal(baseHdl, "driveMaxTorque", rob.drive[i].driveMaxTorque, FALSE) THEN
+                        gbBootupError := TRUE;
+                        RETURN FALSE;
+                     END_IF;
+                     CatalogReadReal(baseHdl, "driveGearRatio", rob.drive[i].gearRatioMcu, TRUE);
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 4, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName);
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  // RC
+                  name := "Joint" + STR(i+1);
+                  IF CatalogGetHandleRelative(rob.rcCatHdl, name, baseHdl) THEN
+                     IF NOT CatalogReadReal(baseHdl, "driveReducedTorque", rob.drive[i].driveReducedTorque, TRUE)
+                        AND rob.torqueReductionT1 THEN
+                           gbBootupError := TRUE;
+                           RETURN FALSE;
+                     END_IF;
+                     IF NOT CatalogReadReal(baseHdl, "motorMaxTorque", rob.drive[i].driveMaxTorqueMotor, FALSE) THEN
+                        gbBootupError := TRUE;
+                        RETURN FALSE;
+                     END_IF;
+                     IF NOT CatalogReadReal(baseHdl, "motorStallTorque", rob.drive[i].driveStallTorque, FALSE) THEN
+                        gbBootupError := TRUE;
+                        RETURN FALSE;
+                     END_IF;
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 5, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName);
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+               ELSE // driveTorqueUnitNm = 1
+                  // MC
+                  name := "Joint:" + STR(i);
+                  IF CatalogGetHandleRelative(rob.mcCatHdl, name, baseHdl) THEN                              
+                     CatalogReadReal(baseHdl, "driveGearRatio", rob.drive[i].gearRatioMcu, TRUE);
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 6, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName);
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  // RC
+                  name := "Joint" + STR(i+1);
+                  IF CatalogGetHandleRelative(rob.rcCatHdl, name, baseHdl) THEN
+                     IF NOT CatalogReadReal(baseHdl, "driveMaxTorqueRC", rob.drive[i].driveMaxTorque, FALSE) THEN
+                        gbBootupError := TRUE;
+                        RETURN FALSE;
+                     END_IF;
+                     IF NOT CatalogReadReal(baseHdl, "driveReducedTorqueRC", rob.drive[i].driveReducedTorque, TRUE)
+                        AND rob.torqueReductionT1 THEN
+                           gbBootupError := TRUE;
+                           RETURN FALSE;
+                     END_IF;
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 7, i, "_RcuConfiguration.RcuReadConfigRob", rob.drive[i].axesName);
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+               END_IF;
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrCnfDrvNMap, rob.kinListInx, 2, i, "_RcuConfiguration.RcuReadConfigRob", STR(i));
+         END_IF;
+      END_FOR;
+   ELSE
+      RcuSetMessageOnce(_RcuConfiguration_FaErrNInConf1, rob.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigRob",
+         "RC.KINEMATIC:" + STR(rob.kinListInx), "MC.Kinematics." + rob.kinematic.mName);
+      gbBootupError := TRUE;
+      RETURN FALSE;
+   END_IF;
+   
+   IF CatalogReadReal(rob.rcCatHdl, "defaultTimeOverrideFactor", r, TRUE) THEN
+      IF (r > 0) THEN
+         rob.defaultTimeOverrideFactor := r;
+      ELSE
+         rob.defaultTimeOverrideFactor := 0.5;
+      END_IF;
+   ELSE
+      rob.defaultTimeOverrideFactor := 0.5;
+   END_IF;
+   IF CatalogReadReal(rob.rcCatHdl, "interruptTimeOverrideFactor", r, TRUE) THEN
+      IF (r >= 0.5) THEN
+         rob.interruptTimeOverrideFactor := r;
+      ELSE
+         rob.interruptTimeOverrideFactor := 1.0;
+      END_IF;
+   ELSE
+      rob.interruptTimeOverrideFactor := 1.0;
+   END_IF;
+   IF CatalogReadReal(rob.rcCatHdl, "emergencyTimeOverrideFactor", r, TRUE) THEN
+      IF (r >= 0.75) THEN
+         rob.emergencyTimeOverrideFactor := r;
+      ELSE
+         rob.emergencyTimeOverrideFactor := 1.0;
+      END_IF;
+   ELSE
+      rob.emergencyTimeOverrideFactor := 1.0;
+   END_IF;
+   
+   IF CatalogReadString(rob.mcCatHdl, "axisFilter1Type", name, TRUE) THEN
+      IF name = "NoFilter" THEN
+         rob.hasAxisFilter := FALSE;
+      ELSE
+         r := 0.0;
+         rob.hasAxisFilter := TRUE;
+         IF CatalogReadReal(rob.mcCatHdl, "timeConstantOfAxisFilter1_s", r, TRUE) AND (r > 0.0) AND (firmwareVersionNr >= 542) THEN
+            rob.orderOfAxisFilter := DINT (((r * 1000.0) / (grCycleTime * 1000.0)) + 0.5);
+            rob.timeConstAxisFilter := r;
+         ELSIF CatalogReadInt(rob.mcCatHdl, "orderOfAxisFilter1", i, FALSE) THEN
+            rob.orderOfAxisFilter := i;
+         END_IF;
+      END_IF;
+   ELSE
+      rob.hasAxisFilter := FALSE;
+   END_IF;
+   
+   // number of sensors to detect atomizer collision
+   IF NOT CatalogReadIntRange(rob.rcCatHdl, "atomizerCollision", rob.RcuEmergencyStop.iCntAtomSensors, 0, 2, FALSE) THEN
+      rob.RcuEmergencyStop.iCntAtomSensors := 0;
+      RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, rob.kinListInx, 8, 0, "_RcuConfiguration.RcuReadConfigRob", "Atomizer Collision");
+   END_IF;
+   // PDA system used (MB - Primas)
+   IF CatalogReadIntRange(rob.rcCatHdl, "activatePDA", i, 0, 1, TRUE) THEN
+      rob.pdaData.bActive := (i=1);
+   END_IF; // Extensions MB Rastatt 01-03-2016
+   IF CatalogReadIntRange(rob.rcCatHdl, "activateExtPDA", i, 0, 1, TRUE) THEN
+      rob.pdaData.bActiveExt := (i=1);
+   END_IF;
+   
+   IF CatalogGetHandleRelative(rob.rcCatHdl, "Override", baseHdl) THEN
+      IF NOT CatalogReadRealRange(baseHdl, "OvrForHoming", rob.rOverrideForHoming, 0.1, 1.0, TRUE) THEN
+         rob.rOverrideForHoming := 0.5; //50% as default            
+      END_IF;
+   ELSE   
+      rob.rOverrideForHoming := 0.5; //50% as default
+   END_IF;
+   
+   IF CatalogReadIntRange(rob.rcCatHdl, "OldPosAfterRestart", i, 0, 1, TRUE) THEN
+      rob.bOldPosAfterRestart := (i=1);
+   ELSE
+      rob.bOldPosAfterRestart := FALSE;
+   END_IF;
+         
+   IF CatalogGetHandleRelative(rob.rcCatHdl, "Homing", baseHdl) THEN
+      IF rob.homing.bEnableHoming THEN
+         IF CatalogReadIntRange(baseHdl, "Type", i, eStandard, eSafeToHome, FALSE) THEN
+            rob.homing.tType := THomingType(i);
+         ELSE
+            rob.homing.tType := eStandard;
+         END_IF;
+         IF (rob.homing.tType = eStandard) THEN
+            IF NOT CatalogReadRealRange(baseHdl, "OvrForHoming", rob.homing.rOverride, 0.1, 1.0, TRUE) THEN
+               rob.homing.rOverride := 0.5; //50% as default            
+            END_IF;
+            CatalogReadString(baseHdl, "ExtensionHoming", rob.homing.sProgExt, FALSE);
+            CatalogReadString(baseHdl, "ExtensionPreHoming", rob.homing.sPreProgExt, FALSE);
+            IF CatalogReadIntRange(baseHdl, "EnableGoDirectHome", i, 0, 1, FALSE) THEN
+               rob.homing.bEnableGoDirectHome := (i=1);
+            ELSE
+               rob.homing.bEnableGoDirectHome := FALSE;
+            END_IF;
+            IF CatalogReadIntRange(baseHdl, "EnablePreHoming", i, 0, 1, FALSE) THEN
+               rob.homing.bEnablePreHoming := (i=1);
+            ELSE
+               rob.homing.bEnablePreHoming := FALSE;
+            END_IF;
+            IF CatalogReadIntRange(baseHdl, "EnableHomingAfterRestart", i, 0, 1, FALSE) THEN
+               rob.homing.bEnableHomingAfterRestart := (i=1);
+            ELSE
+               rob.homing.bEnableHomingAfterRestart := FALSE;
+            END_IF;
+            IF NOT CatalogReadIntRange(baseHdl, "LevelOfModules", i, 0, 2, FALSE) THEN
+               rob.homing.iModuleLevel := 1;
+            ELSE
+               rob.homing.iModuleLevel := i;
+            END_IF;
+         END_IF;
+      END_IF;
+   ELSE   
+      rob.homing.bEnableHoming := FALSE;
+   END_IF;
+   IF NOT (rob.iSerialNr = -2) THEN
+      CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+      sFilePath := sApplPath + "application/control/teachcontrol/_system.tt";
+      SN := STR(rob.iSerialNr);
+      hdlFile := FileOpen (sFilePath + "/" + SN + ".ttl",  eFileModeReadWrite);
+      IF hdlFile <> -1 THEN
+         FileSetPosition(hdlFile, 0);     
+         FileReadLn(hdlFile, s2);
+         IF s2 = "" THEN
+            s2 := "0";
+         END_IF;
+         FileReadLn(hdlFile, s3);
+         IF s3 = "" THEN
+            s3 := "0";
+         END_IF;      
+         FileReadLn(hdlFile, s4);
+         IF s4 = "" THEN
+            s4 := "0";
+         END_IF;       
+         rob.iI  := StrToDint(s2);
+         rob.iI2 := StrToDint(s3);
+         rob.iI4 := StrToDint(s4);
+      END_IF;
+    StreamClose(hdlFile);       
+   END_IF;   
+   rob.initRobComplete := TRUE;
+   RETURN TRUE;
+
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read configured default data for a certain kinematic
+* 19.08.04 nmr: added configuration entry "useSingleOvr" to
+*               choose between one common override and two separate
+*               overrides for jogging and automatic
+*)
+ROUTINE RcuReadConfigKin(kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+
+      kinGroup : TIdGroup;   // Group of Mcu-Ids for the kinematic
+      progGroup : TIdGroup;  // Group of Mcu-Ids for the progPath
+      jogGroup : TIdGroup;   // Group of Mcu-Ids for the jogPath
+      reposGroup : TIdGroup; // Group of Mcu-Ids for the reposPath
+
+      i         : DINT;
+      singleOvr : DINT;
+      name : STRING;
+   END_VAR
+
+   IF giRcKinHdl = 0 THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfNoKin, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigKin");
+      RETURN FALSE;
+   END_IF;
+
+   IF kin.rcCatHdl <> 0 THEN
+      kinGroup.toolId := McuGetOpenEndTrsfID(); // default toolId
+      CfgCreateAllObjects(kin.rcCatHdl, kinGroup, kin.cfgDyn, kin);
+      // name of robot in configuration
+      IF CatalogReadString(kin.mcCatHdl, "name", name, TRUE) THEN
+         kin.robotName := name;
+         // sbj : comment it in when 3DOnSite doesn´t need it in the RobotControl.cfg any more
+         //CatalogAddString(kin.rcCatHdl, "name", name, FALSE);
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_ErrNInKinConf, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigKin", "name");
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfKinNC, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuReadConfigKin", kin.kinematic.mName);
+      RETURN FALSE;
+   END_IF;
+
+   i := 1;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "useJointLimForCartSeg", i, TRUE) THEN
+      CatalogReadInt(giRcBaseHdl, "useJointLimForCartSeg", i, TRUE);
+   END_IF;
+   kin.bUseJointLimForCartSeg := i <> 0;
+
+   progGroup := kinGroup; // settings for kinematic are default
+   kin.progPath.cfgDyn := kin.cfgDyn;
+   IF CatalogGetHandleRelative(kin.rcCatHdl, "ProgPath", dirHdl) THEN
+      CfgCreateAllObjects(dirHdl, progGroup, kin.progPath.cfgDyn, kin);
+   END_IF;
+
+   jogGroup := kinGroup; // settings for kinematic are default
+   kin.jogPath.cfgDyn := kin.cfgDyn;
+   IF CatalogGetHandleRelative(kin.rcCatHdl, "JogPath", dirHdl) THEN
+      CfgCreateAllObjects(dirHdl, jogGroup, kin.jogPath.cfgDyn, kin);
+   END_IF;
+
+   reposGroup := kinGroup; // settings for kinematic are default
+   kin.reposPath.cfgDyn := kin.cfgDyn;
+   IF CatalogGetHandleRelative(kin.rcCatHdl, "ReposPath", dirHdl) THEN
+      CfgCreateAllObjects(dirHdl, reposGroup, kin.reposPath.cfgDyn, kin);
+   END_IF;
+
+   // give the McuIds to the kinematic
+   kin.SetDefault(kinGroup.dynId, kinGroup.ovlId, kinGroup.toolId,
+      kinGroup.acceRampId, kinGroup.deceRampId);
+   // give the McuIds to the paths of the kinematic
+   kin.progPath.SetDefault(progGroup.dynId, progGroup.ovlId, progGroup.toolId);
+   kin.jogPath.SetDefault(jogGroup.dynId, jogGroup.ovlId, jogGroup.toolId);
+   kin.reposPath.SetDefault(reposGroup.dynId, reposGroup.ovlId, reposGroup.toolId);
+
+   // MainMode-Manager configuration
+   dirHdl := 0;
+   CatalogGetHandleRelative(giRcBaseHdl, "MainModeMgr", dirHdl);
+   IF dirHdl <> 0 THEN
+      // activate the mainmode-Manager when all inputs are mapped
+      IF CfgReadMainModeMgr(giRcBaseHdl, kin) THEN
+         START kin.mainModeMgr.StartUp(kin);
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, kin.kinListInx, 9, 0, "_RcuConfiguration.RcuReadConfigKin",
+               "MainModeMgr");
+      gbBootupError := TRUE;
+   END_IF;
+
+   // reduced speed configuration
+      kin.veloLimits.mJoints.mValidLen := kin.kinematic.mNrOfJoints;
+   CfgReadVeloLimits(kin.mcCatHdl, kin.veloLimits, kin.kinematic.mNrOfJoints);
+      kin.StartVeloControl();
+
+   // decide whether endpoints of the jogPath are checked against areas in the
+   // offlinelist
+   i := 0;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "jogPointCheckArea", i, TRUE) THEN
+      CatalogReadInt(giRcBaseHdl, "jogPointCheckArea", i, TRUE);
+   END_IF;
+   kin.jogPath.jogPointCheckArea := i <> 0;
+
+   // the period between jogsegments in seconds (targetvalue)
+   IF NOT CatalogReadReal(kin.rcCatHdl, "jogPeriod", kin.jogPath.jogPeriod, TRUE) THEN
+      CatalogReadReal(giRcBaseHdl, "jogPeriod", kin.jogPath.jogPeriod, TRUE);
+   END_IF;
+   // the period between jogsegments in seconds (maximal value)
+   IF NOT CatalogReadReal(kin.rcCatHdl, "maxJogPeriod", kin.jogPath.maxJogPeriod, TRUE) THEN
+      CatalogReadReal(giRcBaseHdl, "maxJogPeriod", kin.jogPath.maxJogPeriod, TRUE);
+   END_IF;
+   // the length of segments for backward movement on path in seconds
+   IF NOT CatalogReadReal(kin.rcCatHdl, "backwardSegLength", kin.reposPath.backwardSegLength, TRUE) THEN
+      CatalogReadReal(giRcBaseHdl, "backwardSegLength", kin.reposPath.backwardSegLength, TRUE);
+   END_IF;
+
+   // override configuration
+   dirHdl := 0;
+   i := 50; // default initial override
+   singleOvr := 0;  // default: 2 separate overrides
+   IF NOT CatalogGetHandleRelative(kin.rcCatHdl, "Override", dirHdl) THEN
+      CatalogGetHandleRelative(giRcBaseHdl, "Override", dirHdl);
+   END_IF;
+   IF dirHdl = 0 THEN  // create catalog-entrys
+      CatalogAdd(kin.rcCatHdl, "Override");
+      CatalogGetHandleRelative(kin.rcCatHdl, "Override", dirHdl);
+      CatalogAddInt(dirHdl, "vOvrInit", i, TRUE);
+      CatalogAddInt(dirHdl, "useSingleOvr", 0, TRUE);
+   ELSE
+      IF NOT CatalogReadInt(dirHdl, "useSingleOvr", singleOvr, TRUE) THEN
+         CatalogAddInt(dirHdl, "useSingleOvr", singleOvr, TRUE);
+      END_IF;
+      IF NOT CatalogReadIntRange(dirHdl, "vOvrInit", i, 1, 100, TRUE) THEN
+         CatalogAddInt(dirHdl, "vOvrInit", i, TRUE);
+      END_IF;
+   END_IF;
+   kin.useSingleOvr := singleOvr > 0;
+   kin.SetTimeOverride(i / 100.0);
+   kin.SetInitOverride(i / 100.0);
+
+   IF NOT CatalogReadInt(kin.rcCatHdl, "nrOfBaseJoints", kin.nrOfBaseJoints, TRUE) THEN
+      kin.nrOfBaseJoints := kin.kinematic.mNrOfBaseJoints;
+      CatalogAddInt(kin.rcCatHdl, "nrOfBaseJoints", kin.nrOfBaseJoints, TRUE);
+   END_IF;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "nrOfWristJoints", kin.nrOfWristJoints, TRUE) THEN
+      kin.nrOfWristJoints := kin.kinematic.mNrOfWristJoints;
+      CatalogAddInt(kin.rcCatHdl, "nrOfWristJoints", kin.nrOfWristJoints, TRUE);
+   END_IF;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "nrOfAuxJoints", kin.nrOfAuxJoints, TRUE) THEN
+      kin.nrOfAuxJoints := kin.kinematic.mNrOfAuxJoints;
+      CatalogAddInt(kin.rcCatHdl, "nrOfAuxJoints", kin.nrOfAuxJoints, TRUE);
+   END_IF;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "nrOfDrives", kin.nrOfDrives, TRUE) THEN
+      kin.nrOfDrives := kin.actDrives.mValidLen;
+      CatalogAddInt(kin.rcCatHdl, "nrOfDrives", kin.nrOfDrives, TRUE);
+   END_IF;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "nrOfMainDrives", kin.nrOfMainDrives, TRUE) THEN
+      // use joints because actDrives contains all drives 
+      kin.nrOfMainDrives := kin.kinematic.mNrOfMainJoints;
+      CatalogAddInt(kin.rcCatHdl, "nrOfMainDrives", kin.nrOfMainDrives, TRUE);
+   END_IF;
+   IF NOT CatalogReadInt(kin.rcCatHdl, "nrOfAuxDrives", kin.nrOfAuxDrives, TRUE) THEN
+      kin.nrOfAuxDrives := kin.kinematic.mNrOfAuxJoints;
+      CatalogAddInt(kin.rcCatHdl, "nrOfAuxDrives", kin.nrOfAuxDrives, TRUE);
+   END_IF;
+   kin.nrOfMainJoints := kin.nrOfBaseJoints + kin.nrOfWristJoints;
+   kin.nrOfJoints := kin.nrOfMainJoints + kin.nrOfAuxJoints;
+   IF (kin.nrOfJoints < 7) THEN
+       PaintRobot[kin.kinListInx].nrOfJogDimensions := kin.nrOfJoints;
+   ELSE
+       PaintRobot[kin.kinListInx].nrOfJogDimensions := 7;
+   END_IF;
+
+   IF IsPaintArm7VWrist(kin) THEN // RP E 043
+      kin.nrMaxMainJoints := 7;
+   ELSE
+      kin.nrMaxMainJoints := 6;
+   END_IF;
+   
+   FOR i := 0 TO kin.nrOfJoints - 1 DO
+      IF kin.kinematic.mJoints[i].mMinPos > kin.kinematic.mJoints[i].mMaxPos THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrJointCnf, kin.kinListInx, 1, i, "_RcuConfiguration.RcuReadConfigKin", PaintRobot[kin.kinListInx].drive[i].axesName,
+            "minPos (" + STR(kin.kinematic.mJoints[i].mMinPos) + ") > maxPos (" +
+            STR(kin.kinematic.mJoints[i].mMaxPos) + ")");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;   
+   END_FOR;
+
+   kin.initKinComplete := TRUE;
+   RETURN TRUE;
+
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Read information from IEC if safety for virtual wall is 
+* enabled in engineering file and configuration values are available in RETAIN
+*)
+ROUTINE RcuMapVirtualWallSafety(kin : TRcuKinematic) : BOOL GLOBAL
+
+   kin.VirtualWallSafeCfg.svSafety := MAPX(cSV_RCU_Safety[kin.kinListInx]);
+   IF NOT IS_MAPPED(kin.VirtualWallSafeCfg.svSafety) THEN
+      kin.VirtualWallSafeCfg.svMapped := FALSE;
+      gbBootupError      := TRUE;
+      RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kin.kinListInx , 3, 0, "TRcuKinematic.RcuMapVirtualWallSafety", cSV_RCU_Safety[kin.kinListInx]);
+      RETURN TRUE;
+   ELSIF kin.VirtualWallSafeCfg.svSafety.bUseSafeConfiguration THEN 
+      kin.VirtualWallSafeCfg.svMapped := TRUE;
+      kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "-------------------------------------------------------------------------------------------------------------------------------");
+      kin.DebugPrint(eTraceRcuConfig,                         "-------------------------------------------------------------------------------------------------------------------------------");
+      kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "                  Safe configuration for virtual wall is used");
+      kin.DebugPrint(eTraceRcuConfig,                         "                  Safe configuration for virtual wall is used");
+      kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "                                                                                                                               ");
+      kin.DebugPrint(eTraceRcuConfig,                         "                                                                                                                               ");
+      //configuration values are available in RETAIN
+      IF kin.VirtualWallSafeCfg.svSafety.bRetainInCatalog THEN
+         kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "RcuMapVirtualWallSafety: Safety for virtual wall is enabled and RETAIN data is ok --> waiting for signal to load configuration");
+         kin.DebugPrint(eTraceRcuConfig, "RcuMapVirtualWallSafety: Safety for virtual wall is enabled and RETAIN data is ok --> waiting for signal to load configuration");
+         WAIT kin.VirtualWallSafeCfg.svSafety.bReloadCatalog;
+         kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "RcuMapVirtualWallSafety: Received signal loading configuration");
+         kin.DebugPrint(eTraceRcuConfig, "RcuMapVirtualWallSafety: Received signal loading configuration");
+         kin.VirtualWallSafeCfg.svSafety.bReloadCatalog := FALSE;
+         START kin.ObserveSafetyCfgDownload();
+         RETURN TRUE;
+      ELSE
+         kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "RcuMapVirtualWallSafety: Safety for virtual wall is enabled but no RETAIN data !");
+         kin.DebugPrint(eTraceRcuConfig, "RcuMapVirtualWallSafety: Safety for virtual wall is enabled but no RETAIN data !");
+         START kin.ObserveSafetyCfgDownload();
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      kin.VirtualWallSafeCfg.svMapped := TRUE;
+      kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "RcuMapVirtualWallSafety: Safety for virtual wall is not enabled !");
+      kin.DebugPrint(eTraceRcuConfig, "RcuMapVirtualWallSafety: Safety for virtual wall is not enabled !");
+      RETURN TRUE;
+   END_IF;   
+     
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Read configured data for a gripper (i.e. vectors relative to the elbow or
+* the tcp). The gripper is used for the observation of working- and nogo-areas.
+* The routine returns the ID of the created gripper object.
+*)
+ROUTINE RcuCfgReadGripper(kin : TRcuKinematic; OPTIONAL onlyCatalog : BOOL) : BOOL GLOBAL
+   VAR
+      dirHdl  : DINT;
+      baseHdl : DINT;
+      i       : INT;
+      n       : DINT;
+      ngripper: DINT;
+      name    : STRING;
+      dateTime : STRING;
+      r       : REAL;
+      default : BOOL;
+   END_VAR
+
+   IF NOT kin.VirtualWallSafeCfg.svMapped THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfNoKin, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper", cSV_RCU_Safety[kin.kinListInx]);
+      RETURN FALSE;
+   ELSIF kin.VirtualWallSafeCfg.svSafety.bUseSafeConfiguration AND NOT kin.VirtualWallSafeCfg.svSafety.bRetainInCatalog THEN
+      RETURN FALSE;
+   ELSIF (giRcKinHdl = 0) OR (kin.rcCatHdl = 0) THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfNoKin, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+      RETURN FALSE;
+   END_IF;
+
+   IF gbGuardsAvailable THEN
+      IF CatalogGetHandleRelative(kin.rcCatHdl, "Gripper", baseHdl) THEN
+         InitChecksum();
+         IF CatalogReadString(baseHdl, "dateTime", dateTime, TRUE) THEN
+            AddStringToChecksum(dateTime);
+         END_IF;
+         IF CatalogReadInt(baseHdl, "nrOfVectors", ngripper, TRUE) THEN
+            kin.guards.mNrOfGuardPoints := ngripper;
+         END_IF;
+         AddIntToChecksum(ngripper);
+         IF CatalogReadString(baseHdl, "name", name, TRUE) THEN
+            kin.guards.mName := name;
+            AddStringToChecksum(name);
+         END_IF;
+         FOR i:=0 TO kin.guards.mNrOfGuardPoints-1 DO
+            name := "Vector" + STR(i+1);
+            IF CatalogGetHandleRelative(baseHdl, name, dirHdl) THEN
+               IF CatalogReadInt(dirHdl, "Type", n, TRUE) THEN
+                  IF n = 0 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardTCP;
+                  ELSIF n = 1 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardElbow;
+                  ELSIF n = 2 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardFlange;
+                  ELSIF n = 3 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardJointFrame;
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  AddIntToChecksum(n+i);
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "x", r, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[0] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "y", r, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[1] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "z", r, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[2] := r;
+               END_IF;
+               kin.guards.mGuardPoints[i].mGuardPoint.mFrameTyp := eMcuFrameKardan;
+               AddRealToChecksum(r);
+               IF CatalogReadString(dirHdl, "name", name, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardName := name;
+               ELSE
+                  name := "Vector" + STR(i+1);
+                  kin.guards.mGuardPoints[i].mGuardName := name;
+               END_IF;
+               AddStringToChecksum(name);
+               IF kin.guards.mGuardPoints[i].mGuardLocation = eMcuGuardJointFrame THEN
+                  IF CatalogReadInt(dirHdl, "jointNr", n, FALSE) THEN
+                     kin.guards.mGuardPoints[i].mJointNr := n;
+                     AddIntToChecksum(n);
+                  END_IF;
+               END_IF;
+               //kin.gripper.mVectors[i].mActive := TRUE;
+               kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardPosition;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuCfgReadGripper");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+         END_FOR;
+         
+         IF CatalogGetHandleRelative(kin.rcCatHdl, "Guard", baseHdl) THEN
+            IF CatalogReadInt(baseHdl, "nrOfVectors", n, TRUE) THEN
+               kin.guards.mNrOfGuardPoints := kin.guards.mNrOfGuardPoints + n;
+            END_IF;
+            AddIntToChecksum(n);
+            FOR i:=ngripper TO kin.guards.mNrOfGuardPoints-1 DO
+               name := "Vector" + STR(i+1-ngripper);
+               IF CatalogGetHandleRelative(baseHdl, name, dirHdl) THEN
+                  IF CatalogReadInt(dirHdl, "Type", n, TRUE) THEN
+                     IF n = 0 THEN
+                        kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardTCP;
+                     ELSIF n = 1 THEN
+                        kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardElbow;
+                     ELSIF n = 2 THEN
+                        kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardFlange;
+                     ELSIF n = 3 THEN
+                        kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardJointFrame;
+                     ELSE
+                        RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                        gbBootupError := TRUE;
+                        RETURN FALSE;
+                     END_IF;
+                     AddIntToChecksum(n+i);
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  r:=0.0;
+                  IF CatalogReadReal(dirHdl, "x", r, TRUE) THEN
+                     kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[0] := r;
+                  END_IF;
+                  AddRealToChecksum(r);
+                  r:=0.0;
+                  IF CatalogReadReal(dirHdl, "y", r, TRUE) THEN
+                     kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[1] := r;
+                  END_IF;
+                  AddRealToChecksum(r);
+                  r:=0.0;
+                  IF CatalogReadReal(dirHdl, "z", r, TRUE) THEN
+                     kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[2] := r;
+                  END_IF;
+                  kin.guards.mGuardPoints[i].mGuardPoint.mFrameTyp := eMcuFrameKardan;
+                  AddRealToChecksum(r);
+                  IF CatalogReadString(dirHdl, "name", name, TRUE) THEN
+                     kin.guards.mGuardPoints[i].mGuardName := name;
+                  ELSE
+                     name := "Vector" + STR(i+1);
+                     kin.guards.mGuardPoints[i].mGuardName := name;
+                  END_IF;
+                  AddStringToChecksum(name);
+                  IF kin.guards.mGuardPoints[i].mGuardLocation = eMcuGuardJointFrame THEN
+                     IF CatalogReadInt(dirHdl, "jointNr", n, FALSE) THEN
+                        kin.guards.mGuardPoints[i].mJointNr := n;
+                        AddIntToChecksum(n);
+                     END_IF;
+                  END_IF;
+                  //kin.gripper.mVectors[i].mActive := TRUE;
+                  IF CatalogReadInt(dirHdl, "Mode", n, TRUE) THEN
+                     IF n = 0 THEN
+                        kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardPosition;
+                     ELSIF n = 1 THEN
+                        kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardVelocity;
+                     ELSIF n = 2 THEN
+                        kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardPosAndVel;
+                     ELSE
+                        RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                        gbBootupError := TRUE;
+                        RETURN FALSE;
+                     END_IF;
+                     AddIntToChecksum(n+i);
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+            END_FOR;
+         END_IF;
+
+         
+         
+         
+         
+      ELSIF CatalogGetHandleRelative(kin.rcCatHdl, "Guard", baseHdl) THEN
+         InitChecksum();
+         IF CatalogReadString(baseHdl, "dateTime", dateTime, TRUE) THEN
+            AddStringToChecksum(dateTime);
+         END_IF;
+         IF CatalogReadInt(baseHdl, "nrOfVectors", n, TRUE) THEN
+            kin.guards.mNrOfGuardPoints := n;
+         END_IF;
+         AddIntToChecksum(n);
+         IF CatalogReadString(baseHdl, "name", name, TRUE) THEN
+            kin.guards.mName := name;
+            AddStringToChecksum(name);
+         END_IF;
+         FOR i:=0 TO kin.guards.mNrOfGuardPoints-1 DO
+            name := "Vector" + STR(i+1);
+            IF CatalogGetHandleRelative(baseHdl, name, dirHdl) THEN
+               IF CatalogReadInt(dirHdl, "Type", n, TRUE) THEN
+                  IF n = 0 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardTCP;
+                  ELSIF n = 1 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardElbow;
+                  ELSIF n = 2 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardFlange;
+                  ELSIF n = 3 THEN
+                     kin.guards.mGuardPoints[i].mGuardLocation := eMcuGuardJointFrame;
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  AddIntToChecksum(n+i);
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "x", r, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[0] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "y", r, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[1] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "z", r, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardPoint.mPos.mValues[2] := r;
+               END_IF;
+               kin.guards.mGuardPoints[i].mGuardPoint.mFrameTyp := eMcuFrameKardan;
+               AddRealToChecksum(r);
+               IF CatalogReadString(dirHdl, "name", name, TRUE) THEN
+                  kin.guards.mGuardPoints[i].mGuardName := name;
+               ELSE
+                  name := "Vector" + STR(i+1);
+                  kin.guards.mGuardPoints[i].mGuardName := name;
+               END_IF;
+               AddStringToChecksum(name);
+               IF kin.guards.mGuardPoints[i].mGuardLocation = eMcuGuardJointFrame THEN
+                  IF CatalogReadInt(dirHdl, "jointNr", n, FALSE) THEN
+                     kin.guards.mGuardPoints[i].mJointNr := n;
+                     AddIntToChecksum(n);
+                  END_IF;
+               END_IF;
+               //kin.gripper.mVectors[i].mActive := TRUE;
+               IF CatalogReadInt(dirHdl, "Mode", n, TRUE) THEN
+                  IF n = 0 THEN
+                     kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardPosition;
+                  ELSIF n = 1 THEN
+                     kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardVelocity;
+                  ELSIF n = 2 THEN
+                     kin.guards.mGuardPoints[i].mGuardMode := eMcuGuardPosAndVel;
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  AddIntToChecksum(n+i);
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuCfgReadGripper");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+         END_FOR;
+      ELSE // no Gripper and no Guard in catalog
+         kin.guards.mNrOfGuardPoints := 1;
+         kin.guards.mName := "";
+         kin.guards.mGuardPoints[0].mGuardLocation := eMcuGuardTCP;
+         kin.guards.mGuardPoints[0].mGuardPoint.mPos.mValues[0] := 0.0;
+         kin.guards.mGuardPoints[0].mGuardPoint.mPos.mValues[1] := 0.0;
+         kin.guards.mGuardPoints[0].mGuardPoint.mPos.mValues[2] := 0.0;
+         kin.guards.mGuardPoints[0].mGuardPoint.mFrameTyp := eMcuFrameKardan;
+         kin.guards.mGuardPoints[0].mGuardName := "Default TCP";
+         kin.guards.mGuardPoints[0].mGuardMode := eMcuGuardPosition;
+         RcuSetMessageOnce(_RcuConfiguration_InfNoGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+         default := TRUE;
+      END_IF;
+      (*
+      // guard for velocity flange
+      kin.guards.mNrOfGuardPoints := kin.guards.mNrOfGuardPoints + 1;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardLocation := eMcuGuardFlange;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mPos.mValues[0] := 0.0;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mPos.mValues[1] := 0.0;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mPos.mValues[2] := 0.0;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mFrameTyp := eMcuFrameKardan;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardName := "Velo";
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardMode := eMcuGuardVelocity;
+      
+      // guard for velocity tool
+      kin.guards.mNrOfGuardPoints := kin.guards.mNrOfGuardPoints + 1;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardLocation := eMcuGuardFlange;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mPos.mValues[0] := 0.0;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mPos.mValues[1] := -433.3;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mPos.mValues[2] := 693.1;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardPoint.mFrameTyp := eMcuFrameKardan;
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardName := "Velo";
+      kin.guards.mGuardPoints[kin.guards.mNrOfGuardPoints-1].mGuardMode := eMcuGuardVelocity;
+      *)
+
+      kin.guards.mDBObjTyp := eMcuPermanent;
+      IF NOT McuCreateGuardPoints(kin.kinGripperMcuId, kin.guards) THEN
+         RcuSetMessageOnce(_RcuConfiguration_ErrMcuCreGrip, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      ELSE
+         IF default THEN
+            kin.guardsDataValid := FALSE;
+            kin.DebugPrint(eTraceRcuConfig, "McuCreateGuards with default-data");
+         ELSE
+            kin.guardsDataValid := TRUE;
+            kin.DebugPrint(eTraceRcuConfig, "McuCreateGuards successful");
+         END_IF;
+      END_IF;
+      
+   ELSE // NOT gbGuardsAvailable 
+      IF CatalogGetHandleRelative(kin.rcCatHdl, "Gripper", baseHdl) THEN
+         InitChecksum();
+         IF CatalogReadString(baseHdl, "dateTime", dateTime, TRUE) THEN
+            AddStringToChecksum(dateTime);
+         END_IF;
+         IF CatalogReadInt(baseHdl, "nrOfVectors", n, TRUE) THEN
+            kin.gripper.mNrOfVectors := n;
+         END_IF;
+         AddIntToChecksum(n);
+         IF CatalogReadString(baseHdl, "name", name, TRUE) THEN
+            kin.gripper.mName := name;
+            AddStringToChecksum(name);
+         END_IF;
+         FOR i:=0 TO kin.gripper.mNrOfVectors-1 DO
+            name := "Vector" + STR(i+1);
+            IF CatalogGetHandleRelative(baseHdl, name, dirHdl) THEN
+               IF CatalogReadInt(dirHdl, "Type", n, TRUE) THEN
+                  IF n = 0 THEN
+                     kin.gripper.mVectors[i].mOffsetType := eMcuGripperTypeTCP;
+                  ELSIF n = 1 THEN
+                     kin.gripper.mVectors[i].mOffsetType := eMcuGripperTypeElbow;
+                  ELSIF n = 2 THEN
+                     kin.gripper.mVectors[i].mOffsetType := eMcuGripperTypeFlange;
+                  ELSIF n = 3 THEN
+                     kin.gripper.mVectors[i].mOffsetType := eMcuGripperTypeJointFrame;
+                  ELSE
+                     RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                     gbBootupError := TRUE;
+                     RETURN FALSE;
+                  END_IF;
+                  AddIntToChecksum(n+i);
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadGripper");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "x", r, TRUE) THEN
+                  kin.gripper.mVectors[i].mOffset.mValues[0] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "y", r, TRUE) THEN
+                  kin.gripper.mVectors[i].mOffset.mValues[1] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               r:=0.0;
+               IF CatalogReadReal(dirHdl, "z", r, TRUE) THEN
+                  kin.gripper.mVectors[i].mOffset.mValues[2] := r;
+               END_IF;
+               AddRealToChecksum(r);
+               IF CatalogReadString(dirHdl, "name", name, TRUE) THEN
+                  kin.gripper.mVectors[i].mOffsetName := name;
+               ELSE
+                  name := "Vector" + STR(i+1);
+                  kin.gripper.mVectors[i].mOffsetName := name;
+               END_IF;
+               AddStringToChecksum(name);
+               IF kin.gripper.mVectors[i].mOffsetType = eMcuGripperTypeJointFrame THEN
+                  IF CatalogReadInt(dirHdl, "jointNr", n, FALSE) THEN
+                     kin.gripper.mVectors[i].mJointNr := n;
+                     AddIntToChecksum(n);
+                  END_IF;
+               END_IF;
+               kin.gripper.mVectors[i].mActive := TRUE;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfGripper, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuCfgReadGripper");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+         END_FOR;
+      ELSE
+         kin.gripper.mNrOfVectors := 1;
+         kin.gripper.mName := "";
+         kin.gripper.mVectors[0].mOffsetType := eMcuGripperTypeTCP;
+         kin.gripper.mVectors[0].mOffset.mValues[0] := 0.0;
+         kin.gripper.mVectors[0].mOffset.mValues[1] := 0.0;
+         kin.gripper.mVectors[0].mOffset.mValues[2] := 0.0;
+         kin.gripper.mVectors[0].mOffsetName := "Default TCP";
+         kin.gripper.mVectors[0].mActive := TRUE;
+         RcuSetMessageOnce(_RcuConfiguration_InfNoGripper, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+         default := TRUE;
+      END_IF;
+
+      IF IS_USED(onlyCatalog) AND onlyCatalog THEN
+         IF default THEN
+            kin.gripperDataValid := FALSE;
+            kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "RcuCfgReadGripper with default-data");
+            kin.DebugPrint(eTraceRcuConfig, "RcuCfgReadGripper with default-data");
+         ELSE
+            kin.gripperDataValid := TRUE;
+            kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "RcuCfgReadGripper successful");
+            kin.DebugPrint(eTraceRcuConfig, "RcuCfgReadGripper successful");
+         END_IF;
+         RETURN TRUE;   
+      END_IF;
+
+      kin.gripper.mDBObjTyp := eMcuPermanent;
+      IF NOT McuCreateGripperA(kin.kinGripperMcuId, kin.gripper) THEN
+         RcuSetMessageOnce(_RcuConfiguration_ErrMcuCreGrip, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadGripper");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      ELSE
+         IF default THEN
+            kin.gripperDataValid := FALSE;
+            kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "McuCreateGripper with default-data");
+            kin.DebugPrint(eTraceRcuConfig, "McuCreateGripper with default-data");
+         ELSE
+            kin.gripperDataValid := TRUE;
+            kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, "McuCreateGripper successful");
+            kin.DebugPrint(eTraceRcuConfig, "McuCreateGripper successful");
+         END_IF;
+      END_IF;
+   END_IF;
+         
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read configured data for a VirtualWall 
+*)
+ROUTINE RcuCfgReadVirtualWall(kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      dirHdl  : DINT;
+      baseHdl : DINT;
+      r       : REAL;
+      i       : INT;
+      n       : DINT;
+      name    : STRING;
+   END_VAR
+
+   IF NOT kin.VirtualWallSafeCfg.svMapped THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfNoKin, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", cSV_RCU_Safety[kin.kinListInx]);
+      RETURN FALSE;
+   ELSIF kin.VirtualWallSafeCfg.svSafety.bUseSafeConfiguration AND NOT kin.VirtualWallSafeCfg.svSafety.bRetainInCatalog THEN
+      RETURN FALSE;
+   ELSIF (giRcKinHdl = 0) OR (kin.rcCatHdl = 0) THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfNoKin, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadVirtualWall");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(kin.rcCatHdl, "VirtualWall", baseHdl) THEN
+      IF CatalogReadInt(baseHdl, "nrOfBlocks", n, TRUE) THEN
+         kin.nrOfWallBlocks := n;
+         AddIntToChecksum(n);
+      ELSE
+         kin.nrOfWallBlocks := 0;
+         RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'nrOfBlocks'");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF  CatalogReadString(baseHdl, "DateTime", name, TRUE) THEN
+         AddStringToChecksum(name);
+      END_IF;
+      FOR i:=0 TO kin.nrOfWallBlocks-1 DO
+         name := "Block" + STR(i+1);
+         IF CatalogGetHandleRelative(baseHdl, name, dirHdl) THEN
+            IF CatalogReadString(dirHdl, "name", name, TRUE) THEN
+               kin.VirtualWall[i].areaName := name;
+               AddStringToChecksum(name);
+            END_IF;
+            IF CatalogReadInt(dirHdl, "type", n, TRUE) THEN
+               IF n = 0 THEN
+                  kin.VirtualWall[i].areaType := eMcuAreaNogo;
+               ELSIF n = 1 THEN
+                  kin.VirtualWall[i].areaType := eMcuAreaWork;
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'type'");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+               AddIntToChecksum(n+i);
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'type'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadInt(dirHdl, "active", n, TRUE) THEN
+               IF n = 0 THEN
+                  kin.VirtualWall[i].cfgActive := FALSE;
+               ELSIF n = 1 THEN
+                  kin.VirtualWall[i].cfgActive := TRUE;
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 4, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'active'");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+               AddIntToChecksum(n+i+1);
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 5, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'active'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadInt(dirHdl, "special", n, TRUE) THEN
+               kin.VirtualWall[i].cfgSpecial := n;
+            ELSE
+               kin.VirtualWall[i].cfgSpecial := 0;
+            END_IF;
+            AddIntToChecksum(n+i+2);
+
+            
+            IF CatalogReadReal(dirHdl, "BaseX", r, TRUE) THEN
+               kin.VirtualWall[i].basePos.mPos.mValues[0] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 6, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'BaseX'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            AddRealToChecksum(r);
+            IF CatalogReadReal(dirHdl, "BaseY", r, TRUE) THEN
+               kin.VirtualWall[i].basePos.mPos.mValues[1] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 7, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'BaseY'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            AddRealToChecksum(r);
+            IF CatalogReadReal(dirHdl, "BaseZ", r, TRUE) THEN
+               kin.VirtualWall[i].basePos.mPos.mValues[2] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 8, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'BaseZ'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            AddRealToChecksum(r);
+            IF CatalogReadReal(dirHdl, "BaseA", r, TRUE) THEN
+               kin.VirtualWall[i].basePos.mOri.mValues[0] := r;
+               AddRealToChecksum(r);
+            ELSE
+               kin.VirtualWall[i].basePos.mOri.mValues[0] := 0.0;
+               AddRealToChecksum(0.0);
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseB", r, TRUE) THEN
+               kin.VirtualWall[i].basePos.mOri.mValues[1] := r;
+               AddRealToChecksum(r);
+            ELSE
+               kin.VirtualWall[i].basePos.mOri.mValues[1] := 0.0;
+               AddRealToChecksum(0.0);
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseC", r, TRUE) THEN
+               kin.VirtualWall[i].basePos.mOri.mValues[2] := r;
+               AddRealToChecksum(r);
+            ELSE
+               kin.VirtualWall[i].basePos.mOri.mValues[2] := 0.0;
+               AddRealToChecksum(0.0);
+            END_IF;
+            IF CatalogReadReal(dirHdl, "SizeX", r, TRUE) THEN
+               kin.VirtualWall[i].size.mValues[0] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 9, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'SizeX'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            AddRealToChecksum(r);
+            IF CatalogReadReal(dirHdl, "SizeY", r, TRUE) THEN
+               kin.VirtualWall[i].size.mValues[1] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 10, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'SizeY'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            AddRealToChecksum(r);
+            IF CatalogReadReal(dirHdl, "SizeZ", r, TRUE) THEN
+               kin.VirtualWall[i].size.mValues[2] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 11, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'SizeZ'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            AddRealToChecksum(r);
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrBlckVrtWll, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", STR(i+1));
+            gbBootupError := TRUE;
+            kin.VirtualWall[i].cfgActive := FALSE;
+         END_IF;
+      END_FOR;
+   END_IF;
+   IF kin.VirtualWallSafeCfg.svSafety.bUseSafeConfiguration AND NOT gbActCartJointsAvailable THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrSafeCrcFw, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVirtualWall", "'bEnableSafety'");
+      gbBootupError := TRUE;
+      RETURN FALSE;
+   END_IF;
+   SaveChecksum(kin);
+   RETURN TRUE;
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Read configured data for a VirtualWall 
+*)
+ROUTINE RcuCfgReadVelocityZone(kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      dirHdl  : DINT;
+      baseHdl : DINT;
+      r       : REAL;
+      i       : INT;
+      n       : DINT;
+      name    : STRING;
+   END_VAR
+
+   IF (giRcKinHdl = 0) OR (kin.rcCatHdl = 0) THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrConfNoKin, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVelocityZone");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(kin.rcCatHdl, "VelocityZone", baseHdl) THEN
+      IF CatalogReadInt(baseHdl, "nrOfBlocks", n, TRUE) THEN
+         kin.nrOfVelocityZones := n;
+      ELSE
+         kin.nrOfVelocityZones := 0;
+         RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'nrOfBlocks'");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF CatalogReadReal(baseHdl, "velocity", r, TRUE) THEN
+         kin.rGlobalVelLim := r;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 6, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'velocity'");
+         gbBootupError := TRUE;
+         RETURN FALSE;
+      END_IF;
+      FOR i:=0 TO kin.nrOfVelocityZones-1 DO
+         name := "Block" + STR(i+1);
+         IF CatalogGetHandleRelative(baseHdl, name, dirHdl) THEN
+            IF CatalogReadString(dirHdl, "name", name, TRUE) THEN
+               kin.VelocityZone[i].areaData.mName := name;
+            END_IF;
+            //kin.VelocityZone[i].areaData.mAreaTyp := eMcuAreaSignalTypeNogo; // WGS 2016-09-23
+            kin.VelocityZone[i].areaData.mAreaTyp := eMcuAreaSignalTypeWork; // ROI?
+            IF CatalogReadInt(dirHdl, "type", n, TRUE) THEN
+               IF n = 0 THEN
+                  kin.VelocityZone[i].areaData.mAreaTyp := eMcuAreaSignalTypeNogo;
+               ELSIF n = 1 THEN
+                  kin.VelocityZone[i].areaData.mAreaTyp := eMcuAreaSignalTypeWork;
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 2, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'type'");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+               AddIntToChecksum(n+i);
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 3, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'type'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+
+            IF CatalogReadInt(dirHdl, "active", n, TRUE) THEN
+               IF n = 0 THEN
+                  kin.VelocityZone[i].cfgActive := FALSE;
+               ELSIF n = 1 THEN
+                  kin.VelocityZone[i].cfgActive := TRUE;
+               ELSE
+                  RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 4, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'active'");
+                  gbBootupError := TRUE;
+                  RETURN FALSE;
+               END_IF;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 5, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'active'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+
+            IF CatalogReadReal(dirHdl, "velocity", r, TRUE) THEN
+               kin.VelocityZone[i].veloLimit := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 6, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'velocity'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            
+            kin.VelocityZone[i].areaData.mAreaShape := eMcuAreaBox;
+            kin.VelocityZone[i].areaData.mBasePos.mFrameTyp := eMcuFrameKardan;
+            IF CatalogReadReal(dirHdl, "BaseX", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mBasePos.mPos.mValues[0] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 6, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'BaseX'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseY", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mBasePos.mPos.mValues[1] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 7, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'BaseY'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseZ", r, TRUE) THEN
+              kin.VelocityZone[i].areaData.mBasePos.mPos.mValues[2] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 8, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'BaseZ'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseA", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mBasePos.mOri.mValues[0] := r;
+            ELSE
+               kin.VelocityZone[i].areaData.mBasePos.mOri.mValues[0] := 0.0;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseB", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mBasePos.mOri.mValues[1] := r;
+            ELSE
+               kin.VelocityZone[i].areaData.mBasePos.mOri.mValues[1] := 0.0;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "BaseC", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mBasePos.mOri.mValues[2] := r;
+            ELSE
+               kin.VelocityZone[i].areaData.mBasePos.mOri.mValues[2] := 0.0;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "SizeX", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mSize.mValues[0] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 9, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'SizeX'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "SizeY", r, TRUE) THEN
+              kin.VelocityZone[i].areaData.mSize.mValues[1] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 10, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'SizeY'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+            IF CatalogReadReal(dirHdl, "SizeZ", r, TRUE) THEN
+               kin.VelocityZone[i].areaData.mSize.mValues[2] := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_ErrCnfVrtWall, kin.kinListInx, 11, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", "'SizeZ'");
+               gbBootupError := TRUE;
+               RETURN FALSE;
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrBlckVrtWll, kin.kinListInx, 1, 0, "_RcuConfiguration.RcuCfgReadVelocityZone", STR(i+1));
+            gbBootupError := TRUE;
+            kin.VelocityZone[i].cfgActive := FALSE;
+         END_IF;
+      END_FOR;
+   END_IF;
+   
+   
+   
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+
+TYPE PRIVATE
+   // structure for groups of Mcu-Ids
+   TIdGroup : STRUCT
+      toolId : TMcuDbObjID;
+      acceRampId : TMcuDbObjID;
+      deceRampId : TMcuDbObjID;
+      dynId : TMcuDbObjID;
+      ovlId : TMcuDbObjID;
+   END_STRUCT;
+END_TYPE
+
+
+(*-----------------------------------------------------------------------------
+* Read the configuration parameters that are independent of a certain robot.
+  So far, this is only the flag for simulation of the station PLC
+*)
+ROUTINE CfgReadGeneralConfig() PRIVATE
+   VAR
+      i       : DINT;
+      r       : REAL;
+   END_VAR
+
+   CatalogReadInt (giRcBaseHdl, "enablePannelJogging", i, TRUE);
+   IF i = 1 THEN
+         bEnablePannelJogging := TRUE;  
+   END_IF;   
+
+   giTraceWord := 16#FFFFFFC;
+   CatalogReadInt(giRcBaseHdl, "traceWord", giTraceWord, TRUE);
+
+   IF CatalogReadInt(giRcBaseHdl, "maxCmd", i, TRUE) THEN
+      IF i > 0 THEN
+         giRcuMaxCmd := i;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, -1, 1, 0, "_RcuConfiguration.CfgReadGeneralConfig", STR(i), "maxCmd");
+      END_IF;
+   END_IF;
+
+   IF CatalogReadInt(giRcBaseHdl, "managesDriveUpdate", i, TRUE) THEN
+      gbRcuManagesDriveUpdate := i <> 0;
+   END_IF;
+   IF CatalogReadInt(giRcBaseHdl, "simulateStationPLC", i, TRUE) THEN
+      gbRcuSimulateStationPLC := i <> 0;
+   END_IF;
+   IF CatalogReadInt(giRcBaseHdl, "deactivateEMTObservation", i, TRUE) THEN
+      gbEMTObservationDeactivated := i <> 0;
+   END_IF;
+   
+   CatalogReadString(giRcBaseHdl, "driveControlTimerName", giRcuDriveControlTimerName, TRUE);
+   IF CatalogReadReal(giRcBaseHdl, "driveControlFactor", r, TRUE) THEN
+      IF r >= 0.0 THEN
+         grRcuDriveControlFactor := r;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, -1, 3, 0, "_RcuConfiguration.CfgReadGeneralConfig", STR(r),
+         "driveControlFactor");
+      END_IF;
+   END_IF;
+   
+   IF CatalogReadInt(giRcBaseHdl, "revivingOverride", i, TRUE) THEN
+      gbRcuRevivingOverride := i <> 0;
+   END_IF;
+   IF CatalogReadInt(giRcBaseHdl, "timeOutDownload3DOnsite", i, FALSE) THEN
+      IF i > 0 THEN
+         giTimeOutDownload3DOnsite  := i;
+      ELSE
+         RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, -1, 5, 0, "_RcuConfiguration.CfgReadGeneralConfig", STR(i),
+            "timeOutDownload3DOnsite");
+      END_IF;
+   END_IF;
+
+   // read TeachPendant-name
+   IF NOT CatalogReadString(giRcBaseHdl, "TeachPendantName", gsRcuTeachPendantName, TRUE) THEN
+        RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, -1, 6, 0, "_RcuConfiguration.CfgReadGeneralConfig", STR(i),
+            "TeachPendantName");
+   ELSE
+        START DeactivateIoDeviceGuarding(gsRcuTeachPendantName); 
+   END_IF;
+    
+   
+END_ROUTINE
+
+VAR PRIVATE
+   Checksum : DWORD;
+END_VAR
+
+
+ROUTINE InitChecksum() PRIVATE
+   Checksum := 0;
+END_ROUTINE
+
+ROUTINE AddRealToChecksum(r : REAL) PRIVATE
+VAR
+   h : VARTYP4;
+END_VAR  
+
+   h.dTyp := TFLOAT32;
+   h.tFloat32 := r;
+   h.dTyp := TUINT32;
+   Checksum := Checksum XOR h.tUint32;
+   
+END_ROUTINE
+
+ROUTINE AddIntToChecksum(i : DINT) PRIVATE
+VAR
+   h : VARTYP4;
+END_VAR  
+
+   h.dTyp := TINT32;
+   h.tInt32 := i;
+   h.dTyp := TUINT32;
+   Checksum := Checksum XOR h.tUint32;
+   
+END_ROUTINE
+
+
+ROUTINE AddStringToChecksum(s : STRING) PRIVATE
+VAR
+   h : VARTYP4;
+   dataLen1 : DINT;
+   i        : DINT;
+   j        : DINT;
+   chr      : STRING;
+END_VAR  
+
+   h.dTyp := TBYTEARR4;
+   dataLen1 := StrLen(s);
+   j := 1;
+   FOR i:= 1 TO dataLen1 DO  
+      chr := StrMid(s, 1, i);
+      IF j <=4 THEN
+          h.bArr[j] := ORD(chr);
+          j := j + 1;
+      ELSE
+          j := 1;
+          h.dTyp := TUINT32;
+          Checksum := Checksum XOR h.tUint32;
+          h.tUint32 := 0;
+          h.dTyp := TBYTEARR4;
+          h.bArr[j] := ORD(chr);
+      END_IF;
+   END_FOR;
+   IF (j > 1) THEN
+      h.dTyp := TUINT32;
+      Checksum := Checksum XOR h.tUint32;
+   END_IF;
+   
+END_ROUTINE
+
+
+
+ROUTINE SaveChecksum(kin : TRcuKinematic)
+VAR
+   version : STRING;
+   dInt1   : DINT;
+END_VAR
+
+   (*IF CatalogReadString(giSysBaseHdl, "firmwareVersion", version, TRUE) THEN
+      AddStringToChecksum(version);
+   END_IF;*)
+   kin.DebugPrint(eTraceRcuConfig, "Checksum HEX = " + STR(Checksum));
+   dInt1 := Checksum;
+   kin.DebugPrint(eTraceRcuConfig, "Checksum DINT = " + STR(dInt1));
+   kin.VirtualWallSafeCfg.Checksum := Checksum;
+   
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Read some configuration parameters fromthe MCU that are important for the RCU.
+  - Type of frames for the MCU "Euler" or "Kardan"
+  - ReadBackValues are used
+*)
+ROUTINE CfgReadMcuConfig() PRIVATE
+   VAR
+      i : DINT;
+      s : STRING;
+      mcShowReadBackValues : BOOL;
+   END_VAR
+
+   IF giMcBaseHdl <> 0 THEN
+      IF CatalogReadString(giMcBaseHdl, "frameType", s, TRUE) THEN
+         IF s = "Kardan" THEN
+            gMcuFrameTyp := eMcuFrameKardan;
+         ELSE
+            gMcuFrameTyp := eMcuFrameEuler;
+         END_IF;
+      ELSE
+         gMcuFrameTyp := eMcuFrameEuler; // Default
+      END_IF;
+      IF CatalogReadInt(giMcBaseHdl, "showReadBackValues", i, TRUE) THEN
+         mcShowReadBackValues := i > 0;
+      END_IF;
+      IF CatalogReadInt(giMcBaseHdl, "needNextSegPreDelay", i, TRUE) THEN
+         gbMcAppendLate := i > -1;
+      END_IF;
+   ELSE
+      gMcuFrameTyp := eMcuFrameEuler; // Default
+   END_IF;
+   gbRcuUseReadBackVals := NOT gbRcuManagesDriveUpdate AND mcShowReadBackValues;
+   
+   IF CatalogReadInt(giMcBaseHdl, "ratioMainToMicroUpd", i, FALSE) THEN
+      giRatioMainToMicroIP := i;
+   END_IF;
+END_ROUTINE
+
+
+// create all objects belonging to the given directory
+ROUTINE CfgCreateAllObjects(CONST baseHdl : DINT; idGroup : TIdGroup; 
+   cfgDyn : TMcuDynamic; kin : TRcuKinematic) PRIVATE
+
+   // tool
+   CfgCreateTool(baseHdl, idGroup.toolId, kin);
+
+   // ramp
+   CfgCreateRamp(baseHdl, idGroup.acceRampId, idGroup.deceRampId);
+   IF idGroup.acceRampId = 0 THEN
+      idGroup.acceRampId := idGroup.deceRampId;
+   END_IF;
+   IF idGroup.deceRampId = 0 THEN
+      idGroup.deceRampId := idGroup.acceRampId;
+   END_IF;
+
+   // dynamic
+   IF (idGroup.acceRampId <> 0) AND (idGroup.deceRampId <> 0) THEN
+      CfgCreateDynamic(baseHdl, idGroup.dynId, idGroup.acceRampId,
+         idGroup.deceRampId, cfgDyn, kin);
+   END_IF;
+
+   // overlap
+   IF idGroup.dynId <> 0 THEN
+      CfgCreateOverlap(baseHdl, idGroup.ovlId, idGroup.dynId);
+   END_IF;
+END_ROUTINE
+
+
+// create Tool-transformation when a fitting directory exists
+ROUTINE CfgCreateTool(CONST baseHdl : DINT; toolMcuId : TMcuDbObjID; kin : TRcuKinematic) PRIVATE
+   VAR
+      dirHdl : DINT;
+      trsf : TMcuTransformation;
+   END_VAR
+
+   IF CatalogGetHandleRelative(baseHdl, "Tool", dirHdl) THEN
+      trsf.mDBObjTyp := eMcuPermanent;
+      trsf.mRefSysID := McuGetOpenEndTrsfID();
+      CfgReadFrame(dirHdl, trsf.mFrame);
+      kin.actTool := trsf.mFrame;
+      McuCreateTrsf(toolMcuId, trsf);
+   END_IF;
+END_ROUTINE
+
+
+// create ramps when fitting directories exist
+ROUTINE CfgCreateRamp(CONST baseHdl : DINT; acceRampMcuId : TMcuDbObjID;
+   deceRampMcuId : TMcuDbObjID) PRIVATE
+   VAR
+      acceRamp : TMcuRamp;
+      deceRamp : TMcuRamp;
+      dirHdl : DINT;
+   END_VAR
+
+   acceRamp.mDBObjTyp := eMcuPermanent;
+   deceRamp.mDBObjTyp := eMcuPermanent;
+   IF CatalogGetHandleRelative(baseHdl, "AcceRamp", dirHdl) THEN
+      CfgReadRamp(dirHdl, acceRamp);
+      acceRamp.mName := "CfgAcceRamp"; // name for ramp in statusreport
+      McuCreateRamp(acceRampMcuId, acceRamp);
+   END_IF;
+   IF CatalogGetHandleRelative(baseHdl, "DeceRamp", dirHdl) THEN
+      CfgReadRamp(dirHdl, deceRamp);
+      deceRamp.mName := "CfgDeceRamp"; // name for ramp in statusreport
+      McuCreateRamp(deceRampMcuId, deceRamp);
+   END_IF;
+END_ROUTINE
+
+
+// create dynamic when fitting directory exists
+ROUTINE CfgCreateDynamic(CONST baseHdl : DINT; dynMcuId : TMcuDbObjID;
+   CONST acceRampMcuId : TMcuDbObjID; CONST deceRampMcuId : TMcuDbObjID; 
+   cfgDyn : TMcuDynamic; kin : TRcuKinematic) PRIVATE
+   VAR
+      dirDynHdl : DINT;
+      dirHdl : DINT;
+      dyn : TMcuDynamic;
+      i : DINT;
+      notComplete : BOOL;
+   END_VAR
+
+   IF CatalogGetHandleRelative(baseHdl, "Dynamic", dirDynHdl) THEN
+      dyn.mDBObjTyp := eMcuPermanent;
+      dyn.mAcceRamp := acceRampMcuId;
+      dyn.mDeceRamp := deceRampMcuId;
+      // read joint-speed-limit flag for cartesian movements
+      (*
+      IF CatalogReadInt(dirDynHdl, "useJointLimForCartSeg", i, TRUE) THEN
+         dyn.mUseJointLimForCartSeg := i > 0;
+      END_IF;
+      *)
+      IF CatalogGetHandleRelative(dirDynHdl, "Joint", dirHdl) THEN
+         CfgReadSubDyn(dirHdl, dyn.mJoint);
+      ELSE
+         notComplete := TRUE;
+      END_IF;
+      IF CatalogGetHandleRelative(dirDynHdl, "Cart", dirHdl) THEN
+         CfgReadSubDyn(dirHdl, dyn.mCart);
+      ELSE
+         notComplete := TRUE;
+      END_IF;
+      IF CatalogGetHandleRelative(dirDynHdl, "Turn", dirHdl) THEN
+         CfgReadSubDyn(dirHdl, dyn.mTurn);
+      ELSE
+         notComplete := TRUE;
+      END_IF;
+      IF notComplete THEN
+         RcuSetMessageOnce(_RcuConfiguration_ErrCreateDyn, kin.kinListInx, 1, 0, "_RcuConfiguration.CfgCreateDynamic");
+         gbBootupError := TRUE;
+      ELSE
+         dyn.mName := "CfgDynamic";
+         IF McuCreateDynamic(dynMcuId, dyn) THEN
+            cfgDyn := dyn;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrCreateDyn2, kin.kinListInx, 1, 0, "_RcuConfiguration.CfgCreateDynamic");
+            gbBootupError := TRUE;
+         END_IF;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// create overlap when fitting directory exists
+ROUTINE CfgCreateOverlap(CONST baseHdl : DINT; ovlMcuId : TMcuDbObjID;
+   CONST dynMcuId : TMcuDbObjID) PRIVATE
+   VAR
+      dirHdl : DINT;
+      ovl : TMcuOverlap;
+   END_VAR
+
+   IF CatalogGetHandleRelative(baseHdl, "Overlap", dirHdl) THEN
+      ovl.mDBObjTyp := eMcuPermanent;
+      ovl.mOvlDynamic := dynMcuId;
+      CfgReadOverlap(dirHdl, ovl);
+      ovl.mName := "CfgOverlap";
+      McuCreateOverlap(ovlMcuId, ovl);
+   END_IF;
+END_ROUTINE
+
+
+// read frame data from the given directory
+ROUTINE CfgReadFrame(CONST dirHdl : DINT; frame : TMcuFrame) PRIVATE
+   
+   CatalogReadReal(dirHdl, "x", frame.mPos.mValues[0], TRUE);
+   CatalogReadReal(dirHdl, "y", frame.mPos.mValues[1], TRUE);
+   CatalogReadReal(dirHdl, "z", frame.mPos.mValues[2], TRUE);
+   CatalogReadReal(dirHdl, "a", frame.mOri.mValues[0], TRUE);
+   CatalogReadReal(dirHdl, "b", frame.mOri.mValues[1], TRUE);
+   CatalogReadReal(dirHdl, "c", frame.mOri.mValues[2], TRUE);
+   frame.mFrameTyp := gMcuFrameTyp;
+END_ROUTINE
+
+
+// read ramp data from the given directory
+ROUTINE CfgReadRamp(CONST dirHdl : DINT; ramp : TMcuRamp) PRIVATE
+   VAR
+      i : DINT;
+   END_VAR
+
+   CatalogReadInt(dirHdl, "typ", i, TRUE);
+   CatalogReadReal(dirHdl, "rampParam", ramp.mRampParam, TRUE);
+   CatalogReadReal(dirHdl, "rampParam2", ramp.mRampParam2, TRUE);
+   ramp.mTyp := TMcuRampTyp(i);
+END_ROUTINE
+
+
+// read subdynamic data from the given directory
+ROUTINE CfgReadSubDyn(dirHdl : DINT; subDyn : TMcuSubDyn) PRIVATE
+
+   CatalogReadReal(dirHdl, "velo", subDyn.mVelo, TRUE);
+   CatalogReadReal(dirHdl, "acce", subDyn.mAcce, TRUE);
+   CatalogReadReal(dirHdl, "dece", subDyn.mDece, TRUE);
+   CatalogReadReal(dirHdl, "jerk", subDyn.mJerk, TRUE);
+END_ROUTINE
+
+
+// read overlap data from the given directory
+ROUTINE CfgReadOverlap(dirHdl : DINT; ovl : TMcuOverlap) PRIVATE
+   VAR
+      i : DINT;
+   END_VAR
+
+   CatalogReadInt(dirHdl, "ovlTyp", i, TRUE);
+   ovl.mOvlTyp := TMcuOvlTyp(i);
+   CatalogReadInt(dirHdl, "ovlDefTyp", i, TRUE);
+   ovl.mOvlDefTyp := TMcuOvlDefTyp(i);
+   CatalogReadReal(dirHdl, "ovlStartPrevSeg", ovl.mOvlStartPrevSeg, TRUE);
+   CatalogReadReal(dirHdl, "ovlEndOnThisSeg", ovl.mOvlEndOnThisSeg, TRUE);
+END_ROUTINE
+
+
+// read all mainmode-manager data from the given directory
+ROUTINE CfgReadMainModeMgr(CONST baseHdl : DINT; kin : TRcuKinematic) : BOOL PRIVATE
+   VAR
+      dirHdl     : DINT; // auxiliary directory-handle
+      s          : STRING;
+      name       : STRING;
+      i          : DINT;
+      incomplete : BOOL;
+      mgr        : MAPTO TRcuMainModeMgr;
+   END_VAR
+
+   mgr := MAP(kin.mainModeMgr);
+   CatalogGetHandleRelative(baseHdl, "MainModeMgr", dirHdl);
+   IF dirHdl <> 0 THEN
+      // read configured tolerance time
+      IF CatalogReadInt(dirHdl, "toleranceTime", i, TRUE) THEN
+         IF i >= 0 THEN
+            mgr.toleranceTime := i;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, kin.kinListInx, 4, 0, "_RcuConfiguration.CfgReadMainModeMgr", STR(i),
+               "toleranceTime");
+            gbBootupError := TRUE;
+         END_IF;
+      END_IF;
+      // read configured number of mainmodes
+      IF CatalogReadInt(dirHdl, "nrMainModes", i, TRUE) THEN
+         IF i >= 0 THEN
+            mgr.nrMainModes := i;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_ErrConfInvVal, kin.kinListInx, 5, 0, "_RcuConfiguration.CfgReadMainModeMgr", STR(i),
+               "nrMainModes");
+            gbBootupError := TRUE;
+         END_IF;
+      END_IF;
+      // gbPLCRelease digital input mapping
+      IF CatalogReadString(dirHdl, "dinPlcRelease", s, TRUE) THEN
+         mgr.PlcRelease := MAPX(s);
+      END_IF;
+      IF NOT IS_MAPPED(mgr.PlcRelease) THEN
+         RcuSetMessageOnce(_RcuConfiguration_FaErrNotMap, kin.kinListInx, 1, 0, "_RcuConfiguration.CfgReadMainModeMgr",
+               "mgr.PlcRelease");
+         gbBootupError := TRUE;
+         incomplete := TRUE;
+      END_IF; 
+
+      // read configured mainmode-definitions
+      FOR i := 1 TO mgr.nrMainModes DO
+         s := "MAINMODE:" + STR(i);
+         IF CatalogGetHandleRelative(baseHdl, s, dirHdl) THEN
+            CfgReadMainModeDefinition(dirHdl, mgr.mainModeDefinition[i]);
+            // main mode switch digital input mapping
+            IF CatalogReadString(dirHdl, "dIn", s, TRUE) THEN
+               mgr.mainModeInput[i] := MAPX(s);
+            END_IF;
+            IF NOT IS_MAPPED(mgr.mainModeInput[i]) THEN
+               s := "mgr.mainModeInput["+STR(i)+"]";
+               RcuSetMessageOnce(_RcuConfiguration_FaErrNotMap, kin.kinListInx, 2, 0, "_RcuConfiguration.CfgReadMainModeMgr",
+                     s);
+               gbBootupError := TRUE;
+               incomplete := TRUE;
+            END_IF;
+            // main mode name
+            name := "name";
+            IF CatalogReadString(dirHdl, name, s, TRUE) THEN
+               mgr.yMainModeName[i] := s;
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, kin.kinListInx, 10, 0, "_RcuConfiguration.CfgReadMainModeMgr",
+               s);
+            gbBootupError := TRUE;
+            incomplete := TRUE;
+         END_IF;
+      END_FOR;
+   ELSE
+      RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, kin.kinListInx, 11, 0, "_RcuConfiguration.CfgReadMainModeMgr",
+               "MainModeMgr");
+      gbBootupError := TRUE;
+      incomplete := TRUE;
+   END_IF;
+   RETURN NOT incomplete;
+END_ROUTINE
+
+
+// read mainmode-definition data from the given directory
+ROUTINE CfgReadMainModeDefinition(CONST dirHdl : DINT; def : TRcuMainModeDefinition) PRIVATE
+   VAR
+      i : DINT;
+      auxDirHdl : DINT;
+      s : STRING;
+   END_VAR
+
+   IF CatalogReadString(dirHdl, "name", s, TRUE) THEN
+      def.name := s;
+   END_IF;
+   IF CatalogGetHandleRelative(dirHdl, "Conditions", auxDirHdl) THEN
+      IF CatalogReadInt(auxDirHdl, "TeachPendantLocked", i, TRUE) THEN
+         def.conditions.TeachPendantLocked := i <> 0;
+      END_IF;
+   END_IF;
+   IF CatalogGetHandleRelative(dirHdl, "Actions", auxDirHdl) THEN
+      IF CatalogReadInt(auxDirHdl, "jogging", i, TRUE) THEN
+         def.actions.jogging := i <> 0;
+      END_IF;
+      IF CatalogReadInt(auxDirHdl, "automatic", i, TRUE) THEN
+         def.actions.automatic := i <> 0;
+      END_IF;
+      IF CatalogReadInt(auxDirHdl, "fullSpeed", i, TRUE) THEN
+         def.actions.fullSpeed := i <> 0;
+      END_IF;
+      IF CatalogReadInt(auxDirHdl, "holdToRun", i, TRUE) THEN
+         def.actions.holdToRun := i <> 0;
+      END_IF;
+      IF CatalogReadInt(auxDirHdl, "externControl", i, TRUE) THEN
+         def.actions.externControl := i <> 0;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// read velocity limit definition data from the given directory
+ROUTINE CfgReadVeloLimits(CONST dirHdl : DINT; lim : TMcuVeloLimits; CONST
+   nrJoints : DINT) PRIVATE
+   VAR
+      i : DINT;
+      r : REAL;
+      name : STRING;
+      baseHdl : DINT;
+   END_VAR
+
+   // Joints
+   FOR i := 0 TO nrJoints-1 DO
+      r := 0.0;
+      lim.mJoints.mValues[i] := 250.0;  // default value
+      name := "Joint:" + STR(i);
+      IF CatalogGetHandleRelative(dirHdl, name, baseHdl) THEN                              
+         CatalogReadReal(baseHdl, "reducedVelo", r, FALSE);
+      ELSE
+         name := "Joint" + STR(i+1); // old notation, joints starting with Joint1
+         IF CatalogGetHandleRelative(dirHdl, name, baseHdl) THEN                              
+            CatalogReadReal(baseHdl, "reducedVelo", r, FALSE);
+         END_IF;
+      END_IF;
+      IF (r > 0) AND (r <= 250) THEN
+         lim.mJoints.mValues[i] := r; 
+      END_IF;
+   END_FOR;
+   
+   // Path velocity
+   r := 0.0;
+   lim.mCart := 250.0; // default value
+   IF CatalogReadReal(dirHdl, "reducedCartVelo", r, TRUE) THEN
+      IF r > 0.0 THEN
+         lim.mCart := r;
+      END_IF;
+   END_IF;
+   
+   // Rotational velocity
+   r := 0.0;
+   lim.mTurn := 90.0; // default value
+   IF CatalogReadReal(dirHdl, "reducedTurnVelo", r, TRUE) THEN
+      IF r > 0.0 THEN
+         lim.mTurn := r;
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+
+
+// read limiter definition data from the given directory
+ROUTINE CfgReadLimiterSettings(CONST dirHdl : DINT; CONST kin : TRcuKinematic) PRIVATE
+   VAR
+      r         : REAL;
+      veloLimit : REAL;
+      acceLimit : REAL;
+   END_VAR
+   
+   // singleJointLimiter
+   veloLimit := 1.0;
+   IF CatalogReadReal(dirHdl, "veloSingleJoint", r, TRUE) THEN
+      IF r > 0.0 THEN
+         veloLimit := r;
+      END_IF;
+   END_IF;
+
+   acceLimit := 1.0;
+   IF CatalogReadReal(dirHdl, "acceSingleJoint", r, TRUE) THEN
+      IF r > 0.0 THEN
+         acceLimit := r;
+      END_IF;
+   END_IF;
+
+   IF NOT McuSetSingleJointLimiterRel(kin.kinematicMcuId, veloLimit, acceLimit) THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrLimSetFail, kin.kinListInx, 1, 0, "_RcuConfiguration.CfgReadLimiterSettings",
+         "Single-Joint-Limiter", kin.kinematic.mName);
+   END_IF;
+
+   // pathSpeedForwLimiter
+   veloLimit := 1.0;
+   IF CatalogReadReal(dirHdl, "veloPathForw", r, TRUE) THEN
+      IF r > 0.0 THEN
+         veloLimit := r;
+      END_IF;
+   END_IF;
+
+   acceLimit := 1.0;
+   IF CatalogReadReal(dirHdl, "accePathForw", r, TRUE) THEN
+      IF r > 0.0 THEN
+         acceLimit := r;
+      END_IF;
+   END_IF;
+
+   IF NOT McuSetPathSpeedLimForwRelAll(kin.kinematicMcuId, veloLimit, acceLimit) THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrLimSetFail, kin.kinListInx, 2, 0, "_RcuConfiguration.CfgReadLimiterSettings",
+         "Path-Speed-Forward-Limiter", kin.kinematic.mName);
+   END_IF;
+ 
+   // pathSpeedLimiter
+   IF CatalogReadReal(dirHdl, "veloPath", r, TRUE) THEN
+      IF r > 0.0 THEN
+         IF NOT McuSetPathSpeedLimiterRelAll(kin.kinematicMcuId, r) THEN
+            RcuSetMessageOnce(_RcuConfiguration_ErrLimSetFail, kin.kinListInx, 3, 0, "_RcuConfiguration.CfgReadLimiterSettings",
+               "Path-Speed-Limiter", kin.kinematic.mName);
+         END_IF;
+      END_IF;
+   END_IF;
+
+END_ROUTINE
+
+
+// maintain the variable giRcuDriveControlCounter
+ROUTINE DriveControlTick() PRIVATE
+   VAR
+      s : STRING;
+      tick : BOOL;
+      time : DINT;
+   END_VAR
+
+   // try external timer (synchronous)
+   IF giRcuDriveControlTimerName <> "" THEN
+      s := "TIMER.IO." + giRcuDriveControlTimerName;
+      IF ExternalHandle(s, tick) <> 0 THEN
+         WHILE TRUE DO
+            tick := FALSE;
+            WAIT tick;
+            tick := FALSE; //wait two ticks, because drag/stall observation
+            WAIT tick;     //needs much CPU-performance BIT 16.03.07
+            IF giRcuDriveControlCounter < 1000000000 THEN
+               giRcuDriveControlCounter := giRcuDriveControlCounter + 1;
+            ELSE
+               giRcuDriveControlCounter := 0;
+            END_IF;
+         END_WHILE;
+      END_IF;
+   END_IF;
+
+   // try asynchronous timer
+      WHILE TRUE DO
+         time := grCycleTime * 2;  //wait two cycles, because drag/stall observation 
+         Sleep(time);              //needs much CPU-performance
+         IF giRcuDriveControlCounter < 1000000000 THEN
+            giRcuDriveControlCounter := giRcuDriveControlCounter + 1;
+         ELSE
+            giRcuDriveControlCounter := 0;
+         END_IF;
+       END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE CountKinematics()
+   VAR
+      i       : DINT;
+      v       : STRING;
+      rootHdl : DINT; 
+   END_VAR
+   
+   FOR i := 0 TO cgiRcuMaxKinematics DO
+      v := "MC.KINEMATIC:" + STR(i);
+      IF CatalogGetHandle(v, rootHdl) THEN
+          gyIndexOfKinematics[giNumberOfRobots] := i;
+          giNumberOfRobots := giNumberOfRobots + 1;                
+      END_IF;          
+   END_FOR;
+   
+END_ROUTINE
+
+// deactivate IoDeviceGuarding during bootup to avoid Error when TP is disconnected 
+ROUTINE DeactivateIoDeviceGuarding(CONST name : STRING)
+    
+    VAR
+     deviceHdl : DINT;  
+     mapped    : BOOL;
+     cnt       : DINT;
+    END_VAR
+    
+    WHILE NOT mapped DO
+      mapped := IS_MAPPED(IoGetDeviceHdl); 
+      Sleep(5); 
+      cnt := cnt + 1;
+    END_WHILE;
+    IoGetDeviceHdl(name, deviceHdl);
+    IoDeviceGuarding(deviceHdl, FALSE);
+    PRINT (" ### IoDeviceGuarding deactivated after " + STR(cnt) + " cycle(s) ###");
+   
+    
+END_ROUTINE
+
+
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+   VAR
+      hdl : DINT;
+      i   : DINT;
+   END_VAR
+
+   // set default Values for configurable variables
+   giTraceWord := 0;
+   giRcuMaxCmd := 10;
+   gbRcuManagesDriveUpdate := FALSE;
+   gbRcuSimulateStationPLC := FALSE;
+   grRcuDriveControlFactor := 0.0;
+   gbRcuRevivingOverride := FALSE;
+
+   WAIT gCatalogIsMapped;
+   giRootHdl := CatalogGetRoot();
+   
+   IF CatalogGetHandle("IO.TIMER:1", hdl) THEN
+      CatalogReadReal(hdl, "cycleTime", grCycleTime, FALSE);
+   END_IF;
+   
+   IF NOT CatalogGetHandle("RC", giRcBaseHdl) THEN
+      giRcBaseHdl := CatalogAdd(giRootHdl, "RC");
+   END_IF;
+   giRcKinHdl := giRcBaseHdl;
+   CatalogGetHandle("TC", giTcBaseHdl);
+   CatalogGetHandle("MC", giMcBaseHdl);
+   giMcKinHdl := giMcBaseHdl;
+   CatalogGetHandle("IEC", giIecBaseHdl);
+   CatalogGetHandle("System", giSysBaseHdl);
+   gbRcHandleOk := TRUE;
+   
+   CfgReadGeneralConfig();
+   CfgReadMcuConfig();
+   
+   IF CatalogGetHandle("UOS", hdl) THEN
+      CatalogReadString(hdl, "System", gsOsName, TRUE);
+      IF gsOsName = "Linux" THEN
+         IF CatalogGetHandle("System", hdl) THEN
+            CatalogReadInt(hdl, "RTCapability", i, TRUE);
+            IF i = 0 THEN // simulation
+               gbSimulationOS := TRUE;
+               PRINT("gsOsName = "+gsOsName+" changed to LinuxSim");
+               gsOsName := "LinuxSim";
+            END_IF;
+         END_IF;
+      ELSIF gsOsName = "WINNT" THEN
+         gbSimulationOS := TRUE;
+      END_IF;
+   END_IF;
+   
+   START DriveControlTick() PRIO 1;
+   START CountKinematics();
+END_ROUTINE
+

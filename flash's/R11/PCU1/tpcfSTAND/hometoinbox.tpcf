@@ -1,0 +1,88 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2018-06-13  | KLCH/NOA  | First release
+//  v2_01.01.00  | 2020-01-09  | KLCH      | Change: continue after break in current step (FirstStep -> CurrentStep)
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties CurrentStep "Go home to inbox" "" 7 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+	Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+	Add_TPSignal "MainChannel.AFIXPOS.GoAboveBox"
+	Add_TPSignal "MainChannel.AFIXPOS.AtAboveBox"
+	Add_TPSignal "MainChannel.AFIXPOS.GoInBox"
+	Add_TPSignal "MainChannel.AFIXPOS.AtInBox"
+Return
+
+SubRoutine Sub_Add_TPSteps
+	// add step 1:
+	Add_TPStepEvent "CheckHome" False 1 False 0 True True ChannelError 102 And False 0 "" ""
+	// add step 2:
+	Add_TPStepEvent "GoAboveBox" False 20 False 0 True True ChannelError 102 And False 0 "" ""
+	// add step 3:
+	Add_TPStepEvent "GoInBox" False 20 False 0 True True ChannelError 100 And False 0 "" ""
+	// add step 4:
+	Add_TPStepTime "Reset" 0.004 True ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+	
+	// Step 1
+	Select_TPStep "CheckHome"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" False True
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoInBox" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtInBox" False False
+	
+	// Step 2
+	Select_TPStep "GoAboveBox"
+	// Modify only signals changed to step before
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" True True
+	
+	// Step 3
+	Select_TPStep "GoInBox"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoAboveBox" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtAboveBox" False True
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoInBox" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtInBox" True True
+	
+	// Step 4
+	Select_TPStep "Reset"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoInBox" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtInBox" False True
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "hometoinbox" True
+Return

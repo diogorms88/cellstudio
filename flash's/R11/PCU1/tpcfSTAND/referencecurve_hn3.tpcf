@@ -1,0 +1,198 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH      | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+//  v2_02.01.00  | 2019-02-18  | STL       | AddOn: Nozzle head exchanger
+
+Parameter Option1 OptionGun MaterialValve1 HelpGun1 NozzleHeadExchanger
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "Reference curve main needle 3" "" 62 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+	Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+	Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN3"
+	Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN3"
+	Add_TPSignal "MainChannel.YHN3.Set"
+	Add_TPSignal "Material1.AMatManager1.OrderCharacteristicRef"
+	Add_TPSignal "Material1.AMatManager1.OrderDone"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefValueMin"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefValueMax"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefSteps"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefValue"
+	Add_TPSignal "Material1.AMV2FC.ControlType"
+	Add_TPSignal "Material1.AMV2FC.SetAirPressure"
+	Add_TPSignal "Material1.AMV2FC.OrderSet"
+	Add_TPSignal "Material1.AMatManager1.MaxFlow"
+	Add_TPSignal "Material1.AMatManager1.MaxPressure"
+	Add_TPSignal "Material1.AMatManager1.MinFlow"
+	Add_TPSignal "Material1.AMatManager1.MinPressure"
+	SelectCase MaterialValve1
+		Case 1
+			Add_TPSignal "MaterialSupply1.AYMV1.Set"
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Add_TPSignal "Material1.YHG1.Set"
+	EndSelect
+	SelectCase NozzleHeadExchanger // Number of nozzle head exchanger places
+		Case 0
+			// Do nothing
+		CaseElse
+			Add_TPSignal "MainChannel.AFIXPOS.GoNozzleChange"
+			Add_TPSignal "MainChannel.AFIXPOS.AtNozzleChange"
+			Add_TPSignal "NhExchanger.ANHEX1.SetNozzleHeadNr"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	SelectCase NozzleHeadExchanger // Number of nozzle head exchanger places
+		Case 0
+			// Do nothing
+		CaseElse
+			Add_TPStepEvent "GoNozzleChange" False 60 False 0 True True ChannelError 99 And False 0 "" ""
+			Add_TPStepEvent "GoHome" False 30 False 0 True True ChannelError 100 And False 0 "" ""
+	EndSelect
+	Add_TPStepEvent "GoPurgeHN3" False 30 False 0 True True ChannelError 105 And False 0 "" ""
+	Add_TPStepEvent "ReleasePressure" False 30 False 0 True True ChannelError 404 And False 0 "" ""
+	Add_TPStepEvent "Characteristics" False 60 False 0 True True ChannelError 403 And False 0 "" ""
+	Add_TPStepTime "Wait" 1 True ""
+	Add_TPStepEvent "GoHomeAtEnd" False 30 False 0 True True ChannelError 100 And False 0 "" ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+	SelectCase NozzleHeadExchanger // Number of nozzle head exchanger places
+		Case 0
+			// Do nothing
+		CaseElse
+			// Step 1 with nozzle head exchanger
+			Select_TPStep "GoNozzleChange"
+			// First: Apply base settings to all signals
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False True
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" False True
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoNozzleChange" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtNozzleChange" True True
+			Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 2
+			Set_TPSignalAnalog "Material1.AMV2FC.SetAirPressure" 0
+			Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+			Set_TPSignalBool "MainChannel.YHN3.Set" False
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMin" 1.5
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMax" 3.5
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefSteps" 6
+			Act_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValue" False 0 GreaterEqual 0
+			Set_TPSignalAnalog "Material1.AMatManager1.MaxFlow" 0
+			Set_TPSignalAnalog "Material1.AMatManager1.MaxPressure" 0
+			Set_TPSignalAnalog "Material1.AMatManager1.MinFlow" 0
+			Set_TPSignalAnalog "Material1.AMatManager1.MinPressure" 0
+			SelectCase MaterialValve1 //Automatic Material Valve at Supply/Robot Interface
+				Case 1 // Automatic Material Valve selected
+					Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+			EndSelect
+			SelectCase Circulation // Variants of Circulation
+				Case Circ_OnRobot_NoRL // Set following Signal, if robot internal circulation is used.
+					Set_TPSignalBool "MaterialSupply1.YFDR1.Set" True
+			EndSelect
+			Set_TPSignalAnalog "NhExchanger.ANHEX1.SetNozzleHeadNr" 1
+			// Step 2 with nozzle head exchanger
+			Select_TPStep "GoHome"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoNozzleChange" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtNozzleChange" False True
+	EndSelect
+	
+	// Step 1
+	Select_TPStep "GoPurgeHN3"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False True
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" True True
+	Set_TPSignalBool "MainChannel.YHN3.Set" False
+	Set_TPSignalBool "Material1.AMatManager1.OrderCharacteristicRef" False
+	Act_TPSignalBool "Material1.AMatManager1.OrderDone" False False
+	Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMin" 1.5
+	Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMax" 3.5
+	Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefSteps" 6
+	Act_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValue" False 0 GreaterEqual 0
+	Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 2
+	Set_TPSignalAnalog "Material1.AMV2FC.SetAirPressure" 0
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+	Set_TPSignalAnalog "Material1.AMatManager1.MaxFlow" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MaxPressure" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MinFlow" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MinPressure" 0
+	SelectCase MaterialValve1
+		Case 1
+			Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" True
+	EndSelect
+	
+	// Step 2
+	Select_TPStep "ReleasePressure"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" False False
+	
+	// Step 3
+	Select_TPStep "Characteristics"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.YHN3.Set" True
+	Set_TPSignalBool "Material1.AMatManager1.OrderCharacteristicRef" True
+	Act_TPSignalBool "Material1.AMatManager1.OrderDone" True True
+	Set_TPSignalAnalogVar "Material1.AMV2FC.SetAirPressure" "Material1.AMatManager1.CharacteristicRefValue"
+	
+	// Step 4
+	Select_TPStep "Wait"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.YHN3.Set" False
+	Set_TPSignalBool "Material1.AMatManager1.OrderCharacteristicRef" False
+	Act_TPSignalBool "Material1.AMatManager1.OrderDone" False False
+	Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 0
+	Set_TPSignalAnalog "Material1.AMV2FC.SetAirPressure" 0
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+	
+	// Step 5
+	Select_TPStep "GoHomeAtEnd"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "reference_curve_hn3" True
+Return

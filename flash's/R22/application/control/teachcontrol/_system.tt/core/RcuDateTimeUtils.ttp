@@ -1,0 +1,75 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : RcuDateTimeUtils.ttp                                        *
+*   Description : Date/Time utilities                                         *
+*-----------------------------------------------------------------------------*)
+
+ROUTINE GetDateString() : STRING
+   VAR
+      sTime             : STRING;
+      iTime             : LINT;
+      sChr              : STRING;
+      str               : STRING[3];
+      iLen              : DINT;
+   END_VAR
+   
+   SysTimerGetUs(iTime);
+   SysTimerString(sTime, iTime);
+   sChr := "";
+   iLen   := StrLen(sTime); 
+   sTime := StrDelete(sTime, 4, 1);
+   
+   //Day
+   sChr := sChr + StrMid(sTime, 2, 5) + ".";
+   
+   //Month
+   str := StrMid(sTime, 3, 1) + ".";
+   CASE str OF
+      "Jan": sChr := sChr + "01.";
+      "Feb": sChr := sChr + "02.";
+      "Mar": sChr := sChr + "03.";
+      "Apr": sChr := sChr + "04.";
+      "May": sChr := sChr + "05.";
+      "Jun": sChr := sChr + "06.";
+      "Jul": sChr := sChr + "07.";
+      "Aug": sChr := sChr + "08.";
+      "Sep": sChr := sChr + "09.";
+      "Oct": sChr := sChr + "10.";
+      "Nov": sChr := sChr + "11.";
+      "Dec": sChr := sChr + "12.";
+   END_CASE;  
+   //Year
+   sChr := sChr + StrMid(sTime, 4, 17);
+   
+   RETURN sChr;
+END_ROUTINE
+   
+   
+ROUTINE GetTimeString() : STRING
+   VAR
+      sTime             : STRING;
+      iTime             : LINT;
+      sChr              : STRING;
+   END_VAR
+
+   SysTimerGetUs(iTime);
+   SysTimerString(sTime, iTime);
+   
+   sChr := "";
+   //hour:min:sec
+   sChr := sChr + StrMid(sTime, 8, 12);
+   
+   RETURN sChr;
+END_ROUTINE

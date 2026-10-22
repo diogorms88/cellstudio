@@ -1,0 +1,338 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 04.09.2019  | KTO    | First release: Fuse Monitoring
+//  v2_01.01.00  | 09.09.2019  | KTO    | AddOn:  Check OptionRCMPGen(RCMP + Control Hardware)
+//  v2_01.02.00  | 11.09.2019  | MWT    | Bugfix: correction of endpoint strings
+//  v2_01.03.00  | 17.08.2020  | MWT    | AddOn:  new RCMP type for RCMP2.1 and remove empty strings when clearing
+//  v2_01.04.00  | 10.12.2020  | MWT    | Change: RCMP2.1 has no fuse to be monitored so put "not used" for name of fuse 1
+//  v2_01.05.00  | 23.06.2021  | PZB    | Change: Use BMK2 as default
+
+Parameter OptionRCMPGen
+
+Call Main_FuseMon
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_FuseMon
+	//Call Sub_FuseMon_Clear_Config
+	
+	SelectCase OptionRCMPGen
+		Case RCMP1_IPC
+			Call Sub_FuseMon_Configure_RCMP1_IPC
+		Case RCMP1_Cube
+			Call Sub_FuseMon_Configure_RCMP1_Cube
+		Case RCMP1_D3
+			Call Sub_FuseMon_Configure_RCMP1_Replacement
+		Case RCMP2_Rev2
+			Call Sub_FuseMon_Configure_RCMP2_RPC2
+		Case RCMP2.1
+			Call Sub_FuseMon_Configure_RCMP2.1_RPC2
+	EndSelect
+Return
+
+SubRoutine Sub_FuseMon_Clear_Config
+	SelectNode RPC1.System
+	SelectTab [CfgParameter]
+	
+	//Fuse1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse2
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse3
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse4
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse5
+	SelectCfg System.RCMP.FuseMonitoring.Fuse05_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse05_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse05_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse6
+	SelectCfg System.RCMP.FuseMonitoring.Fuse06_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse06_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse06_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse7
+	SelectCfg System.RCMP.FuseMonitoring.Fuse07_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse07_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse07_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse8
+	SelectCfg System.RCMP.FuseMonitoring.Fuse08_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse08_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse08_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse9
+	SelectCfg System.RCMP.FuseMonitoring.Fuse09_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse09_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse09_ExCtrl
+	Value 0
+	OptionalUsed 0
+	
+	//Fuse10
+	SelectCfg System.RCMP.FuseMonitoring.Fuse10_Name
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse10_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse10_ExCtrl
+	Value 0
+	OptionalUsed 0
+Return
+
+SubRoutine Sub_FuseMon_Configure_RCMP1_IPC
+	SelectNode RPC1.System
+	SelectTab [CfgParameter]
+	
+	//Fuse1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_Name
+	OptionalUsed 1
+	Value 6F
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VUPS"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse2
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_Name
+	OptionalUsed 1
+	Value 7F
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24V"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse3
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_Name
+	OptionalUsed 1
+	Value 8F
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VProcess"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse4
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_Name
+	OptionalUsed 1
+	Value 24Q4/54Q2/60Q4
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mQMon3P"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_ExCtrl
+	OptionalUsed 1
+	Value 0
+Return
+
+SubRoutine Sub_FuseMon_Configure_RCMP1_Cube
+	SelectNode RPC1.System
+	SelectTab [CfgParameter]
+	
+	//Fuse1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_Name
+	OptionalUsed 1
+	Value 6F
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VUPS"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse2
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_Name
+	OptionalUsed 1
+	Value 7F
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24V"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse3
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_Name
+	OptionalUsed 1
+	Value 8F
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VProcess"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse4
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_Name
+	OptionalUsed 1
+	Value 24Q4/54Q2/60Q4
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mQMon3P"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_ExCtrl
+	OptionalUsed 1
+	Value 0
+Return
+
+SubRoutine Sub_FuseMon_Configure_RCMP1_Replacement
+	SelectNode RPC1.System
+	SelectTab [CfgParameter]
+	
+	//Fuse1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_Name
+	OptionalUsed 1
+	Value F72
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VUPS"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse2
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_Name
+	OptionalUsed 1
+	Value F73
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24V"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse3
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_Name
+	OptionalUsed 1
+	Value F74
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VProcess"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse4
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_Name
+	OptionalUsed 1
+	Value Q0ANT/Q0DP/Q0TC
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mQMon3P"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse04_ExCtrl
+	OptionalUsed 1
+	Value 0
+Return
+
+SubRoutine Sub_FuseMon_Configure_RCMP2_RPC2
+	SelectNode RPC1.System
+	SelectTab [CfgParameter]
+	
+	//Fuse1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_Name
+	OptionalUsed 1
+	Value +A-F72
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24V1"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse2
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_Name
+	OptionalUsed 1
+	Value +B-F72
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VProcess1"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse02_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse3
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_Name
+	OptionalUsed 1
+	Value +A-F74
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mFMon24VProcess2"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse03_ExCtrl
+	OptionalUsed 1
+	Value 0
+	
+	//Fuse5
+	SelectCfg System.RCMP.FuseMonitoring.Fuse05_Name
+	OptionalUsed 1
+	Value +B-Q1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse05_HWEndpoint
+	OptionalUsed 1
+	Value "system.HWI_mQMon3P"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse05_ExCtrl
+	OptionalUsed 1
+	Value 0
+Return
+
+SubRoutine Sub_FuseMon_Configure_RCMP2.1_RPC2
+	SelectNode RPC1.System
+	SelectTab [CfgParameter]
+	
+	//Fuse1
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_Name
+	OptionalUsed 1
+	Value "not used"
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_HWEndpoint
+	OptionalUsed 0
+	SelectCfg System.RCMP.FuseMonitoring.Fuse01_ExCtrl
+	Value 0
+	OptionalUsed 0
+Return

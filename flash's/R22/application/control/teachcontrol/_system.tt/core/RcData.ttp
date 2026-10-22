@@ -1,0 +1,1381 @@
+(*------------------------------------------------------------------------------
+*                             (c) 2004 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*-------------------------------------------------------------------------------
+*  Component    : RC
+*  Modul        : RcData.ttp
+*  First Author : nmr
+*  Date         : 29.1.2004
+*-------------------------------------------------------------------------------
+*  Description:
+*
+*  Global RC-Data (for TeachView-Connection)
+*-------------------------------------------------------------------------------
+* 19.08.04 nmr: added keys for switching-on/off the drives and changing the
+*               active override
+* 25.09.04 nmr: corrected error messages (now registered texts are used)
+* 19.01.05 nmr: new flag triggerKey: key for switching between normal trigger
+*               functionality and moving toward the triggers
+* 16.02.05 nmr: moved TRcRefSysValidArray from _RcuReferenceSystems to RcData,
+*               added keys for moving forwards/backwards and GoldenRepos,
+*               removed InitKinematicData,
+*               changed to global flag gRcuUseReadBackVals which indicates whether
+*               ReadBackValues are used for the display of actual data
+* 22.03.05 nmr: new array gRcData.userIcon[] for representation of icons
+*               in the tool bar, constants
+* 04.04.05 nmr: added interface for application-controlled TeachView-dialogue,
+*               locked Register/Unregister via semaphores (as yet Enter/Leave)
+* 24.08.05 nmr: bugfix in routine Register()
+* 26.08.05 nmr: bugfix in routine GetKinElem(), added variables for boottime-
+*               measurement
+* 01.09.05 nmr: bugfix - display of selected jogRefSys after pressing COORD
+* 23.05.06 BMA: driveOnOffKey deleted. convJogKey added
+*)
+
+(*------------------------------------------------------------------------------
+* globals
+*)
+
+TYPE GLOBAL USER
+   TRcJogOvr: (            // jog override
+         Override            := -1,
+         Override_100        := 0,
+         Override_50         := 1,
+         Override_25         := 2,
+         Override_10         := 3,
+         Override_1          := 4,
+         Override_01         := 5);
+END_TYPE
+
+TYPE GLOBAL
+
+   //  enumerations
+   TRcJogCoordSys: (            // jog coordinate systems
+         eJogCoordAxes        := 0,
+         eJogCoordWorldMixed  := 1,
+         eJogCoordWorld       := 2,
+         eJogCoordTCP         := 3,
+         eJogCoordTCPMixed    := 4,
+         eJogCoordObject      := 5,
+         eJogCoordObjectMixed := 6,
+         eJogCoordExtTool     := 7,
+         eJogCoordMax         := 8
+      );
+
+   //  valid-state for each reference-system
+   TRcRefSysValidArray : ARRAY [eRcuNrOfRefSystems] OF MAPTO BOOL;
+
+   //  jog data
+   TRcJogKeys : ARRAY [cNrHardkeyDim] OF ARRAY [2] OF MAPTO BOOL;
+
+   // 
+   TRcDataRobotArray : ARRAY [cRcMaxRobots] OF TRcDataRobot;
+
+   TJogLabelArray : ARRAY [8] OF String8;
+
+   //  general data
+   TRcDataGeneral : STRUCT
+      rcVersion         : DINT;                     // RC version number
+      startStopKey      : ARRAY [2] OF MAPTO BOOL;  // program keys 0=STOP, 1=START
+      convJogKey        : MAPTO BOOL;               // conveyor jogging
+      backwardKey       : MAPTO BOOL;
+      forewardKey       : MAPTO BOOL;
+      robKey            : MAPTO BOOL;       // key to switch the active robot (not implemented yet)
+      goldenReposKey    : MAPTO BOOL;
+      triggerKey        : MAPTO BOOL;               // toggling trigger functionality
+      overrideKey       : ARRAY [2] OF MAPTO BOOL;  // override keys 0=-, 1=+
+      overrideFocusKey  : MAPTO BOOL;
+      overrideFocused   : MAPTO BOOL;         // jog override has the focus
+      jogKey            : MAPTO TRcJogKeys;   // jog keys
+      jog2ndKey         : MAPTO BOOL;
+      jogCoordKey       : MAPTO BOOL;
+      motionStepKey     : MAPTO BOOL;
+      nrOfJogKeys       : MAPTO DINT;         // number of hardkeys for jogging
+      jogKeyIndex       : MAPTO DINT;
+      jogOverrideValues : ARRAY [cRcMaxJogOverrideValues] OF DINT := (1000,500,250,100,10,1);
+      nrOfMainModes     : DINT;
+      mainModeRights    : MAPTO DINT;         // main mode flags
+      
+      mainModeName      : ARRAY [cgiRcuMaxMainModes] OF MAPTO String32; // names of the mainmodes (from configuration)
+      selectedMainMode  : MAPTO DINT;               // main mode of the kinematic
+      nrOfRobots        : DINT;                     // number of kinematics
+      robotMask         : DINT;                     // bit-coded number of present kinematics
+      robotName         : ARRAY [cRcMaxRobots] OF String32; // names of the robots (from configuration)
+      robotDir          : ARRAY [cRcMaxRobots] OF String32;       // base directory of kinematics (for multikinematic)
+      selectedRobot     : DINT := -1;               // focused kinematic
+      nrOfRefSystems    : DINT;                     // number of reference systems
+      refSysMask        : MAPTO DINT;
+      refSysName        : ARRAY [cRcMaxRefSystems] OF String32;  // names of the reference systems
+      userIcon          : ARRAY [cRcMaxUserIcons] OF DINT;
+
+      // active program data is set from teachview
+      // only active programs are startet/coninued by start-key
+      activeProgram    : ARRAY [8] OF TRcProgramData;
+      activeProgramCnt : DINT := -1; // initialize with -1 to be able to distinguish between old and
+                                     // new teachview versions
+      messageFilterData : MAPTO TMessageFilterData;
+      isIncJogging             : BOOL;
+      
+      showAxesPos       : BOOL;
+      showJointPos      : BOOL := TRUE;
+      showWorldPos      : BOOL;
+      showObjectPos     : BOOL;
+      showExtToolPos    : BOOL;
+      
+      nrOfJogAxes       : DINT := 7;
+      jogLabel          : TJogLabelArray;
+   END_STRUCT;
+
+   TRcProgramData : STRUCT
+      program   : String32;
+      project   : String32;
+      kinematic : String32;
+   END_STRUCT;
+
+   //  robot data
+   TRcDataRobot : STRUCT        
+       // general data
+      progName              : MAPTO STRING [128];  //Projectname.Mainprogname..Progname:Line
+      robotNr               : MAPTO DINT;
+      override              : MAPTO DINT;  // program override 0..100 %
+      isReady               : MAPTO BOOL;  // kinematic is ready
+      drivesOn              : MAPTO BOOL;  // drives are on
+      isReferenced          : MAPTO BOOL;  // all drives are referenced
+      isNotReferenced       : BOOL;
+      fullCartDisplay       : BOOL;        // if FALSE, mixed positions are displayed when cartesion positions is selected
+      mixedCartDisplay      : BOOL;
+      isNotReferenced_Full  : BOOL;
+      isNotReferenced_Mixed : BOOL;
+      selectedRefSysName    : MAPTO String32;
+      
+      // manual movement
+      jogOverride        : MAPTO DINT;
+      selectedJogCoord   : MAPTO TRcJogCoordSys;  // jog coordinate system
+      jogSysSelected     : ARRAY [eJogCoordMax] OF BOOL;
+      fullCartJogging    : MAPTO BOOL;            // if false, mixed-jogging is used when cartesian jogging is selected
+      wristJogging       : BOOL;
+      keyIndex           : MAPTO DINT;
+
+      // drive data
+      nrOfAxes         : MAPTO DINT;
+      axesMask         : DINT;          // fade-off bits for drives, Bit 0..cRcMaxAxes-1
+      axesName         : ARRAY [cRcMaxAxes] OF MAPTO String32;  // names of the drives
+      isRotAxis        : ARRAY [cRcMaxAxes] OF BOOL;           // linear or rotation axis
+      axisPosValue     : ARRAY [cRcMaxAxes] OF MAPTO REAL;     // drive position
+      axisState        : ARRAY [cRcMaxAxes] OF MAPTO DINT;     // Drivecom state
+      showDrive        : ARRAY [cRcMaxAxes] OF BOOL;
+      
+      // joint data
+      nrOfBaseJoints   : MAPTO DINT;   // base joints
+      nrOfWristJoints  : MAPTO DINT;   // wrist joints
+      nrOfAuxJoints    : MAPTO DINT;   // auxiliary joints
+      jointMask        : DINT;         // fade-off bits for joints, Bit 0..cRcMaxJoints-1
+      jointName        : ARRAY [cRcMaxJoints] OF String8;
+      isRotJoint       : ARRAY [cRcMaxJoints] OF BOOL;       // linear or rotation joint
+      jointPosValue    : ARRAY [cRcMaxJoints] OF MAPTO REAL; // joint position
+      nrOfJointTurns   : ARRAY [cRcMaxJoints] OF MAPTO DINT; // number of joint turns (typical +- 3)
+      jointMode        : MAPTO DINT;                         // bit-coded joint-state
+      jointState       : ARRAY [cRcMaxJoints] OF MAPTO DINT; // joint state: simulated, referenced, ...
+      showJoint        : ARRAY [cRcMaxJoints] OF BOOL; 
+      jointMaxPos      : ARRAY [cRcMaxJoints] OF DINT;
+      jointMinPos      : ARRAY [cRcMaxJoints] OF DINT;
+      wristAvailable   : BOOL;
+      wristJointSum    : REAL;
+      
+      //aux-joint data
+      auxJointName     : ARRAY [cRcMaxAuxJoints] OF String8; // names of aux-joints (instancenames)
+      auxJointPosValue : ARRAY [cRcMaxAuxJoints] OF MAPTO REAL;
+      isRotAuxJoint    : ARRAY [cRcMaxAuxJoints] OF BOOL;    // auxjoint is a rotation joint: 0=mm, 1=grd
+      
+      // cartesian data
+      nrOfCartComps    : MAPTO DINT;     // number of cartesian components, 1..cRcMaxCartComps
+      cartCompMask       : MAPTO DINT;               // fade-off bits for cartesian components, Bit 0..nrOfCartComps-1
+      cartCompName       : ARRAY [cRcMaxCartComps] OF String8 := ("X","Y","Z","A","B","C"); // names of the cartesian components 
+      worldPosValue      : ARRAY [cRcMaxCartComps] OF MAPTO REAL;  // actual position in world system
+      objectPosValue     : ARRAY [cRcMaxCartComps] OF MAPTO REAL;  // actual position in selected coordinate system
+      extToolPosValue    : ARRAY [cRcMaxCartComps] OF MAPTO REAL;  // actual position in ext. tool coordinate system
+      selectedRefSys     : MAPTO DINT;               // index of the actual reference system
+      showObjectPos      : BOOL;
+      showExtToolPos     : BOOL;
+      objectActive       : BOOL;
+      cartAvailable      : BOOL;                     // if true, cartesian positions are available
+      cartDataChgEnabled : BOOL;
+      cartAvailableRef   : BOOL;
+      cartAvailableNRef  : BOOL;
+      showCartComp       : ARRAY [cRcMaxCartComps] OF BOOL;
+      showAuxJoint       : ARRAY [cRcMaxAuxJoints] OF BOOL;
+      
+      nrOfMainModes    : DINT;   // number of main modes
+      mainModeRights   : MAPTO DINT;   // main mode authorisations in form of a bitmask (every bit indicates a action)
+                                        // Bit 1=jog, 2=auto, 3=fullspeed, 4=allPrograms, 5=holdToRun, 6=enableHt, 7=enableRemoteIf 8=enableEuromap
+      mainModeName      : ARRAY [cgiRcuMaxMainModes] OF MAPTO String32; // names of mainmodes (from konfiguration)
+      selectedMainMode  : MAPTO DINT;  // main mode of kinematic, 0..cRcMaxRobots-1, -1=keine Kinematik
+      mainModeNoAuto    : BOOL;
+   END_STRUCT;
+
+   TRcuKinListElem : STRUCT
+      kin    : MAPTO TRcuKinematic; // registered kinematic
+//29-05-07      flowId : DINT;                // current flow selecting the kinematic
+      initDone : BOOL; // flag to mark elements when insertKin() has been finished
+   END_STRUCT;
+
+   TRcDataDialog : STRUCT
+      ctrlRequest   : BOOL; // 0 -> 1 open dialogue box
+      viewResponse  : BOOL; // 0 -> 1 input completed, box close
+      viewRetVal    : DINT; // >= 0 OK, < 0 abort
+      projectName   : STRING[32];
+      programName   : STRING[32];
+      lineNr        : DINT;
+      textNr        : DINT;   // if <> 0 text number instead of text
+      text          : STRING; // complete text
+      varName       : STRING; // complete variable name
+      limitDINT     : ARRAY [2] OF DINT; // min/max-value for Integer data type
+      limitREAL     : ARRAY [2] OF REAL; // min/max-value for Real data type
+   END_STRUCT; 
+END_TYPE
+
+ 
+VAR GLOBAL
+   // list of all kinematics, ordered according to configured kinematicNr-id
+   gRcuKinList          : ARRAY [cRcMaxRobots] OF TRcuKinListElem;
+   gRcData              : TRcDataGeneral;
+   gRcDataRobot         : TRcDataRobotArray;
+   gRcDataDialog        : TRcDataDialog;
+   gRcSelectedRobotData : MAPTO TRcDataRobot;
+   gNrHardkeyDim         : DINT;
+END_VAR
+
+VAR GLOBAL USER
+   jogOvrSelected     : TRcJogOvr;
+END_VAR
+
+(*---------------------------------------------------------------------------
+* members
+*)
+
+
+VAR
+   iT2 : LINT;
+   iT1 : LINT;
+END_VAR
+
+
+// Return in the structure elem the kinematic belonging to this flow if possible
+// (present and unique). If no kinematic was selected and only one kinematic is
+// existing then this kinematic is selected and returned. If no kinematic can be
+// deduced at all the function causes an error and returns FALSE, otherwise it
+// returns TRUE.
+ROUTINE CheckKin(elem : TRcuKinListElem; sWhoCalls : STRING) : BOOL
+   VAR
+      i : DINT;
+   END_VAR
+
+   GetKinElem(elem);
+   IF NOT IS_MAPPED(elem.kin) THEN
+      IF gRcData.nrOfRobots = 1 THEN
+         // only one kinematic present
+         FOR i := 0 TO cRcMaxRobots - 1 DO
+            IF  IS_MAPPED(gRcuKinList[i].kin) THEN
+               gRcuKinList[i].kin.Select();
+               GetKinElem(elem);
+               RETURN TRUE;
+            END_IF;
+         END_FOR;
+         // element should exist but is not found
+         RcuSetMessageOnce(RcData_ErrNoKinFMakr, -1, 1, 0, "RcData.CheckKin", sWhoCalls);
+         InterruptProgSelf();
+         RETURN FALSE;
+      ELSE
+         RcuSetMessageOnce(RcData_ErrNoKinFMakr, -1, 2, 0, "RcData.CheckKin", sWhoCalls);
+         InterruptProgSelf();
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      // get the whole program path
+      START elem.kin.UpdateProgInfo();
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// register a kinematic (upon NEW)
+ROUTINE Register(kin : TRcuKinematic) : BOOL
+   VAR
+      currInx : DINT;
+      sem : TRcuSemaphore;
+   END_VAR
+
+   sem.Lock(eRcDataSemaphore);
+   currInx := kin.kinListInx;
+   IF gRcData.nrOfRobots >= cRcMaxRobots THEN
+      sem.Unlock();
+      RcuSetMessageOnce(RcData_ErrKinListProbl, -1, 1, 0, "RcData.Register");
+      RETURN FALSE;
+   ELSIF (currInx < 0) OR (currInx > cRcMaxRobots - 1) THEN
+      sem.Unlock();
+      RcuSetMessageOnce(RcData_ErrKinListProbl, -1, 2, 0, "RcData.Register");
+      RETURN FALSE;
+   ELSE
+      gRcData.nrOfRobots := gRcData.nrOfRobots + 1;
+      gRcData.robotMask := 
+         gRcData.robotMask OR gyBits[currInx];
+      gRcuKinList[currInx].kin := MAP(kin);
+//29-05-07      gRcuKinList[currInx].flowId := kin.selectingFlow.flowId;
+      sem.Unlock();
+      WAIT gbRcHandleOk;
+      IF NOT CatalogAddInt(giRcKinHdl, "nrOfKinematics", gRcData.nrOfRobots, TRUE) THEN
+         CatalogWriteInt(giRcKinHdl, "nrOfKinematics", gRcData.nrOfRobots);
+      END_IF;
+      START InsertKin(currInx);
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// unregister a kinematic (upon DELETE)
+ROUTINE UnRegister(kin : TRcuKinematic) : BOOL
+   VAR
+      currInx : DINT;
+      sem : TRcuSemaphore;
+   END_VAR
+
+   sem.Lock(eRcDataSemaphore);
+   currInx := kin.kinListInx;
+   IF (currInx < 0) OR (currInx >= cRcMaxRobots) THEN
+      sem.Unlock();
+      RcuSetMessageOnce(RcData_ErrKinListProbl, -1, 3, 0, "RcData.UnRegister");
+      RETURN FALSE;
+   ELSE
+      gRcuKinList[currInx].kin := MAPX("");
+//29-05-07      gRcuKinList[currInx].flowId := 0;
+      gRcData.nrOfRobots := gRcData.nrOfRobots - 1;
+      gRcData.robotMask := gRcData.robotMask AND NOT gyBits[currInx];
+      RemoveKin(currInx);
+      sem.Unlock();
+      WAIT gbRcHandleOk;
+      CatalogWriteInt(giRcKinHdl, "nrOfKinematics", gRcData.nrOfRobots);
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// report a change in the selecting flow
+//29-05-07 
+(*
+ROUTINE FlowChange(kin : TRcuKinematic) : BOOL
+   VAR
+      currInx : DINT;
+      sem : TRcuSemaphore;
+   END_VAR
+
+   sem.Lock(eRcDataSemaphore);
+   currInx := kin.kinListInx;
+   IF (currInx < 0) OR (currInx >= cRcMaxRobots) THEN
+      sem.Unlock();
+      RcuSetMessageOnce(RcData_ErrKinListProbl, 4, 0, "RcData.FlowChange");
+      RETURN FALSE;
+   ELSE
+      IF gRcuKinList[currInx].flowId <> kin.selectingFlow.flowId THEN
+         gRcuKinList[currInx].flowId := kin.selectingFlow.flowId;
+      END_IF;
+      sem.Unlock();
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+*)
+
+ROUTINE InitAll()
+   
+   InitGeneralData();
+   InitJogData();
+   START ObserveFocusFromCatalog();
+   START ObserveFocus();
+   START ObserveRobKey();
+   START ManagePositionPages();
+END_ROUTINE
+
+
+ROUTINE MapIOValues(CONST kin : TRcuRobot)
+VAR
+   i               : DINT;
+   robData         : MAPTO TRcDataRobot;
+END_VAR
+
+   WAIT kin.initRobComplete;
+   robData := MAP(gRcDataRobot[kin.kinListInx]);
+
+   // cartesian data
+   FOR i := 0 TO 2 DO
+      //robData.cartPosValue[i] := MAP(kin.IOWorldPos.mFrame.mPos.mValues[i]);
+      robData.worldPosValue[i] := MAP(kin.IOWorldPos.mFrame.mPos.mValues[i]);
+   END_FOR;
+   FOR i := 3 TO 5 DO
+      //robData.cartPosValue[i] := MAP(kin.IOWorldPos.mFrame.mOri.mValues[i - 3]);
+      robData.worldPosValue[i] := MAP(kin.IOWorldPos.mFrame.mOri.mValues[i - 3]);
+   END_FOR;
+   robData.jointMode := MAP(kin.IOWorldPos.mMode.mConfig);
+   // object data
+   IF kin.actObjectSystem <> 0 THEN
+      FOR i := 0 TO 2 DO
+         robData.objectPosValue[i] := MAP(kin.IOObjectPos.mFrame.mPos.mValues[i]);
+      END_FOR;
+      FOR i := 3 TO 5 DO
+         robData.objectPosValue[i] := MAP(kin.IOObjectPos.mFrame.mOri.mValues[i - 3]);
+      END_FOR;
+   END_IF;
+
+      FOR i := 0 TO 2 DO
+         robData.extToolPosValue[i] := MAP(kin.IOExtToolPos.mFrame.mPos.mValues[i]);
+      END_FOR;
+      FOR i := 3 TO 5 DO
+         robData.extToolPosValue[i] := MAP(kin.IOExtToolPos.mFrame.mOri.mValues[i - 3]);
+      END_FOR;
+
+   // get axis and drive data
+   FOR i := 0 TO kin.nrOfMainJoints - 1 DO
+      robData.jointPosValue[i] := MAP(kin.IOMainJoints.mJoints.mValues[i]);
+      robData.isRotJoint[i] := kin.kinematic.mJoints[i].mDHParam.mTyp = eMcuJointRot;
+      robData.nrOfJointTurns[i] := MAP(kin.IOWorldPos.mMode.mTurns.mValues[i]);
+      robData.jointMaxPos[i] := kin.kinematic.mJoints[i].mMaxPos;
+      robData.jointMinPos[i] := kin.kinematic.mJoints[i].mMinPos;
+   END_FOR;
+   FOR i := kin.nrOfMainDrives TO cRcMaxMainJoints - 1 DO
+      robData.jointPosValue[i]  := MAPX("");
+      robData.isRotJoint[i]     := FALSE;
+      robData.nrOfJointTurns[i] := MAPX("");
+   END_FOR;
+   
+   FOR i := 0 TO kin.nrOfMainDrives - 1 DO
+      robData.axisPosValue[i] := MAP(kin.IOMainDrives.mValues[i]);
+   END_FOR;
+   FOR i := kin.nrOfMainDrives TO cRcMaxAxes - 1 DO
+      robData.axisPosValue[i] := MAPX("");
+   END_FOR;
+   
+   FOR i := 0 TO kin.nrOfAuxJoints - 1 DO
+      robData.jointPosValue[kin.nrOfMainJoints + i] := MAP(kin.IOAuxJoints.mValues[i]);
+      robData.nrOfJointTurns[kin.nrOfMainJoints + i] := 
+         MAP(kin.IOWorldPos.mMode.mTurns.mValues[kin.nrOfMainJoints + i]); 
+      robData.auxJointPosValue[i] := MAP(kin.IOAuxJoints.mValues[i]);
+      robData.isRotAuxJoint[i]    := kin.kinematic.mJoints[kin.kinematic.mNrOfMainJoints + i].mDHParam.mTyp = eMcuJointRot;
+      robData.isRotJoint[kin.kinematic.mNrOfMainJoints + i] := kin.kinematic.mJoints[kin.kinematic.mNrOfMainJoints + i].mDHParam.mTyp = eMcuJointRot;
+      robData.jointMaxPos[kin.kinematic.mNrOfMainJoints + i] := kin.kinematic.mJoints[kin.kinematic.mNrOfMainJoints + i].mMaxPos;
+      robData.jointMinPos[kin.kinematic.mNrOfMainJoints + i] := kin.kinematic.mJoints[kin.kinematic.mNrOfMainJoints + i].mMinPos;
+   END_FOR;
+   FOR i := kin.kinematic.mNrOfAuxJoints TO cRcMaxAuxJoints - 1 DO
+      robData.auxJointPosValue[i] := MAPX("");
+      robData.isRotAuxJoint[i]    := FALSE;
+   END_FOR;
+   IF IsPaintArm7VWrist(kin) THEN
+      MapAdditionalPos(kin);
+      robData.auxJointPosValue[0] := MAP(actIOAdditionalPosRobArr[kin.kinListInx][0]); // richtiges Mapping, wenn Variable vorhanden in MapIOValues bzw. MapMcValues
+      robData.isRotAuxJoint[0]    := TRUE;
+      IF kin.nrOfAuxJoints > 0 THEN 
+         robData.auxJointPosValue[1] := MAP(kin.IOAuxJoints.mValues[0]); // richtiges Mapping, wenn Variable vorhanden in MapIOValues bzw. MapMcValues
+         robData.isRotAuxJoint[1]    := FALSE;
+     END_IF;
+   END_IF;
+   
+   FOR i := 0 TO kin.nrOfAuxDrives - 1 DO
+      robData.axisPosValue[kin.nrOfMainDrives + i] := MAP(kin.IOAuxJoints.mValues[i]);
+   END_FOR;
+   FOR i := kin.kinematic.mNrOfAuxJoints TO cRcMaxAuxJoints - 1 DO
+      robData.axisPosValue[kin.nrOfMainDrives + i] := MAPX("");
+   END_FOR;
+END_ROUTINE
+
+
+ROUTINE MapMcValues(CONST kin : TRcuKinematic)
+VAR
+   i       : DINT;
+   robData : MAPTO TRcDataRobot;
+END_VAR
+
+   WAIT kin.initKinComplete;
+   robData := MAP(gRcDataRobot[kin.kinListInx]);
+
+   IF kin.kinematic.mForwCoordTrafo THEN
+      // cartesian data
+   FOR i := 0 TO 2 DO
+      IF gbRcuUseReadBackVals AND NOT kin.allDrivesSimulated THEN
+            //robData.cartPosValue[i] := 
+            //   MAP(kin.readBackVals.mCartPos.mValues[i]);
+            robData.worldPosValue[i] := 
+               MAP(kin.readBackVals.mCartPos.mValues[i]);
+      ELSE
+            //robData.cartPosValue[i] := 
+            //   MAP(kin.actCartVals.mPos.mValues[i]);
+            robData.worldPosValue[i] := 
+               MAP(kin.actCartVals.mPos.mValues[i]);
+      END_IF;
+   END_FOR;
+   FOR i := 3 TO 5 DO
+         IF gbRcuUseReadBackVals AND NOT kin.allDrivesSimulated THEN
+            //robData.cartPosValue[i] := 
+            //   MAP(kin.readBackVals.mCartOri.mValues[i - 3]);
+            robData.worldPosValue[i] := 
+               MAP(kin.readBackVals.mCartOri.mValues[i - 3]);
+      ELSE
+            //robData.cartPosValue[i] := 
+            //    MAP(kin.actCartVals.mOri.mValues[i - 3]);
+            robData.worldPosValue[i] := 
+                MAP(kin.actCartVals.mOri.mValues[i - 3]);
+      END_IF;
+   END_FOR;
+      robData.jointMode := MAP(kin.actCartVals.mRobotMode.mConfig);
+      // object data
+      IF kin.actObjectSystem <> 0 THEN
+         FOR i := 0 TO 2 DO
+            robData.objectPosValue[i] := MAP(kin.actObjectPos.mFrame.mPos.mValues[i]);
+         END_FOR;
+         FOR i := 3 TO 5 DO
+            robData.objectPosValue[i] := MAP(kin.actObjectPos.mFrame.mOri.mValues[i - 3]);
+         END_FOR;
+      END_IF;
+      
+         FOR i := 0 TO 2 DO
+            robData.extToolPosValue[i] := MAP(kin.actExtToolPos.mFrame.mPos.mValues[i]);
+         END_FOR;
+         FOR i := 3 TO 5 DO
+            robData.extToolPosValue[i] := MAP(kin.actExtToolPos.mFrame.mOri.mValues[i - 3]);
+         END_FOR;
+      
+   END_IF;
+   
+   // get axis and drive data
+   FOR i := 0 TO kin.nrOfMainJoints - 1 DO
+      IF gbRcuUseReadBackVals AND NOT kin.allDrivesSimulated THEN
+         robData.jointPosValue[i] := 
+            MAP(kin.readBackVals.mJoints.mMainJoints.mValues[i]);
+      ELSE
+         robData.jointPosValue[i] := MAP(kin.actJoints.mPos[i]);
+      END_IF;
+      robData.isRotJoint[i] := kin.kinematic.mJoints[i].mDHParam.mTyp = eMcuJointRot;
+      robData.jointMaxPos[i] := kin.kinematic.mJoints[i].mMaxPos;
+      robData.jointMinPos[i] := kin.kinematic.mJoints[i].mMinPos;
+      IF kin.kinematic.mForwCoordTrafo THEN
+         robData.nrOfJointTurns[i] := 
+            MAP(kin.actCartVals.mRobotMode.mTurns.mValues[i]);
+      END_IF;
+   END_FOR;
+   FOR i := kin.nrOfMainDrives TO cRcMaxMainJoints - 1 DO
+      robData.jointPosValue[i]  := MAPX("");
+      robData.isRotJoint[i]     := FALSE;
+      robData.nrOfJointTurns[i] := MAPX("");
+   END_FOR;   
+   
+   FOR i := 0 TO kin.nrOfMainDrives - 1 DO
+      robData.axisPosValue[i] := MAP(kin.actDrives.mPos[i]);
+   END_FOR;
+   FOR i := kin.nrOfMainDrives TO cRcMaxAxes - 1 DO
+      robData.axisPosValue[i] := MAPX("");
+   END_FOR;   
+   
+   FOR i := 0 TO kin.nrOfAuxJoints - 1 DO
+      IF gbRcuUseReadBackVals AND NOT kin.allDrivesSimulated THEN
+         robData.jointPosValue[kin.nrOfMainJoints + i] := 
+            MAP(kin.readBackVals.mJoints.mAuxJoints.mValues[i]);
+         robData.auxJointPosValue[i] := MAP(kin.readBackVals.mJoints.mAuxJoints.mValues[i]);
+      ELSE
+         robData.jointPosValue[kin.nrOfMainJoints + i] := 
+            MAP(kin.actJoints.mPos[kin.nrOfMainJoints + i]);
+         robData.auxJointPosValue[i] := MAP(kin.actJoints.mPos[kin.kinematic.mNrOfMainJoints + i]);
+      END_IF;
+      IF kin.kinematic.mForwCoordTrafo THEN
+         robData.nrOfJointTurns[kin.nrOfMainJoints + i] := 
+            MAP(kin.actCartVals.mRobotMode.mTurns.mValues[kin.nrOfMainJoints + i]); 
+      END_IF;
+      robData.isRotJoint[kin.nrOfMainJoints + i]  := kin.kinematic.mJoints[kin.nrOfMainJoints + i].mDHParam.mTyp = eMcuJointRot;
+      robData.jointMaxPos[kin.nrOfMainJoints + i] := kin.kinematic.mJoints[kin.nrOfMainJoints + i].mMaxPos;
+      robData.jointMinPos[kin.nrOfMainJoints + i] := kin.kinematic.mJoints[kin.nrOfMainJoints + i].mMinPos;
+   END_FOR;
+   FOR i := kin.kinematic.mNrOfAuxJoints TO cRcMaxAuxJoints - 1 DO
+      robData.auxJointPosValue[i] := MAPX("");
+      robData.isRotAuxJoint[i]    := FALSE;
+   END_FOR;
+   IF IsPaintArm7VWrist(kin) THEN
+      MapAdditionalPos(kin);
+      robData.auxJointPosValue[0] := MAP(actAdditionalPosRobArr[kin.kinListInx][0]); // richtiges Mapping, wenn Variable vorhanden in MapIOValues bzw. MapMcValues
+      robData.isRotAuxJoint[0]    := TRUE;
+      IF kin.nrOfAuxJoints > 0 THEN 
+         robData.auxJointPosValue[1] := MAP(kin.readBackVals.mJoints.mAuxJoints.mValues[0]);  // richtiges Mapping, wenn Variable vorhanden in MapIOValues bzw. MapMcValues
+         robData.isRotAuxJoint[1]    := FALSE;
+     END_IF;
+   END_IF;
+   
+   FOR i := 0 TO kin.nrOfAuxDrives - 1 DO
+      robData.axisPosValue[kin.nrOfMainDrives + i] := MAP(kin.actDrives.mPos[kin.nrOfMainDrives + i]);
+   END_FOR;
+   FOR i := kin.kinematic.mNrOfAuxJoints TO cRcMaxAuxJoints - 1 DO
+      robData.axisPosValue[kin.nrOfMainDrives + i] := MAPX("");
+   END_FOR;
+   
+END_ROUTINE
+
+
+(*--------------------------------------------------------------------------------
+* private members
+*)
+
+
+CONSTANT PRIVATE
+   cRcMaxMainModes         : DINT := 8;
+   cRcMaxRobots            : DINT := cgiRcuMaxKinematics;
+   cRcMaxRefSystems        : DINT :=32;
+   cRcMaxAxes              : DINT := cMcuMaxJ;
+   cRcMaxJoints            : DINT := cMcuMaxJ;
+   cRcMaxCartComps         : DINT := 6;
+   cRcMaxUserIcons         : DINT := 6;
+   cRcMaxJogOverrideValues : DINT := 8;
+   cNrHardkeyDim           : DINT := 9;
+   cRcMaxMainJoints        : DINT := 6;
+   cRcMaxAuxJoints         : DINT := 3;
+END_CONSTANT
+
+
+VAR PRIVATE
+   staticZero   : DINT;  // 0, mapping target
+   staticEmpty  : String32; // 0, mapping target
+END_VAR
+
+// return in the parameter elem the kinematiclist-element belonging to this
+// flow if possible (present and unique), an invalid element otherwise
+ROUTINE GetKinElem(elem : TRcuKinListElem) PRIVATE
+   VAR
+      h : DINT;
+      inx : DINT;
+      i : DINT;
+      count : DINT;
+//      sem : TRcuSemaphore;
+   END_VAR
+
+   // this semaphore is only used in register and unregister of a kiinematic, so there is no need to lock
+   // sem.Lock(eRcDataSemaphore);
+(* 29-05-07
+   h := GetProgHdl();
+   count := 0;
+   FOR i := 0 TO cRcMaxRobots - 1 DO
+      IF gRcuKinList[i].flowId = h THEN
+         count := count + 1;
+         inx := i;
+      END_IF;
+   END_FOR;
+   IF count = 1 THEN // present and unique
+      elem := gRcuKinList[inx];
+   ELSE
+      elem.kin := MAPX(""); // unmap kinematic reference
+      elem.flowId := 0;     // reset flowId
+   END_IF;
+*)
+   h := GetProgHdl();
+   count := 0;
+   FOR i := 0 TO cRcMaxRobots - 1 DO
+      IF IS_MAPPED(gRcuKinList[i].kin) THEN
+         IF gRcuKinList[i].kin.selectingFlow.flowId = h THEN
+         count := count + 1;
+         inx := i;
+      END_IF;
+      END_IF;
+   END_FOR;
+   IF count = 1 THEN // present and unique
+      elem := gRcuKinList[inx];
+   ELSE
+      elem.kin := MAPX(""); // unmap kinematic reference
+   END_IF;
+   // sem.Unlock();
+END_ROUTINE
+
+
+ROUTINE InitGeneralData() PRIVATE
+   VAR
+      i       : DINT;
+   END_VAR
+
+   gRcData.rcVersion := StringToInt(gRcuVersion);
+   gRcData.nrOfRefSystems := cgiRcuNrRefSysForActCartVals;
+   gRcData.refSysMask := MAP(giTvRefSysValidMask);
+   FOR i := 0 TO eRcuNrOfRefSystems - 1 DO
+      gRcData.refSysName[i] := gRcuRefSysNames[i];
+   END_FOR;
+   
+   gRcData.selectedRobot := -1;
+
+   IF IS_MAPPED(RcuTeachPendantControl.keyORMinus) THEN
+      gRcData.overrideKey[0]  := MAP(RcuTeachPendantControl.keyORMinus);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyORPlus) THEN
+      gRcData.overrideKey[1]  := MAP(RcuTeachPendantControl.keyORPlus);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyORFocusSwitch) THEN
+      gRcData.overrideFocusKey  := MAP(RcuTeachPendantControl.keyORFocusSwitch);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyMoveBackward) THEN
+      gRcData.backwardKey  := MAP(RcuTeachPendantControl.keyMoveBackward);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyMoveForeward) THEN
+      gRcData.forewardKey  := MAP(RcuTeachPendantControl.keyMoveForeward);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyGoldenRepos) THEN
+      gRcData.goldenReposKey  := MAP(RcuTeachPendantControl.keyGoldenRepos);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyToggleTriggerFunc) THEN
+      gRcData.triggerKey  := MAP(RcuTeachPendantControl.keyToggleTriggerFunc);
+   END_IF;
+
+   IF IS_MAPPED(RcuTeachPendantControl.keyConvJog) THEN
+      gRcData.convJogKey  := MAP(RcuTeachPendantControl.keyConvJog);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyRobSwitch) THEN
+      gRcData.robKey  := MAP(RcuTeachPendantControl.keyRobSwitch);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyMotionStep) THEN
+      gRcData.motionStepKey  := MAP(RcuTeachPendantControl.keyMotionStep);
+   END_IF;
+
+   IF giTcBaseHdl <> 0 THEN
+      IF CatalogReadIntRange(giTcBaseHdl, "globalStartIdx",
+                             i, 0, cHTMaxKeys - 1, TRUE) THEN
+         gRcData.startStopKey[1] := MAP(HTKeyMem[i]);
+      END_IF;
+      IF CatalogReadIntRange(giTcBaseHdl, "globalStopIdx", 
+                             i, 0, cHTMaxKeys - 1, TRUE) THEN
+         gRcData.startStopKey[0] := MAP(HTKeyMem[i]);
+      END_IF;
+   END_IF;
+   IF NOT IS_MAPPED(gRcData.startStopKey[1]) THEN
+      IF IS_MAPPED(RcuTeachPendantControl.keyProgStart) THEN
+         gRcData.startStopKey[1] := MAP(RcuTeachPendantControl.keyProgStart);
+      ELSE
+         gRcData.startStopKey[1] := MAPX("");
+      END_IF;
+   END_IF;
+   IF NOT IS_MAPPED(gRcData.startStopKey[0]) THEN
+      IF IS_MAPPED(RcuTeachPendantControl.keyProgStop) THEN
+         gRcData.startStopKey[0] := MAP(RcuTeachPendantControl.keyProgStop);
+      ELSE
+         gRcData.startStopKey[0] := MAPX("");
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE InitJogData() PRIVATE
+
+   // connect to RcuTeachPendantControl data
+   gRcData.jogKey            := MAP(RcuTeachPendantControl.jogKeys);
+   IF IS_MAPPED(RcuTeachPendantControl.key2nd) THEN
+       gRcData.jog2ndKey          := MAP(RcuTeachPendantControl.key2nd);
+   END_IF;
+   IF IS_MAPPED(RcuTeachPendantControl.keyToggleJogCoord) THEN
+      gRcData.jogCoordKey  := MAP(RcuTeachPendantControl.keyToggleJogCoord);
+   END_IF;
+   gRcData.overrideFocused := MAP(RcuTeachPendantControl.jogOverrideFocused);
+   gRcData.nrOfJogKeys := MAP(RcuTeachPendantControl.nrOfJogDimensions);
+   IF IS_MAPPED(gRcuFocusedKinematic) THEN
+      gRcData.jogKeyIndex := MAP(gRcuFocusedKinematic.TeachPendantMemories.keyIndex); 
+   ELSE
+      gRcData.jogKeyIndex := MAP(staticZero);
+   END_IF;
+   gRcData.isIncJogging  := UPDATE(RcuTeachPendantControl.jogIncremental);
+END_ROUTINE
+
+ROUTINE ObserveFocusFromCatalog() PRIVATE
+   VAR
+      value : DINT;
+      i : DINT;
+   END_VAR
+
+   WAIT gbEquipmentReady;
+   // wait until all robots are ready to make sure that teachview data is set
+   FOR i := 0 TO gRcData.nrOfRobots - 1 DO
+      WAIT gRcuKinList[i].initDone;
+   END_FOR;
+   WHILE TRUE DO
+      WAIT gbRcFocusChanged;
+      gbRcFocusChanged := FALSE;
+      CatalogReadInt(giRcKinHdl, "focusedKinematic", value, FALSE);
+      IF value = -1 THEN
+         DebugPrint(eTraceHotPlug, "deactivated -> disconnect TeachPendant");
+         IF IoDeviceGuarding(RcuTeachPendantControl.deviceHdl, FALSE) THEN
+            DebugPrint(eTraceHotPlug, "  ... observation deactivated");
+         ELSE
+            DebugPrint(eTraceHotPlug, "  ... observation couldn't be deactivated");
+         END_IF;
+      ELSE
+         gRcData.selectedRobot := value;
+         DebugPrint(eTraceHotPlug, "activated -> observe TeachPendant");
+         IF NOT gRcuKinList[gRcData.selectedRobot].kin.mainModeMgr.externControl THEN
+            IF IoDeviceGuarding(RcuTeachPendantControl.deviceHdl, TRUE) THEN
+               DebugPrint(eTraceHotPlug, "  ... observation activated");
+            ELSE
+               DebugPrint(eTraceHotPlug, "  ... observation couldn't be activated");
+            END_IF;
+         ELSE
+            DebugPrint(eTraceHotPlug, "  ... observation not activated - externControl");
+         END_IF;   
+         SetJogLabel(gRcData.selectedRobot, gRcDataRobot[gRcData.selectedRobot].selectedJogCoord);
+      END_IF;
+      DebugPrint(eTraceHotPlug, "ObserveFocusFromCatalog -> " + STR(value));
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveRobKey() PRIVATE
+ VAR 
+   i : DINT;
+ END_VAR
+   
+   IF NOT IS_MAPPED(gRcData.robKey) THEN
+      RETURN;
+   END_IF;
+   // no toggling when using real phg
+   
+   // RcuTeachPendantControl.driverMode = 1 ==> real PHG (Co-Linux, Viewserver)
+   IF ((RcuTeachPendantControl.driverMode = 1) AND NOT gbIsTVB AND NOT gbFBSSActive) THEN       
+      // real PHG (Co-Linux, Viewserver) and not WinMOD
+      RETURN;    
+   END_IF;
+   
+   WAIT gbEquipmentReady;
+   // wait until all robots are ready to make sure that teachview data is set
+   FOR i := 0 TO gRcData.nrOfRobots - 1 DO
+      WAIT gRcuKinList[i].initDone;
+   END_FOR;
+   WHILE TRUE DO
+      WAIT gRcData.robKey;
+      IF gRcData.selectedRobot < gRcData.nrOfRobots - 1 THEN
+         gRcData.selectedRobot := gRcData.selectedRobot + 1;
+      ELSE
+         gRcData.selectedRobot := 0;
+      END_IF;
+      WAIT NOT gRcData.robKey;
+   END_WHILE;
+END_ROUTINE
+
+// react upon a change of the active kinematic
+ROUTINE ObserveFocus() PRIVATE
+   VAR
+      focusChanged      :  BOOL;
+      focusedKinChanged :  BOOL;
+      focusFlipFlop     : BOOL;
+      focusedKinListInx : DINT;
+      value             : DINT;
+      i : DINT;
+   END_VAR
+
+   WAIT gbEquipmentReady;
+   // wait until all robots are ready to make sure that teachview data is set
+   FOR i := 0 TO gRcData.nrOfRobots - 1 DO
+      WAIT gRcuKinList[i].initDone;
+   END_FOR;
+   focusChanged := IS_CHANGED(gRcData.selectedRobot);
+   focusFlipFlop := IS_CHANGED(gbRcuFocusFlipFlop);
+   WHILE TRUE DO
+      IF gRcData.nrOfRobots > 0 THEN  
+         // at least one kinematic present
+         IF IS_MAPPED(gRcuFocusedKinematic) THEN
+            focusedKinListInx := gRcuFocusedKinematic.kinListInx;
+         ELSE
+            focusedKinListInx := -1;  // no kinematic focused
+         END_IF;
+         IF focusedKinListInx <> gRcData.selectedRobot THEN
+            STOP ObserveKey2nd;
+            STOP ObserveJogSystem;
+            STOP CalcWristSumAngle;
+            IF focusedKinChanged OR (gRcData.selectedRobot = -1) THEN // focus changed from the outside
+               gRcData.selectedRobot := focusedKinListInx;
+            ELSE                       // focus changed via teachview
+               IF IS_MAPPED(gRcuKinList[gRcData.selectedRobot].kin) THEN
+                  gRcuKinList[gRcData.selectedRobot].kin.Focus();
+               END_IF;
+            END_IF;
+            IF IS_MAPPED(gRcuKinList[gRcData.selectedRobot].kin) THEN
+               START ObserveKey2nd(gRcData.selectedRobot);
+               START ObserveJogSystem(gRcData.selectedRobot);
+               START CalcWristSumAngle(gRcData.selectedRobot);
+               gRcData.jogKeyIndex := 
+                  MAP(gRcuKinList[gRcData.selectedRobot].kin.TeachPendantMemories.keyIndex); 
+               gRcData.selectedMainMode := MAP(gRcuKinList[gRcData.selectedRobot].kin.mainModeMgr.mode);
+               gRcData.mainModeRights   := MAP(gRcuKinList[gRcData.selectedRobot].kin.mainModeMgr.rights);
+               gRcData.nrOfMainModes    := gRcuKinList[gRcData.selectedRobot].kin.mainModeMgr.nrMainModes + 1;               
+               FOR i:=0 TO cRcMaxMainModes - 1 DO
+                  gRcData.mainModeName[i]     := MAP(gRcuKinList[gRcData.selectedRobot].kin.mainModeMgr.yMainModeName[i]);
+               END_FOR;
+            ELSE
+               RcuSetMessageOnce(RcData_ErrKinListProbl, -1, 5, 0, "RcData.ObserveFocus");
+            END_IF;
+         END_IF;
+      ELSE
+         gRcData.selectedRobot := -1;
+      END_IF;
+      CatalogReadInt(giRcKinHdl, "focusedKinematic", value, FALSE);
+      IF value <> gRcData.selectedRobot THEN
+         value := gRcData.selectedRobot;
+         CatalogWriteInt(giRcKinHdl, "focusedKinematic", value);
+         DebugPrint(eTraceHotPlug, "ObserveFocus -> " + STR(gRcData.selectedRobot));
+      END_IF;
+      IF gRcData.selectedRobot >= 0 THEN
+         gRcSelectedRobotData := MAP(gRcDataRobot[gRcData.selectedRobot]);
+         SetJogLabel(gRcData.selectedRobot, gRcDataRobot[gRcData.selectedRobot].selectedJogCoord);
+      ELSE
+         gRcSelectedRobotData := MAPX("");
+      END_IF;
+      IF IS_MAPPED(giFocusedKinematic) THEN
+         giFocusedKinematic := gRcData.selectedRobot;
+      END_IF;
+      WAIT focusChanged OR focusFlipFlop;
+      focusedKinChanged := focusFlipFlop;  // local copy
+      focusChanged := FALSE;
+      focusFlipFlop := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE JogOvrObserver(rob : TRcDataRobot) PRIVATE
+ VAR  
+   chg : BOOL;
+ END_VAR
+
+   jogOvrSelected := TRcJogOvr(-1);
+   chg := IS_CHANGED(jogOvrSelected);
+   WHILE TRUE DO
+      chg := FALSE;
+      WAIT chg;
+      IF (jogOvrSelected < 0) THEN
+         jogOvrSelected := TRcJogOvr(0);
+      END_IF;
+      rob.jogOverride := gRcData.jogOverrideValues[jogOvrSelected];
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE JogSysObserver(rob : TRcDataRobot) PRIVATE
+ VAR  
+   chg : BOOL;
+   i : DINT;
+ END_VAR
+
+   chg := IS_CHANGED(rob.jogSysSelected);
+   WHILE TRUE DO
+      FOR i := 0 TO eJogCoordMax-1 DO
+         IF rob.jogSysSelected[i] THEN
+            rob.selectedJogCoord := TRcJogCoordSys(i);
+            rob.jogSysSelected[i] := FALSE;
+         END_IF;
+      END_FOR;
+      chg := FALSE;
+      WAIT chg;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveExtToolActive(rob : TRcDataRobot) PRIVATE
+ VAR  
+   chg : BOOL;
+   extToolWasActive : BOOL;
+ END_VAR
+
+   chg := IS_CHANGED(rob.showExtToolPos);
+   WHILE TRUE DO
+      IF extToolWasActive AND NOT rob.showExtToolPos THEN
+         gRcData.showObjectPos := TRUE;
+      END_IF;
+      extToolWasActive := rob.showExtToolPos;
+      chg := FALSE;
+      WAIT chg;
+   END_WHILE;
+END_ROUTINE
+
+// inserts a kinematic in the gRcDataKin-List
+ROUTINE InsertKin(CONST kinListInx : DINT) PRIVATE
+   VAR
+      i       : DINT;
+      thisKin     : MAPTO TRcuKinematic;
+      thisRobot   : MAPTO TRcuRobot;
+      thisDataGeneral : MAPTO TRcDataGeneral;
+      thisDataRobot   : MAPTO TRcDataRobot;
+      isDir : BOOL;
+      path  : STRING;
+      flag : BOOL;
+      tcWorkPath : STRING;
+   END_VAR
+
+   thisKin     := MAP(gRcuKinList[kinListInx].kin);
+   thisRobot   := MAP(gRcuKinList[kinListInx].kin);
+   WAIT thisKin.initKinComplete;
+
+   thisDataGeneral := MAP(gRcData);
+   thisDataRobot   := MAP(gRcDataRobot[kinListInx]);
+
+   thisDataRobot.robotNr            := MAP(thisKin.kinListInx);
+   thisDataRobot.selectedMainMode := MAP(thisKin.mainModeMgr.mode);
+   thisDataRobot.mainModeRights   := MAP(thisKin.mainModeMgr.rights);
+   thisDataRobot.nrOfMainModes    := thisKin.mainModeMgr.nrMainModes + 1;
+   thisDataRobot.mainModeNoAuto   := UPDATE(NOT thisKin.mainModeMgr.externControl);
+   FOR i:=0 TO cRcMaxMainModes - 1 DO
+      thisDataRobot.mainModeName[i] := MAP(thisKin.mainModeMgr.yMainModeName[i]);
+   END_FOR;
+   thisDataGeneral.robotName[thisDataRobot.robotNr] := thisKin.robotName;
+   
+   // get kinematic base directory for multikinematic
+   IF giTcBaseHdl <> 0 THEN
+      CatalogReadString(giTcBaseHdl, "workPath", tcWorkPath, TRUE);
+      path := tcWorkPath + thisKin.subDirName;
+   ELSE
+      PRINT("NO TC-CATALOG HANDLE");
+   END_IF;
+   IF IsDir(path, isDir) AND isDir THEN
+      thisDataGeneral.robotDir[thisDataRobot.robotNr] := thisKin.subDirName;
+      // load global project, before we have to wait until _system has finished
+      WAIT ProjectName <> "";
+      path := thisKin.subDirName + "/" + "_global";
+      IF BuildProject(path) THEN
+         path := StrToLower(thisKin.subDirName);
+         IF LoadProject(path, flag) THEN
+            WAIT flag;
+         END_IF;
+      END_IF;
+   ELSE
+      thisDataGeneral.robotDir[thisDataRobot.robotNr] := "";
+   END_IF;
+   
+   thisDataRobot.progName           := MAP(thisKin.progNameKin);
+   thisDataRobot.override           := MAP(thisKin.override);
+   thisDataRobot.isReady            := MAP(thisKin.mainModeMgr.ready);
+   thisDataRobot.fullCartJogging    := MAP(thisKin.allDegreesOfFreedom);
+   thisDataRobot.wristJogging       := NOT thisKin.allDegreesOfFreedom;
+   thisDataRobot.isReferenced       := MAP(thisRobot.allDrivesReferenced);
+   thisDataRobot.isNotReferenced    := UPDATE(NOT thisRobot.allDrivesReferenced);
+   thisDataRobot.selectedRefSysName := MAP(thisRobot.refSysName);
+
+   // jog data
+   thisDataRobot.jogOverride        := MAP(thisKin.TeachPendantMemories.jogOverride);
+   thisDataRobot.selectedJogCoord   := MAP(thisKin.jogPath.jogSystem);
+   thisDataGeneral.jogKeyIndex      := MAP(thisKin.TeachPendantMemories.keyIndex);
+   
+   // cartesian data
+   thisDataRobot.nrOfCartComps  := MAP(thisKin.nrOfCartComps);
+   thisDataRobot.cartCompMask   := MAP(thisKin.cartCompMask);
+   thisDataRobot.jointMode      := MAP(thisKin.actCartVals.mRobotMode.mConfig);
+   thisDataRobot.selectedRefSys := MAP(thisKin.TeachPendantMemories.selectedObjectSystem);
+   thisDataRobot.showObjectPos  := UPDATE(thisKin.isObjectActive AND thisKin.kinematic.mForwCoordTrafo);
+   thisDataRobot.objectActive   := UPDATE(thisKin.isObjectActive AND thisKin.kinematic.mForwCoordTrafo);
+   thisDataRobot.showExtToolPos := UPDATE(thisKin.extToolActive AND thisKin.kinematic.mForwCoordTrafo);
+   // axis data
+   thisDataRobot.nrOfBaseJoints   := MAP(thisKin.nrOfBaseJoints);
+   thisDataRobot.nrOfWristJoints  := MAP(thisKin.nrOfWristJoints);
+   thisDataRobot.nrOfAuxJoints    := MAP(thisKin.nrOfAuxJoints);
+   thisDataRobot.nrOfAxes         := MAP(thisKin.nrOfDrives);
+
+   IF IS_MAPPED(thisRobot) THEN
+      WAIT thisRobot.initRobComplete;
+      thisDataRobot.drivesOn              := MAP(thisRobot.allDrivesReady);
+      thisDataRobot.cartAvailable         := thisRobot.kinematic.mForwCoordTrafo;
+      thisDataRobot.cartDataChgEnabled    := UPDATE(thisRobot.allDrivesReferenced AND thisRobot.kinematic.mForwCoordTrafo);
+      thisDataRobot.cartAvailableRef      := UPDATE(thisDataRobot.cartAvailable AND thisDataRobot.isReferenced);
+      thisDataRobot.cartAvailableNRef     := UPDATE(thisDataRobot.cartAvailable AND NOT thisDataRobot.isReferenced);
+      thisDataRobot.fullCartDisplay       := UPDATE(thisRobot.allDrivesReferenced AND thisDataRobot.fullCartJogging AND thisDataRobot.cartAvailable);
+      thisDataRobot.mixedCartDisplay      := UPDATE(thisRobot.allDrivesReferenced AND (NOT thisDataRobot.fullCartJogging) AND thisDataRobot.cartAvailable);
+      thisDataRobot.isNotReferenced_Full  := UPDATE((NOT thisRobot.allDrivesReferenced) AND thisDataRobot.fullCartJogging AND thisDataRobot.cartAvailable);
+      thisDataRobot.isNotReferenced_Mixed := UPDATE((NOT thisRobot.allDrivesReferenced) AND (NOT thisDataRobot.fullCartJogging) AND thisDataRobot.cartAvailable);
+      thisDataRobot.wristAvailable        := UPDATE(thisRobot.kinematic.mNrOfWristJoints > 0);
+      
+      FOR i := 0 TO cRcMaxAxes-1 DO
+         IF IS_MAPPED(thisRobot.drive[i]) THEN
+            thisDataRobot.jointState[i] := MAP(thisRobot.drive[i].jointState);  
+            thisDataRobot.axisState[i]  := MAP(thisRobot.drive[i].state);
+            thisDataRobot.isRotAxis[i]  := thisRobot.drive[i].type = eMcuJointRot;
+            thisDataRobot.axesName[i]   := MAP(thisRobot.drive[i].axesName);
+            thisDataRobot.axesMask      := thisDataRobot.axesMask OR gyBits[i];
+            thisDataRobot.jointMask     := thisDataRobot.jointMask OR gyBits[i];
+         ELSE
+            thisDataRobot.jointState[i] := MAP(staticZero);  
+            thisDataRobot.axisState[i]  := MAP(staticZero);
+            thisDataRobot.isRotAxis[i]  := FALSE;
+            thisDataRobot.axesName[i]   := MAP(staticEmpty);
+         END_IF;
+         thisDataRobot.showDrive[i] := thisDataRobot.axesMask  AND gyBits[i] <> 0;
+         thisDataRobot.showJoint[i] := thisDataRobot.jointMask AND gyBits[i] <> 0;
+      END_FOR;
+      FOR i := 0 TO cRcMaxCartComps-1 DO
+          thisDataRobot.showCartComp[i] := gyBits[i] <> 0;
+      END_FOR;
+      FOR i := 0 TO cRcMaxAuxJoints-1 DO
+         thisDataRobot.showAuxJoint[i] := thisDataRobot.jointMask AND gyBits[i+thisKin.nrOfMainJoints] <> 0;
+         thisDataRobot.auxJointName[i] := thisDataRobot.jointName[i+thisKin.nrOfMainJoints];
+      END_FOR;
+      IF IsPaintArm7VWrist(thisKin) THEN
+         thisDataRobot.showAuxJoint[0] := TRUE;
+         thisDataRobot.auxJointName[0] := "FG7";
+         thisDataRobot.isRotAuxJoint[0]  := TRUE;
+         IF (thisKin.nrOfAuxJoints > 0) THEN
+            thisDataRobot.showAuxJoint[1] := TRUE;
+            thisDataRobot.auxJointName[1] := thisDataRobot.jointName[thisKin.nrOfMainJoints];
+            thisDataRobot.isRotAuxJoint[1]  := FALSE;
+         END_IF;
+      END_IF;
+   END_IF;
+   START JogOvrObserver(thisDataRobot) PRIO 3;
+   START JogSysObserver(thisDataRobot) PRIO 3;
+   START ObserveExtToolActive(thisDataRobot) PRIO 3;
+   gRcuKinList[kinListInx].initDone := TRUE;
+END_ROUTINE
+
+
+// removes a kinematic from the gRcDataKin-List
+ROUTINE RemoveKin(CONST inx : DINT) PRIVATE
+   VAR
+      dummy : TRcDataRobot;
+   END_VAR
+
+   gRcDataRobot[inx] := dummy; 
+END_ROUTINE
+
+
+// react upon a change of the jogsystem
+ROUTINE ObserveJogSystem(CONST kinInx : DINT) PRIVATE
+   VAR
+      chgTVJogSys  : BOOL;
+      chgKinJogSys : BOOL;
+      kin      : MAPTO TRcuKinematic;
+      coordSys : MAPTO TRcJogCoordSys;
+      refSys   : TRcuReferenceSystem;
+   END_VAR
+
+   WAIT gRcuKinList[kinInx].initDone; // to avoid mapping problems
+   kin := MAP(gRcuKinList[kinInx].kin);
+   coordSys := MAP(gRcDataRobot[kinInx].selectedJogCoord);
+   chgKinJogSys := IS_CHANGED(kin.jogPath.jogSystem);
+   chgTVJogSys := IS_CHANGED(coordSys);
+   WHILE TRUE DO
+      WAIT chgKinJogSys OR chgTVJogSys;
+      IF chgKinJogSys THEN
+         coordSys := kin.jogPath.jogSystem;  // update interface-variable
+      ELSE
+         kin.jogPath.SetJogSystem(coordSys); // set new jogsystem
+      END_IF;
+      // bugfix for jogging in object/world systems
+      IF (coordSys = eJogCoordWorld) OR (coordSys = eJogCoordWorldMixed) OR 
+         (coordSys = eJogCoordTCP) OR (coordSys = eJogCoordTCPMixed) THEN
+         kin.jogPath.SetJogRefSys(eRcuRefSystemWorld);
+      ELSIF (coordSys <> eJogCoordAxes) THEN
+         refSys := TRcuReferenceSystem(gRcDataRobot[kinInx].selectedRefSys);
+         kin.jogPath.SetJogRefSys(refSys);
+      END_IF;
+      SetJogLabel(kinInx, coordSys);
+      chgKinJogSys := FALSE;
+      chgTVJogSys := FALSE;
+   END_WHILE;
+END_ROUTINE 
+
+
+// react upon a change of the jogsystem
+ROUTINE ObserveKey2nd(CONST kinInx : DINT) PRIVATE
+   VAR
+      chgKey2nd  : BOOL;
+      kin        : MAPTO TRcuKinematic;
+      coordSys   : MAPTO TRcJogCoordSys;
+      refSys     : TRcuReferenceSystem;
+      i        : INT;
+      ic       : INT;
+   END_VAR
+
+   WAIT gRcuKinList[kinInx].initDone; // to avoid mapping problems
+   kin := MAP(gRcuKinList[kinInx].kin);
+   coordSys := MAP(gRcDataRobot[kinInx].selectedJogCoord);
+   chgKey2nd := IS_CHANGED(kin.TeachPendantMemories.keyIndex);
+   WHILE TRUE DO
+      WAIT chgKey2nd;
+      SetJogLabel(kinInx, coordSys);
+      chgKey2nd := FALSE;
+   END_WHILE;
+END_ROUTINE 
+
+
+ROUTINE SetJogLabel(CONST kinInx : DINT; coordSys : TRcJogCoordSys) PRIVATE
+   VAR
+      kin      : MAPTO TRcuKinematic;
+      refSys   : TRcuReferenceSystem;
+      i        : INT;
+      ic       : INT;
+      iMax     : INT;
+   END_VAR
+
+   kin := MAP(gRcuKinList[kinInx].kin);
+   IF kin.TeachPendantMemories.keyIndex = 0 THEN
+      RcuTeachPendantControl.led2ndKeyOn := FALSE;
+      IF (coordSys = eJogCoordAxes) THEN
+         gRcData.nrOfJogAxes := kin.nrOfJoints;
+         iMax := gRcData.nrOfJogAxes;
+         IF gRcData.nrOfJogAxes > 7 THEN
+            iMax := 7;
+         END_IF;
+         FOR i:=0 TO iMax-1 DO
+            gRcData.jogLabel[i] := gRcDataRobot[kinInx].jointName[i]; 
+         END_FOR;
+      ELSE
+         IF kin.kinematic.mRobotTyp = eMcuDoorOpener THEN
+            gRcData.nrOfJogAxes := 3 + kin.nrOfAuxJoints;
+            ic := 3;
+         ELSE
+            gRcData.nrOfJogAxes := 6 + kin.nrOfAuxJoints;
+            ic := 6;
+         END_IF;
+         IF (coordSys = eJogCoordTCP) OR (coordSys = eJogCoordTCPMixed) THEN
+            FOR i:=0 TO ic-1 DO
+               gRcData.jogLabel[i] := "T" + gRcDataRobot[kinInx].cartCompName[i]; 
+            END_FOR;
+         ELSE
+            FOR i:=0 TO ic-1 DO
+               gRcData.jogLabel[i] := gRcDataRobot[kinInx].cartCompName[i]; 
+            END_FOR;
+         END_IF;
+         gRcData.nrOfJogAxes := kin.nrOfJoints;
+         iMax := gRcData.nrOfJogAxes;
+         IF gRcData.nrOfJogAxes > 7 THEN
+            iMax := 7;
+         END_IF;
+         FOR i:=ic TO iMax-1 DO
+            IF IsPaintArm7VWrist(kin) THEN
+               gRcData.jogLabel[i] := "FG7"; // FG statt Hilfsachse
+            ELSE
+               gRcData.jogLabel[i] := gRcDataRobot[kinInx].jointName[kin.nrOfMainJoints + i - ic];
+            END_IF;
+         END_FOR;
+      END_IF;
+   ELSE // key2nd
+      RcuTeachPendantControl.led2ndKeyOn := TRUE;
+      gRcData.nrOfJogAxes := kin.nrOfJoints;
+      FOR i:=0 TO 7 DO
+         IF i < gRcData.nrOfJogAxes-7 THEN
+            gRcData.jogLabel[i] := gRcDataRobot[kinInx].jointName[i+7]; 
+         ELSE
+            gRcData.jogLabel[i] := ""; 
+         END_IF;
+      END_FOR;
+   END_IF;
+
+END_ROUTINE
+
+
+// calculate to sum of the wristjoint angles
+ROUTINE CalcWristSumAngle(CONST kinInx : DINT) PRIVATE
+ VAR
+  i             : SINT;
+  index         : SINT;
+  nrBaseJoints  : DINT;
+  nrWristJoints : DINT;
+ END_VAR
+ 
+  WAIT gRcuKinList[kinInx].initDone; // to avoid mapping problems
+  index := kinInx;
+  IF gRcuKinList[index].kin.kinematic.mNrOfWristJoints = 0 THEN
+     RETURN;
+  END_IF;
+  nrBaseJoints  := gRcuKinList[index].kin.kinematic.mNrOfBaseJoints;
+  nrWristJoints := gRcuKinList[index].kin.kinematic.mNrOfWristJoints;
+  WHILE TRUE DO
+    gRcDataRobot[index].wristJointSum := 0;
+    //if wrist axis 5 has two joints the angle of axis 5 does not turn the tube
+    IF (gRcuKinList[index].kin.kinematic.mRobotTyp = eMcuEcopaintVWrist) OR IsPaintArm7VWrist(gRcuKinList[index].kin) THEN
+       FOR i:=0 TO nrWristJoints-1 DO
+           IF (i <> 1) THEN
+              gRcDataRobot[index].wristJointSum := gRcDataRobot[index].wristJointSum + gRcDataRobot[index].jointPosValue[nrBaseJoints+i];
+           END_IF;   
+       END_FOR;
+    ELSE
+       FOR i:=0 TO nrWristJoints-1 DO
+           gRcDataRobot[index].wristJointSum := gRcDataRobot[index].wristJointSum + gRcDataRobot[index].jointPosValue[nrBaseJoints+i];
+       END_FOR;
+    END_IF;
+    gRcuKinList[index].kin.WaitMcMicroCycles(10);
+  END_WHILE;
+END_ROUTINE
+
+// manage which page is shown
+ROUTINE ManagePositionPages() PRIVATE
+ VAR
+  chgAxesPos   : BOOL;
+  chgJointPos  : BOOL;
+  chgWorldPos  : BOOL;
+  chgObjectPos : BOOL;
+  chgExtToolPos: BOOL;
+ END_VAR
+ 
+  chgAxesPos   := IS_CHANGED(gRcData.showAxesPos);
+  chgJointPos  := IS_CHANGED(gRcData.showJointPos);
+  chgWorldPos  := IS_CHANGED(gRcData.showWorldPos);
+  chgObjectPos := IS_CHANGED(gRcData.showObjectPos);
+  chgExtToolPos:= IS_CHANGED(gRcData.showExtToolPos);
+  chgAxesPos   := TRUE;
+  chgJointPos  := TRUE;
+  chgWorldPos  := TRUE;
+  chgObjectPos := TRUE;
+  chgExtToolPos:= TRUE;
+  WHILE TRUE DO
+    IF gRcData.showAxesPos AND chgAxesPos THEN
+       gRcData.showAxesPos   := TRUE;
+       gRcData.showJointPos  := FALSE;
+       gRcData.showWorldPos  := FALSE;
+       gRcData.showObjectPos := FALSE;
+       gRcData.showExtToolPos:= FALSE;
+    END_IF;
+    IF gRcData.showJointPos AND chgJointPos THEN
+       gRcData.showAxesPos   := FALSE;
+       gRcData.showJointPos  := TRUE;
+       gRcData.showWorldPos  := FALSE;
+       gRcData.showObjectPos := FALSE;
+       gRcData.showExtToolPos:= FALSE;
+    END_IF;
+    IF gRcData.showWorldPos AND chgWorldPos THEN
+       gRcData.showAxesPos   := FALSE;
+       gRcData.showJointPos  := FALSE;
+       gRcData.showWorldPos  := TRUE;
+       gRcData.showObjectPos := FALSE;
+       gRcData.showExtToolPos:= FALSE;
+    END_IF;
+   IF gRcData.showObjectPos AND chgObjectPos THEN
+       gRcData.showAxesPos   := FALSE;
+       gRcData.showJointPos  := FALSE;
+       gRcData.showWorldPos  := FALSE;
+       gRcData.showObjectPos := TRUE;
+       gRcData.showExtToolPos:= FALSE;
+    END_IF;    
+   IF gRcData.showExtToolPos AND chgExtToolPos THEN
+       gRcData.showAxesPos   := FALSE;
+       gRcData.showJointPos  := FALSE;
+       gRcData.showWorldPos  := FALSE;
+       gRcData.showObjectPos := FALSE;
+       gRcData.showExtToolPos:= TRUE;
+    END_IF;    
+    chgAxesPos   := FALSE;
+    chgJointPos  := FALSE;
+    chgWorldPos  := FALSE;
+    chgObjectPos := FALSE;
+    chgExtToolPos:= FALSE;
+    WAIT chgAxesPos OR chgJointPos OR chgWorldPos OR chgObjectPos OR chgExtToolPos;
+  END_WHILE;
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE NEW()
+VAR
+   focusChangeHdl     : DINT;
+   focusChangeHdlHdl  : DINT;
+   num                : DINT;
+END_VAR
+
+   WAIT gbRcHandleOk;
+   IF NOT CatalogReadInt(giRcKinHdl, "nrOfKinematics", num, TRUE) THEN
+      // no kinematic registered and nrOfKinematics not in catalog
+      IF NOT CatalogAddInt(giRcKinHdl, "nrOfKinematics", 0, TRUE) THEN
+         CatalogWriteInt(giRcKinHdl, "nrOfKinematics", 0);
+      END_IF;
+   END_IF;
+   IF NOT CatalogAddInt(giRcKinHdl, "focusedKinematic", -1, TRUE) THEN
+      CatalogWriteInt(giRcKinHdl, "focusedKinematic", -1);
+   END_IF;
+   CatalogGetHandleRelative(giRcKinHdl, "focusedKinematic", focusChangeHdl);
+   focusChangeHdlHdl := ExternalHandleHdl(focusChangeHdl, gbRcFocusChanged);
+   gNrHardkeyDim := cNrHardkeyDim;
+END_ROUTINE

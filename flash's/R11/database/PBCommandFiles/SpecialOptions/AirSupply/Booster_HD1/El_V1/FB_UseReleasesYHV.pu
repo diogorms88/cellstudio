@@ -1,0 +1,293 @@
+(*
+Version     | ReleaseDate | Respon | Changes
+----------- ------------------------------------------------
+V2_01.00.00 | 04.11.2010  | PZB    | First release
+V2_01.01.00 | 25.01.2012  | STL    | AddOn:  if a nozzle exchanger is used then replace air supply valve
+V2_01.02.00 | 23.10.2015  | RHI    | Change: air supply valve from AB_Valve_T001 to AB_MainValve_T001
+V2_01.03.00 | 03.03.2020  | KLCH   | Change: rename air supply; delete variant for nozzle exchanger
+v2_02.00.00 | 08.07.2021  | PE3    | Change: Automatic code change (rename device instances)
+
+
+<Functional description>
+Switch on air supply with ...Internal.PreReleaseSetValueAirSupply before all other process devices will be switched on.
+After pressure initiator gets 'TRUE' set the release for all other process devices (AB_Releases).
+<End functional description>
+
+*)
+
+IMPORT_OVER_LISTFILE
+ Nobody
+, nReleasesOut
+, tsGenSysCfg
+, tsReleases
+, AB_Channels
+, FB_SetProtocolAdv
+, AB_MainValve_T001
+, AB_Initiator_T001
+
+END_IMPORT
+
+FUNCTION_BLOCK FB_UseReleasesYHV #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ SV_sGeneralSystemCfg : tsGenSysCfg;
+END_VAR
+
+VAR_EXTERNAL
+ GV_mInitDone : BOOL;
+ GV_sReleases : tsReleases;
+ abChannels : AB_Channels;
+ fbSetProtocol : FB_SetProtocolAdv;
+ abMainValve_LV2 : AB_MainValve_T001;
+ abInitiator_LV2 : AB_Initiator_T001;
+END_VAR
+
+VAR
+ iChannel : INT;
+ mFirst : BOOL;
+ mValve_Set : BOOL;
+ mValve_Set_old : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF GV_mInitDone THEN
+  
+  IF (NOT mFirst) THEN
+    mFirst := TRUE;
+    // Get iChannel only once
+    iChannel := abMainValve_LV2.fGet_ChannelNr();
+  END_IF;
+  
+  IF GV_sReleases.sReleases.Internal.PreReleaseSetValueAirSupply
+     AND
+     (NOT abChannels.fGetChannelAnyError(i_iChannelIdx := iChannel))
+     AND
+     abChannels.fGetChannelEnabled(i_iChannelIdx := iChannel)
+     AND
+     (abChannels.fGetChannelReservedBy(iChannel) = Nobody)
+     AND NOT abMainValve_LV2.fGet_Interlock()
+  THEN
+    // If no release and no error flag is on the channel write InterlocksOut to ReleasesOut
+    abMainValve_LV2.aSetDev_Set(i_mValue      := TRUE,
+                       i_nSignalNode := nReleasesOut);
+  END_IF;
+  
+  mValve_Set := abMainValve_LV2.fGetDevSet_Set(i_nSignalNode:= nReleasesOut);
+  
+  IF (mValve_Set XOR mValve_Set_old) THEN
+    
+    IF SV_sGeneralSystemCfg.mSimulateProcess THEN
+      abInitiator_LV2.aSet_SimValue(i_mValue := mValve_Set);
+    END_IF;
+    
+    fbSetProtocol(Ident    := 1,
+                  BodyID   := 0,
+                  Location := 'FB_UseReleasesYHV',
+                  Message  := CONCAT('Air supply switched: ', BOOL_TO_STRING(mValve_Set_old), ' -> ', BOOL_TO_STRING(mValve_Set)));
+    
+    mValve_Set_old := mValve_Set;
+    
+  END_IF;
+  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 4 30 @Pou 25 
+@@@BEG_Comment@@@
+Version     | ReleaseDate | Respon | Changes
+----------- ------------------------------------------------
+V2_01.00.00 | 04.11.2010  | PZB    | First release
+V2_01.01.00 | 25.01.2012  | STL    | AddOn:  if a nozzle exchanger is used then replace air supply valve
+V2_01.02.00 | 23.10.2015  | RHI    | Change: air supply valve from AB_Valve_T001 to AB_MainValve_T001
+V2_01.03.00 | 03.03.2020  | KLCH   | Change: rename air supply; delete variant for nozzle exchanger
+v2_02.00.00 | 08.07.2021  | PE3    | Change: Automatic code change (rename device instances)
+
+
+<Functional description>
+Switch on air supply with ...Internal.PreReleaseSetValueAirSupply before all other process devices will be switched on.
+After pressure initiator gets 'TRUE' set the release for all other process devices (AB_Releases).
+<End functional description>
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(6)Nobody @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nReleasesOut @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(17)FB_UseReleasesYHV @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(20)SV_sGeneralSystemCfg @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsGenSysCfg @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)GV_mInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)GV_sReleases @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsReleases @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(10)abChannels @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)AB_Channels @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(13)fbSetProtocol @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FB_SetProtocolAdv @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(15)abMainValve_LV2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_MainValve_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(15)abInitiator_LV2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_Initiator_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(8)iChannel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mFirst @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mValve_Set @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mValve_Set_old @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(41)
+IF GV_mInitDone THEN
+  
+  IF (NOT mFirst) THEN
+    mFirst := TRUE;
+    // Get iChannel only once
+    iChannel := abMainValve_LV2.fGet_ChannelNr();
+  END_IF;
+  
+  IF GV_sReleases.sReleases.Internal.PreReleaseSetValueAirSupply
+     AND
+     (NOT abChannels.fGetChannelAnyError(i_iChannelIdx := iChannel))
+     AND
+     abChannels.fGetChannelEnabled(i_iChannelIdx := iChannel)
+     AND
+     (abChannels.fGetChannelReservedBy(iChannel) = Nobody)
+     AND NOT abMainValve_LV2.fGet_Interlock()
+  THEN
+    // If no release and no error flag is on the channel write InterlocksOut to ReleasesOut
+    abMainValve_LV2.aSetDev_Set(i_mValue      := TRUE,
+                       i_nSignalNode := nReleasesOut);
+  END_IF;
+  
+  mValve_Set := abMainValve_LV2.fGetDevSet_Set(i_nSignalNode:= nReleasesOut);
+  
+  IF (mValve_Set XOR mValve_Set_old) THEN
+    
+    IF SV_sGeneralSystemCfg.mSimulateProcess THEN
+      abInitiator_LV2.aSet_SimValue(i_mValue := mValve_Set);
+    END_IF;
+    
+    fbSetProtocol(Ident    := 1,
+                  BodyID   := 0,
+                  Location := 'FB_UseReleasesYHV',
+                  Message  := CONCAT('Air supply switched: ', BOOL_TO_STRING(mValve_Set_old), ' -> ', BOOL_TO_STRING(mValve_Set)));
+    
+    mValve_Set_old := mValve_Set;
+    
+  END_IF;
+  
+END_IF;
+
+@END_Body 
+
+@END_Contents 

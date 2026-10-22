@@ -1,0 +1,128 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 28.01.2014  | SMOH   | First release - Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14 (This file was option14 before. Option14 has been renamed as option 27 with appropriate changes)
+//  v2_01.01.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.02.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.03.00  | 05.10.2018  | KLCH   | Change: code optimization (use Common_CheckChannel_MaterialSupply1, ..2)
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_Option27
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option27
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL_PCL
+			Call Option27_2Materials
+		Case EcoDose_SM_PCL
+			Call Option27_2Materials
+		Case EcoDose_SM_SM
+			Call Option27_2Materials
+		CaseElse
+			Call Option27_1Material
+	EndSelect
+Return
+
+SubRoutine Option27_1Material
+	Call Common_CheckChannel_MaterialSupply1
+	
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T
+		Delete
+	Endif
+	
+	SelectCase Option27
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+			Call Common_AddDevice_BMV1T
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV1T
+	  			BusType 6 //Sercos III
+	  			Vendor  2 //Phoenix Contact
+	  			Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV1T
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			CaseElse
+				Message Wrong bus master (BMV1T)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option27_2Materials
+	Call Common_CheckChannel_MaterialSupply1
+	Call Common_CheckChannel_MaterialSupply2
+
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T_1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.BMV1T_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.BMV1T_2
+		Delete
+	Endif
+	
+	SelectCase Option27
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+			Call Common_AddDevice_BMV1T_1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2
+			Call Common_AddDevice_BMV1T_2
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.BMV1T_1
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV1T_1
+	  			BusType 6 //Sercos III
+	  			Vendor  2 //Phoenix Contact
+	  			Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV1T_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			CaseElse
+				Message Wrong bus master (BMV1T_1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.BMV1T_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.BMV1T_2
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV1T_2
+	  			BusType 6 //Sercos III
+	  			Vendor  2 //Phoenix Contact
+	  			Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV1T_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			CaseElse
+				Message Wrong bus master (BMV1T_2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return

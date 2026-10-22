@@ -1,0 +1,296 @@
+//---------------------------------------------------------------------------------------------------
+//-----------------  Hardware-Endpoint to Fieldbus-Slave new IO-System ------------------------------
+//---------------------------------------------------------------------------------------------------
+   
+//--------------------------------------------------------------------------   
+//                 Inputs
+//--------------------------------------------------------------------------
+CONSTANT GLOBAL
+   //-- Inputs motion mode ------
+   cHW_SLI_mModeAutoEx        : STRING := "SLI_mModeAutoExtern";
+   cHW_SLI_mModeT1            : STRING := "SLI_mModeT1";
+   cHW_SLI_mModeT2            : STRING := "SLI_mModeT2";
+   cHW_SLI_mModeSleep         : STRING := "SLI_mModeSleep";
+   cHW_SLI_mEmergencyStop     : STRING := "SLI_mEmergencyStop";
+   cHW_SLI_mFireAlarm         : STRING := "SLI_mFireAlarm";
+   cHW_SLI_mDeadman           : STRING := "SLI_mDeadman";
+   cHW_SLI_mModeHand          : STRING := "SLI_mProcessHand";
+   
+   //-- Inputs motion control ---------------------------------------------
+   cHW_SLI_mErrorQuit         : STRING := "SLI_mErrorQuit";
+   cHW_SLI_mGhostMode         : STRING := "SLI_mGhostMode";
+   cHW_SLI_mGhostNoMotion     : STRING := "SLI_mGhostNoMotion";
+   cHW_SLI_mReleaseRobot      : STRING := "SLI_mReleaseRobot";
+   cHW_SLI_mPowerOn           : STRING := "SLI_mPowerOn";
+   cHW_SLI_mMovementRelease   : STRING := "SLI_mMovementRelease";
+   cHW_SLI_mStartHoming       : STRING := "SLI_mStartHoming";
+   cHW_SLI_mStartPreHoming    : STRING := "SLI_mStartPreHoming";
+   
+   //-- Inputs collision --------------------------------------------------
+   cHW_SLI_mCollisionBit      : STRING := "SLI_mCollisionBit";
+   
+   //-- Inputs custom teach bits-------------------------------------------
+   cHW_SLI_mCustomTeachCommando : STRING := "SLI_mCustomTeachCommando";
+   
+   //-- Inputs for handling ------------------------------------------------
+   cHW_SLI_mHandlerFinish     : STRING := "SLI_mHandlerFinish";
+   cHW_SLI_mIgnorePartControl : STRING := "SLI_mIgnorePartControl";
+   //-- Inputs state active of all handlers --------------------------------
+   cHW_SLI_mSignalHandlerXActive : STRING := "SLI_mSignalActiveH";
+   //-- Inputs part position -----------------------------------------------
+   cHW_SLI_bSignalPartPos        : STRING := "SLI_bSignalPartPos";
+   //-- Inputs state active of all ordering robots -------------------------
+   cHW_SLI_mSignalOrdererXActive : STRING := "SLI_mSignalActiveR";
+   //-- Inputs part position request ---------------------------------------
+   cHW_SLI_bRequestPartPos        : STRING := "SLI_bRequestPartPosRob";
+   
+   //-- Input requests to handler ------------------------------------------
+   cHW_SLI_mRequestPartXwait  : STRING := "SLI_mRequestPart";
+   cHW_SLI_mRequestPartXposY  : STRING := "SLI_mRequestPart"; 
+   //-- Inputs poscodes from handler   -------------------------------------
+   cHW_SLI_mSignalPartXposY : STRING := "SLI_mSignalPart";
+   //-- Inputs poscodes from handler 1 -------------------------------------
+   cHW_SLI_mSignalH1Active      : STRING := "SLI_mSignalH1Active";
+   cHW_SLI_mSignalH1PartXwait   : STRING := "SLI_mSignalH1Part";
+   cHW_SLI_mSignalH1PartXposY   : STRING := "SLI_mSignalH1Part";
+   cHW_SLI_mSignalH1StateActive : STRING := "SLI_mSignalH1StateActive";
+   //-- Inputs poscodes from handler 2 -------------------------------------
+   cHW_SLI_mSignalH2Active      : STRING := "SLI_mSignalH2Active";
+   cHW_SLI_mSignalH2PartXwait   : STRING := "SLI_mSignalH2Part";
+   cHW_SLI_mSignalH2PartXposY   : STRING := "SLI_mSignalH2Part";
+   cHW_SLI_mSignalH2StateActive : STRING := "SLI_mSignalH2StateActive";
+   //-- Inputs poscodes from handler 3 -------------------------------------
+   cHW_SLI_mSignalH3Active      : STRING := "SLI_mSignalH3Active";
+   cHW_SLI_mSignalH3PartXwait   : STRING := "SLI_mSignalH3Part";
+   cHW_SLI_mSignalH3PartXposY   : STRING := "SLI_mSignalH3Part";
+   cHW_SLI_mSignalH3StateActive : STRING := "SLI_mSignalH3StateActive";
+   //-- Inputs poscodes from handler 4 -------------------------------------
+   cHW_SLI_mSignalH4Active      : STRING := "SLI_mSignalH4Active";
+   cHW_SLI_mSignalH4PartXwait   : STRING := "SLI_mSignalH4Part";
+   cHW_SLI_mSignalH4PartXposY   : STRING := "SLI_mSignalH4Part";
+   cHW_SLI_mSignalH4StateActive : STRING := "SLI_mSignalH4StateActive";
+      
+   //-- Inputs vision ------------------------------------------------------
+   cHW_SLI_mStrobeVisionData  : STRING := "SLI_mStrobeVisionData";
+   cHW_SLI_mVisionDataInvalid : STRING := "SLI_mVisionDataInvalid";
+   cHW_SLI_mGoDirectHome      : STRING := "SLI_mGoDirectHome";
+   cHW_SLI_mDoRemeasure       : STRING := "SLI_mDoRemeasure";  
+   cHW_SLI_mContinueVision    : STRING := "SLI_mContinueVision";
+   cHW_SLI_mAckSyncVision     : STRING := "SLI_mAckSyncVision";  
+   cHW_SLI_mGhostNoVision     : STRING := "SLI_mGhostNoVision";
+   
+   cHW_SLI_wVisionDisplaceX   : STRING := "SLI_wVisionDisplaceX";
+   cHW_SLI_wVisionDisplaceY   : STRING := "SLI_wVisionDisplaceY";
+   cHW_SLI_wVisionDisplaceZ   : STRING := "SLI_wVisionDisplaceZ";
+   cHW_SLI_wVisionDisplaceA   : STRING := "SLI_wVisionDisplaceA";
+   cHW_SLI_wVisionDisplaceB   : STRING := "SLI_wVisionDisplaceB";
+   cHW_SLI_wVisionDisplaceC   : STRING := "SLI_wVisionDisplaceC";
+   cHW_SLI_mEStopVision       : STRING := "SLI_mEStopVision";
+
+   cHW_SLI_mAckMeasureRelative: STRING := "SLI_mAckMeasureRelative";
+   cHW_SLI_mAckStartMeasure   : STRING := "SLI_mAckStartMeasure";
+   cHW_SLI_mGoNextCamPos      : STRING := "SLI_mGoNextCamPos";
+
+   //-- Inputs timedata ---------------------------------------------------
+   cHW_SLI_mAckTimeData       : STRING := "SLI_mAckTimeData";
+   cHW_SLI_mConvRunning       : STRING := "SLI_mConvRunning";
+   
+   // gluing
+   cHW_SLI_bPlcOrder           : STRING := "SLI_bTrans";
+   cHW_SLI_bPlcState           : STRING := "SLI_bState";
+   cHW_SLI_mGripperFixing      : STRING := "SLI_mGripperFixing";
+   cHW_SLI_mGripperVacuum      : STRING := "SLI_mGripperVacuum";
+   cHW_SLI_mGripperBlowOff     : STRING := "SLI_mGripperBlowOff"; 
+   cHW_SLI_mGripperGlassDetect : STRING := "SLI_mGripperGlassDetect";
+   
+   // exchange of masking device
+   cHW_SLI_mMDDeskRelease : STRING := "SLI_mMDDeskRelease";
+   cHW_SLI_mMDGripperOpen : STRING := "SLI_mMDGripperOpen";
+   
+   // BCC
+   cHW_SLI_Spot1Empty : STRING        := "SLI_mSpot1Empty";
+   cHW_SLI_Spot2Empty : STRING        := "SLI_mSpot2Empty";
+   cHW_SLI_Spot3Empty : STRING        := "SLI_mSpot3Empty";
+   cHW_SLI_Spot4Empty : STRING        := "SLI_mSpot4Empty";
+   cHW_SLI_CouplingTool1Done : STRING := "SLI_mCouplingTool1Done";
+   cHW_SLI_CouplingTool2Done : STRING := "SLI_mCouplingTool2Done";
+   cHW_SLI_CouplingTool3Done : STRING := "SLI_mCouplingTool3Done";
+   cHW_SLI_CouplingTool4Done : STRING := "SLI_mCouplingTool4Done";
+   cHW_SLI_Tool1Lifted : STRING       := "SLI_mTool1Lifted";
+   cHW_SLI_Tool2Lifted : STRING       := "SLI_mTool2Lifted";
+   cHW_SLI_Tool3Lifted : STRING       := "SLI_mTool3Lifted";
+   cHW_SLI_Tool4Lifted : STRING       := "SLI_mTool4Lifted";
+   cHW_SLI_Tool1Lowered : STRING      := "SLI_mTool1Lowered";   
+   cHW_SLI_Tool2Lowered : STRING      := "SLI_mTool2Lowered";
+   cHW_SLI_Tool3Lowered : STRING      := "SLI_mTool3Lowered"; 
+   cHW_SLI_Tool4Lowered : STRING      := "SLI_mTool4Lowered"; 
+   cHW_SLI_ApplicationDone : STRING   := "SLI_mApplicationDone";            
+   cHW_SLI_NozzleSensor : STRING      := "SLI_mNozzleSensor";
+   cHW_SLI_HoleNumber : STRING        := "SLI_wHoleNumber"; 
+   
+   //SSK
+   cHW_SLI_PlacePlugOK : STRING          := "SLI_mPlacePlugOK";
+   cHW_SLI_CheckPlugOK : STRING          := "SLI_mCheckPlugOK";
+   cHW_SLI_FillingMagazineDone : STRING  := "SLI_mFillingMagazineDone";
+   cHW_SLI_EmptyMagazine : STRING        := "SLI_mEmptyMagazine";
+   cHW_SLI_CouplingToolDone_PI : STRING  := "SLI_mPlugToolCoupleDone"; 
+   cHW_SLI_UncouplingToolDone_PI : STRING:= "SLI_mPlugToolUncoupleDone"; 
+   cHW_SLI_SpotEmpty_PI : STRING         := "SLI_mSpotPlugEmpty";
+   cHW_SLI_GetPlugDone_PI : STRING       := "SLI_mGetPlugDone";
+   cHW_SLI_PlugCheckOk       : STRING    := "SLI_mPlugCheckOk";  
+   cHW_SLI_MagazinDischarged : STRING    := "SLI_mMagazinDischarged";  
+   
+   //pannel_jogging
+   cHW_SLI_AxisNumber : STRING           := "SLI_bAxisNumber"; 
+   cHW_SLI_KeyPlus    : STRING           := "SLI_mKeyPlus"; 
+   cHW_SLI_KeyMinus   : STRING           := "SLI_mKeyMinus"; 
+   cHW_SLI_JogMode    : STRING           := "SLI_bJogMode";
+   
+   cHW_SLI_CleanRequest   : STRING       := "SLI_mCleanRequest";    
+   //stop&go conveyor 
+   cHW_SLI_mBodyIsFixed      : STRING    := "SLI_mBodyIsFixed";
+   cHW_SLI_mAbortWaitingBody : STRING    := "SLI_mAbortWaitingBody";
+   
+   //SFA - singals are mapped in TRcuSFA
+   cSV_SLI_mGhostNoColor : STRING        := "SLI_mGhostNoColor";
+   cSV_SLI_mAirPress     : STRING        := "SLI_mHV1";
+   
+   
+//--------------------------------------------------------------------------   
+//                 Outputs
+//--------------------------------------------------------------------------   
+   
+   //-- Outputs fixpos -----------------------------------------------------
+   cHW_SLO_mPosUnselect       : STRING := "SLO_mPosUnselect";
+   cHW_SLO_mPosBypass         : STRING := "SLO_mPosBypass";
+   cHW_SLO_mPosHome           : STRING := "SLO_mPosHome";
+   
+   //-- Outputs motion mode ------------------------------------------------
+   cHW_SLO_mModeAutoEx        : STRING := "SLO_mModeAutoExtern";
+   cHW_SLO_mModeT1            : STRING := "SLO_mModeT1";
+   cHW_SLO_mModeT2            : STRING := "SLO_mModeT2";
+   cHW_SLO_mModeSleep         : STRING := "SLO_mModeSleep";
+   
+   //-- Outputs motion control ---------------------------------------------
+   cHW_SLO_mProgramActive     : STRING := "SLO_mProgramActive";
+   cHW_SLO_mTPConnected       : STRING := "SLO_mTPConnected";
+   cHW_SLO_mJogConv           : STRING := "SLO_mJogConv";
+   cHW_SLO_mPowerOn           : STRING := "SLO_mPowerOn";
+   cHW_SLO_mMovementRelease   : STRING := "SLO_mMovementRelease";
+   cHW_SLO_mHomingActive      : STRING := "SLO_mHomingActive";
+   cHW_SLO_mHomingFinished    : STRING := "SLO_mHomingFinished";
+   
+   //-- Outputs vision -----------------------------------------------------
+   cHW_SLO_mBadVisionData     : STRING := "SLO_mBadVisionData";
+   cHW_SLO_mAckVisionData     : STRING := "SLO_mAckVisionData";
+   cHW_SLO_mReqVisionData     : STRING := "SLO_mReqVisionData";
+   cHW_SLO_mMeasureRelative   : STRING := "SLO_mMeasureRelative";
+   cHW_SLO_mStartMeasure      : STRING := "SLO_mStartMeasure";
+   cHW_SLO_mRobInCamPos       : STRING := "SLO_mRobInCamPos";
+   cHW_SLO_mRobInLastCamPos   : STRING := "SLO_mRobInLastCamPos";
+   cHW_SLO_mReqSyncVision     : STRING := "SLO_mReqSyncVision";
+   cHW_SLO_bPathNr            : STRING := "SLO_bPathNr";
+   cHW_SLO_byOrderValuesNr    : STRING := "SLO_bOrderValuesNr";
+   cHW_SLO_mVisionError       : STRING := "SLO_mVisionError";
+   cHW_SLO_mLightOn           : STRING := "SLO_mLightOn";
+   cHW_SLO_mOpenCover         : STRING := "SLO_mOpenCover";
+   cHW_SLO_mWarnToolRange     : STRING := "SLO_mWarnToolRange";
+   
+   //-- Outputs collision --------------------------------------------------
+   cHW_SLO_mCollisionBit      : STRING := "SLO_mCollisionBit";
+   
+   //-- Outputs custom teach bits ------------------------------------------
+   cHW_SLO_mCustomTeachCommando : STRING := "SLO_mCustomTeachCommando";
+      //-- Outputs motion state ------------------------------------------------
+   cHW_SLO_mMotion_ERR        : STRING := "SLO_mMotion_ERR";
+   cHW_SLO_mMotion_WARN       : STRING := "SLO_mMotion_WARN";
+   cHW_SLO_mMotion_ON         : STRING := "SLO_mMotion_ON";
+   cHW_SLO_mMotion_OFF        : STRING := "SLO_mMotion_OFF";
+
+   cHW_SLO_mHandlerstateActive  : STRING := "SLO_mHandlerstateActive";
+   //-- Output requests to handler 1 ---------------------------------------
+   cHW_SLO_mRequestH1Finish     : STRING := "SLO_mRequestH1Finish";
+   cHW_SLO_mRequestH1PartXwait  : STRING := "SLO_mRequestH1Part";
+   cHW_SLO_mRequestH1PartXposY  : STRING := "SLO_mRequestH1Part";
+   //-- Output requests to handler 2 ---------------------------------------
+   cHW_SLO_mRequestH2Finish     : STRING := "SLO_mRequestH2Finish";
+   cHW_SLO_mRequestH2PartXwait  : STRING := "SLO_mRequestH2Part"; 
+   cHW_SLO_mRequestH2PartXposY  : STRING := "SLO_mRequestH2Part";
+   //-- Output requests to handler 3 ---------------------------------------
+   cHW_SLO_mRequestH3Finish     : STRING := "SLO_mRequestH3Finish";
+   cHW_SLO_mRequestH3PartXwait  : STRING := "SLO_mRequestH3Part";   
+   cHW_SLO_mRequestH3PartXposY  : STRING := "SLO_mRequestH3Part";
+   //-- Output requests to handler 4 ---------------------------------------
+   cHW_SLO_mRequestH4Finish     : STRING := "SLO_mRequestH4Finish";
+   cHW_SLO_mRequestH4PartXwait  : STRING := "SLO_mRequestH4Part";
+   cHW_SLO_mRequestH4PartXposY  : STRING := "SLO_mRequestH4Part";
+   //-- Outputs part position from handler ----------------------------------
+   cHW_SLO_mSignalPartXwait     : STRING := "SLO_mSignalPart";
+   cHW_SLO_mSignalPartXposY     : STRING := "SLO_mSignalPart"; 
+   cHW_SLO_bSignalPartPos       : STRING := "SLO_bPartPos";
+   //-- Outputs part position request ---------------------------------------
+   cHW_SLO_bRequestPartPos      : STRING := "SLO_bRequestPartPosH";
+   
+   //-- brakecheck ---------------------------------------------------------
+   cHW_SLO_mOutCheckRequired    : STRING := "SLO_mOutCheckRequired";
+   cHW_SLO_mOutCheckRuns        : STRING := "SLO_mOutCheckRuns";
+   
+   //-- Outputs timedata ---------------------------------------------------
+   cHW_SLO_mTimeDataValid       : STRING := "SLO_mTimeDataValid";
+   cHW_SLO_wProgramNo           : STRING := "SLO_wProgramNo";
+   cHW_SLO_wTimeData            : STRING := "SLO_wTimeData";
+   
+   // gluing
+   cHW_SLO_bPlcOrder           : STRING := "SLO_bStepnmbr";
+   cHW_SLO_PLCTrigger1         : STRING := "SLO_mPLCTrigger1";
+   cHW_SLO_PLCTrigger2         : STRING := "SLO_mPLCTrigger2";
+   cHW_SLO_PLCTrigger3         : STRING := "SLO_mPLCTrigger3";
+   cHW_SLO_PLCTrigger4         : STRING := "SLO_mPLCTrigger4";
+   
+   // exchange of masking device
+   cHW_SLO_mMDDeskOrder    : STRING := "SLO_mMDDeskOrder";
+   cHW_SLO_mMDGripperOrder : STRING := "SLO_mMDGripperOrder";
+    // BCC
+   cHW_SLO_UncoupleTool1 : STRING      := "SLO_mUncoupleTool1";
+   cHW_SLO_UncoupleTool2 : STRING      := "SLO_mUncoupleTool2";
+   cHW_SLO_UncoupleTool3 : STRING      := "SLO_mUncoupleTool3";
+   cHW_SLO_UncoupleTool4 : STRING      := "SLO_mUncoupleTool4";
+   cHW_SLO_CoupleTool1   : STRING      := "SLO_mCoupleTool1";
+   cHW_SLO_CoupleTool2   : STRING      := "SLO_mCoupleTool2";
+   cHW_SLO_CoupleTool3   : STRING      := "SLO_mCoupleTool3";
+   cHW_SLO_CoupleTool4   : STRING      := "SLO_mCoupleTool4";
+   cHW_SLO_LiftTool1     : STRING      := "SLO_mLiftTool1";
+   cHW_SLO_LiftTool2     : STRING      := "SLO_mLiftTool2";
+   cHW_SLO_LiftTool3     : STRING      := "SLO_mLiftTool3";
+   cHW_SLO_LiftTool4     : STRING      := "SLO_mLiftTool4";
+   cHW_SLO_LowerTool1    : STRING      := "SLO_mLowerTool1";   
+   cHW_SLO_LowerTool2    : STRING      := "SLO_mLowerTool2";
+   cHW_SLO_LowerTool3    : STRING      := "SLO_mLowerTool3"; 
+   cHW_SLO_LowerTool4    : STRING      := "SLO_mLowerTool4"; 
+   cHW_SLO_ApplicationStart : STRING   := "SLO_mApplicationStart";            
+   cHW_SLO_CollisionType : STRING      := "SLO_mCollisionType";
+   cHW_SLO_HoleNumber    : STRING      := "SLO_wHoleNumber"; 
+   //SSK
+   cHW_SLO_PlacePlug           : STRING    := "SLO_mPlacePlug";
+   cHW_SLO_CheckPlug           : STRING    := "SLO_mCheckPlug";
+   cHW_SLO_FillMagazine        : STRING    := "SLO_mFillMagazine";
+   cHW_SLO_CoupleTool_PI       : STRING    := "SLO_mPlugToolCouple"; 
+   cHW_SLO_UncoupleTool_PI     : STRING    := "SLO_mPlugToolUncouple"; 
+   cHW_SLO_GetPlug_PI          : STRING    := "SLO_mGetPlug"; 
+   cHW_SLO_DiscargePlugMagazin : STRING    := "SLO_mDiscargePlugMagazin"; 
+   // mastering of save encoders
+   cHW_SLO_mMasterSafeEncoders : STRING := "SLO_mMasterSafeEncoders";
+   //DVD gluing
+   cHW_SLO_mMainNeedle         : STRING    := "SLO_mMainNeedle";
+   cHW_SLO_wTcpSpeed           : STRING    := "SLO_wTcpSpeed";
+   cHW_SLO_wOverride           : STRING    := "SLO_wOverride";
+   //stop&go conveyor 
+   cHW_SLO_mWaitingBodyFixed    : STRING   := "SLO_mWaitingBodyFixed";
+   //SFA - singals are mapped in TRcuSFA
+   cSV_SLO_mAirSupply          : STRING   := "SLO_mBLV1";
+   //MBT Hosdere Axis7 values to PLC
+   cHW_SLO_wA7ToPlc            : STRING   := "SLO_wActXPosition";
+   //InterfaceToProcess
+   cHW_SLO_mAtomizerNotInCleaner : STRING := "SLO_mAtomizerNotInCleaner";
+   
+END_CONSTANT

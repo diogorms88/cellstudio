@@ -1,0 +1,112 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Koch                                                        *
+*    E-Mail:      Nico.Koch@durr.com                                          *
+*                                                                             *
+*    Modul:       Gluing.xml                                                  *
+*    Description: Showing and operating gripper for window gluing             *
+*    Changes:     -                                                           *
+*************************************************************************** -->
+
+<VIEW>
+  <!--  ########################################### Piston Mastering ###########################################   -->
+  <MASKDEF key="TeachView.mask.Gluing" textfile="userTx" permissiondef="userMenuPermission" height="381">
+    <GROUP key="Gluing.label.group1" columns="40" rows="18" col="1" row="1" rspan="4" halign="stretch" valign="stretch">
+      <LABEL key="Gluing.label.title" col="2" row="2" halign="left" />
+
+      <LABEL key="Gluing.label.confirm" visiblevar="_system.gRcuFocusedRobot.gluing.bYesNoVisible" visiblevartype="TT"  col="30" row="2" halign="left" />
+      <LABEL key="Gluing.label.fixing"  col="2" row="3" halign="left" 
+             visiblevar="_system.gRcuFocusedRobot.gluing.bGripperFixingAvailable" visiblevartype="TT" />
+      <BUTTON key="Gluing.label.On1" var="_system.gRcuFocusedRobot.gluing.bReqFixingOn" vartype="TT" 
+              enablevar="_system.gRcuFocusedRobot.gluing.bFixingOnEnabled" enablevartype="TT"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperFixingAvailable" visiblevartype="TT" 
+              col="12" row="3" halign="left" />
+      <BUTTON key="Gluing.label.Off1" var="_system.gRcuFocusedRobot.gluing.bReqFixingOff" vartype="TT" 
+              enablevar="_system.gRcuFocusedRobot.gluing.bFixingOffEnabled" enablevartype="TT"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperFixingAvailable" visiblevartype="TT"
+              col="18" row="3" halign="left" />  
+      <CHECKBOX var="_system.gRcuFocusedRobot.fieldbusIn.Fixing.svBool" vartype="TT" enabled="false"
+      				visiblevar="_system.gRcuFocusedRobot.gluing.bGripperFixingAvailable" visiblevartype="TT"
+      				col="24" row="3" halign="left" />   
+      <BUTTON key="Gluing.label.Yes1" var="_system.gRcuFocusedRobot.gluing.bButtonYes" vartype="TT" 
+              visiblevar="_system.gRcuFocusedRobot.gluing.bFixingYesNoVisible" visiblevartype="TT" 
+              col="30" row="3" halign="left" />      
+      <BUTTON key="Gluing.label.No1" var="_system.gRcuFocusedRobot.gluing.bButtonNo" vartype="TT" 
+              visiblevar="_system.gRcuFocusedRobot.gluing.bFixingYesNoVisible" visiblevartype="TT" 
+              col="36" row="3" halign="left" />
+		
+  		
+      <LABEL key="Gluing.label.vacuum" visiblevar="_system.gRcuFocusedRobot.gluing.bGripperVaccumAvailable" visiblevartype="TT"  col="2" row="5" halign="left" />
+      <BUTTON key="Gluing.label.On2" var="_system.gRcuFocusedRobot.gluing.bReqVacuumOn" vartype="TT" 
+              enablevar="_system.gRcuFocusedRobot.gluing.bVacuumOnEnabled" enablevartype="TT"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperVaccumAvailable" visiblevartype="TT"
+              col="12" row="5" halign="left" />
+      <BUTTON key="Gluing.label.Off2" var="_system.gRcuFocusedRobot.gluing.bReqVacuumOff" vartype="TT" 
+              enablevar="_system.gRcuFocusedRobot.gluing.bVacuumOffEnabled" enablevartype="TT"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperVaccumAvailable" visiblevartype="TT"
+              col="18" row="5" halign="left" />  
+      <CHECKBOX var="_system.gRcuFocusedRobot.fieldbusIn.Vacuum.svBool" vartype="TT" enabled="false"
+      				visiblevar="_system.gRcuFocusedRobot.gluing.bGripperVaccumAvailable" visiblevartype="TT"
+      				col="24" row="5" halign="left" />  		
+      <BUTTON key="Gluing.label.Yes2" var="_system.gRcuFocusedRobot.gluing.bButtonYes" vartype="TT" 
+              visiblevar="_system.gRcuFocusedRobot.gluing.bVacuumYesNoVisible" visiblevartype="TT" 
+              col="30" row="5" halign="left" />      
+      <BUTTON key="Gluing.label.No2" var="_system.gRcuFocusedRobot.gluing.bButtonNo" vartype="TT" 
+              visiblevar="_system.gRcuFocusedRobot.gluing.bVacuumYesNoVisible" visiblevartype="TT" 
+              col="36" row="5" halign="left" />
+    
+      
+      <LABEL key="Gluing.label.blowoff" visiblevar="_system.gRcuFocusedRobot.gluing.bGripperBlowOffAvailable" visiblevartype="TT" col="2" row="7" halign="left" />
+      <BUTTON key="Gluing.label.Start" var="_system.gRcuFocusedRobot.gluing.bReqStartBlowOff" vartype="TT" 
+              enablevar="_system.gRcuFocusedRobot.gluing.bStartBlowOffEnabled" enablevartype="TT"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperBlowOffAvailable" visiblevartype="TT" 
+              col="12" row="7" halign="left" />
+      <BUTTON key="Gluing.label.Stop" var="_system.gRcuFocusedRobot.gluing.bReqStopBlowOff" vartype="TT" 
+              enablevar="_system.gRcuFocusedRobot.gluing.bStopBlowOffEnabled" enablevartype="TT"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperBlowOffAvailable" visiblevartype="TT"
+              col="18" row="7" halign="left" />  
+      <CHECKBOX var="_system.gRcuFocusedRobot.fieldbusIn.BlowOff.svBool" vartype="TT" enabled="false"
+              visiblevar="_system.gRcuFocusedRobot.gluing.bGripperBlowOffAvailable" visiblevartype="TT"
+      		    col="24" row="7" halign="left" /> 
+      <BUTTON key="Gluing.label.Yes3" var="_system.gRcuFocusedRobot.gluing.bButtonYes" vartype="TT" 
+              visiblevar="_system.gRcuFocusedRobot.gluing.bBlowOffYesNoVisible" visiblevartype="TT" 
+              col="30" row="7" halign="left" />      
+      <BUTTON key="Gluing.label.No3" var="_system.gRcuFocusedRobot.gluing.bButtonNo" vartype="TT" 
+              visiblevar="_system.gRcuFocusedRobot.gluing.bBlowOffYesNoVisible" visiblevartype="TT" 
+              col="36" row="7" halign="left" />      
+      
+      
+      <LABEL key="Gluing.label.bus" col="2" row="10" halign="left" />
+      <LABEL key="Gluing.label.in" col="15" row="10" halign="left" />
+      <NUMFIELD var="_system.gRcuFocusedRobot.gluing.iGluingStepIn" vartype="TT" 
+      					col="17" row="10" cspan="4" hspan="2" halign="stretch" enabled="false" />
+   
+      <LABEL key="Gluing.label.out" col="24" row="10" halign="left" />
+      <NUMFIELD var="_system.gRcuFocusedRobot.gluing.iGluingStepOut" vartype="TT" 
+      					col="26" row="10" cspan="4" hspan="2" halign="stretch" enabled="true" />
+
+			<LABEL key="Gluing.label.state" col="31" row="10" halign="right" />
+      <NUMFIELD var="_system.gRcuFocusedRobot.gluing.iGluingState" vartype="TT" 
+      					col="35" row="10" cspan="4" hspan="2" halign="stretch" enabled="false" />
+
+      <LABEL key="Gluing.label.glassdetect" visiblevar="_system.gRcuFocusedRobot.gluing.bGlassDetectAvailable" visiblevartype="TT" col="2" row="12" halign="left" />
+      <CHECKBOX var="_system.gRcuFocusedRobot.fieldbusIn.GlassDetect.svBool" vartype="TT" enabled="false"
+          		visiblevar="_system.gRcuFocusedRobot.gluing.bGlassDetectAvailable" visiblevartype="TT" 
+      				col="24" row="12" halign="left" /> 
+      
+      <BUTTON key="Gluing.label.clear" var="_system.gRcuFocusedRobot.gluing.bButtonClear" vartype="TT" 
+              col="2" row="14" halign="left" />   
+              
+    </GROUP>
+  </MASKDEF>
+</VIEW>

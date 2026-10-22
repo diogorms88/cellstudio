@@ -1,0 +1,635 @@
+(*
+Version     | ReleaseDate | Respon | Changes
+---------------------------------------------------------------------------------------------------
+V2_01.00.00 | 2016-10-18  | STL    | First release
+*)
+
+IMPORT_OVER_LISTFILE
+ F_Version_String
+, cCatRootVersion
+, cCatPathVersion
+, tsStationPLCDataPCU
+, AB_Needle_T001
+, tsPCU
+, FB_SetMessagePCU
+, FB_ReSetMessage
+, tsReleases
+, tyGunTriggers
+, tyDevicesForTrigger
+
+END_IMPORT
+
+FUNCTION_BLOCK FB_Interlocks_MainNeedle #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ io_yGunTriggers : tyGunTriggers;
+ io_yDevicesForTrigger : tyDevicesForTrigger;
+ io_mReleaseNeedles : BOOL;
+ io_mReleaseFlowControl : BOOL;
+END_VAR
+
+SYSTEM_VAR
+ SV_PLC2PCU : tsStationPLCDataPCU;
+END_VAR
+
+VAR_EXTERNAL
+ abYHN1 : AB_Needle_T001 (* Needle  *);
+ abYHN2 : AB_Needle_T001 (* Needle  *);
+ abYHN3 : AB_Needle_T001 (* Needle  *);
+ GV_sPCU : tsPCU;
+ fbSetMessagePCU : FB_SetMessagePCU;
+ fbReSetMessage : FB_ReSetMessage;
+ GV_sReleases : tsReleases;
+END_VAR
+
+VAR_TEMP
+ i : INT;
+ j : INT;
+ k : INT;
+END_VAR
+
+VAR
+ mGetGunTriggers : BOOL;
+ mHN_Set_InterlocksIn : BOOL;
+ iInterlockNeedle : INT;
+ iInterlockNeedleOld : INT;
+ iInterlockGunNr : INT;
+ zTempText : STRING(255);
+ zTempTextOld : STRING(255);
+ mInitDone : BOOL;
+END_VAR
+
+VAR CONSTANT
+ zMyName : STRING(23) := 'FB_Interlocks_AirSupply';
+ zVersion : STRING(15) := 'V2_01.00.00';
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF NOT mInitDone THEN
+  // Set version info to catalog
+  mInitDone := F_Version_String(i_zRoot    := cCatRootVersion,
+                                i_zPath    := cCatPathVersion,
+                                i_zName    := zMyName,
+                                i_zVersion := zVersion);
+END_IF;
+
+//-------------------------------------------------------------------------------------------------
+// Interlocks of needles
+//-------------------------------------------------------------------------------------------------
+
+IF NOT mGetGunTriggers THEN
+  
+  // search for trigger from motion
+  FOR i := 1 TO GV_sPCU.Devices.sNeedles.iNumber DO
+    FOR j := 1 TO cDevicesForTrigger DO
+      IF (io_yDevicesForTrigger[j].mEntriesValid                                        AND
+          (GV_sPCU.Devices.sNeedles.y[i].zName = io_yDevicesForTrigger[j].zDeviceName)) THEN
+        FOR k := 1 TO cMaxGunsForTrigger DO
+          IF io_yDevicesForTrigger[j].ySwitchedByTrigger[k] THEN
+            io_yGunTriggers[i] := k;
+            EXIT;
+          END_IF;
+        END_FOR;
+        IF (io_yGunTriggers[i] <> 0) THEN
+          EXIT;
+        END_IF;  
+      END_IF;  
+    END_FOR;
+  END_FOR;
+  
+  mGetGunTriggers := TRUE;
+  
+END_IF;
+
+// Check releases and trigger signals only when process is released
+IF GV_sReleases.sReleases.External.AtomizerRelease THEN
+  
+  zTempText              := '';
+  iInterlockNeedle       := 0;
+  io_mReleaseFlowControl := FALSE;
+  mHN_Set_InterlocksIn   := FALSE;
+
+  FOR i := 1 TO GV_sPCU.Devices.sNeedles.iNumber DO
+    
+    iInterlockGunNr := 0;
+      
+    FOR j := 1 TO cNumberOfNeedles DO
+      IF (io_yGunTriggers[j] = i) THEN
+        iInterlockGunNr := j;
+        EXIT;
+      END_IF;
+    END_FOR;
+
+    CASE STRING_TO_INT(DELETE(GV_sPCU.Devices.sNeedles.y[i].zName, 
+                              LEN(GV_sPCU.Devices.sNeedles.y[i].zName) - 1, 1)) OF
+      1: 
+          IF abYHN1.fGetDevSet_Set(nInterlocksOut) THEN
+            mHN_Set_InterlocksIn := TRUE;
+            iInterlockNeedle := GV_sPCU.Devices.sNeedles.y[i].iDeviceNr;
+            abYHN2.aSet_HMIRelease(i_mValue := FALSE);
+            abYHN3.aSet_HMIRelease(i_mValue := FALSE);
+          END_IF;
+      2: 
+          IF abYHN2.fGetDevSet_Set(nInterlocksOut) THEN
+            mHN_Set_InterlocksIn := TRUE;
+            iInterlockNeedle := GV_sPCU.Devices.sNeedles.y[i].iDeviceNr;
+            abYHN1.aSet_HMIRelease(i_mValue := FALSE);
+            abYHN3.aSet_HMIRelease(i_mValue := FALSE);
+          END_IF;                             
+      3: 
+          IF abYHN3.fGetDevSet_Set(nInterlocksOut) THEN
+            mHN_Set_InterlocksIn := TRUE;
+            iInterlockNeedle := GV_sPCU.Devices.sNeedles.y[i].iDeviceNr;
+            abYHN1.aSet_HMIRelease(i_mValue := FALSE);
+            abYHN2.aSet_HMIRelease(i_mValue := FALSE); 
+          END_IF;
+  
+    END_CASE;
+          
+    IF (NOT SV_PLC2PCU.tReleases.mReleaseGun[i] OR
+        NOT io_mReleaseNeedles)                 THEN
+      
+      IF (iInterlockGunNr <> 0) THEN
+        IF (zTempText = '') THEN
+          zTempText := GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].zName;
+        ELSE
+          zTempText := CONCAT(zTempText, ' - ', GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].zName);
+        END_IF;
+        GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].mInterlock := TRUE;
+        mHN_Set_InterlocksIn := FALSE;
+      END_IF;
+      
+    ELSIF mHN_Set_InterlocksIn THEN //GV_sPCU.Devices.sNeedles.y[i].Common.Signals.Set.mValue_Interlocks_In
+
+      // Check if more than one needle are triggered
+      IF  (iInterlockNeedle <> iInterlockNeedleOld) AND (iInterlockNeedle <> 0) AND (iInterlockNeedleOld <> 0)THEN
+        
+        GV_sPCU.Devices.sNeedles.y[iInterlockNeedle].mInterlock    := TRUE;
+        GV_sPCU.Devices.sNeedles.y[iInterlockNeedleOld].mInterlock := TRUE;
+        
+        fbSetMessagePCU(i_iIdent         := cFB_Interlocks_Misc,
+                        i_iMsgCount      := 1,
+                        i_iDeviceNr      := i,
+                        i_zLocation      := zMyName,
+                        i_zParam1        := GV_sPCU.Devices.sNeedles.y[iInterlockNeedle].zName,
+                        i_zParam2        := GV_sPCU.Devices.sNeedles.y[iInterlockNeedleOld].zName,
+                        i_zParam3        := '',
+                        i_iChannelNumber := GV_sPCU.Devices.sNeedles.y[i].iChannelNr); 
+        RETURN;
+                  
+      ELSE
+        
+        GV_sPCU.Devices.sNeedles.y[iInterlockNeedle].mInterlock := FALSE;
+        iInterlockNeedleOld := iInterlockNeedle; 
+
+      END_IF;
+
+      io_mReleaseFlowControl := TRUE;
+      
+    ELSE
+      
+      GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].mInterlock := FALSE;
+      
+      iInterlockNeedleOld    := 0;
+      io_mReleaseFlowControl := TRUE;
+      
+    END_IF;
+    
+  END_FOR;
+  
+  // Set info when one or more mainneedle(s) not released
+  IF ((zTempText <> '')            AND
+      (zTempTextOld <> zTempText)) THEN
+    fbReSetMessage(i_iIdent        := cFB_Interlocks_MainNeedleNoRel,
+                   i_iMsgCount     := 1,
+                   i_iDeviceNr     := i,
+                   i_zLocation     := zMyName,
+                   i_zTimeProgName := '',
+                   i_iTimeProgStep := 0,
+                   i_zParam1       := zTempText,
+                   i_zParam2       := '',
+                   i_zParam3       := '');
+  END_IF;
+  
+  zTempTextOld := zTempText;
+  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 145 @Pou 25 
+@@@BEG_Comment@@@
+Version     | ReleaseDate | Respon | Changes
+---------------------------------------------------------------------------------------------------
+V2_01.00.00 | 2016-10-18  | STL    | First release
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(16)F_Version_String @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(15)cCatRootVersion @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCatPathVersion @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(24)FB_Interlocks_MainNeedle @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+25 
+@Var @RT(10)SV_PLC2PCU @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsStationPLCDataPCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)abYHN1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)AB_Needle_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(7)Needle  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abYHN2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)AB_Needle_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(7)Needle  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abYHN3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)AB_Needle_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(7)Needle  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(7)GV_sPCU @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(5)tsPCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(15)fbSetMessagePCU @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)FB_SetMessagePCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(14)fbReSetMessage @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)FB_ReSetMessage @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)GV_sReleases @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsReleases @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(7)zMyName @RT(0) @T @F @DT @RT(10)STRING(23) @RT(0) @T @T @STRING 0 @F @RT(2)23 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(25)'FB_Interlocks_AirSupply' @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(8)zVersion @RT(0) @T @F @DT @RT(10)STRING(15) @RT(0) @T @T @STRING 0 @F @RT(2)15 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(13)'V2_01.00.00' @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)j @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)k @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)mGetGunTriggers @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mHN_Set_InterlocksIn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)iInterlockNeedle @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)iInterlockNeedleOld @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iInterlockGunNr @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)zTempText @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)zTempTextOld @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)io_yGunTriggers @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyGunTriggers @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(21)io_yDevicesForTrigger @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyDevicesForTrigger @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(18)io_mReleaseNeedles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(22)io_mReleaseFlowControl @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(150)
+IF NOT mInitDone THEN
+  // Set version info to catalog
+  mInitDone := F_Version_String(i_zRoot    := cCatRootVersion,
+                                i_zPath    := cCatPathVersion,
+                                i_zName    := zMyName,
+                                i_zVersion := zVersion);
+END_IF;
+
+//-------------------------------------------------------------------------------------------------
+// Interlocks of needles
+//-------------------------------------------------------------------------------------------------
+
+IF NOT mGetGunTriggers THEN
+  
+  // search for trigger from motion
+  FOR i := 1 TO GV_sPCU.Devices.sNeedles.iNumber DO
+    FOR j := 1 TO cDevicesForTrigger DO
+      IF (io_yDevicesForTrigger[j].mEntriesValid                                        AND
+          (GV_sPCU.Devices.sNeedles.y[i].zName = io_yDevicesForTrigger[j].zDeviceName)) THEN
+        FOR k := 1 TO cMaxGunsForTrigger DO
+          IF io_yDevicesForTrigger[j].ySwitchedByTrigger[k] THEN
+            io_yGunTriggers[i] := k;
+            EXIT;
+          END_IF;
+        END_FOR;
+        IF (io_yGunTriggers[i] <> 0) THEN
+          EXIT;
+        END_IF;  
+      END_IF;  
+    END_FOR;
+  END_FOR;
+  
+  mGetGunTriggers := TRUE;
+  
+END_IF;
+
+// Check releases and trigger signals only when process is released
+IF GV_sReleases.sReleases.External.AtomizerRelease THEN
+  
+  zTempText              := '';
+  iInterlockNeedle       := 0;
+  io_mReleaseFlowControl := FALSE;
+  mHN_Set_InterlocksIn   := FALSE;
+
+  FOR i := 1 TO GV_sPCU.Devices.sNeedles.iNumber DO
+    
+    iInterlockGunNr := 0;
+      
+    FOR j := 1 TO cNumberOfNeedles DO
+      IF (io_yGunTriggers[j] = i) THEN
+        iInterlockGunNr := j;
+        EXIT;
+      END_IF;
+    END_FOR;
+
+    CASE STRING_TO_INT(DELETE(GV_sPCU.Devices.sNeedles.y[i].zName, 
+                              LEN(GV_sPCU.Devices.sNeedles.y[i].zName) - 1, 1)) OF
+      1: 
+          IF abYHN1.fGetDevSet_Set(nInterlocksOut) THEN
+            mHN_Set_InterlocksIn := TRUE;
+            iInterlockNeedle := GV_sPCU.Devices.sNeedles.y[i].iDeviceNr;
+            abYHN2.aSet_HMIRelease(i_mValue := FALSE);
+            abYHN3.aSet_HMIRelease(i_mValue := FALSE);
+          END_IF;
+      2: 
+          IF abYHN2.fGetDevSet_Set(nInterlocksOut) THEN
+            mHN_Set_InterlocksIn := TRUE;
+            iInterlockNeedle := GV_sPCU.Devices.sNeedles.y[i].iDeviceNr;
+            abYHN1.aSet_HMIRelease(i_mValue := FALSE);
+            abYHN3.aSet_HMIRelease(i_mValue := FALSE);
+          END_IF;                             
+      3: 
+          IF abYHN3.fGetDevSet_Set(nInterlocksOut) THEN
+            mHN_Set_InterlocksIn := TRUE;
+            iInterlockNeedle := GV_sPCU.Devices.sNeedles.y[i].iDeviceNr;
+            abYHN1.aSet_HMIRelease(i_mValue := FALSE);
+            abYHN2.aSet_HMIRelease(i_mValue := FALSE); 
+          END_IF;
+  
+    END_CASE;
+          
+    IF (NOT SV_PLC2PCU.tReleases.mReleaseGun[i] OR
+        NOT io_mReleaseNeedles)                 THEN
+      
+      IF (iInterlockGunNr <> 0) THEN
+        IF (zTempText = '') THEN
+          zTempText := GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].zName;
+        ELSE
+          zTempText := CONCAT(zTempText, ' - ', GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].zName);
+        END_IF;
+        GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].mInterlock := TRUE;
+        mHN_Set_InterlocksIn := FALSE;
+      END_IF;
+      
+    ELSIF mHN_Set_InterlocksIn THEN //GV_sPCU.Devices.sNeedles.y[i].Common.Signals.Set.mValue_Interlocks_In
+
+      // Check if more than one needle are triggered
+      IF  (iInterlockNeedle <> iInterlockNeedleOld) AND (iInterlockNeedle <> 0) AND (iInterlockNeedleOld <> 0)THEN
+        
+        GV_sPCU.Devices.sNeedles.y[iInterlockNeedle].mInterlock    := TRUE;
+        GV_sPCU.Devices.sNeedles.y[iInterlockNeedleOld].mInterlock := TRUE;
+        
+        fbSetMessagePCU(i_iIdent         := cFB_Interlocks_Misc,
+                        i_iMsgCount      := 1,
+                        i_iDeviceNr      := i,
+                        i_zLocation      := zMyName,
+                        i_zParam1        := GV_sPCU.Devices.sNeedles.y[iInterlockNeedle].zName,
+                        i_zParam2        := GV_sPCU.Devices.sNeedles.y[iInterlockNeedleOld].zName,
+                        i_zParam3        := '',
+                        i_iChannelNumber := GV_sPCU.Devices.sNeedles.y[i].iChannelNr); 
+        RETURN;
+                  
+      ELSE
+        
+        GV_sPCU.Devices.sNeedles.y[iInterlockNeedle].mInterlock := FALSE;
+        iInterlockNeedleOld := iInterlockNeedle; 
+
+      END_IF;
+
+      io_mReleaseFlowControl := TRUE;
+      
+    ELSE
+      
+      GV_sPCU.Devices.sNeedles.y[iInterlockGunNr].mInterlock := FALSE;
+      
+      iInterlockNeedleOld    := 0;
+      io_mReleaseFlowControl := TRUE;
+      
+    END_IF;
+    
+  END_FOR;
+  
+  // Set info when one or more mainneedle(s) not released
+  IF ((zTempText <> '')            AND
+      (zTempTextOld <> zTempText)) THEN
+    fbReSetMessage(i_iIdent        := cFB_Interlocks_MainNeedleNoRel,
+                   i_iMsgCount     := 1,
+                   i_iDeviceNr     := i,
+                   i_zLocation     := zMyName,
+                   i_zTimeProgName := '',
+                   i_iTimeProgStep := 0,
+                   i_zParam1       := zTempText,
+                   i_zParam2       := '',
+                   i_zParam3       := '');
+  END_IF;
+  
+  zTempTextOld := zTempText;
+  
+END_IF;
+
+@END_Body 
+
+@END_Contents 

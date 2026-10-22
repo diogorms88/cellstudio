@@ -1,0 +1,318 @@
+//  Version      | ReleaseDate | Respon  | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 20.12.2016  | KTO     | First release
+//  v2_01.01.00  | 13.01.2018  | PZB     | AddOn: devices for EcoChargeC
+//  v2_01.02.00  | 17.05.2019  | KTO     | AddOn: PaintJet
+//  v2_01.03.00  | 31.05.2019  | PZB     | Change: Revise devices for EcoChargeC/EcoChargeC_2K
+//  v2_01.04.00  | 09.12.2021  | MWT/PZB | Change: remove unused devices of Gen3 BBR1 and BBL1_PL1
+
+Parameter OptionRobGen Option1 Option2 Option78 Option14
+Imports Common
+
+Call Main_RobGen3
+	SelectNode RPC1.R11
+	SelectTab [VariantConfiguration]
+	Message OptionRobGen changed ! IEC-Code change required, please search for "RobGen" in your IEC-project
+END
+
+SubRoutine Main_RobGen3
+	SelectCase Option14
+		Case SercosIII
+			Call Sub_RobGen3_ChangeDevice_BLV1
+			Call Sub_RobGen3_ChangeDevice_BARZY1ER
+			Call Sub_RobGen3_ChangeDevice_BARZY1EV
+			Call Sub_RobGen3_ChangeDevice_BFDS1MB
+			Call Sub_RobGen3_ChangeDevice_BFDS1MB_AB
+			Call Sub_RobGen3_ChangeDevice_BFDS2MB
+			Call Sub_RobGen3_ChangeDevice_BFDS3MB_AB
+			Call Sub_RobGen3_ChangeDevice_BMLD1
+			Call Sub_RobGen3_ChangeDevice_BFDS1
+			Call Sub_RobGen3_ChangeDevice_BFDS1_AB
+			Call Sub_RobGen3_ChangeDevice_BFDS2
+			Call Sub_RobGen3_ChangeDevice_BFDS3_AB
+			//New EcoChargeC
+			Call Sub_RobGen3_ChangeDevice_BL1ZYER
+			Call Sub_RobGen3_ChangeDevice_BL1ZYEV
+			Call Sub_RobGen3_ChangeDevice_BL2ZYER
+			Call Sub_RobGen3_ChangeDevice_BL2ZYEV
+			Call Sub_RobGen3_ChangeDevice_BFDCAN1
+			Call Sub_RobGen3_ChangeDevice_BFDCAN2
+		CaseElse
+			Message Option RobGen3 not available for drive system Profibus
+	EndSelect
+	
+	Call Common_New_PCU_cfg
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BLV1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.BLV1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.BLV1
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+		Call Common_AddDevice_BLV1
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BARZY1ER
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].DockingUnit.BARZY1ER
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].DockingUnit.BARZY1ER
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].DockingUnit
+		Call Common_AddDevice_BARZY1ER
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BARZY1EV
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].DockingUnit.BARZY1EV
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].DockingUnit.BARZY1EV
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].DockingUnit
+		Call Common_AddDevice_BARZY1EV
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS1MB
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint.BFDS1MB
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint.BFDS1MB
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint
+		Call Common_AddDevice_BFDS1MB
+	EndIf
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BFDS1MB
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BFDS1MB
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+		Call Common_AddDevice_BFDS1MB
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS1MB_AB
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a.BFDS1MBa
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a.BFDS1MBa
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a
+		Call Common_AddDevice_BFDS1MB_AB
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a.BFDS1MBa
+		Call Common_ConfigDevice_BFDS1MBa
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.b.BFDS1MBb
+		Call Common_ConfigDevice_BFDS1MBb
+	EndIf
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a.BFDS1MBa
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a.BFDS1MBa
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a
+		Call Common_AddDevice_BFDS1MB_AB
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a.BFDS1MBa
+		Call Common_ConfigDevice_BFDS1MBa
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.b.BFDS1MBb
+		Call Common_ConfigDevice_BFDS1MBb
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS2MB
+	SelectCase Option1 // Process type
+		Case EcoPurgeLCC2_2K
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener.BFDS2MB
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener.BFDS2MB
+				Delete
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener
+				Call Common_AddDevice_BFDS2MB
+			EndIf
+		CaseElse
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].PumpHardener.BFDS2MB
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].PumpHardener.BFDS2MB
+				Delete
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].PumpHardener
+				Call Common_AddDevice_BFDS2MB
+			EndIf
+	EndSelect
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS3MB_AB
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.a.BFDS3MBa
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.a.BFDS3MBa
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_
+		Call Common_AddDevice_BFDS3MB_AB
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.a.BFDS3MBa
+		Call Common_ConfigDevice_BFDS3MBa
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.b.BFDS3MBb
+		Call Common_ConfigDevice_BFDS3MBb
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BMLD1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BMLD1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BMLD1
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+		Call Common_AddDevice_BMLD1
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BL1ZYER
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1.BL1ZYER
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1.BL1ZYER
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1
+		Call Common_AddDevice_BL1ZYER
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BL1ZYEV
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1.BL1ZYEV
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1.BL1ZYEV
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1
+		Call Common_AddDevice_BL1ZYEV
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BL2ZYER
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2.BL2ZYER
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2.BL2ZYER
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2
+		Call Common_AddDevice_BL2ZYER
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BL2ZYEV
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2.BL2ZYEV
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2.BL2ZYEV
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2
+		Call Common_AddDevice_BL2ZYEV
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint.BFDS1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint.BFDS1
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint
+		Call Common_AddDevice_BFDS1
+		Call Common_Configure_HWSignals_BFDS1
+		Call Common_Configure_TrBr_BFDS1
+	EndIf
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BFDS1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BFDS1
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+		Call Common_AddDevice_BFDS1
+		Call Common_Configure_HWSignals_BFDS1
+		Call Common_Configure_TrBr_BFDS1
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS2
+	SelectCase Option1 // Process type
+		Case EcoPurgeLCC2_2K
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener.BFDS2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener.BFDS2
+				Delete
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener
+				Call Common_AddDevice_BFDS2
+				Call Common_Configure_HWSignals_BFDS2
+				Call Common_Configure_TrBr_BFDS2
+			EndIf
+		CaseElse
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].PumpHardener.BFDS2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].PumpHardener.BFDS2
+				Delete
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].PumpHardener
+				Call Common_AddDevice_BFDS2
+				Call Common_Configure_HWSignals_BFDS2
+				Call Common_Configure_TrBr_BFDS2
+			EndIf
+	EndSelect
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS1_AB
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a.BFDS1a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a.BFDS1a
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_
+		Call Common_AddDevice_BFDS1_AB
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.a.BFDS1a
+		Call Common_ConfigDevice_BFDS1a
+		Call Common_Configure_HWSignals_BFDS1a
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].StockPaint_.b.BFDS1b
+		Call Common_ConfigDevice_BFDS1b
+		Call Common_Configure_HWSignals_BFDS1b
+		
+		Call Common_Configure_TrBr_BFDS1_AB
+	EndIf
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a.BFDS1a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a.BFDS1a
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_
+		Call Common_AddDevice_BFDS1_AB
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.a.BFDS1a
+		Call Common_ConfigDevice_BFDS1a
+		Call Common_Configure_HWSignals_BFDS1a
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorChanger_.b.BFDS1b
+		Call Common_ConfigDevice_BFDS1b
+		Call Common_Configure_HWSignals_BFDS1b
+		
+		Call Common_Configure_TrBr_BFDS1_AB
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDS3_AB
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.a.BFDS3a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.a.BFDS3a
+		Delete
+			
+	   //add device
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_
+		Call Common_AddDevice_BFDS3_AB
+		//configure BFDS3a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.a.BFDS3a
+		Call Common_ConfigDevice_BFDS3a
+		//configure BFDS3b
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Hardener_.b.BFDS3b
+		Call Common_ConfigDevice_BFDS3b
+		
+		//Configure BFDS3b as virtual device (optional)
+		SelectTab [VirtualDevices]
+		//Set link to real device
+		VirtualDeviceSetReference PCU.Hardener_.BFDS3a
+		
+		//Trigger Brush configuration
+		Call Common_Configure_TrBr_BFDS3_AB
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDCAN1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1.BFDCAN1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1.BFDCAN1
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine1
+		Call Common_AddDevice_BFDCAN1
+		Call Common_Configure_HWSignals_BFDCAN1
+	EndIf
+Return
+
+SubRoutine Sub_RobGen3_ChangeDevice_BFDCAN2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2.BFDCAN2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2.BFDCAN2
+		Delete
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ColorLine2
+		Call Common_AddDevice_BFDCAN2
+		Call Common_Configure_HWSignals_BFDCAN2
+	EndIf
+Return

@@ -1,0 +1,155 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option20 OptionShotMeter
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "PistonFill" "" 14 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+    SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			Add_TPSignal "ShotMeter1Sub_?.YAV1?.Set"
+	EndSelect
+	Add_TPSignal "ShotMeter1Sub_?.YBV1?.Set"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetVolume"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetAccelerationTime"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.EnableMinPresCtrl"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderDone"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.UseCalculatedVolume"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetQuantity"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.ContainedVolume"
+Return
+
+SubRoutine Sub_Add_TPSteps
+	SelectCase Option20 // Shot Meter Single
+		Case 0 // If not selected, add following time step
+			Add_TPStepTime "CloseYAV1" 0.2 True ""
+	EndSelect
+	Add_TPStepEvent "OpenYBV1" False 0.2 True 0 True False None 0 And False 0 "" ""
+	Add_TPStepEvent "FillPiston" False 120 False 4 True True ChannelError 3 Or False 0 "" ""
+	Add_TPStepTime "CloseYBV1" 0.2 True ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, use following signals
+			Select_TPStep "CloseYAV1"
+			// First: Apply base settings to all signals
+			Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" False
+			Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" False
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" False
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 0
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetAccelerationTime" 0
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.EnableMinPresCtrl" False
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.UseCalculatedVolume" True
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 0
+			Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" False 0 GreaterEqual 0
+	EndSelect
+			
+	// Step 2
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, use following signals
+			Select_TPStep "OpenYBV1"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" True
+			SelectCase OptionShotMeter
+				Case SM_113ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 90 GreaterEqual 0
+				Case SM_590ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 570 GreaterEqual 0
+				Case SM_300ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 280 GreaterEqual 0
+				Case SM_600ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 580 GreaterEqual 0
+			EndSelect
+		Case 1 // If selected, use following signals
+			Select_TPStep "OpenYBV1"
+			// First: Apply base settings to all signals
+			Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" True
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" False
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 0
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetAccelerationTime" 0
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.EnableMinPresCtrl" False
+			Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 0
+			SelectCase OptionShotMeter
+				Case SM_113ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 90 GreaterEqual 0
+				Case SM_590ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 570 GreaterEqual 0
+				Case SM_300ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 280 GreaterEqual 0
+				Case SM_600ccm
+					Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" True 580 GreaterEqual 0
+			EndSelect
+	EndSelect
+
+	// Step 3
+	Select_TPStep "FillPiston"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" True
+	SelectCase OptionShotMeter
+		Case SM_113ccm
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 90
+		Case SM_590ccm
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 570
+		Case SM_300ccm
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 280
+		Case SM_600ccm
+			Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 580
+	EndSelect
+	Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetAccelerationTime" 800
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.EnableMinPresCtrl" True
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" True True
+	Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 1800
+
+	// Step 4
+	Select_TPStep "CloseYBV1"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" False
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderFillAbsolute" False
+	Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetVolume" 0
+	Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetAccelerationTime" 0
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.EnableMinPresCtrl" False
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderDone" False False
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following step
+			Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.UseCalculatedVolume" False
+	EndSelect
+	Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetQuantity" 0
+	Act_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.ContainedVolume" False 0 GreaterEqual 0
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "pistonfill" True
+Return

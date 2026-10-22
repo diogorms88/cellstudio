@@ -1,0 +1,530 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : _RcuDefinitions.ttp
+*  First Author : pen
+*  Date         : 15.11.2001
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Rcu specific global Variables, Constants, Types, Routines
+*------------------------------------------------------------------------------
+* 28.08.04 nmr: Bugfixing in StringToInt
+* 25.01.05 nmr: new flag gbProgDataChanged in consideration of actual 
+*               Mcu-coordinatesystem in RcuReadTransformedActPos
+* 16.02.05 nmr: Enumeration TTraceLevel as well as routines DebugPrint and 
+*               TraceLevel to view  traceWord-dependent informations added
+*               Semaphore: new flag-array gyRcuSemaphore and new Enumeration
+*               TRcuSemaphoreEnum
+* 29.03.05 nmr: New Flag gbEquipmentReady for Bootupcontrol
+* 08.09.05 nmr: changes fpr Teachview 2.14, new routine WaitIOCycles 
+*               to wait a number of cycles of the standard io-timer (8 ms),
+*               this is better than a sleep
+* 01.12.05 BMA: new Trace Levels eTraceTracking and eTraceInterfaceBCU
+*)
+
+
+(*
+   Belegung der Userdaten der diversen Mcu-DB-Objekte:
+   
+   TMcuPosition:
+      mUserData.mDataInt[0] ... Zeilennummer im Enduserprogramm aus der diese Position 
+         angelegt wurde (typischerweise Zeile in dem das Makro (zB. LIN) aufgerufen wurde)
+         -1 = kein Enduserbezug angebbar
+         Die Zeilennummer wird bei der Ausgabe der Mcu-Dynamikinfos benötigt und ist
+         daher unbedingt anzugeben.
+
+   TMcuSegment (dazu auch Enumeration TSegUserData : (eSegOvlId := 0, eSegStackHdl := 1)):
+      mUserData.mDataInt[0] ... Handler- und Trackingstatus dieses Segments
+      mUserData.mDataInt[1] ... Überschleifdatensatz dieses Segments
+      mUserData.mDataInt[2] ... Überschleifdatensatz für nächstes Segment
+      mUserData.mDataInt[3] ... Callstackhandle zur Zeile im Enduserprogramm aus der
+         dieses Segment angeleg wurde (zB. durch ein LIN-Makro)
+         
+      nur bei Rückwärtsfahrsegmenten:
+      mUserData.mDataInt[4] ... SegmentID des Segments der Vorwärtsbahn auf dem 
+         die Startposition dieses Rückwärtssegments liegt
+      mUserData.mDataInt[5] ... SegmentID des Segments der Vorwärtsbahn auf dem 
+         die Endposition dieses Rückwärtssegments liegt      
+      mUserData.mDataFloat[0] ... Segmentparameter der Startposition dieses 
+         Segments auf der korrespondierenden Segment der Vorwärtsbahn
+      mUserData.mDataFloat[1] ... Segmentparameter der Endposition dieses 
+         Segments auf der korrespondierenden Segment der Vorwärtsbahn
+
+   TMcuJob:  
+      bei allen Triggern:
+      mUserData.mDataInt[0] ... type : TRcuTriggerType (Gun, Brush, Process )
+      mUserData.mDataInt[1] ... number of job on segment (+ 100*line-number of the corresponding segment)
+      mUserData.mDataInt[2] ... stackHdl of the UserProg-Callstack of the setBrush-macro in the end-user program
+
+      bei Brushtriggern: 
+      mUserData.mDataInt[3] ... gunNumber
+      mUserData.mDataInt[4] ... brushNumber
+
+      bei Guntrigger:
+      mUserData.mDataInt[3] ... number
+      
+      bei Processtrigger:
+      mUserData.mDataInt[3] ... command      
+*)
+
+(*******************************************************************************
+* globals
+*)
+
+CONSTANT GLOBAL
+    // maximum number of jog dimensions
+   cgiRcuMaxJogDim       : DINT := 7;
+   cgiNrMotionBuffer     : DINT := 5;
+   cgiMaxSelectLevels    : DINT := 10;
+   cgiTimeTableSize      : DINT := 40;
+   cgiTimeTableBody      : SINT := 2;
+   cgiMaxdie_BCC         : INT  := 2; 
+   cgTM                  : DINT := 60000;
+   cgiSizeEcoTalkVarList : SINT := 20;
+   cgiNrNeedlesMultigun  : SINT := 16;
+   cgiMaxGuns            : SINT := 4; // maximum number of Guns for GUN, SETBRUSH, NC_SET_NOZZLE
+END_CONSTANT
+
+TYPE GLOBAL
+   TRcuTeachPendantMemories : STRUCT
+      selectedDisplayCoord : TRcuCoordSystem;
+      selectedObjectSystem : DINT;
+      jogOverride          : DINT; //jog-Override in promille, incremental = <0
+      jogOverridePercent   : DINT; //jog-Override
+      keyIndex             : DINT;
+   END_STRUCT;
+   
+   TTraceLevel : (eTraceCommon, // 0
+                  eTraceSegment,
+                  eTraceTrigger,
+                  eTraceGoldenRepos,
+                  eTraceProcess,
+                  eTraceAutoControl,
+                  eTraceBackward,
+                  eTraceEquipment,
+                  eTraceMotionStep,
+                  eTraceAreaJob,
+                  eTraceHotPlug, //10
+                  eTraceRcuConfig,
+                  eTraceRcuConveyor,
+                  eTraceRcuTeachPendantInterface,
+                  eTraceRcuHandler,
+                  eTraceRcuDrive,
+                  eTraceMotionModesFine,
+                  eTraceTracking,
+                  eTraceInterfaceBCU,
+                  eTriggerVerify,
+                  eTraceReposDebug,  // 20
+                  eTraceVision,
+                  eTraceTorqueLogger,
+                  eTraceExtTool,
+                  eTraceUploadHandshake,
+                  eTracePaintChecker,
+                  eTraceGluing,
+                  eTraceHoming,
+                  eTraceTcpIp
+                  );
+
+   TRcuSemaphoreEnum : (eInvalidSemaphore := -1, 
+                        eAppendSegmentSemaphore := 0, 
+                        eRefSysSetSemaphore,
+                        eFlowSemaphore,
+                        eRcDataSemaphore,
+                        eRcMotionStartSemaphore,
+                        (*$$$$$* motionstep *$$$$$*)
+                        eRcMotionStepSema,
+                        eMaxSemaphore);
+
+   TSegUserData : (eSegSpecialState := 0, eSegOvlId := 1, eSegNextOvlId := 2, eSegStackHdl := 3, eSegStartSegId := 4, eSegEndSegId := 5);
+   
+   String32  : STRING [32];
+   String8   : STRING [8];
+   
+   // variant data type, e.g. reading from process.cfg
+   TDataType : (
+      eTypeSint,
+      eTypeInt,
+      eTypeDint,
+      eTypeLint,
+      eTypeReal,
+      eTypeString
+   );
+   
+   // variant data type, e.g. reading from process.cfg
+   TDataVariant : STRUCT
+      CASE dataType : TDataType OF
+         eTypeSint   : (dataSint : SINT);
+         eTypeInt    : (dataInt : INT);
+         eTypeDint   : (dataDint : DINT);
+         eTypeLint   : (dataLint : LINT);
+         eTypeReal   : (dataReal : REAL);
+         eTypeString : (dataString : STRING);
+   END_STRUCT;
+   
+   TRcuStationType : (eStopAndGo, eTracking);
+   
+END_TYPE
+
+CONSTANT GLOBAL
+   cgiMaskBit0  : DINT := 16#00000001;
+   cgiMaskBit1  : DINT := 16#00000002;
+   cgiMaskBit2  : DINT := 16#00000004;
+   cgiMaskBit3  : DINT := 16#00000008;
+   cgiMaskBit4  : DINT := 16#00000010;
+   cgiMaskBit5  : DINT := 16#00000020;
+   cgiMaskBit6  : DINT := 16#00000040;
+   cgiMaskBit7  : DINT := 16#00000080;
+   cgiMaskBit8  : DINT := 16#00000100;
+   cgiMaskBit9  : DINT := 16#00000200;
+   cgiMaskBit10 : DINT := 16#00000400;
+   cgiMaskBit11 : DINT := 16#00000800;
+   cgiMaskBit12 : DINT := 16#00001000;
+   cgiMaskBit13 : DINT := 16#00002000;
+   cgiMaskBit14 : DINT := 16#00004000;
+   cgiMaskBit15 : DINT := 16#00008000;
+   cgiMaskBit16 : DINT := 16#00010000;
+   cgiMaskBit17 : DINT := 16#00020000;
+   cgiMaskBit18 : DINT := 16#00040000;
+   cgiMaskBit19 : DINT := 16#00080000;
+   cgiMaskBit20 : DINT := 16#00100000;
+   cgiMaskBit21 : DINT := 16#00200000;
+   cgiMaskBit22 : DINT := 16#00400000;
+   cgiMaskBit23 : DINT := 16#00800000;
+   cgiMaskBit24 : DINT := 16#01000000;
+   cgiMaskBit25 : DINT := 16#02000000;
+   cgiMaskBit26 : DINT := 16#04000000;
+   cgiMaskBit27 : DINT := 16#08000000;
+   cgiMaskBit28 : DINT := 16#10000000;
+   cgiMaskBit29 : DINT := 16#20000000;
+   cgiMaskBit30 : DINT := 16#40000000;
+   cgiMaskBit31 : DINT := -16#80000000;
+   cgiMaxMcUpdCnt : DINT := 21700;
+END_CONSTANT 
+		                                        
+VAR GLOBAL
+   // *** global teach-settings ***
+   
+   // reference system in which cartesian positions will be teached
+   gRcuTeachRefSystem    : TRcuReferenceSystem;
+   // offset object which will be used for teaching of joints-positions with
+   // joints tracking
+   gRcuTeachOffsetObject : TRcuOffsetObject;
+   
+   // *** global data to maintain the connection to a specific robot ***
+
+   // kinematic which is in the dialogue-system-focus
+   gRcuFocusedKinematic : MAPTO TRcuKinematic; 
+   // robot which is in the dialogue-system-focus
+   gRcuFocusedRobot : MAPTO TRcuRobot; 
+   // indicates a change of the focused kinematic
+   gbRcFocusChanged      : BOOL; 
+   // indicator for changing of the focused kinematic (inverted upon every change)
+   gbRcuFocusFlipFlop    : BOOL;
+ 
+   // *** global kinematic settings ***
+   
+   // structur for deactivating dynamic limits
+   gRcuNoVeloRestriction : TMcuVeloLimits; 
+   // Decide whether readBackValues are used for visualisation, otherwise 
+   // the actueal values from mcu are used
+   gbRcuUseReadBackVals   : BOOL;
+   // Type of frames for the MCU "Euler" or "Kardan"
+   gMcuFrameTyp          : TMcuFrameTyp; 
+   // indicates if new segments should be appended as late as possible
+   gbMcAppendLate        : BOOL;
+   // maximum number of active motion-mommands
+   giRcuMaxCmd            : DINT; 
+   
+   giTimeOutDownload3DOnsite : DINT;
+   
+   // *** global settings for drives ***
+   
+   // Decide whether the RCU manages the Drive-Update. Otherwise the drive update
+   // is managed by the MCU.
+   gbRcuManagesDriveUpdate    : BOOL;
+   // Name of the timer for drag-error observation.
+   giRcuDriveControlTimerName : STRING;
+   // is incremented according to iDriveControlTime / iDriveControlTime
+   giRcuDriveControlCounter   : DINT;
+   // Factor which determines how many revolutions difference are allowed for
+   // the revolution drag-error observation. <=0 means no revolution drag-error
+   // observation.
+   grRcuDriveControlFactor    : REAL;
+   
+   // Counter for NEW-Routine of TRcuDrive
+   giCounter : DINT := 6;
+   // cycletime
+   grCycleTime                 : TMcuReal;
+   
+   // *** global state variables ***
+   
+   gbBootupFinished        : BOOL; // indicator for finished system start  
+   gbEquipmentReady        : BOOL; // indicator for finished initialisation of robot
+//   gbProgDataChanged       : BOOL; // indicates a change in program's save-data
+   gbRcuSimulateStationPLC : BOOL; // Simulation of the station PLC     
+   gbEMTObservationDeactivated :BOOL;    
+   giRcuTrackingStyle      : DINT; // with or without macros, ...
+   gRcuStationType         : TRcuStationType; // Stop&Go or Tracking
+   gbIsTrackingStation     : BOOL; //used for teachview to show tracking-userpage
+   
+   gbEnableWaitConvTolerance : BOOL;
+   grWaitConvTolerance     : REAL;
+   grConveyorDelayTime     : REAL;
+   
+   // Decide whether initial override settings should be reset upon unloading
+   // projects
+   gbRcuRevivingOverride   : BOOL;
+   gbRcHandleOk            : BOOL; // indicator for obtained rc catalog handle
+   
+   // *** common data ***
+   
+   gsRcuTeachPendantName     : STRING; // name of the handterminal
+   gyRcuSemaphore  : ARRAY [eMaxSemaphore] OF BOOL;  
+   giRcBaseHdl     : DINT; // catalog handle for rc root-directory
+   giRcKinHdl      : DINT; // catalog handle for rc kinematic directory
+   giTcBaseHdl     : DINT; // catalog handle for tc root-directory
+   giMcBaseHdl     : DINT; // catalog handle for mc root-directory
+   giMcKinHdl      : DINT; // catalog handle for rc kinematic directory
+   giIecBaseHdl    : DINT; // catalog handle for iec root-directory
+   giSysBaseHdl    : DINT; // catalog handle for system root-directory
+   giRootHdl       : DINT; // catalog handle for root-directory
+   giTraceWord      : DINT;   
+
+   // *** helpful structures ***
+   
+   eX    : TMcuVector3;
+   eY    : TMcuVector3;
+   eZ    : TMcuVector3;  
+   gyBits : ARRAY [32] OF DINT; // array of numbers useable for binary operations
+   gMcuWorldRefSysId : TMcuDbObjID;
+   
+   // Multikinematic
+   gyiNrRcu : ARRAY[cgiRcuMaxKinematics] OF INT := (1, 0, 0, 0);
+   gyiNrBcu : ARRAY[cgiRcuMaxKinematics] OF INT := (1, 0, 0, 0);
+   gyiNrPcu : ARRAY[cgiRcuMaxKinematics] OF INT := (1, 0, 0, 0);
+   giAnzKin : INT := 1;
+   giNrMasterRobot : INT := 0;
+   gsMasterName : STRING;
+   
+   iCntMcuCreateRestartPathPosFalse : DINT;
+   iCntRcuCreateRestartPathPosFalse : DINT;
+   iCntMcuCreateRestartPathPosBound : DINT;
+   iCntMcuCreateRestartPathPosOk : DINT;
+   iCntReposRequired : DINT;
+   iCntReposNotRequired : DINT;
+   iCntMinorError : DINT;
+   gTriggerError : DINT;
+   
+   giNoBodydata : INT := 20;
+   giNoOfTypes  : INT;
+   giRatioMainToMicroIP : DINT;
+END_VAR
+
+
+(*-----------------------------------------------------------------------------
+* Read the current cartesian position of the given kinematic and express it in
+* the given reference System.
+*)
+ROUTINE RcuReadTransformedActPos(CONST kin : TRcuKinematic; CONST refSys :
+   TRcuReferenceSystem; frame : TMcuFrame) : BOOL GLOBAL
+   VAR
+      actPos : TMcuPosCart;
+      calcPos : TMcuPosCart;
+      refSysId : TMcuDbObjID;
+   END_VAR
+
+   actPos.mFrame.mPos := kin.actCartVals.mPos;
+   actPos.mFrame.mOri := kin.actCartVals.mOri;
+   actPos.mRefSysID   := gMcuWorldRefSysId; //deprecated - McuGetRefSysForActCartVals
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+
+   // don't check earlier to avoid delays
+   IF NOT RcuRefSysGetMcuId(refSys, refSysId) THEN
+      RcuSetMessageOnce(_RcuDefinitions_WarDefRefSysInv, kin.kinListInx, 1, 0, "_RcuDefinitions.RcuReadTransformedActPos", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kin.kinListInx, 9, 0, "_RcuDefinitions.RcuReadTransformedActPos", kin.robotName, "McuTransformPosCart");
+         RETURN FALSE;
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         RcuSetMessageOnce(_RcuDefinitions_ErrWrngFrTyp, kin.kinListInx, 1, 0, "_RcuDefinitions.RcuReadTransformedActPos");
+      END_IF;
+      frame := calcPos.mFrame;
+   ELSE
+      frame := actPos.mFrame;
+   END_IF;
+
+   RETURN TRUE;
+END_ROUTINE
+
+
+// distribute unique instanceId's
+ROUTINE RcuGetInstanceId() : DINT GLOBAL
+
+   IF instanceId >= 2.0e9  THEN
+      instanceId := 1;
+   ELSE
+      instanceId := instanceId + 1;
+   END_IF;
+   RETURN instanceId;
+END_ROUTINE
+
+
+// extract (first) number from a string, leading and tailing non numeric 
+// characters are ignored
+ROUTINE StringToInt(VAR_IN string : STRING) : DINT GLOBAL
+   VAR
+      i   : DINT;
+      chr : STRING;
+      nr  : DINT;
+      int : DINT;
+      len : DINT;
+      negativ : BOOL;
+   END_VAR
+   
+   len := StrLen(string);
+   
+   // find "-" or first numeric character, ignore all other characters
+   REPEAT 
+      i := i + 1;
+      chr := StrMid(string, 1, i);
+   UNTIL (i > len - 1) OR (chr = "-") OR 
+      ((ORD(chr) >= ORD("0")) AND (ORD(chr) <= ORD("9")));
+      
+   IF chr = "-" THEN
+      negativ := TRUE;
+      i := i + 1;
+      chr := StrMid(string, 1, i);
+   END_IF;
+   
+   // build number until a not numeric character appears, ignore "." and ","
+   WHILE (i <= len) AND ((chr = ".") OR (chr = ",") OR 
+         ((ORD(chr) >= ORD("0")) AND (ORD(chr) <= ORD("9")))) DO
+      IF (ORD(chr) >= ORD("0")) AND (ORD(chr) <= ORD("9")) THEN
+         nr := ORD(chr) - ORD("0");
+         int := int * 10 + nr;
+      END_IF;
+      i := i + 1;
+      chr := StrMid(string, 1, i);
+   END_WHILE;
+   
+   IF negativ THEN
+      int := -int;
+   END_IF;
+   
+   RETURN int;
+END_ROUTINE
+  
+
+// converts given real to string with a length of d characters
+// -> nice formating but slow!!
+ROUTINE RealToStr(VAR_IN r : REAL; VAR_IN d : DINT) : STRING GLOBAL
+VAR 
+   str : STRING;
+END_VAR
+
+   str := STR(r);
+   IF r >= 0.0 THEN
+      str := " " + str;
+   END_IF;
+   d := d + 1;
+   RETURN StrLeft(str, d);
+END_ROUTINE
+
+ROUTINE McuRealToStr(VAR_IN r : TMcuReal; VAR_IN d : DINT) : STRING GLOBAL
+VAR 
+   str : STRING;
+END_VAR
+
+   str := STR(r);
+   IF r >= 0.0 THEN
+      str := " " + str;
+   END_IF;
+   d := d + 1;
+   RETURN StrLeft(str, d);
+END_ROUTINE
+   
+// no length-limit for traces any more - a full string can be traced
+ROUTINE DebugPrint(CONST traceBit : TTraceLevel; VAR_IN str : STRING) GLOBAL
+   
+   IF (giTraceWord AND gyBits[traceBit]) > 0 THEN
+      PRINT(str);  
+   END_IF;
+END_ROUTINE
+
+
+// Returns TRUE if traceBit is set in giTraceWord
+ROUTINE TraceLevel(CONST traceBit : TTraceLevel) : BOOL GLOBAL
+   
+   RETURN (giTraceWord AND gyBits[traceBit]) > 0;
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+
+VAR PRIVATE
+   instanceId   : DINT;
+END_VAR
+
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+   VAR
+      i   : DINT;
+   END_VAR
+
+   eX.mValues[0] := 1.0;
+   eY.mValues[1] := 1.0;
+   eZ.mValues[2] := 1.0;
+   
+   FOR i := 0 TO cMcuMaxJ - 1 DO
+      gRcuNoVeloRestriction.mJoints.mValues[i] := 1.0e20;
+   END_FOR;
+   gRcuNoVeloRestriction.mCart := 1.0e20;
+   gRcuNoVeloRestriction.mTurn := 1.0e20;
+   gyBits[0] := cgiMaskBit0;
+   gyBits[1] := cgiMaskBit1;
+   gyBits[2] := cgiMaskBit2;
+   gyBits[3] := cgiMaskBit3;
+   gyBits[4] := cgiMaskBit4;
+   gyBits[5] := cgiMaskBit5;
+   gyBits[6] := cgiMaskBit6;
+   gyBits[7] := cgiMaskBit7;
+   gyBits[8] := cgiMaskBit8;
+   gyBits[9] := cgiMaskBit9;
+   gyBits[10] := cgiMaskBit10;
+   gyBits[11] := cgiMaskBit11;
+   gyBits[12] := cgiMaskBit12;
+   gyBits[13] := cgiMaskBit13;
+   gyBits[14] := cgiMaskBit14;
+   gyBits[15] := cgiMaskBit15;
+   gyBits[16] := cgiMaskBit16;
+   gyBits[17] := cgiMaskBit17;
+   gyBits[18] := cgiMaskBit18;
+   gyBits[19] := cgiMaskBit19;
+   gyBits[20] := cgiMaskBit20;
+   gyBits[21] := cgiMaskBit21;
+   gyBits[22] := cgiMaskBit22;
+   gyBits[23] := cgiMaskBit23;
+   gyBits[24] := cgiMaskBit24;
+   gyBits[25] := cgiMaskBit25;
+   gyBits[26] := cgiMaskBit26;
+   gyBits[27] := cgiMaskBit27;
+   gyBits[28] := cgiMaskBit28;
+   gyBits[29] := cgiMaskBit29;
+   gyBits[30] := cgiMaskBit30;
+   gyBits[31] := cgiMaskBit31;
+END_ROUTINE
+

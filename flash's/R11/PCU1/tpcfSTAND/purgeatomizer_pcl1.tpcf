@@ -1,0 +1,272 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH      | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+//  v2_02.01.00  | 2019-02-18  | STL       | AddOn: Nozzle head exchanger
+
+Parameter Option1 OptionGun MaterialValve1 HelpGun1 NumberOfMainNeedles NozzleHeadExchanger
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties CurrentGroup "Purge atomizer" "" 24 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+	Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+	Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN1"
+	Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN1"
+	Add_TPSignal "MainChannel.YHN1.Set"
+	SelectCase NumberOfMainNeedles
+		Case 1
+		CaseElse
+			Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN2"
+			Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN2"
+			Add_TPSignal "MainChannel.YHN2.Set"
+	EndSelect
+	SelectCase NumberOfMainNeedles
+		Case 1
+		Case 2
+		CaseElse
+			Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN3"
+			Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN3"
+			Add_TPSignal "MainChannel.YHN3.Set"
+	EndSelect
+	Add_TPSignal "Material1.AMV2FC.ControlType"
+	Add_TPSignal "Material1.AMV2FC.SetFlow"
+	Add_TPSignal "Material1.AMV2FC.SetNextNozzle"
+	Add_TPSignal "Material1.AMV2FC.OrderSet"
+	SelectCase MaterialValve1
+		Case 1
+			Add_TPSignal "MaterialSupply1.AYMV1.Set"
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Add_TPSignal "Material1.YHG1.Set"
+	EndSelect
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Add_TPSignal "MainChannel.YLA1.Set"
+			Add_TPSignal "MainChannel.BBL1.Set"
+		Case Gun_MD_El
+			Add_TPSignal "MainChannel.AMD99.OrderRun"
+			Add_TPSignal "MainChannel.AMD99.SetVelocity"
+			Add_TPSignal "MainChannel.BBL1.Set"
+	EndSelect
+	SelectCase NozzleHeadExchanger // Number of nozzle head exchanger places
+		Case 0
+			// Do nothing
+		CaseElse
+			Add_TPSignal "MainChannel.ARPI_M.AtAlternativeFixpos"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	SelectCase NozzleHeadExchanger // Number of nozzle head exchanger places
+		Case 0 
+			Add_TPStepEvent "GoPurgePosHN1" False 10 False 0 True True ChannelError 105 And False 0 "" ""
+		CaseElse
+			Add_TPStepEvent "GoPurgePosHN1" False 10 False 0 True True ChannelError 105 Or False 0 "" ""
+	EndSelect
+	Add_TPStepTime "PurgeHN1" 1 True ""
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Add_TPStepTime "CleanMD" 1 True ""
+		Case Gun_MD_El
+			Add_TPStepTime "CleanMD" 1 True ""
+	EndSelect
+	SelectCase NumberOfMainNeedles
+		Case 1
+		CaseElse
+			Add_TPStepEvent "GoPurgePosHN2" False 10 False 0 True True ChannelError 106 And False 0 "" ""
+			Add_TPStepTime "PurgeHN2" 1 True ""
+	EndSelect
+	SelectCase NumberOfMainNeedles
+		Case 1
+		Case 2
+		CaseElse
+			Add_TPStepEvent "GoPurgePosHN3" False 10 False 0 True True ChannelError 107 And False 0 "" ""
+			Add_TPStepTime "PurgeHN3" 1 True ""
+	EndSelect
+	Add_TPStepEvent "GoHome" False 20 False 0 True True ChannelError 100 And False 0 "" ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "GoPurgePosHN1"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN1" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN1" True True
+	SelectCase NozzleHeadExchanger // Number of nozzle head exchanger places
+		Case 0
+			// Do nothing
+		CaseElse
+			Act_TPSignalBool "MainChannel.ARPI_M.AtAlternativeFixpos" True True
+	EndSelect
+	
+	Set_TPSignalBool "MainChannel.YHN1.Set" False
+	SelectCase NumberOfMainNeedles
+		Case 1
+		CaseElse
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN2" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN2" False False
+			Set_TPSignalBool "MainChannel.YHN2.Set" False
+	EndSelect
+	SelectCase NumberOfMainNeedles
+		Case 1
+		Case 2
+		CaseElse
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" False False
+			Set_TPSignalBool "MainChannel.YHN3.Set" False
+	EndSelect
+	Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 0
+	Set_TPSignalAnalog "Material1.AMV2FC.SetFlow" 10
+	Set_TPSignalAnalog "Material1.AMV2FC.SetNextNozzle" 1
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+	SelectCase MaterialValve1
+		Case 1
+			Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" True
+	EndSelect
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Set_TPSignalBool "MainChannel.YLA1.Set" True
+			Set_TPSignalAnalog "MainChannel.BBL1.Set" 1.5
+		Case Gun_MD_El
+			Set_TPSignalBool "MainChannel.AMD99.OrderRun" True
+			Set_TPSignalAnalog "MainChannel.AMD99.SetVelocity" 60
+			Set_TPSignalAnalog "MainChannel.BBL1.Set" 1.5
+	EndSelect
+
+	// Step 2
+	Select_TPStep "PurgeHN1"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN1" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN1" False False
+	Set_TPSignalBool "MainChannel.YHN1.Set" True
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			// Step 3
+			Select_TPStep "CleanMD"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "MainChannel.YHN1.Set" False
+			Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+		Case Gun_MD_El
+			// Step 3
+			Select_TPStep "CleanMD"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "MainChannel.YHN1.Set" False
+			Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+	EndSelect
+
+	SelectCase NumberOfMainNeedles
+		Case 1
+		CaseElse
+			// Step 4
+			Select_TPStep "GoPurgePosHN2"
+			// Modify only signals changed to step before
+			SelectCase OptionGun
+				Case Gun_MD_Air
+				Case Gun_MD_El
+				CaseElse
+					Set_TPSignalBool "MainChannel.YHN1.Set" False
+					Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+			EndSelect
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN2" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN2" True True
+			Set_TPSignalAnalog "Material1.AMV2FC.SetNextNozzle" 2
+			SelectCase OptionGun
+				Case Gun_MD_Air
+					Set_TPSignalBool "MainChannel.YLA1.Set" False
+					Set_TPSignalAnalog "MainChannel.BBL1.Set" 0
+				Case Gun_MD_El
+					Set_TPSignalBool "MainChannel.AMD99.OrderRun" False
+					Set_TPSignalAnalog "MainChannel.AMD99.SetVelocity" 0
+					Set_TPSignalAnalog "MainChannel.BBL1.Set" 0
+			EndSelect
+
+			// Step 5
+			Select_TPStep "PurgeHN2"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN2" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN2" False False
+			Set_TPSignalBool "MainChannel.YHN2.Set" True
+			Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+	EndSelect
+
+	SelectCase NumberOfMainNeedles
+		Case 1
+		Case 2
+		CaseElse
+			// Step 6
+			Select_TPStep "GoPurgePosHN3"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" True
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" True True
+			Set_TPSignalBool "MainChannel.YHN2.Set" False
+			Set_TPSignalAnalog "Material1.AMV2FC.SetNextNozzle" 3
+			Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+
+			// Step 7
+			Select_TPStep "PurgeHN3"
+			// Modify only signals changed to step before
+			Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" False
+			Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" False False
+			Set_TPSignalBool "MainChannel.YHN3.Set" True
+			Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+	EndSelect
+
+	// Step 8
+	Select_TPStep "GoHome"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+	SelectCase NumberOfMainNeedles
+		Case 1
+			Set_TPSignalBool "MainChannel.YHN1.Set" False
+		Case 2
+			Set_TPSignalBool "MainChannel.YHN2.Set" False
+		Case 3
+			Set_TPSignalBool "MainChannel.YHN3.Set" False
+	EndSelect
+	Set_TPSignalAnalog "Material1.AMV2FC.SetFlow" 0
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "purgeatomizer_pcl1" True
+Return

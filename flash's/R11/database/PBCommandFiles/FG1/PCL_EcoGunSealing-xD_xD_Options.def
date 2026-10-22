@@ -1,0 +1,388 @@
+//  Version     | ReleaseDate | Respon  | Changes
+//  -----------------------------------------------------------------------------------------------
+//  V2_01.00.00 | 2013-09-30  | STL     | First release
+//  V2_01.01.00 | 2014-01-28  | SMOH    | Change: Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  V2_01.02.00 | 2014-02-14  | SMOH    | Change: Encompass ExhaustUnit Option into Option12 + Delete Option6, Option17 and Option 9+ Include Temp HE_2 for PCL
+//  V2_01.03.00 | 2014-04-15  | SMOH    | Change: Option22 converted to BoostAirSupply
+//  V2_01.04.00 | 2014-04-28  | KLCH    | Bugfix: correction of Option14 (export for HMI not ok)
+//  V2_01.05.00 | 2014-12-15  | STL     | AddOn:  Nozzle exchanger
+//  V2_01.06.00 | 2015-11-18  | STL     | Change: Option26 (BAP1P) (0 -> 1)
+//  V2_01.07.00 | 2016-10-10  | RHI     | AddOn:  KeStudio XML Version
+//  V2_01.08.00 | 2016-10-17  | STL     | AddOn:  HelpGun as option
+//  V2_01.09.00 | 2016-11-21  | KLCH    | Change: new option OptionGun; modification of items
+//  V2_01.10.00 | 2016-12-21  | RHI     | AddOn:  Option Cooling Device
+//  V2_01.11.00 | 2017-01-12  | KLCH    | Change: Option5 (BMV2PE) (0 -> 1)
+//  V2_01.12.00 | 2017-08-23  | KLCH    | Change: Option14 (Profibus -> Sercos III); TempHE (1 -> 0); EcoTempAxis1 (Not existing -> Air cooled large); EcoTempAxis3 (Not existing -> Air cooled small); ElectricalVersion(Version 1 -> Version 2)
+//  V2_01.13.00 | 2017-12-12  | KLCH    | Change: modified selection for circulation
+//  V2_01.14.00 | 2018-03-20  | KTO     | AddOn:  KeStudio Version 3.20+ and RCMP / RCMP2, set "KeStudio 3.20+ and RCMP (Sercos3 drives)" as default
+//  V2_01.15.00 | 2018-04-24  | KLCH    | AddOn:  OptionRobType, OptionSafetyType
+//  V2_01.16.00 | 2018-10-02  | KLCH    | Change: modified selection for renamed RobType (OptionRobType), SafetyType (OptionSafetyType)
+//  V2_01.17.00 | 2019-03-05  | STL     | AddOn:  ECORPC-198: Nozzle head exchanger
+//  V2_01.18.00 | 2020-03-03  | KLCH    | Change: ECORPC-484: BoostAirSupply (remove additional air supply; rename air supply)
+//  V2_01.19.00 | 2024-07-11  | KLCH    | Change: ECORPC-1837: new option 31 to enable initiator of EcoShot Meter (end position)
+
+[Option1]
+Name=Option 1
+Description=Process
+Visible=1
+Enable=0
+Script=
+Type=Combobox
+Item1=EcoDose PCL|EcoDose_PCL
+Item2=EcoDose SM|EcoDose_SM
+Item3=EcoDose PM|EcoDose_PM
+Item4=EcoDose ES|EcoDose_ES
+Item5=EcoDose PCL/PCL|EcoDose_PCL_PCL
+Item6=EcoDose SM/PCL|EcoDose_SM_PCL
+Item7=EcoDose SM/SM|EcoDose_SM_SM
+DefaultValue=EcoDose PCL
+
+[Option2]
+Name=Option 2
+Description=Variant
+Visible=1
+Enable=0
+Script=
+Type=Combobox
+Item1=xD|xD
+Item2=xD LASD (HF)|xD_LASD
+Item3=MD|MD
+Item4=Swirl|Swirl
+Item5=IDS|IDS
+DefaultValue=xD
+
+[Option3]
+Name=Option 3
+Description=Sensor (BMV2TE)
+Visible=1
+Enable=1
+Script=Option3.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option4]
+Name=Option 4
+Description=Sensor (BMV2TA)
+Visible=1
+Enable=1
+Script=Option4.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option5]
+Name=Option 5
+Description=Sensor (BMV2PE)
+Visible=1
+Enable=1
+Script=Option5.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option12]
+Name=Option 12
+Description=MD Dump
+Visible=0
+Enable=0
+Script=Option12.PBcf
+Type=Combobox
+Item1=No Dump|No_Dump
+Item2=Dump|Dump
+Item3=Material Exhaust Unit|Material_Exhaust_Unit
+DefaultValue=No Dump
+
+[Option15]
+Name=Option 15
+Description=Changing system MD
+Visible=0
+Enable=0
+Script=Option15.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option18]
+Name=Option 18
+Description=Cleaning system LASD purging water auto
+Visible=1
+Enable=0
+Script=Option18.PBcf
+Type=Combobox
+Item1=No cleaning system|No_CleaningSystem
+Item2=Water quench manual|CleaningSystem_PurgeWaterManual
+Item3=Water quench auto|CleaningSystem_PurgeWaterAuto
+DefaultValue=No cleaning system
+
+[Option20]
+Name=Option 20
+Description=ShotMeter single
+Visible=0
+Enable=0
+Script=Option20.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option21]
+Name=Option 21
+Description=Air supply cleaning blower
+Visible=1
+Enable=1
+Script=Option21.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option26]
+Name=Option 26
+Description=Sensor (BAP1P)
+Visible=1
+Enable=1
+Script=Option26.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[Option27]
+Name=Option 27
+Description=Sensor (BMV1T)
+Visible=1
+Enable=1
+Script=Option27.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option31]
+Name=Option 31
+Description=Initiator ShotMeter (end position)
+Visible=0
+Enable=0
+Script=Option31.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[OptionGun]
+Name=Option Gun
+Description=Type of gun
+Visible=1
+Enable=0
+Script=OptionGun.PBcf
+Type=Combobox
+Item1=xD|Gun_xD
+Item2=MD-Air|Gun_MD_Air
+Item3=MD-El|Gun_MD_El
+Item4=Swirl-Duerr|Gun_Swirl_Duerr
+Item5=Swirl-Graco|Gun_Swirl_Graco
+Item6=IDS|Gun_IDS
+DefaultValue=xD
+
+[OptionShotMeter]
+Name=Option ShotMeter
+Description=Type of ShotMeter
+Visible=0
+Enable=0
+Script=OptionShotMeter.PBcf
+Type=Combobox
+Item1=None|None
+Item2=113 ccm|SM_113ccm
+Item3=590 ccm|SM_590ccm
+Item4=300 ccm|SM_300ccm
+Item5=600 ccm|SM_600ccm
+DefaultValue=None
+
+[BoostAirSupply]
+Name=BoostAirSupply
+Description=Booster
+Visible=1
+Enable=1
+Script=BoostAirSupply.PBcf
+Type=Combobox
+Item1=Not existing|No_BoostAirSupply
+Item2=Booster with BHD1|Booster_BHD1
+DefaultValue=Booster with BHD1
+
+[TempHE]
+Name=TempHE
+Description=Temperature controller (Single) for material 1
+Visible=1
+Enable=1
+Script=TempHE.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[TempHE_2]
+Name=TempHE_2
+Description=Temperature controller (Single) for material 2
+Visible=0
+Enable=0
+Script=TempHE_2.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone1]
+Name=Heating zone 1
+Description=Heating zone before axis 7 (zone_11)
+Visible=1
+Enable=1
+Script=TempHeatZone1.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone2]
+Name=Heating zone 2
+Description=Heating zone axis 7 (zone_12)
+Visible=1
+Enable=1
+Script=TempHeatZone2.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone3]
+Name=Heating zone 3 and 4
+Description=Heating zones pistons (zone_2a, zone_2b)
+Visible=1
+Enable=0
+Script=TempHeatZone3.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone4]
+Name=Heating zone 4
+Description=Heating zone piston 2 (zone_2b)
+Visible=0
+Enable=0
+Script=
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone5]
+Name=Heating zone 5
+Description=Heating zone axis 1/2 (zone_51)
+Visible=1
+Enable=1
+Script=TempHeatZone5.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone6]
+Name=Heating zone 6
+Description=Heating zone axis 2/3 (zone_52)
+Visible=1
+Enable=1
+Script=TempHeatZone6.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone7]
+Name=Heating zone 7
+Description=Heating zone gun (zone_7)
+Visible=1
+Enable=1
+Script=TempHeatZone7.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone8]
+Name=Heating zone 8
+Description=Heating zone water quench (zone_SW1)
+Visible=1
+Enable=0
+Script=TempHeatZone8.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone9]
+Name=Heating zone 9
+Description=Heating zone ShotMeter (zone_3)
+Visible=1
+Enable=0
+Script=TempHeatZone9.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[EcoTempAxis1]
+Name=Temperature controller (Peltier) axis 1
+Description=Temperature controller (Peltier) at axis 1
+Visible=1
+Enable=1
+Script=EcoTempAxis1.PBcf
+Type=Combobox
+Item1=Not existing|No_EcoTempAxis1
+Item2=Air cooled large|EcoTempAxis1_Air_large
+Item3=Air cooled small|EcoTempAxis1_Air_small
+Item4=Water cooled large|EcoTempAxis1_Water_large
+Item5=Water cooled small|EcoTempAxis1_Water_small
+DefaultValue=Not existing
+
+[EcoTempAxis3]
+Name=Temperature controller (Peltier) axis 3
+Description=Temperature controller (Peltier) at axis 3
+Visible=1
+Enable=1
+Script=EcoTempAxis3.PBcf
+Type=Combobox
+Item1=Not existing|No_EcoTempAxis3
+Item2=Air cooled small|EcoTempAxis3_Air_small
+Item3=Water cooled small|EcoTempAxis3_Water_small
+DefaultValue=Not existing
+
+[MaterialValve1]
+Name=MaterialValve1
+Description=Material valve (MV1)
+Visible=1
+Enable=1
+Script=MaterialValve1.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[NumberOfMainNeedles]
+Name=NumberOfMainNeedles
+Description=Number of MainNeedles
+Visible=1
+Enable=1
+Script=NumberOfMainNeedles.PBcf
+Type=Combobox
+Item1=1 MainNeedle|1
+Item2=2 MainNeedles|2
+Item3=3 MainNeedles|3
+DefaultValue=3 MainNeedles
+
+[NozzleExchanger]
+Name=NozzleExchanger
+Description=Type of NozzleExchanger
+Visible=1
+Enable=1
+Script=NozzleExchanger.PBcf
+Type=Combobox
+Item1=None|0
+Item2=3 Places|3
+Item3=6 Places|6
+Item4=10 Places|10
+DefaultValue=None
+
+[NozzleHeadExchanger]
+Name=NozzleHeadExchanger
+Description=Number of NozzleHeadExchanger-Places
+Visible=1
+Enable=1
+Script=NozzleHeadExchanger.PBcf
+Type=Numeric
+Min=0
+Max=6
+DefaultValue=0
+
+[Circulation]
+Name=Circulation
+Description=Circulation
+Visible=1
+Enable=1
+Script=Circulation.PBcf
+Type=Combobox
+Item1=Not existing|No_Circulation
+Item2=To return line RL (Standard)|Circ_ToReturnLine
+Item3=On robot only - no RL (Small)|Circ_OnRobot_NoRL
+DefaultValue=To return line RL (Standard)
+
+[HelpGun1]
+Name=HelpGun1
+Description=Help gun (HG1)
+Visible=1
+Enable=1
+Script=HelpGun1.PBcf
+Type=Checkbox
+DefaultValue=1

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<xs:schema attributeFormDefault="unqualified" elementFormDefault="qualified"
+           xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:element name="Root">
+        <xs:complexType>
+            <xs:sequence>
+			
+                <xs:element name="Pedestals" maxOccurs="1" minOccurs="1">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="Pedestal" type="PedestalType" maxOccurs="unbounded" minOccurs="0" />
+                        </xs:sequence>
+                    </xs:complexType>
+
+                    <xs:unique name="PedestalIdUnique">
+                        <xs:selector xpath="Pedestal" />
+                        <xs:field xpath="@PedestalId" />
+                    </xs:unique>
+					
+                </xs:element>
+
+                <xs:element name="Rails" maxOccurs="1" minOccurs="1">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="Rail" type="RailType" maxOccurs="unbounded" minOccurs="0" />
+                            <xs:element name="AdaptersForRail" maxOccurs="1" minOccurs="1">
+                                <xs:complexType>
+                                    <xs:sequence>
+                                        <xs:element ref="Adapters" maxOccurs="unbounded" minOccurs="0" />
+                                    </xs:sequence>
+                                </xs:complexType>
+                                <xs:unique name="AdaptersIdUnique">
+                                    <xs:selector xpath="Adapters" />
+                                    <xs:field xpath="@Id" />
+                                </xs:unique>
+                            </xs:element>
+                        </xs:sequence>
+                    </xs:complexType>
+
+                    <xs:unique name="RailIdUnique">
+                        <xs:selector xpath="Rail" />
+                        <xs:field xpath="@RailId" />
+                    </xs:unique>
+                </xs:element>
+
+                <xs:element name="Categories" maxOccurs="1" minOccurs="1">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element ref="Category" maxOccurs="unbounded" minOccurs="0" />
+                        </xs:sequence>
+                    </xs:complexType>
+                    <xs:unique name="CategoryNameUnique">
+                        <xs:selector xpath="Category" />
+                        <xs:field xpath="@Name" />
+                    </xs:unique>
+                </xs:element>
+
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="Category">
+        <xs:complexType mixed="true">
+            <xs:sequence>
+                <xs:element name="Rail" maxOccurs="unbounded" minOccurs="0">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element type="xs:string" name="RailId" />
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+                <xs:element ref="Category" minOccurs="0" maxOccurs="unbounded" />
+            </xs:sequence>
+            <xs:attribute type="xs:string" name="Name" />
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="Adapters">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="Adapter" maxOccurs="unbounded" minOccurs="0">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element type="xs:string" name="Path" />
+                            <xs:element type="xs:string" name="Category" />
+                            <xs:element type="xs:string" name="PathPreviewPicture" />
+                            <xs:element type="xs:double" name="OffsetXinMm" />
+                            <xs:element type="xs:double" name="OffsetYinMm" />
+                            <xs:element type="xs:double" name="OffsetZinMm" />
+                        </xs:sequence>
+                        <xs:attribute type="xs:string" name="Id" />
+                    </xs:complexType>
+                </xs:element>
+            </xs:sequence>
+            <xs:attribute type="xs:string" name="Id" />
+        </xs:complexType>
+    </xs:element>
+
+    <xs:complexType name="RailType">
+        <xs:sequence>
+            <xs:element type="xs:string" name="Name" />
+            <xs:element type="xs:string" name="Description" />
+            <xs:element type="xs:string" name="PathPreviewPicture" />
+            <xs:element type="xs:string" name="Adapters" minOccurs="0" maxOccurs="1" />
+        </xs:sequence>
+        <xs:attribute type="xs:string" name="RailId" use="optional" />
+    </xs:complexType>
+	
+	<xs:complexType name="PedestalType">
+        <xs:sequence>
+            <xs:element type="xs:string" name="Name" />
+            <xs:element type="xs:string" name="Description" />
+            <xs:element type="xs:string" name="PathPreviewPicture" />
+        </xs:sequence>
+        <xs:attribute type="xs:string" name="PedestalId" use="required" />
+    	<xs:attribute type="xs:string" name="RelevantForRobotTypes"  use="required" />
+    </xs:complexType>
+
+</xs:schema>

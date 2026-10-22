@@ -1,0 +1,801 @@
+(*
+Version     | ReleaseDate | Respon | Changes
+---------------------------------------------------------------------------------------------------
+V2_01.00.00 | 2013-06-14  | KLCH   | First release - based on FB_GeneralSetValues V2_01.02.00
+v2_02.00.00 | 08.07.2021  | PE3    | Change: Automatic code change (rename device instances)
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_REFTO
+, F_CheckStatusOfGET_REFTO
+, F_Version_String
+, cTimeout_GET_REFTO
+, cCatRootVersion
+, cCatPathVersion
+, RobAuto
+, RobT2
+, stHand
+, cIndex_MainChannel
+, TP_Interpreter
+, C_PressureReleased_done
+, nInterlocksIn
+, stAuto
+, C_Undefined
+, cNumberOfAnalogSensors
+, tsPCU
+, tsFgParam
+, tsReleases
+, tsModes
+, AB_Channels
+, AB_SwitchPLC_T001
+, tsPCU2BCU
+, KSYS_Status
+, tnMainModeState
+
+END_IMPORT
+
+ALGORITHM_BLOCK AB_GeneralSetValues #DUMMY_EDIT_BLOCK
+
+VAR_EXTERNAL
+ GV_mInitDone : BOOL;
+ GV_sPCU : tsPCU;
+ GV_sFgParam : tsFgParam (* functiongroup-parameters of this FU *);
+ GV_sReleases : tsReleases;
+ GV_sModesRef : REFTO tsModes;
+ abChannels : AB_Channels;
+ abSwitchPLC_YMV1 : AB_SwitchPLC_T001;
+END_VAR
+
+VAR
+ AG_mInitDataBlock : BOOL;
+ ptSV_sPCU2BCU : REFTO tsPCU2BCU;
+END_VAR
+
+VAR CONSTANT
+ AG_zMyName : STRING(19) := 'AB_GeneralSetValues';
+ AG_zVersion : STRING(15) := 'v2_02.00.00';
+END_VAR
+
+FUNCTION fPriv_GetSoftwareReferences : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR
+ nStatusOfGetRefto : KSYS_Status (* Status of firmware function GET_REFTO *);
+ mInitError : BOOL;
+ zTemp : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+//-------------------------------------------------------------------------------------------------
+// Get software references
+//-------------------------------------------------------------------------------------------------
+mInitError := FALSE;
+
+// Get reference to SV_sPCU2BCU -------------------------------------------------------------------
+zTemp := CONCAT(GV_sFgParam.zBcuName, '.SV_sPCU2BCU');
+
+ptSV_sPCU2BCU := GET_REFTO(SVName  := zTemp,
+                           Timeout := cTimeout_GET_REFTO,
+                           Status  := nStatusOfGetRefto);
+
+mInitError := (mInitError OR F_CheckStatusOfGET_REFTO(nStatusOfGetRefto,
+                                                      CONCAT(AG_zMyName, '.fPriv_GetSoftwareReferences'),
+                                                      zTemp,
+                                                      '',
+                                                      ''));
+
+
+//-------------------------------------------------------------------------------------------------
+fPriv_GetSoftwareReferences := NOT mInitError;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+ALGORITHM aPriv_GhostNoMotion
+
+#BEGIN_EDIT_BLOCK
+//-------------------------------------------------------------------------------------------------
+// Ghost without motion
+//-------------------------------------------------------------------------------------------------
+
+;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aPriv_FlowCheck
+
+#BEGIN_EDIT_BLOCK
+//-------------------------------------------------------------------------------------------------
+// Flow check
+//-------------------------------------------------------------------------------------------------
+
+;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+FUNCTION fInit : BOOL
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+//-------------------------------------------------------------------------------------------------
+// Initialization
+//-------------------------------------------------------------------------------------------------
+
+// Init of data block -----------------------------------------------------------------------------
+IF NOT AG_mInitDataBlock THEN
+ 
+  // Set version info to catalog
+  AG_mInitDataBlock := F_Version_String(i_zRoot    := cCatRootVersion,
+                                        i_zPath    := cCatPathVersion,
+                                        i_zName    := AG_zMyName,
+                                        i_zVersion := AG_zVersion);
+  
+END_IF;
+
+// Do all initialization work here
+
+
+
+// Set return value -------------------------------------------------------------------------------
+fInit := (AG_mInitDataBlock AND
+          fPriv_GetSoftwareReferences());
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+ALGORITHM aCyclic
+
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ nMainState : tnMainModeState;
+ mTemp : BOOL;
+ mReturn : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+//-------------------------------------------------------------------------------------------------
+// Cyclic
+//-------------------------------------------------------------------------------------------------
+
+IF GV_mInitDone THEN
+  
+  //-------- Switch on tempering unit -------------------------------------------------------------
+  //GV_sPCU.Devices.sTemperingUnits.y[cTemperingUnit_ATC1].T003.Signals.SetActive.mValue_Interlocks_In := TRUE;
+  
+  //-------- Set request to switch on AVV ---------------------------------------------------------
+  // It's not allowed to switch on AVV in maintenance or T1 mode (personnel protection)
+  IF (((GV_sModesRef^.nRobotMainState = RobAuto)        OR
+       (GV_sModesRef^.nRobotMainState = RobT2))         AND
+      GV_sReleases.sReleases.Internal.AtomizerRelease) THEN
+    
+    CASE GV_sModesRef^.nMainState OF
+      
+      stHand:                    
+     
+        IF (abChannels.fGetChannelReservedBy(i_iChannelIdx := cIndex_MainChannel ) <> TP_Interpreter) THEN
+          abSwitchPLC_YMV1.aSetDev_Set(i_mValue      := (GV_sReleases.sReleases.External.ReleaseHand AND
+                                                (abChannels.fGetChannelState(i_iChannelIdx :=cIndex_MainChannel) <> C_PressureReleased_done)),
+                              i_nSignalNode := nInterlocksIn);
+        END_IF;
+        
+      stAuto:
+        
+        IF (abChannels.fGetChannelReservedBy(i_iChannelIdx := cIndex_MainChannel ) <> TP_Interpreter) THEN
+          abSwitchPLC_YMV1.aSetDev_Set(i_mValue      := TRUE,
+                              i_nSignalNode := nInterlocksIn);
+        END_IF;
+        
+    END_CASE;
+    
+  ELSE
+   
+    abSwitchPLC_YMV1.aSetDev_Set(i_mValue      := FALSE,
+                        i_nSignalNode := nInterlocksIn);
+    
+  END_IF;
+                                  
+  // Reset channel state
+  IF abSwitchPLC_YMV1.fGetDevAct_ActValue()                                                               AND 
+    (abChannels.fGetChannelState(i_iChannelIdx := cIndex_MainChannel) = C_PressureReleased_done) THEN
+   
+    mReturn := abChannels.fSetChannelState(i_iChannelIdx   := cIndex_MainChannel,
+                                           i_iChannelState := C_Undefined);
+  END_IF;
+  
+  IF (GV_sModesRef^.nMainState = stAuto) AND 
+     (nMainState <> stAuto)              AND
+     (abChannels.fGetChannelState(i_iChannelIdx := cIndex_MainChannel) = C_PressureReleased_done) THEN
+    
+    mTemp := abChannels.fSetChannelState(i_iChannelIdx   := cIndex_MainChannel,
+                                         i_iChannelState := C_Undefined);
+    
+  END_IF;
+  
+  //-------- Copy Internal.ReleaseSetValues in pData of AnalogSensor  --------------
+  //-------- devices to start/stop monitoring functions depending on  --------------
+  //-------- the Internal.ReleaseSetValues flag                       --------------
+  //-------- (monitoring of solvent supply pressure)                  --------------
+  
+  FOR i := 1 TO cNumberOfAnalogSensors DO
+    
+    GV_sPCU.Devices.sAnalogSensors.y[i].pData.mReleaseSetValues := GV_sReleases.sReleases.Internal.ReleaseSetValues;
+    
+  END_FOR;
+ 
+  //edge detection
+  nMainState := GV_sModesRef^.nMainState;
+  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 4 30 @Pou 25 
+@@@BEG_Comment@@@
+Version     | ReleaseDate | Respon | Changes
+---------------------------------------------------------------------------------------------------
+V2_01.00.00 | 2013-06-14  | KLCH   | First release - based on FB_GeneralSetValues V2_01.02.00
+v2_02.00.00 | 08.07.2021  | PE3    | Change: Automatic code change (rename device instances)
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(9)GET_REFTO @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)F_CheckStatusOfGET_REFTO @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)F_Version_String @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+13 
+@Var @RT(18)cTimeout_GET_REFTO @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCatRootVersion @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCatPathVersion @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)RobAuto @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)RobT2 @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)stHand @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cIndex_MainChannel @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)TP_Interpreter @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)C_PressureReleased_done @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)nInterlocksIn @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)stAuto @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)C_Undefined @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)cNumberOfAnalogSensors @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)AB_GeneralSetValues @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(12)GV_mInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(7)GV_sPCU @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(5)tsPCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(11)GV_sFgParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tsFgParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)functiongroup-parameters of this FU @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)GV_sReleases @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsReleases @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)GV_sModesRef @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(7)tsModes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(10)abChannels @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)AB_Channels @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(16)abSwitchPLC_YMV1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_SwitchPLC_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(17)AG_mInitDataBlock @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)ptSV_sPCU2BCU @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tsPCU2BCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)AG_zMyName @RT(0) @T @F @DT @RT(10)STRING(19) @RT(0) @T @T @STRING 0 @F @RT(2)19 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(21)'AB_GeneralSetValues' @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(11)AG_zVersion @RT(0) @T @F @DT @RT(10)STRING(15) @RT(0) @T @T @STRING 0 @F @RT(2)15 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(13)'v2_02.00.00' @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(27)fPriv_GetSoftwareReferences @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(17)nStatusOfGetRefto @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)Status of firmware function GET_REFTO @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mInitError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)zTemp @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(19)aPriv_GhostNoMotion @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(15)aPriv_FlowCheck @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(5)fInit @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(7)aCyclic @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)nMainState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnMainModeState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)mTemp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)mReturn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(22)
+//-------------------------------------------------------------------------------------------------
+// Get software references
+//-------------------------------------------------------------------------------------------------
+mInitError := FALSE;
+
+// Get reference to SV_sPCU2BCU -------------------------------------------------------------------
+zTemp := CONCAT(GV_sFgParam.zBcuName, '.SV_sPCU2BCU');
+
+ptSV_sPCU2BCU := GET_REFTO(SVName  := zTemp,
+                           Timeout := cTimeout_GET_REFTO,
+                           Status  := nStatusOfGetRefto);
+
+mInitError := (mInitError OR F_CheckStatusOfGET_REFTO(nStatusOfGetRefto,
+                                                      CONCAT(AG_zMyName, '.fPriv_GetSoftwareReferences'),
+                                                      zTemp,
+                                                      '',
+                                                      ''));
+
+
+//-------------------------------------------------------------------------------------------------
+fPriv_GetSoftwareReferences := NOT mInitError;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+//-------------------------------------------------------------------------------------------------
+// Ghost without motion
+//-------------------------------------------------------------------------------------------------
+
+;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+//-------------------------------------------------------------------------------------------------
+// Flow check
+//-------------------------------------------------------------------------------------------------
+
+;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+//-------------------------------------------------------------------------------------------------
+// Initialization
+//-------------------------------------------------------------------------------------------------
+
+// Init of data block -----------------------------------------------------------------------------
+IF NOT AG_mInitDataBlock THEN
+ 
+  // Set version info to catalog
+  AG_mInitDataBlock := F_Version_String(i_zRoot    := cCatRootVersion,
+                                        i_zPath    := cCatPathVersion,
+                                        i_zName    := AG_zMyName,
+                                        i_zVersion := AG_zVersion);
+  
+END_IF;
+
+// Do all initialization work here
+
+
+
+// Set return value -------------------------------------------------------------------------------
+fInit := (AG_mInitDataBlock AND
+          fPriv_GetSoftwareReferences());
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(74)
+//-------------------------------------------------------------------------------------------------
+// Cyclic
+//-------------------------------------------------------------------------------------------------
+
+IF GV_mInitDone THEN
+  
+  //-------- Switch on tempering unit -------------------------------------------------------------
+  //GV_sPCU.Devices.sTemperingUnits.y[cTemperingUnit_ATC1].T003.Signals.SetActive.mValue_Interlocks_In := TRUE;
+  
+  //-------- Set request to switch on AVV ---------------------------------------------------------
+  // It's not allowed to switch on AVV in maintenance or T1 mode (personnel protection)
+  IF (((GV_sModesRef^.nRobotMainState = RobAuto)        OR
+       (GV_sModesRef^.nRobotMainState = RobT2))         AND
+      GV_sReleases.sReleases.Internal.AtomizerRelease) THEN
+    
+    CASE GV_sModesRef^.nMainState OF
+      
+      stHand:                    
+     
+        IF (abChannels.fGetChannelReservedBy(i_iChannelIdx := cIndex_MainChannel ) <> TP_Interpreter) THEN
+          abSwitchPLC_YMV1.aSetDev_Set(i_mValue      := (GV_sReleases.sReleases.External.ReleaseHand AND
+                                                (abChannels.fGetChannelState(i_iChannelIdx :=cIndex_MainChannel) <> C_PressureReleased_done)),
+                              i_nSignalNode := nInterlocksIn);
+        END_IF;
+        
+      stAuto:
+        
+        IF (abChannels.fGetChannelReservedBy(i_iChannelIdx := cIndex_MainChannel ) <> TP_Interpreter) THEN
+          abSwitchPLC_YMV1.aSetDev_Set(i_mValue      := TRUE,
+                              i_nSignalNode := nInterlocksIn);
+        END_IF;
+        
+    END_CASE;
+    
+  ELSE
+   
+    abSwitchPLC_YMV1.aSetDev_Set(i_mValue      := FALSE,
+                        i_nSignalNode := nInterlocksIn);
+    
+  END_IF;
+                                  
+  // Reset channel state
+  IF abSwitchPLC_YMV1.fGetDevAct_ActValue()                                                               AND 
+    (abChannels.fGetChannelState(i_iChannelIdx := cIndex_MainChannel) = C_PressureReleased_done) THEN
+   
+    mReturn := abChannels.fSetChannelState(i_iChannelIdx   := cIndex_MainChannel,
+                                           i_iChannelState := C_Undefined);
+  END_IF;
+  
+  IF (GV_sModesRef^.nMainState = stAuto) AND 
+     (nMainState <> stAuto)              AND
+     (abChannels.fGetChannelState(i_iChannelIdx := cIndex_MainChannel) = C_PressureReleased_done) THEN
+    
+    mTemp := abChannels.fSetChannelState(i_iChannelIdx   := cIndex_MainChannel,
+                                         i_iChannelState := C_Undefined);
+    
+  END_IF;
+  
+  //-------- Copy Internal.ReleaseSetValues in pData of AnalogSensor  --------------
+  //-------- devices to start/stop monitoring functions depending on  --------------
+  //-------- the Internal.ReleaseSetValues flag                       --------------
+  //-------- (monitoring of solvent supply pressure)                  --------------
+  
+  FOR i := 1 TO cNumberOfAnalogSensors DO
+    
+    GV_sPCU.Devices.sAnalogSensors.y[i].pData.mReleaseSetValues := GV_sReleases.sReleases.Internal.ReleaseSetValues;
+    
+  END_FOR;
+ 
+  //edge detection
+  nMainState := GV_sModesRef^.nMainState;
+  
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,5527 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -----------------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Change: combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 15.04.2014  | SMOH   | Bugfix: YLV2 is Air Supply 2
+//  v2_01.03.00  | 12.09.2014  | KLCH   | Change: adaptions for new type T004 of ATC
+//  v2_01.04.00  | 07.11.2014  | PZB    | AddOn:  Set default options for common monitoring functions (cooling device and UPS) in system.RCMP
+//  v2_01.05.00  | 15.12.2014  | STL    | AddOn:  Nozzle exchanger
+//  v2_01.06.00  | 15.04.2015  | STL    | Change: Pressure controlled piston
+//  v2_01.07.00  | 23.10.2015  | RHI    | AddOn:  new routines for MainValve
+//  v2_01.08.00  | 17.10.2016  | STL    | Change: replaces device FC_Press_AF_10_BR by device Flow_CTRL_DOSEPCL_V2
+//  v2_01.09.00  | 21.11.2016  | KLCH   | AddOn:  new heating zone, swirl
+//  v2_01.10.00  | 17.08.2017  | KLCH   | Change: visu interface for BMV2 activated
+//  v2_01.11.00  | 23.08.2017  | KLCH   | AddOn:  AMD99; CPX devices
+//  v2_01.12.00  | 28.09.2017  | KLCH   | AddOn:  Common_Sealing_GenerateTimeProg; Common_Sealing_ConfigureBCUCfg, Common_Sealing_ConfigureSCUCfg (moved from Build-script)
+//  v2_01.13.00  | 14.12.2017  | KLCH   | AddOn:  new time programs to Common_Sealing_GenerateTimeProg
+//  v2_01.14.00  | 23.03.2018  | KLCH   | Change: remove redundant configuration
+//  v2_01.15.00  | 24.04.2018  | KLCH   | AddOn:  Common_Delete_SCP_Patterns; Common_Copy_SCP_Patterns_Sealing
+//  v2_01.16.00  | 10.07.2018  | KLCH   | AddOn:  new time programs to Common_Sealing_GenerateTimeProg_SM1; redesign of Common_Sealing_GenerateTimeProg; Common_Sealing_DeleteTimeProg_SM1
+//  v2_01.17.00  | 10.07.2018  | KTO    | Change: Modify handling of SCP patterns, add fixpos RefSCP and SyncSCP for saferobotics
+//  v2_01.18.00  | 21.08.2018  | KLCH   | Change: rename Common_AddDevice_BLV1 to Common_AddInitiator_LV1 and check Option14
+//  v2_01.19.00  | 05.10.2018  | KLCH   | AddOn:  Common_AddValve_FDR1, .._1, .._2; Common_ActivateChannel_MaterialSupply1, ..2; Common_CheckChannel_MaterialSupply1, ..2
+//  v2_01.20.00  | 16.01.2019  | KLCH   | AddOn:  Common_Sealing_ConfigureSystemCfg
+//  v2_01.21.00  | 15.02.2019  | KLCH   | Change: adjustments due to structural changes (EA2.0)
+//  v2_01.22.00  | 06.03.2019  | STL    | AddOn:  Nozzle head exchanger
+//  v2_01.23.00  | 11.03.2019  | KLCH   | AddOn:  copy process dependent statistic.cfg
+//  v2_01.24.00  | 26.03.2019  | STL    | AddOn:  RobInterface
+//  v2_01.25.00  | 26.03.2019  | KLCH   | AddOn:  new time programs to Common_Sealing_GenerateTimeProg_SM1 (pistons_flush_sm1, piston_purge_sm1); new tp naming convention
+//  v2_01.26.00  | 04.06.2019  | BIT    | AddOn:  Set cfg parameters optional in RCUx.cfg when safe-robotic is used or not
+//  v2_01.27.00  | 08.07.2019  | STL    | Bugfix: The air supply valve of the nozzle head exchanger (LV5) must be a main air valve 
+//  v2_01.28.00  | 04.03.2020  | KLCH   | Change: rename air supply
+//  v2_01.29.00  | 21.04.2020  | MWT    | Change: only use one global Common_Sealing_ConfigureSystemCfg and add parameter ConveyorBusType
+//  v2_01.30.00  | 04.08.2020  | MWT    | Change: for RCMP2.1 the ConveyorBusType must be set to 8 for PLC interface input and generally Sercos3 is not optional anymore
+//  v2_01.31.00  | 01.12.2020  | MWT    | AddOn:  For Retrofit the byteorder of data larger than bytes must be changed
+//  v2_01.32.00  | 26.01.2021  | BIT    | AddOn:  SubRoutine Common_ConfigureRCUCfg
+//  v2_01.33.00  | 23.02.2021  | KLCH   | Change: remove special handling of AB_SFC_MainChannel.pu dependent on Option12
+//  v2_01.34.00  | 17.03.2021  | MWT    | AddOn:  for Retrofit the SITOP USV requires new parameter for battery supervision
+//  v2_01.35.00  | 21.06.2021  | PZB    | AddOn:  new sub routine Common_Sealing_Save_Database, Common_SwitchToBMK2
+//  v2_01.36.00  | 18.08.2021  | KLCH   | Change: Common_AddDevice_YLV3 to Common_AddValve_LV_BL1 (air supply valve of cleaning blower renamed)
+//  v2_01.37.00  | 25.01.2022  | KLCH   | Change: [ECORPC-1137] adaptions to reduce variant/ option dependent software blocks
+//  v2_01.38.00  | 22.02.2022  | KLCH   | Change: [ECORPC-1148] harmonization of all Sealing build scripts
+//  v2_01.39.00  | 18.03.2022  | MUCH   | Change: Cfg parameter NumberOfWarningsOnHMI increased to 6 because of Kawasaki robots
+//  v2_01.40.00  | 16.05.2022  | KLCH   | Change: [ECORPC-763] internal handling of HelpGun - no trigger device
+//  v2_01.41.00  | 14.07.2023  | KLCH   | Bugfix: [ECORPC-1540] EcoDose PCL: PBV2 scripts not working correctly in case of no circulation
+//  V2_01.42.00  | 18.03.2024  | BIT    | AddOn : [ECORPC-1754] Added parameter RCU1.SafetyControl.Simulation.EnableSafeRobotics to simulated SCP for WinMOD test
+
+// Script includes all SubRoutines for common use
+// like inserting channels and devices with their properties
+// Also common configuration of fix positions and trigger setup
+
+//**************Start routines to add channels *************
+
+SubRoutine Common_AddChannel_MainChannel
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel MainChannel
+	SelectTab [Properties]
+	Description Main channel
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddChannel_AirSupply
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel AirSupply
+	SelectTab [Properties]
+	Description Air supply
+	VisuInterface 1 2
+Return
+
+SubRoutine Common_AddChannel_MaterialSupply1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel MaterialSupply1
+	SelectTab [Properties]
+	Description Supply material 1
+	VisuInterface 1 6
+Return
+
+SubRoutine Common_AddChannel_MaterialSupply2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel MaterialSupply2
+	SelectTab [Properties]
+	Description Supply material 2
+	VisuInterface 1 7
+Return
+
+SubRoutine Common_AddChannel_BlowOut
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel BlowOut
+	SelectTab [Properties]
+	Description blow out
+	VisuInterface 1 8
+Return
+
+SubRoutine Common_AddChannel_MDClean
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel MDClean
+	SelectTab [Properties]
+	Description clean masking device
+	VisuInterface 1 9
+Return
+
+SubRoutine Common_AddChannel_ExhaustUnit
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel ExhaustUnit
+	SelectTab [Properties]
+	Description exhaust unit for masking device
+	VisuInterface 1 10
+Return
+
+SubRoutine Common_AddChannel_Material1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel Material1
+	SelectTab [Properties]
+	Description devices material 1
+	VisuInterface 1 11
+Return
+
+SubRoutine Common_AddChannel_Material2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel Material2
+	SelectTab [Properties]
+	Description devices material 2
+	VisuInterface 1 12
+Return
+
+SubRoutine Common_AddChannel_ShotMeter1Sub_a
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannelgroup ShotMeter1Sub_ a
+	SelectTab [Properties]
+	Description dosing devices material 1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a
+	VisuInterface 1 4
+Return
+
+SubRoutine Common_AddChannel_ShotMeter1Sub_ab
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannelgroup ShotMeter1Sub_ a b
+	SelectTab [Properties]
+	Description dosing devices material 1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a
+	VisuInterface 1 4
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+	VisuInterface 1 5
+Return
+
+SubRoutine Common_AddChannel_ShotMeter2Sub_a
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannelgroup ShotMeter2Sub_ a
+	SelectTab [Properties]
+	Description dosing devices material 2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a
+	VisuInterface 1 14
+Return
+
+SubRoutine Common_AddChannel_ShotMeter2Sub_ab
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannelgroup ShotMeter2Sub_ a b
+	SelectTab [Properties]
+	Description dosing devices material 2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_a
+	VisuInterface 1 14
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_b
+	VisuInterface 1 15
+Return
+
+SubRoutine Common_AddChannel_BoostedAirSupply
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel BoostedAirSupply
+	SelectTab [Properties]
+	Description Boosted air supply
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddChannel_WaterQuench
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel WaterQuench
+	SelectTab [Properties]
+	Description water quench
+	VisuInterface 1 13
+Return
+
+SubRoutine Common_AddChannel_Exchanger
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel Exchanger
+	SelectTab [Properties]
+	Description nozzle exchanger
+	VisuInterface 1 16
+Return
+
+SubRoutine Common_AddChannel_NhExchanger
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups]
+	AddChannel NhExchanger
+	SelectTab [Properties]
+	Description nozzle head exchanger
+	VisuInterface 1 17
+Return
+
+SubRoutine Common_ActivateChannel_MaterialSupply1
+	SelectNode RPC1.R11.PCU1
+	//******** Add Material supply 1 channel ************
+	Call Common_AddChannel_MaterialSupply1
+	//Add physical channels to logical channel Material1
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	SelectLogChannel PCU1.LogMaterial1
+	//*********** Add physical MaterialSupply1*****************
+	LogChannelAddPhysChannel MaterialSupply1
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 1
+Return
+
+SubRoutine Common_ActivateChannel_MaterialSupply2
+	SelectNode RPC1.R11.PCU1
+	//******** Add Material supply 2 channel ************
+	Call Common_AddChannel_MaterialSupply2
+	//Add physical channels to logical channel Material2
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	SelectLogChannel PCU1.LogMaterial2
+	//*********** Add physical MaterialSupply2*****************
+	LogChannelAddPhysChannel MaterialSupply2
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 1
+Return
+
+SubRoutine Common_CheckChannel_MaterialSupply1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+		SelectCase Option27
+			Case 1
+			CaseElse
+				SelectCase MaterialValve1
+					Case 1
+					CaseElse
+						SelectCase Circulation
+							Case Circ_OnRobot_NoRL
+							CaseElse
+								SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+								Delete
+						EndSelect
+				EndSelect
+		EndSelect
+	Else
+		SelectCase Option27
+			Case 1
+				Call Common_ActivateChannel_MaterialSupply1
+			CaseElse
+				SelectCase MaterialValve1
+					Case 1
+						Call Common_ActivateChannel_MaterialSupply1
+					CaseElse
+						SelectCase Circulation
+							Case Circ_OnRobot_NoRL
+								Call Common_ActivateChannel_MaterialSupply1
+						EndSelect
+				EndSelect
+		EndSelect
+	Endif
+Return
+
+SubRoutine Common_CheckChannel_MaterialSupply2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2
+		SelectCase Option27
+			Case 1
+			CaseElse
+				SelectCase MaterialValve1
+					Case 1
+					CaseElse
+						SelectCase Circulation
+							Case Circ_OnRobot_NoRL
+							CaseElse
+								SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2
+								Delete
+						EndSelect
+				EndSelect
+		EndSelect
+	Else
+		SelectCase Option27
+			Case 1
+				Call Common_ActivateChannel_MaterialSupply2
+			CaseElse
+				SelectCase MaterialValve1
+					Case 1
+						Call Common_ActivateChannel_MaterialSupply2
+					CaseElse
+						SelectCase Circulation
+							Case Circ_OnRobot_NoRL
+								Call Common_ActivateChannel_MaterialSupply2
+						EndSelect
+				EndSelect
+		EndSelect
+	Endif
+Return
+//**************End routines to add channels *************
+
+//**************Start routines to add devices *************
+
+// *********Start devices of family Valve**********
+// YLV1 for sealing processes
+SubRoutine Common_AddDeviceSealing_YLV1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL LV1
+			Description Valve air supply 1
+			VisuInterface 1 1 23
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL LV1
+			Description Valve air supply 1
+			VisuInterface 1 1 23
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDeviceSealing_YLV1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDeviceSealing_YLV1_Main
+	AddDevice V_3-2_EL_MAIN LV1
+	Description Valve air supply 1
+	VisuInterface 1 1 23
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDeviceSealing_YLV2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL LV2
+			Description Valve air supply 2
+			VisuInterface 1 1 23
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL LV2
+			Description Valve air supply 2
+			VisuInterface 1 1 23
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDeviceSealing_YLV2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDeviceSealing_YLV2_Main
+	AddDevice V_3-2_EL_MAIN LV2
+	Description Valve air supply 2
+	VisuInterface 1 1 23
+	WearCounter 1
+Return
+
+SubRoutine Common_AddValve_LV_BL1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL LV_BL1
+			Description Valve air supply blow out 1
+			VisuInterface 1 1 24
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL LV_BL1
+			Description Valve air supply blow out 1
+			VisuInterface 1 1 24
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddValve_LV_BL1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YLV5
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL LV5
+			Description Valve air supply nozzle exchanger 
+			VisuInterface 1 1 25
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL LV5
+			Description Valve air supply nozzle exchanger 
+			VisuInterface 1 1 25
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YLV5)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YLV5_Main
+	AddDevice V_3-2_EL_MAIN LV5
+	Description Valve air supply 1
+	VisuInterface 1 1 25
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_YBL1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL BL1
+			Description Blowing air valve 1
+			VisuInterface 1 1 30
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL BL1
+			Description Blowing air valve 1
+			VisuInterface 1 1 30
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YBL1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YBL2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL BL2
+			Description Blowing air valve 2
+			VisuInterface 1 1 29
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL BL2
+			Description Blowing air valve 2
+			VisuInterface 1 1 29
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YBL2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YAVR1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL AVR1
+			Description Valve circulation 1
+			VisuInterface 1 1 0
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL AVR1
+			Description Valve circulation 1
+			VisuInterface 1 1 0
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YAVR1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YAVR1_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL AVR1_1
+			Description Valve circulation 1
+			VisuInterface 1 1 0
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL AVR1_1
+			Description Valve circulation 1
+			VisuInterface 1 1 0
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YAVR1_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YAVR1_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL AVR1_2
+			Description Valve circulation 2
+			VisuInterface 1 3 0
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL AVR1_2
+			Description Valve circulation 2
+			VisuInterface 1 3 0
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YAVR1_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YLA1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL LA1
+			Description Valve air drive 1
+			VisuInterface 1 1 31
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL LA1
+			Description Valve air drive 1
+			VisuInterface 1 1 31
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_YLA1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddValve_FDR1
+	AddDevice V_3-2_EL FDR1
+	Description Valve material pressure 1
+	VisuInterface 1 1 6
+	WearCounter 1
+Return
+
+SubRoutine Common_AddValve_FDR1_1
+	AddDevice V_3-2_EL FDR1_1
+	Description Valve material pressure 1
+	VisuInterface 1 1 6
+	WearCounter 1
+Return
+
+SubRoutine Common_AddValve_FDR1_2
+	AddDevice V_3-2_EL FDR1_2
+	Description Valve material pressure 1
+	VisuInterface 1 3 6
+	WearCounter 1
+Return
+
+SubRoutine Common_AddValve_HG1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL HG1
+			Description Valve help gun 1
+			VisuInterface 1 1 5
+			WearCounter 1
+			// set cfg parameters
+			SelectTab [CfgParameter]
+			SelectCfg YHG1.TimeOn
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+			SelectCfg YHG1.TimeOff
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL HG1
+			Description Valve help gun 1
+			VisuInterface 1 1 5
+			WearCounter 1
+			// set cfg parameters
+			SelectTab [CfgParameter]
+			SelectCfg YHG1.TimeOn
+			OptionalUsed 1
+			Value 00d00h00m0s070ms
+			SelectCfg YHG1.TimeOff
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+		CaseElse
+			Message Wrong bus master (Common_AddValve_HG1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddValve_HG1_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL HG1_1
+			Description Valve help gun 1
+			VisuInterface 1 1 5
+			WearCounter 1
+			// set cfg parameters
+			SelectTab [CfgParameter]
+			SelectCfg YHG1_1.TimeOn
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+			SelectCfg YHG1_1.TimeOff
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL HG1_1
+			Description Valve help gun 1
+			VisuInterface 1 1 5
+			WearCounter 1
+			// set cfg parameters
+			SelectTab [CfgParameter]
+			SelectCfg YHG1_1.TimeOn
+			OptionalUsed 1
+			Value 00d00h00m0s070ms
+			SelectCfg YHG1_1.TimeOff
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+		CaseElse
+			Message Wrong bus master (Common_AddValve_HG1_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddValve_HG1_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL HG1_2
+			Description Valve help gun 1
+			VisuInterface 1 3 5
+			WearCounter 1
+			// set cfg parameters
+			SelectTab [CfgParameter]
+			SelectCfg YHG1_2.TimeOn
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+			SelectCfg YHG1_2.TimeOff
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL HG1_2
+			Description Valve help gun 1
+			VisuInterface 1 3 5
+			WearCounter 1
+			// set cfg parameters
+			SelectTab [CfgParameter]
+			SelectCfg YHG1_2.TimeOn
+			OptionalUsed 1
+			Value 00d00h00m0s070ms
+			SelectCfg YHG1_2.TimeOff
+			OptionalUsed 1
+			Value 00d00h00m00s070ms
+		CaseElse
+			Message Wrong bus master (Common_AddValve_HG1_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YZYAD1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ZYAD1
+			Description Valve adjust MD 1
+			VisuInterface 1 1 10
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ZYAD1
+			Description Valve adjust MD 1
+			VisuInterface 1 1 10
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YZYAD1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YZYRZ1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ZYRZ1
+			Description Valve recycle cylinder 1
+			VisuInterface 1 1 11
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ZYRZ1
+			Description Valve recycle cylinder 1
+			VisuInterface 1 1 11
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YZYRZ1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YKPL1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL KPL1
+			Description Valve coupling MD 1
+			VisuInterface 1 1 12
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL KPL1
+			Description Valve coupling MD 1
+			VisuInterface 1 1 12
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YKPL1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YZY1AB1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ZY1AB1
+			Description Valve cover MD 1
+			VisuInterface 1 1 13
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ZY1AB1
+			Description Valve cover MD 1
+			VisuInterface 1 1 13
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YZY1AB1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YABS1zu
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ABS1zu
+			Description Valve exhaust MD close
+			VisuInterface 1 1 14
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ABS1zu
+			Description Valve exhaust MD close
+			VisuInterface 1 1 14
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YABS1zu)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YABS1auf
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ABS1auf
+			Description Valve exhaust MD open
+			VisuInterface 1 1 15
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ABS1auf
+			Description Valve exhaust MD open
+			VisuInterface 1 1 15
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YABS1auf)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YABS1_KPzu
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ABS1_KPzu
+			Description Valve exhaust cover close
+			VisuInterface 1 1 16
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ABS1_KPzu
+			Description Valve exhaust cover close
+			VisuInterface 1 1 16
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YABS1_KPzu)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YABS1_KPauf
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ABS1_KPauf
+			Description Valve exhaust cover open
+			VisuInterface 1 1 17
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ABS1_KPauf
+			Description Valve exhaust cover open
+			VisuInterface 1 1 17
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YABS1_KPauf)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YVG1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL VG1
+			Description Valve vacuum generator
+			VisuInterface 1 1 18
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL VG1
+			Description Valve vacuum generator
+			VisuInterface 1 1 18
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YVG1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YP1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL P1
+			Description Valve pump exhaust unit
+			VisuInterface 1 1 19
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL P1
+			Description Valve pump exhaust unit
+			VisuInterface 1 1 19
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YP1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YAV1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL AV1
+			Description outlet valve piston
+			VisuInterface 1 1 1
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL AV1
+			Description outlet valve piston
+			VisuInterface 1 1 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YAV1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YAV1_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL AV1_1
+			Description outlet valve piston
+			VisuInterface 1 1 1
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL AV1_1
+			Description outlet valve piston
+			VisuInterface 1 1 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YAV1_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YAV1_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL AV1_2
+			Description outlet valve piston
+			VisuInterface 1 3 1
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL AV1_2
+			Description outlet valve piston
+			VisuInterface 1 3 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YAV1_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YBV1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL BV1
+			Description inlet valve piston
+			VisuInterface 1 1 2
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL BV1
+			Description inlet valve piston
+			VisuInterface 1 1 2
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YBV1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YBV1_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL BV1_1
+			Description inlet valve piston
+			VisuInterface 1 1 2
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL BV1_1
+			Description inlet valve piston
+			VisuInterface 1 1 2
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YBV1_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YBV1_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL BV1_2
+			Description inlet valve piston
+			VisuInterface 1 3 2
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL BV1_2
+			Description inlet valve piston
+			VisuInterface 1 3 2
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YBV1_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YBL1_Sealing
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL BL1
+			Description Valve cleaning air water quench
+			VisuInterface 1 1 20
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL BL1
+			Description Valve cleaning air water quench
+			VisuInterface 1 1 20
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YBL1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YSWVR1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL SWVR1
+			Description Valve release water water quench
+			VisuInterface 1 1 21
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL SWVR1
+			Description Valve release water water quench
+			VisuInterface 1 1 21
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YSWVR1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YSWVV1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL SWVV1
+			Description Valve release water water quench
+			VisuInterface 1 1 22
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL SWVV1
+			Description Valve release water water quench
+			VisuInterface 1 1 22
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YSWVV1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY1
+			Description Valve nozzle exchanger place 1
+			VisuInterface 1 2 1
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY1
+			Description Valve nozzle exchanger place 1
+			VisuInterface 1 2 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY2
+			Description Valve nozzle exchanger place 2
+			VisuInterface 1 2 2
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY2
+			Description Valve nozzle exchanger place 2
+			VisuInterface 1 2 2
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY3
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY3
+			Description Valve nozzle exchanger place 3
+			VisuInterface 1 2 3
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY3
+			Description Valve nozzle exchanger place 3
+			VisuInterface 1 2 3
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY3)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY4
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY4
+			Description Valve nozzle exchanger place 4
+			VisuInterface 1 2 4
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY4
+			Description Valve nozzle exchanger place 4
+			VisuInterface 1 2 4
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY4)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY5
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY5
+			Description Valve nozzle exchanger place 5
+			VisuInterface 1 2 5
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY5
+			Description Valve nozzle exchanger place 5
+			VisuInterface 1 2 5
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY5)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY6
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY6
+			Description Valve nozzle exchanger place 6
+			VisuInterface 1 2 6
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY6
+			Description Valve nozzle exchanger place 6
+			VisuInterface 1 2 6
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY6)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY7
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY7
+			Description Valve nozzle exchanger place 7
+			VisuInterface 1 2 7
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY7
+			Description Valve nozzle exchanger place 7
+			VisuInterface 1 2 7
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY7)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY8
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY8
+			Description Valve nozzle exchanger place 8
+			VisuInterface 1 2 8
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY8
+			Description Valve nozzle exchanger place 8
+			VisuInterface 1 2 8
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY8)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY9
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY9
+			Description Valve nozzle exchanger place 9
+			VisuInterface 1 2 9
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY9
+			Description Valve nozzle exchanger place 9
+			VisuInterface 1 2 9
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY9)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_YARZY10
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice V_3-2_EL ARZY10
+			Description Valve nozzle exchanger place 10
+			VisuInterface 1 2 10
+			WearCounter 1
+		Case Profibus
+			AddDevice V_3-2_LP04_DDL ARZY10
+			Description Valve nozzle exchanger place 10
+			VisuInterface 1 2 10
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (YARZY10)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+// *********End devices of family Valve**********
+
+// *********Start devices of family Initiator**********
+SubRoutine Common_AddInitiator_LV1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice INI_Pres_10 LV1
+					Description Initiator input pressure air supply 1
+					VisuInterface 1 1
+				Case El_V2
+					AddDevice INI_Pres_10_CPX LV1
+					Description Initiator input pressure air supply 1
+					VisuInterface 1 1
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddInitiator_LV1)
+			EndSelect
+		Case Profibus
+			AddDevice INI_Pres_10 LV1
+			Description Initiator input pressure air supply 1
+			VisuInterface 1 1
+		CaseElse
+			Message Wrong bus master (Common_AddInitiator_LV1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddInitiator_LV2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice INI_Pres_10 LV2
+					Description Initiator input pressure air supply 2
+					VisuInterface 1 1
+				Case El_V2
+					AddDevice INI_Pres_10_CPX LV2
+					Description Initiator input pressure air supply 2
+					VisuInterface 1 1
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddInitiator_LV2)
+			EndSelect
+		Case Profibus
+			AddDevice INI_Pres_10 LV2
+			Description Initiator input pressure air supply 2
+			VisuInterface 1 1
+		CaseElse
+			Message Wrong bus master (Common_AddInitiator_LV2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_BARZY1ER
+	AddDevice INI_Pres_10 ARZY1ER
+	Description Initiator locking cylinder rear
+	VisuInterface 1 4
+	SelectTab [CfgParameter]
+	// Select required cfg parameter of device BARZY1ER
+	SelectCfg BARZY1ER.DeBouncingTime
+	// enable optional parameter
+	OptionalUsed 1
+	Value 0d0h0m0s500ms
+Return
+
+SubRoutine Common_AddDevice_BARZY1EV
+	AddDevice INI_Pres_10 ARZY1EV
+	Description Initiator locking cylinder front
+	VisuInterface 1 5
+	SelectTab [CfgParameter]
+	// Select required cfg parameter of device BARZY1EV
+	SelectCfg BARZY1EV.DeBouncingTime
+	// enable optional parameter
+	OptionalUsed 1
+	Value 0d0h0m0s500ms
+Return
+
+SubRoutine Common_AddDevice_BHD1
+	AddDevice INI_Pres_Booster_BR HD1
+	Description Initiator input high pressure air supply 1
+	VisuInterface 1 11
+Return
+
+SubRoutine Common_AddDevice_BDRU1
+	AddDevice INI_Pres_10 DRU1
+	Description Initiator air drive 1
+	VisuInterface 1 12
+Return
+
+SubRoutine Common_AddDevice_BPU1
+	AddDevice INI_Pres_10 PU1
+	Description Initiator air exhaust unit
+	VisuInterface 1 13
+Return
+
+SubRoutine Common_AddDevice_BMS1
+	AddDevice Ini_EndPosSM MS1
+	Description Initiator MS 1
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_BSP1
+	AddDevice Ini_EndPosSM SP1
+	Description Initiator SP 1
+	VisuInterface 1 4
+Return
+
+SubRoutine Common_AddDevice_BZYAD1ER
+	AddDevice Ini_EndPosSM ZYAD1ER
+	Description Initiator ZYAD1ER
+	VisuInterface 1 5
+Return
+
+SubRoutine Common_AddDevice_BZYAD1EV
+	AddDevice Ini_EndPosSM ZYAD1EV
+	Description Initiator ZYAD1EV
+	VisuInterface 1 6
+Return
+
+SubRoutine Common_AddDevice_BZYRZER
+	AddDevice Ini_EndPosSM ZYRZ1ER
+	Description Initiator ZYRZ1ER
+	VisuInterface 1 7
+Return
+
+SubRoutine Common_AddDevice_BZYRZ1EV
+	AddDevice Ini_EndPosSM ZYRZ1EV
+	Description Initiator ZYRZ1EV
+	VisuInterface 1 8
+Return
+
+SubRoutine Common_AddDevice_BKPL1DU
+	AddDevice Ini_EndPosSM KPL1DU
+	Description Initiator coupling MD 1
+	VisuInterface 1 9
+Return
+
+SubRoutine Common_AddDevice_BAB1
+	AddDevice Ini_EndPosSM AB1
+	Description Initiator cover MD 1
+	VisuInterface 1 10
+Return
+
+SubRoutine Common_AddDevice_BGF2
+	AddDevice Ini_EndPosSM GF2
+	Description Initiator MD at robot
+	VisuInterface 1 11
+Return
+
+SubRoutine Common_AddDevice_BABS1zu
+	AddDevice Ini_EndPosSM ABS1zu
+	Description Initiator exhaust valve close
+	VisuInterface 1 14
+Return
+
+SubRoutine Common_AddDevice_BABS1auf
+	AddDevice Ini_EndPosSM ABS1auf
+	Description Initiator exhaust valve open
+	VisuInterface 1 15
+Return
+
+SubRoutine Common_AddDevice_BDP92GR
+	AddDevice Ini_EndPosSM DP92GR
+	Description Endposition initiator piston MDP92
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_BDP92GR_1
+	AddDevice Ini_EndPosSM DP92GR_1
+	Description Endposition initiator piston MDP92_1
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_BDP92GR_2
+	AddDevice Ini_EndPosSM DP92GR_2
+	Description Endposition initiator piston MDP92_2
+	VisuInterface 1 4
+Return
+
+SubRoutine Common_AddDevice_BSW1
+	AddDevice Ini_EndPosSM SW1
+	Description filling level initiator water quench
+	VisuInterface 1 16
+Return
+
+SubRoutine Common_AddDevice_BSW2
+	AddDevice Ini_EndPosSM SW2
+	Description overflow initiator water quench
+	VisuInterface 1 18
+Return
+
+SubRoutine Common_AddDevice_BARZY1aER
+	AddDevice Ini_EndPosSM ARZY1aER
+	Description bolt initiator 1 place 1
+	VisuInterface 1 19
+Return
+
+SubRoutine Common_AddDevice_BARZY1bER
+	AddDevice Ini_EndPosSM ARZY1bER
+	Description bolt initiator 2 place 1
+	VisuInterface 1 20
+Return
+
+SubRoutine Common_AddDevice_BARZY2aER
+	AddDevice Ini_EndPosSM ARZY2aER
+	Description bolt initiator 1 place 2
+	VisuInterface 1 21
+Return
+
+SubRoutine Common_AddDevice_BARZY2bER
+	AddDevice Ini_EndPosSM ARZY2bER
+	Description bolt initiator 2 place 2
+	VisuInterface 1 22
+Return
+
+SubRoutine Common_AddDevice_BARZY3aER
+	AddDevice Ini_EndPosSM ARZY3aER
+	Description bolt initiator 1 place 3
+	VisuInterface 1 23
+Return
+
+SubRoutine Common_AddDevice_BARZY3bER
+	AddDevice Ini_EndPosSM ARZY3bER
+	Description bolt initiator 2 place 3
+	VisuInterface 1 24
+Return
+
+SubRoutine Common_AddDevice_BARZY4aER
+	AddDevice Ini_EndPosSM ARZY4aER
+	Description bolt initiator 1 place 4
+	VisuInterface 1 25
+Return
+
+SubRoutine Common_AddDevice_BARZY4bER
+	AddDevice Ini_EndPosSM ARZY4bER
+	Description bolt initiator 2 place 4
+	VisuInterface 1 26
+Return
+
+SubRoutine Common_AddDevice_BARZY5aER
+	AddDevice Ini_EndPosSM ARZY5aER
+	Description bolt initiator 1 place 5
+	VisuInterface 1 27
+Return
+
+SubRoutine Common_AddDevice_BARZY5bER
+	AddDevice Ini_EndPosSM ARZY5bER
+	Description bolt initiator 2 place 5
+	VisuInterface 1 28
+Return
+
+SubRoutine Common_AddDevice_BARZY6aER
+	AddDevice Ini_EndPosSM ARZY6aER
+	Description bolt initiator 1 place 6
+	VisuInterface 1 29
+Return
+
+SubRoutine Common_AddDevice_BARZY6bER
+	AddDevice Ini_EndPosSM ARZY6bER
+	Description bolt initiator 2 place 6
+	VisuInterface 1 30
+Return
+
+SubRoutine Common_AddDevice_BARZY7aER
+	AddDevice Ini_EndPosSM ARZY7aER
+	Description bolt initiator 1 place 7
+	VisuInterface 1 31
+Return
+
+SubRoutine Common_AddDevice_BARZY7bER
+	AddDevice Ini_EndPosSM ARZY7bER
+	Description bolt initiator 2 place 7
+	VisuInterface 1 32
+Return
+
+SubRoutine Common_AddDevice_BARZY8aER
+	AddDevice Ini_EndPosSM ARZY8aER
+	Description bolt initiator 1 place 8
+	VisuInterface 1 33
+Return
+
+SubRoutine Common_AddDevice_BARZY8bER
+	AddDevice Ini_EndPosSM ARZY8bER
+	Description bolt initiator 2 place 8
+	VisuInterface 1 34
+Return
+
+SubRoutine Common_AddDevice_BARZY9aER
+	AddDevice Ini_EndPosSM ARZY9aER
+	Description bolt initiator 1 place 9
+	VisuInterface 1 35
+Return
+
+SubRoutine Common_AddDevice_BARZY9bER
+	AddDevice Ini_EndPosSM ARZY9bER
+	Description bolt initiator 2 place 9
+	VisuInterface 1 36
+Return
+
+SubRoutine Common_AddDevice_BARZY10aER
+	AddDevice Ini_EndPosSM ARZY10aER
+	Description bolt initiator 1 place 10
+	VisuInterface 1 37
+Return
+
+SubRoutine Common_AddDevice_BARZY10bER
+	AddDevice Ini_EndPosSM ARZY10bER
+	Description bolt initiator 2 place 10
+	VisuInterface 1 38
+Return
+
+SubRoutine Common_AddDevice_BWS1
+	AddDevice Ini_EndPosSM WS1
+	Description occupied initiator place 1
+	VisuInterface 1 39
+Return
+
+SubRoutine Common_AddDevice_BWS2
+	AddDevice Ini_EndPosSM WS2
+	Description occupied initiator place 2
+	VisuInterface 1 40
+Return
+
+SubRoutine Common_AddDevice_BWS3
+	AddDevice Ini_EndPosSM WS3
+	Description occupied initiator place 3
+	VisuInterface 1 41
+Return
+
+SubRoutine Common_AddDevice_BWS4
+	AddDevice Ini_EndPosSM WS4
+	Description occupied initiator place 4
+	VisuInterface 1 42
+Return
+
+SubRoutine Common_AddDevice_BWS5
+	AddDevice Ini_EndPosSM WS5
+	Description occupied initiator place 5
+	VisuInterface 1 43
+Return
+
+SubRoutine Common_AddDevice_BWS6
+	AddDevice Ini_EndPosSM WS6
+	Description occupied initiator place 6
+	VisuInterface 1 44
+Return
+
+SubRoutine Common_AddDevice_BWS7
+	AddDevice Ini_EndPosSM WS7
+	Description occupied initiator place 7
+	VisuInterface 1 45
+Return
+
+SubRoutine Common_AddDevice_BWS8
+	AddDevice Ini_EndPosSM WS8
+	Description occupied initiator place 8
+	VisuInterface 1 46
+Return
+
+SubRoutine Common_AddDevice_BWS9
+	AddDevice Ini_EndPosSM WS9
+	Description occupied initiator place 9
+	VisuInterface 1 47
+Return
+
+SubRoutine Common_AddDevice_BWS10
+	AddDevice Ini_EndPosSM WS10
+	Description occupied initiator place 10
+	VisuInterface 1 48
+Return
+
+SubRoutine Common_AddDevice_BKSS1
+	AddDevice Ini_EndPosSM KSS1
+	Description State Check Initiator KSS1
+	VisuInterface 1 2
+Return
+
+SubRoutine Common_AddDevice_BKPL1
+	AddDevice Ini_EndPosSM KPL1
+	Description Coupling Initiator KPL1
+	VisuInterface 1 49
+Return
+
+SubRoutine Common_AddDevice_BKPL2
+	AddDevice Ini_EndPosSM KPL2
+	Description Coupling Initiator KPL2
+	VisuInterface 1 50
+Return
+
+SubRoutine Common_AddDevice_BKPL3
+	AddDevice Ini_EndPosSM KPL3
+	Description Coupling Initiator KPL3
+	VisuInterface 1 51
+Return
+
+SubRoutine Common_AddDevice_BKPL4
+	AddDevice Ini_EndPosSM KPL4
+	Description Coupling Initiator KPL4
+	VisuInterface 1 52
+Return
+
+SubRoutine Common_AddDevice_BKPL5
+	AddDevice Ini_EndPosSM KPL5
+	Description Coupling Initiator KPL5
+	VisuInterface 1 53
+Return
+
+SubRoutine Common_AddDevice_BKPL6
+	AddDevice Ini_EndPosSM KPL6
+	Description Coupling Initiator KPL6
+	VisuInterface 1 54
+Return
+
+SubRoutine Common_AddDevice_BKSK1
+	AddDevice Ini_EndPosSM KSK1
+	Description Collision protection Initiator KSK1
+	VisuInterface 1 55
+Return
+
+SubRoutine Common_AddDevice_BKSK2
+	AddDevice Ini_EndPosSM KSK2
+	Description Collision protection Initiator KSK2
+	VisuInterface 1 56
+Return
+
+SubRoutine Common_AddDevice_BKSK3
+	AddDevice Ini_EndPosSM KSK3
+	Description Collision protection Initiator KSK3
+	VisuInterface 1 57
+Return
+
+SubRoutine Common_AddDevice_BKSK4
+	AddDevice Ini_EndPosSM KSK4
+	Description Collision protection Initiator KSK4
+	VisuInterface 1 58
+Return
+
+SubRoutine Common_AddDevice_BKSK5
+	AddDevice Ini_EndPosSM KSK5
+	Description Collision protection Initiator KSK5
+	VisuInterface 1 59
+Return
+
+SubRoutine Common_AddDevice_BKSK6
+	AddDevice Ini_EndPosSM KSK6
+	Description Collision protection Initiator KSK6
+	VisuInterface 1 60
+Return
+
+SubRoutine Common_AddDevice_BTO1
+	AddDevice Ini_EndPosSM TO1
+	Description Occupied Initiator TO1
+	VisuInterface 1 61
+Return
+
+SubRoutine Common_AddDevice_BTO2
+	AddDevice Ini_EndPosSM TO2
+	Description Occupied Initiator TO2
+	VisuInterface 1 62
+Return
+
+SubRoutine Common_AddDevice_BTO3
+	AddDevice Ini_EndPosSM TO3
+	Description Occupied Initiator TO3
+	VisuInterface 1 63
+Return
+
+SubRoutine Common_AddDevice_BTO4
+	AddDevice Ini_EndPosSM TO4
+	Description Occupied Initiator TO4
+	VisuInterface 1 64
+Return
+
+SubRoutine Common_AddDevice_BTO5
+	AddDevice Ini_EndPosSM TO5
+	Description Occupied Initiator TO5
+	VisuInterface 1 65
+Return
+
+SubRoutine Common_AddDevice_BTO6
+	AddDevice Ini_EndPosSM TO6
+	Description Occupied Initiator TO6
+	VisuInterface 1 66
+Return
+
+// *********End devices of family Initiator**********
+
+// *********Start devices of family Piston**********
+SubRoutine Common_AddDevice_MDP92_100ccm
+	AddDevice PISTON_SEAL_100ccm DP92
+	Description Dosing piston 92
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_1_100ccm
+	AddDevice PISTON_SEAL_100ccm DP92_1
+	Description Dosing piston 92_1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_2_100ccm
+	AddDevice PISTON_SEAL_100ccm DP92_2
+	Description Dosing piston 92_2
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_MDP92_585ccm
+	AddDevice PISTON_SEAL_585ccm DP92
+	Description Dosing piston 92
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_1_585ccm
+	AddDevice PISTON_SEAL_585ccm DP92_1
+	Description Dosing piston 92_1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_2_585ccm
+	AddDevice PISTON_SEAL_585ccm DP92_2
+	Description Dosing piston 92_2
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_MDP92_300ccm
+	AddDevice PISTON_SEAL_300ccm DP92
+	Description Dosing piston 92
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_1_300ccm
+	AddDevice PISTON_SEAL_300ccm DP92_1
+	Description Dosing piston 92_1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_2_300ccm
+	AddDevice PISTON_SEAL_300ccm DP92_2
+	Description Dosing piston 92_2
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_MDP92_600ccm
+	AddDevice PISTON_SEAL_600ccm DP92
+	Description Dosing piston 92
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_1_600ccm
+	AddDevice PISTON_SEAL_600ccm DP92_1
+	Description Dosing piston 92_1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_MDP92_2_600ccm
+	AddDevice PISTON_SEAL_600ccm DP92_2
+	Description Dosing piston 92_2
+	VisuInterface 1 3
+Return
+// *********End devices of family Piston**********
+
+// *********Start devices of family AirFlow**********
+SubRoutine Common_AddDevice_BFDS1
+	AddDevice AF_Press_Analog20_10_BR FDS1
+	Description Paint pressure control 1
+	VisuInterface 1 3
+	// Properties of hardware endpoints (Profibus / SercosIII) will be set by script for Option 14
+Return
+
+SubRoutine Common_AddDevice_BMV2
+	AddDevice AF_Press_Analog20_10_BR MV2
+	Description Air flow for pressure regulator material 1
+	VisuInterface 1 1
+	// set cfg parameters
+	SelectTab [CfgParameter]
+	SelectCfg BMV2.ActualPressure.MonitorStatic.LowerAlarmRange
+	Value 50
+	SelectCfg BMV2.ActualPressure.MonitorStatic.LowerWarningRange
+	Value 15
+	SelectCfg BMV2.ActualPressure.MonitorStatic.TimeIgnoreDifferenceDown
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2.ActualPressure.MonitorStatic.TimeIgnoreDifferenceUp
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2.ActualPressure.MonitorStatic.TimeOutLowerAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2.ActualPressure.MonitorStatic.TimeOutLowerWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2.ActualPressure.MonitorStatic.TimeOutUpperAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2.ActualPressure.MonitorStatic.TimeOutUpperWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2.ActualPressure.MonitorStatic.UpperAlarmRange
+	Value 50
+	SelectCfg BMV2.ActualPressure.MonitorStatic.UpperWarningRange
+	Value 15
+	SelectCfg BMV2.TimeDown
+	Value 0d0h0m0s200ms
+	SelectCfg BMV2.TimeUp
+	Value 0d0h0m0s200ms
+Return
+
+SubRoutine Common_AddDevice_BMV2_1
+	AddDevice AF_Press_Analog20_10_BR MV2_1
+	Description Air flow for pressure regulator material 1
+	VisuInterface 1 1
+	// set cfg parameters
+	SelectTab [CfgParameter]
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.LowerAlarmRange
+	Value 50
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.LowerWarningRange
+	Value 15
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.TimeIgnoreDifferenceDown
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.TimeIgnoreDifferenceUp
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.TimeOutLowerAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.TimeOutLowerWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.TimeOutUpperAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.TimeOutUpperWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.UpperAlarmRange
+	Value 50
+	SelectCfg BMV2_1.ActualPressure.MonitorStatic.UpperWarningRange
+	Value 15
+	SelectCfg BMV2_1.TimeDown
+	Value 0d0h0m0s200ms
+	SelectCfg BMV2_1.TimeUp
+	Value 0d0h0m0s200ms
+Return
+
+SubRoutine Common_AddDevice_BMV2_2
+	AddDevice AF_Press_Analog20_10_BR MV2_2
+	Description Air flow for pressure regulator material 2
+	VisuInterface 1 11
+	// set cfg parameters
+	SelectTab [CfgParameter]
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.LowerAlarmRange
+	Value 50
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.LowerWarningRange
+	Value 15
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.TimeIgnoreDifferenceDown
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.TimeIgnoreDifferenceUp
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.TimeOutLowerAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.TimeOutLowerWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.TimeOutUpperAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.TimeOutUpperWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.UpperAlarmRange
+	Value 50
+	SelectCfg BMV2_2.ActualPressure.MonitorStatic.UpperWarningRange
+	Value 15
+	SelectCfg BMV2_2.TimeDown
+	Value 0d0h0m0s200ms
+	SelectCfg BMV2_2.TimeUp
+	Value 0d0h0m0s200ms
+Return
+
+SubRoutine Common_AddDevice_BBL1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice AF_Press_Analog20_10_BR BL1
+					Description Blowing air masking device
+					VisuInterface 1 2
+				Case El_V2
+					AddDevice AF_CPX_10bar BL1
+					Description Blowing air masking device
+					VisuInterface 1 2
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddDevice_BBL1)
+			EndSelect
+		Case Profibus
+			AddDevice AF_Press_Analog20_10_BR BL1
+			Description Blowing air masking device
+			VisuInterface 1 2
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_BBL1)!! Only Profibus and Sercos III supported
+	EndSelect
+	// set cfg parameters
+	SelectTab [CfgParameter]
+	SelectCfg BBL1.ActualPressure.MonitorStatic.LowerAlarmRange
+	Value 50
+	SelectCfg BBL1.ActualPressure.MonitorStatic.LowerWarningRange
+	Value 15
+	SelectCfg BBL1.ActualPressure.MonitorStatic.TimeIgnoreDifferenceDown
+	Value 0d0h0m0s0ms
+	SelectCfg BBL1.ActualPressure.MonitorStatic.TimeIgnoreDifferenceUp
+	Value 0d0h0m0s0ms
+	SelectCfg BBL1.ActualPressure.MonitorStatic.TimeOutLowerAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BBL1.ActualPressure.MonitorStatic.TimeOutLowerWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BBL1.ActualPressure.MonitorStatic.TimeOutUpperAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BBL1.ActualPressure.MonitorStatic.TimeOutUpperWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BBL1.ActualPressure.MonitorStatic.UpperAlarmRange
+	Value 50
+	SelectCfg BBL1.ActualPressure.MonitorStatic.UpperWarningRange
+	Value 15
+	SelectCfg BBL1.TimeDown
+	Value 0d0h0m0s200ms
+	SelectCfg BBL1.TimeUp
+	Value 0d0h0m0s200ms
+Return
+
+SubRoutine Common_AddDevice_BBL2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice AF_Press_Analog20_10_BR BL2
+					Description Blowing air masking device
+					VisuInterface 1 3
+				Case El_V2
+					AddDevice AF_CPX_10bar BL2
+					Description Blowing air masking device
+					VisuInterface 1 3
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddDevice_BBL2)
+			EndSelect
+		Case Profibus
+			AddDevice AF_Press_Analog20_10_BR BL2
+			Description Blowing air masking device
+			VisuInterface 1 2
+		CaseElse
+			Message Bus master [Option14] not supported (only Profibus and Sercos III) !! (Common_AddDevice_BBL2)
+	EndSelect
+	// set cfg parameters
+	SelectTab [CfgParameter]
+	SelectCfg BBL2.ActualPressure.MonitorStatic.LowerAlarmRange
+	Value 50
+	SelectCfg BBL2.ActualPressure.MonitorStatic.LowerWarningRange
+	Value 15
+	SelectCfg BBL2.ActualPressure.MonitorStatic.TimeIgnoreDifferenceDown
+	Value 0d0h0m0s0ms
+	SelectCfg BBL2.ActualPressure.MonitorStatic.TimeIgnoreDifferenceUp
+	Value 0d0h0m0s0ms
+	SelectCfg BBL2.ActualPressure.MonitorStatic.TimeOutLowerAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BBL2.ActualPressure.MonitorStatic.TimeOutLowerWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BBL2.ActualPressure.MonitorStatic.TimeOutUpperAlarm
+	Value 0d0h0m0s0ms
+	SelectCfg BBL2.ActualPressure.MonitorStatic.TimeOutUpperWarning
+	Value 0d0h0m0s0ms
+	SelectCfg BBL2.ActualPressure.MonitorStatic.UpperAlarmRange
+	Value 50
+	SelectCfg BBL2.ActualPressure.MonitorStatic.UpperWarningRange
+	Value 15
+	SelectCfg BBL2.TimeDown
+	Value 0d0h0m0s200ms
+	SelectCfg BBL2.TimeUp
+	Value 0d0h0m0s200ms
+Return
+
+SubRoutine Common_AddDevice_BLV_BL1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice AF_CPX_10bar LV_BL1
+			Description Cleaning Air Nozzles
+			VisuInterface 1 4
+		CaseElse
+			Message Bus master [Option14] not supported (only Sercos III) !! (Common_AddDevice_BLV_BL1)
+	EndSelect
+Return
+// *********End devices of family AirFlow**********
+
+// *********Start devices of family Needle**********
+SubRoutine Common_AddDevice_YHN1
+	AddDevice NEEDLE_GUN_SEALING_1D HN1
+	Description Main needle 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_YHN2
+	AddDevice NEEDLE_GUN_SEALING_1D HN2
+	Description Main needle 2
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_YHN3
+	AddDevice NEEDLE_GUN_SEALING_1D HN3
+	Description Main needle 3
+	VisuInterface 1 3
+	WearCounter 1
+Return
+// *********End devices of family Needle**********
+
+// *********Start devices of family AnalogSensor**********
+SubRoutine Common_AddDevice_BMV2PE
+	AddDevice AS_Press_Analog20_400_TS MV2PE
+	Description Pressure sensor inlet BMV2
+	VisuInterface 1 2
+Return
+
+SubRoutine Common_AddDevice_BMV2PE_1
+	AddDevice AS_Press_Analog20_400_TS MV2PE_1
+	Description Pressure sensor inlet BMV2_1
+	VisuInterface 1 2
+Return
+
+SubRoutine Common_AddDevice_BMV2PE_2
+	AddDevice AS_Press_Analog20_400_TS MV2PE_2
+	Description Pressure sensor inlet BMV2_2
+	VisuInterface 1 22
+Return
+
+SubRoutine Common_AddDevice_BMV2PA
+	AddDevice AS_Press_Analog20_400_TS MV2PA
+	Description Pressure sensor outlet BMV2
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_BMV2PA_1
+	AddDevice AS_Press_Analog20_400_TS MV2PA_1
+	Description Pressure sensor outlet BMV2_1
+	VisuInterface 1 3
+Return
+
+SubRoutine Common_AddDevice_BMV2PA_2
+	AddDevice AS_Press_Analog20_400_TS MV2PA_2
+	Description Pressure sensor outlet BMV2_2
+	VisuInterface 1 23
+Return
+
+SubRoutine Common_AddDevice_BAP1P
+	AddDevice AS_Press_Analog20_250_TS AP1P
+	Description Pressure sensor applicator material 1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_BAP2P
+	AddDevice AS_Press_Analog20_250_TS AP2P
+	Description Pressure sensor applicator material 2
+	VisuInterface 1 21
+Return
+
+SubRoutine Common_AddDevice_BAP1T
+	AddDevice AS_Temp_Analog20_850_PT100_EH AP1T
+	Description Temperature sensor applicator material 1
+	VisuInterface 1 4
+Return
+
+SubRoutine Common_AddDevice_BAP2T
+	AddDevice AS_Temp_Analog20_850_PT100_EH AP2T
+	Description Temperature sensor applicator material 2
+	VisuInterface 1 24
+Return
+
+SubRoutine Common_AddDevice_BMV1T
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV1T
+	Description Temperature sensor supply material 1
+	VisuInterface 1 5
+Return
+
+SubRoutine Common_AddDevice_BMV1T_1
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV1T_1
+	Description Temperature sensor supply material 1
+	VisuInterface 1 5
+Return
+
+SubRoutine Common_AddDevice_BMV1T_2
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV1T_2
+	Description Temperature sensor supply material 2
+	VisuInterface 1 25
+Return
+
+SubRoutine Common_AddDevice_BMV2TE
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV2TE
+	Description Temperature sensor inlet BMV2
+	VisuInterface 1 6
+Return
+
+SubRoutine Common_AddDevice_BMV2TE_1
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV2TE_1
+	Description Temperature sensor inlet BMV2_1
+	VisuInterface 1 6
+Return
+
+SubRoutine Common_AddDevice_BMV2TE_2
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV2TE_2
+	Description Temperature sensor inlet BMV2_2
+	VisuInterface 1 26
+Return
+
+SubRoutine Common_AddDevice_BMV2TA
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV2TA
+	Description Temperature sensor outlet BMV2
+	VisuInterface 1 7
+Return
+
+SubRoutine Common_AddDevice_BMV2TA_1
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV2TA_1
+	Description Temperature sensor outlet BMV2_1
+	VisuInterface 1 7
+Return
+
+SubRoutine Common_AddDevice_BMV2TA_2
+	AddDevice AS_Temp_Analog20_850_PT100_EH MV2TA_2
+	Description Temperature sensor outlet BMV2_2
+	VisuInterface 1 27
+Return
+
+SubRoutine Common_AddDevice_BLISA
+	AddDevice AS_FillingLevel_Analog20_100_FEI50H LISA
+	Description Filling level sensor exhaust tank
+	VisuInterface 1 11
+Return
+
+SubRoutine Common_AddDevice_BDP92PA
+	AddDevice AS_Press_Analog20_400_TS DP92PA
+	Description Pressure sensor piston MDP92
+	VisuInterface 1 8
+Return
+
+SubRoutine Common_AddDevice_BDP92PA_1
+	AddDevice AS_Press_Analog20_400_TS DP92PA_1
+	Description Pressure sensor piston MDP92_1
+	VisuInterface 1 8
+Return
+
+SubRoutine Common_AddDevice_BDP92PA_2
+	AddDevice AS_Press_Analog20_400_TS DP92PA_2
+	Description Pressure sensor piston MDP92_2
+	VisuInterface 1 28
+Return
+// *********End devices of family AnalogSensor**********
+
+// *********Start devices of family PCU_Fixposition**********
+SubRoutine Common_AddDevice_AFIXPOS
+	AddDevice FIXPOS_T001 FIXPOS
+	Description Fixed positions
+Return
+// *********End devices of family PCU_Fixposition**********
+
+// *********Start devices of family ModesInterface**********
+SubRoutine Common_AddDevice_AModesInterface
+	AddDevice ModesInterface_T001 ModesInterface
+	Description Operating modes
+Return
+// *********End devices of family ModesInterface**********
+
+// *********Start devices of family SwitchPLC**********
+SubRoutine Common_AddDevice_YMV1
+	AddDevice SWITCH_PLC_1 YMV1
+	Description Material valve material 1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_YMV1_1
+	AddDevice SWITCH_PLC_1 YMV1_1
+	Description Material valve material 1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_YMV1_2
+	AddDevice SWITCH_PLC_1 YMV1_2
+	Description Material valve material 2
+	VisuInterface 1 2
+Return
+// *********End devices of family SwitchPLC**********
+
+// *********Start devices of family FlowMeter **********
+SubRoutine Common_AddDevice_BMV2F
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice FM_COUNTER_KUEPPERS_S3_PX MV2F
+					Description FlowMeter outlet BMV2
+					VisuInterface 1 1
+				Case El_V2
+					AddDevice FM_COUNTER_S3_FESTO_CPX MV2F
+					Description FlowMeter outlet BMV2
+					VisuInterface 1 1
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddDevice_BMV2F)
+			EndSelect
+		Case Profibus
+			AddDevice FM_COUNTER_KUEPPERS MV2F
+			Description FlowMeter outlet BMV2
+			VisuInterface 1 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_BMV2F)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_BMV2F_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice FM_COUNTER_KUEPPERS_S3_PX MV2F_1
+					Description FlowMeter outlet BMV2_1
+					VisuInterface 1 1
+				Case El_V2
+					AddDevice FM_COUNTER_S3_FESTO_CPX MV2F_1
+					Description FlowMeter outlet BMV2_1
+					VisuInterface 1 1
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddDevice_BMV2F_1)
+			EndSelect
+		Case Profibus
+			AddDevice FM_COUNTER_KUEPPERS MV2F_1
+			Description FlowMeter outlet BMV2_1
+			VisuInterface 1 1
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_BMV2F_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_BMV2F_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V1
+					AddDevice FM_COUNTER_KUEPPERS_S3_PX MV2F_2
+					Description FlowMeter outlet BMV2_2
+					VisuInterface 1 2
+				Case El_V2
+					AddDevice FM_COUNTER_S3_FESTO_CPX MV2F_2
+					Description FlowMeter outlet BMV2_2
+					VisuInterface 1 2
+				CaseElse
+					Message OptionElectricalVersion not supported !! (Common_AddDevice_BMV2F_2)
+			EndSelect
+		Case Profibus
+			AddDevice FM_COUNTER_KUEPPERS MV2F_2
+			Description FlowMeter outlet BMV2_2
+			VisuInterface 1 2
+		CaseElse
+			Message Wrong bus master (Common_AddDevice_BMV2F_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+// *********End devices of family FlowMeter ************
+
+// *********Start devices of family FlowControl ********
+SubRoutine Common_AddDevice_AMV2FC
+	AddDevice Flow_CTRL_DOSEPCL_V2 MV2FC
+	Description control of AirFlow BMV2
+	VisuInterface 1 1
+Return
+// *********End devices of family FlowControl **********
+
+// *********Start devices of family MatManager *********
+SubRoutine Common_AddDevice_AMatManager1
+	AddDevice MatManager MatManager1
+	Description Material manager 1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_AMatManager2
+	AddDevice MatManager MatManager2
+	Description Material manager 2
+	VisuInterface 1 2
+Return
+
+SubRoutine Common_AddDevice_AManagerSW1
+	AddDevice MatManager ManagerSW1
+	Description Manager SW1
+	VisuInterface 1 4
+Return
+// *********End devices of family MatManager **********
+
+// *********Start devices of family ShotMeter ********
+SubRoutine Common_AddDevice_BShotMeter1
+	AddDevice SHOTMETER_CTRL_DOSESM_V2 ShotMeter1
+	Description Control of pistons (ShotMeter)
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_BShotMeter2
+	AddDevice SHOTMETER_CTRL_DOSESM_V2 ShotMeter2
+	Description Control of pistons (ShotMeter)
+	VisuInterface 1 2
+Return
+// *********End devices of family ShotMeter **********
+
+// *********Start devices of family MaskingDevice ******
+SubRoutine Common_AddDevice_AMD1
+	AddDevice MD_EcoGunSealingMD MD1
+	Description Control of masking device 1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_AMD99
+	AddDevice MD_EcoGunMD_Servo1 MD99
+	Description Control of masking device 99
+	VisuInterface 1 1
+Return
+// *********End devices of family MaskingDevice ******
+
+// *********Start devices of family Swirl ******
+SubRoutine Common_AddDevice_ASWL1_Duerr
+	AddDevice SWIRL_DUERR_1 SWL1
+	Description Swirl 1
+	VisuInterface 1 1
+Return
+
+SubRoutine Common_AddDevice_ASWL1_Graco
+	AddDevice SWIRL_GRACO_1 SWL1
+	Description Swirl 1
+	VisuInterface 1 1
+Return
+// *********End devices of family Swirl ******
+
+// *********Start devices of family TempControl**********
+SubRoutine Common_AddDevice_ATCP12_AC_L
+	AddDevice EcoTemp_Peltier_AC_L TCP12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_AC_S
+	AddDevice EcoTemp_Peltier_AC_S TCP12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_WC_L
+	AddDevice EcoTemp_Peltier_WC_L TCP12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_WC_S
+	AddDevice EcoTemp_Peltier_WC_S TCP12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_1_AC_L
+	AddDevice EcoTemp_Peltier_AC_L TCP12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_1_AC_S
+	AddDevice EcoTemp_Peltier_AC_S TCP12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_1_WC_L
+	AddDevice EcoTemp_Peltier_WC_L TCP12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_1_WC_S
+	AddDevice EcoTemp_Peltier_WC_S TCP12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_2_AC_L
+	AddDevice EcoTemp_Peltier_AC_L TCP12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_2_AC_S
+	AddDevice EcoTemp_Peltier_AC_S TCP12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_2_WC_L
+	AddDevice EcoTemp_Peltier_WC_L TCP12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP12_2_WC_S
+	AddDevice EcoTemp_Peltier_WC_S TCP12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_AC_L
+	AddDevice EcoTemp_Peltier_AC_L TCP51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_AC_S
+	AddDevice EcoTemp_Peltier_AC_S TCP51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_WC_L
+	AddDevice EcoTemp_Peltier_WC_L TCP51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_WC_S
+	AddDevice EcoTemp_Peltier_WC_S TCP51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_1_AC_L
+	AddDevice EcoTemp_Peltier_AC_L TCP51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_1_AC_S
+	AddDevice EcoTemp_Peltier_AC_S TCP51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_1_WC_L
+	AddDevice EcoTemp_Peltier_WC_L TCP51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_1_WC_S
+	AddDevice EcoTemp_Peltier_WC_S TCP51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_2_AC_L
+	AddDevice EcoTemp_Peltier_AC_L TCP51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_2_AC_S
+	AddDevice EcoTemp_Peltier_AC_S TCP51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_2_WC_L
+	AddDevice EcoTemp_Peltier_WC_L TCP51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP51_2_WC_S
+	AddDevice EcoTemp_Peltier_WC_S TCP51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_AC_L
+	AddDevice EcoTemp_PT_AC_L_WOS TCP1_WT12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_AC_S
+	AddDevice EcoTemp_PT_AC_S_WOS TCP1_WT12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_WC_L
+	AddDevice EcoTemp_PT_WC_L_WOS TCP1_WT12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_WC_S
+	AddDevice EcoTemp_PT_WC_S_WOS TCP1_WT12
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_1_AC_L
+	AddDevice EcoTemp_PT_AC_L_WOS TCP1_WT12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_1_AC_S
+	AddDevice EcoTemp_PT_AC_S_WOS TCP1_WT12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_1_WC_L
+	AddDevice EcoTemp_PT_WC_L_WOS TCP1_WT12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_1_WC_S
+	AddDevice EcoTemp_PT_WC_S_WOS TCP1_WT12_1
+	Description TempControl axis 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_2_AC_L
+	AddDevice EcoTemp_PT_AC_L_WOS TCP1_WT12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_2_AC_S
+	AddDevice EcoTemp_PT_AC_S_WOS TCP1_WT12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_2_WC_L
+	AddDevice EcoTemp_PT_WC_L_WOS TCP1_WT12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT12_2_WC_S
+	AddDevice EcoTemp_PT_WC_S_WOS TCP1_WT12_2
+	Description TempControl axis 1
+	VisuInterface 1 3
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_AC_L
+	AddDevice EcoTemp_PT_AC_L_WOS TCP1_WT51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_AC_S
+	AddDevice EcoTemp_PT_AC_S_WOS TCP1_WT51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_WC_L
+	AddDevice EcoTemp_PT_WC_L_WOS TCP1_WT51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_WC_S
+	AddDevice EcoTemp_PT_WC_S_WOS TCP1_WT51
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_1_AC_L
+	AddDevice EcoTemp_PT_AC_L_WOS TCP1_WT51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_1_AC_S
+	AddDevice EcoTemp_PT_AC_S_WOS TCP1_WT51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_1_WC_L
+	AddDevice EcoTemp_PT_WC_L_WOS TCP1_WT51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_1_WC_S
+	AddDevice EcoTemp_PT_WC_S_WOS TCP1_WT51_1
+	Description TempControl axis 3
+	VisuInterface 1 2
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_2_AC_L
+	AddDevice EcoTemp_PT_AC_L_WOS TCP1_WT51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_2_AC_S
+	AddDevice EcoTemp_PT_AC_S_WOS TCP1_WT51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_2_WC_L
+	AddDevice EcoTemp_PT_WC_L_WOS TCP1_WT51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATCP1_WT51_2_WC_S
+	AddDevice EcoTemp_PT_WC_S_WOS TCP1_WT51_2
+	Description TempControl axis 3
+	VisuInterface 1 4
+	WearCounter 1
+Return
+// *********End devices of family TempControl**********
+
+// *********Start devices of family TempCtrlSupply**********
+SubRoutine Common_AddDevice_Supply_ATCP1
+	AddDevice EcoTemp_PT_Supply1 TCP1
+	Description Supply for EcoTemp PT heat exchanger
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_Supply_ATCP1_1
+	AddDevice EcoTemp_PT_Supply1 TCP1_1
+	Description Supply for EcoTemp PT heat exchanger
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_Supply_ATCP1_2
+	AddDevice EcoTemp_PT_Supply1 TCP1_2
+	Description Supply for EcoTemp PT heat exchanger
+	VisuInterface 1 2
+	WearCounter 1
+Return
+// *********End devices of family TempCtrlSupply**********
+
+// *********Start devices of family TemperingUnit**********
+SubRoutine Common_AddDevice_ATC1
+	AddDevice EcoTemp_HE_T004 TC1
+	Description Tempering unit 1
+	VisuInterface 1 1
+	WearCounter 1
+Return
+
+SubRoutine Common_AddDevice_ATC2
+	AddDevice EcoTemp_HE_T004 TC2
+	Description Tempering unit 2
+	VisuInterface 1 2
+	WearCounter 1
+Return
+// *********End devices of family TemperingUnit**********
+
+// *********Start devices of family MatHeaterCD**********
+SubRoutine Common_AddDevice_AMH1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160 MH1
+			Description Material Heater FP160 device 1
+			VisuInterface 1 1
+			WearCounter 1
+		Case Profibus
+			AddDevice MaterialHeater MH1
+			Description Material Heater FP08 device 1
+			VisuInterface 1 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+// *********End devices of family MatHeaterCD**********
+
+// *********Start devices of family HeatingSection**********
+SubRoutine Common_AddDevice_AMH1_11
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_11
+			Description Heating section before axis 7
+			VisuInterface 1 1
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_11
+			Description Heating section before axis 7
+			VisuInterface 1 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_11)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_11_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_11_1
+			Description Heating section before axis 7
+			VisuInterface 1 1
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_11_1
+			Description Heating section before axis 7
+			VisuInterface 1 1
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_11_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_11_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_11_2
+			Description Heating section before axis 7
+			VisuInterface 1 9
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_11_2
+			Description Heating section before axis 7
+			VisuInterface 1 9
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_11_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_12
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_12
+			Description Heating section axis 7
+			VisuInterface 1 2
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_12
+			Description Heating section axis 7
+			VisuInterface 1 2
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_12)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_12_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_12_1
+			Description Heating section axis 7
+			VisuInterface 1 2
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_12_1
+			Description Heating section axis 7
+			VisuInterface 1 2
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (MH1_12_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_12_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_12_2
+			Description Heating section axis 7
+			VisuInterface 1 10
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_12_2
+			Description Heating section axis 7
+			VisuInterface 1 10
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_12_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_2
+			Description Heating section piston
+			VisuInterface 1 3
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_2
+			Description Heating section piston
+			VisuInterface 1 3
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_2_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_2_1
+			Description Heating section piston
+			VisuInterface 1 3
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_2_1
+			Description Heating section piston
+			VisuInterface 1 3
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_2_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_2_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_2_2
+			Description Heating section piston
+			VisuInterface 1 11
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_2_2
+			Description Heating section piston
+			VisuInterface 1 11
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_2_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_3
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_3
+			Description Heating section ShotMeter
+			VisuInterface 1 15
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_3
+			Description Heating section ShotMeter
+			VisuInterface 1 15
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_3)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_3_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_3_1
+			Description Heating section ShotMeter
+			VisuInterface 1 15
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_3_1
+			Description Heating section ShotMeter
+			VisuInterface 1 15
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_3_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_3_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_3_2
+			Description Heating section ShotMeter
+			VisuInterface 1 16
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_3_2
+			Description Heating section ShotMeter
+			VisuInterface 1 16
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_3_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_51
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_51
+			Description Heating section axis 2
+			VisuInterface 1 5
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_51
+			Description Heating section axis 2
+			VisuInterface 1 5
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_51)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_51_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_51_1
+			Description Heating section axis 2
+			VisuInterface 1 5
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_51_1
+			Description Heating section axis 2
+			VisuInterface 1 5
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_51_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_51_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_51_2
+			Description Heating section axis 2
+			VisuInterface 1 13
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_51_2
+			Description Heating section axis 2
+			VisuInterface 1 13
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_51_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_52
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_52
+			Description Heating section axis 3
+			VisuInterface 1 6
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_52
+			Description Heating section axis 3
+			VisuInterface 1 6
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_52)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_52_1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_52_1
+			Description Heating section axis 3
+			VisuInterface 1 6
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_52_1
+			Description Heating section axis 3
+			VisuInterface 1 6
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_52_1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_52_2
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_52_2
+			Description Heating section axis 3
+			VisuInterface 1 14
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_52_2
+			Description Heating section axis 3
+			VisuInterface 1 14
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_52_2)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_7
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_7
+			Description Heating section gun
+			VisuInterface 1 7
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_7
+			Description Heating section gun
+			VisuInterface 1 7
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_7)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_AddDevice_AMH1_SW1
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			AddDevice EcoHeat_FP160_HeatingSection MH1_SW1
+			Description Heating section water quench
+			VisuInterface 1 8
+			WearCounter 1
+		Case Profibus
+			AddDevice HeatingSection MH1_SW1
+			Description Heating section water quench
+			VisuInterface 1 8
+			WearCounter 1
+		CaseElse
+			Message Wrong bus master (AMH1_SW1)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+// *********End devices of family HeatingSection**********
+
+// *********Start nozzle exchanger devices**************
+SubRoutine Common_AddDevice_ARZY_3Places
+	AddDevice Nozzle_Exchanger_IPR_3P_5_2_Valve RZY
+	Description Nozzle exchanger with 3 places
+	VisuInterface 1 1
+	WearCounter 0
+Return
+
+SubRoutine Common_AddDevice_ARZY_6Places
+	AddDevice Nozzle_Exchanger_IPR_6P_5_2_Valve RZY
+	Description Nozzle exchanger with 6 places
+	VisuInterface 1 1
+	WearCounter 0
+Return
+
+SubRoutine Common_AddDevice_ARZY_10Places
+	AddDevice Nozzle_Exchanger_IPR_10P_5_2_Valve RZY
+	Description Nozzle exchanger with 10 places
+	VisuInterface 1 1
+	WearCounter 0
+Return
+
+SubRoutine Common_AddDevice_NHEX1
+	AddDevice Nozzle_HeadExchanger_Staeubli_Max20P NHEX1
+	Description Nozzle head exchanger with max 20 places
+	VisuInterface 1 1
+	WearCounter 0
+Return
+// *********End nozzle exchanger devices**************
+
+// *********Start devices of family RobInterface**********
+SubRoutine Common_AddDevice_ARPI_M
+	AddDevice RobToProcess RPI_M
+	Description Robot To TP Interface
+Return
+// *********End devices of family RobInterface**********
+
+//**************End routines to add devices*************
+
+//**************Start routines to set common properties*************
+
+SubRoutine Common_Sealing_OptionalTPGroups
+	SelectCase Option18
+		Case CleaningSystem_PurgeWaterManual
+			Call Common_Sealing_ActivateTPGroup_7
+		Case CleaningSystem_PurgeWaterAuto
+			Call Common_Sealing_ActivateTPGroup_7
+		CaseElse
+			SelectCase Option21
+				Case 1
+					Call Common_Sealing_ActivateTPGroup_7
+				CaseElse
+					SelectCase Option12
+						Case Dump
+							SelectCase OptionGun
+								Case Gun_MD_Air
+									Call Common_Sealing_ActivateTPGroup_7
+								Case Gun_MD_El
+									Call Common_Sealing_ActivateTPGroup_7
+								CaseElse
+									Call Common_Sealing_DeactivateTPGroup_7
+									Message Wrong type of gun or [Option12] !! (Common_Sealing_OptionalTPGroups)
+							EndSelect
+						CaseElse
+							Call Common_Sealing_DeactivateTPGroup_7
+					EndSelect
+			EndSelect
+	EndSelect
+	
+	SelectCase Option12
+		Case Material_Exhaust_Unit
+			SelectCase OptionGun
+				Case Gun_MD_Air
+					Call Common_Sealing_ActivateTPGroup_9
+				Case Gun_MD_El
+					Call Common_Sealing_ActivateTPGroup_9
+				CaseElse
+					Call Common_Sealing_DeactivateTPGroup_9
+					Message Wrong type of gun or [Option12] !! (Common_Sealing_OptionalTPGroups)
+			EndSelect
+		CaseElse
+			Call Common_Sealing_DeactivateTPGroup_9
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_ActivateTPGroup_7
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	// time program group 7 (CleanAtomizer)
+	ActivateTimeProgramGroup 7 1
+	SetResetStateAborted 7 unused
+	SetResetStateReady 7 unused
+Return
+
+SubRoutine Common_Sealing_DeactivateTPGroup_7
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	// time program group 7 (CleanAtomizer)
+	ActivateTimeProgramGroup 7 0
+	SetResetStateAborted 7 unused
+	SetResetStateReady 7 unused
+Return
+
+SubRoutine Common_Sealing_ActivateTPGroup_9
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	// time program group 9 (DumpLinesClean)
+	ActivateTimeProgramGroup 9 1
+	SetResetStateAborted 9 unused
+	SetResetStateReady 9 unused
+Return
+
+SubRoutine Common_Sealing_DeactivateTPGroup_9
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	// time program group 9 (DumpLinesClean)
+	ActivateTimeProgramGroup 9 0
+	SetResetStateAborted 9 unused
+	SetResetStateReady 9 unused
+Return
+
+SubRoutine Common_Sealing_OptionalBCUCfg_ProgStart
+	SelectCase NozzleExchanger
+		Case 0
+			SelectCase NozzleHeadExchanger
+				Case 0
+					Call Common_Sealing_BCUCfg_Deactivate_StartProgBodyIn
+				Case 1
+					Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+				Case 2
+					Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+				Case 3
+					Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+				Case 4
+					Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+				Case 5
+					Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+				Case 6
+					Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+				CaseElse
+					Call Common_Sealing_BCUCfg_Deactivate_StartProgBodyIn
+					Message Number of exchanger places [NozzleHeadExchanger] not supported !! (Common_Sealing_OptionalBCUCfg_ProgStart)
+			EndSelect
+		Case 3
+			Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+		Case 6
+			Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+		Case 10
+			Call Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+		CaseElse
+			Call Common_Sealing_BCUCfg_Deactivate_StartProgBodyIn
+			Message Nozzle exchanger type [NozzleExchanger] not supported !! (Common_Sealing_OptionalBCUCfg_ProgStart)
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_BCUCfg_Activate_StartProgBodyIn
+	SelectNode RPC1.R11.BCU1
+	SelectTab [CfgParameter]
+	SelectCfg BCU1.ProgramStart.StartProgBodyIn
+	OptionalUsed 1
+	Value 1
+Return
+
+SubRoutine Common_Sealing_BCUCfg_Deactivate_StartProgBodyIn
+	SelectNode RPC1.R11.BCU1
+	SelectTab [CfgParameter]
+	SelectCfg BCU1.ProgramStart.StartProgBodyIn
+	OptionalUsed 1
+	Value 0
+Return
+
+SubRoutine Common_Sealing_ConfigureSystemCfg
+	SelectNode RPC1.System
+	// Select tab cfg parameter
+	SelectTab [CfgParameter]
+	SelectCfg system.FireAlarm.CO2_SupplyType
+	Value 0
+	SelectCfg System.RCMP.CheckUPS
+	Value 1
+	SelectCfg System.MsgSystem.Suppression.NumberOfWarningsOnHMI
+	Value 6
+	
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCfg System.S3
+			OptionalUsed 1
+			SelectCase OptionRCMPGen
+				Case RCMP2.1
+					// configure ConveyorBusType to PLC interface
+					SelectCfg System.Conveyor.ConveyorBusType
+					Value 8
+				CaseElse
+					// configure ConveyorBusType to Sercos3
+					SelectCfg System.Conveyor.ConveyorBusType
+					Value 6
+			EndSelect
+		Case Profibus
+			SelectCfg System.S3
+			OptionalUsed 0
+			// configure ConveyorBusType to ProfiBus
+			SelectCfg System.Conveyor.ConveyorBusType
+			Value 1
+
+			//this is for retrofit RPC v2.x wit RPC v3.3, so every data longer as a byte is reordered, as the Nettap doesn't change the order
+			//also the USV supervision for SITOP requires a new parameter
+			SelectCase OptionRPCFirmware
+				Case RPC_V140
+					SelectNode RPC1.System
+					SelectTab [CfgParameter]
+					// Select required cfg parameter group for ProfiBus
+					SelectCfg System.PB
+					// enable optional parameter group
+					OptionalUsed 1
+					SelectCfg System.PB.ChangeByteOrder
+					Value 1
+					// enable the supervision for SITOP USV with battery
+					SelectCfg System.RCMP.UseUpsSignalBatteryOk
+					OptionalUsed 1
+					Value 1
+				Case RPC_V155
+					SelectNode RPC1.System
+					SelectTab [CfgParameter]
+					// Select required cfg parameter group for ProfiBus
+					SelectCfg System.PB
+					// enable optional parameter group
+					OptionalUsed 1
+					SelectCfg System.PB.ChangeByteOrder
+					Value 1
+					// enable the supervision for SITOP USV with battery
+					SelectCfg System.RCMP.UseUpsSignalBatteryOk
+					OptionalUsed 1
+					Value 1
+			EndSelect
+
+		CaseElse
+			Message Wrong bus master (Option14)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Common_ConfigureRCUCfg
+	SelectNode RPC1.R11.RCU1
+	// Select tab cfg parameter 
+	SelectTab [CfgParameter]
+	// Set value for DelayRobotDrives
+	SelectCfg RCU1.Kinematic.DelayRobotDrives
+	// Set value according RCMPGen
+	SelectCase OptionRCMPGen
+		Case RCMP2_Rev2
+			Value 2
+		Case RCMP2.1
+			Value 2
+		CaseElse
+			Value 20
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_GenerateTimeProg
+	
+	Call Common_Sealing_Save_Database	
+	SelectNode RPC1.R11.PCU1
+	
+// Uncomment the following Call-actions when automatically generated 2-material-processes are available
+//	Call Common_Sealing_DeleteTimeProg_SM1
+//	Call Common_Sealing_DeleteTimeProg_SM2
+	Call Common_Sealing_DeleteTimeProg_PCL1
+//	Call Common_Sealing_DeleteTimeProg_PCL2
+	
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			Call Common_Sealing_DeleteTimeProg_SM1	// Remove this Call-action when automatically generated 2-material-processes are available
+			Call Common_Sealing_GenerateTimeProg_SM1
+		Case EcoDose_SM_SM
+//			Call Common_Sealing_GenerateTimeProg_SM1
+//			Call Common_Sealing_GenerateTimeProg_SM2
+			FSCopy ..\SpecialOptions\SM\Single_Multi\timeprog\*.* ..\..\..\..\..\application\control\PCU1\timeprog	// Remove this FSCopy-action when automatically generated 2-material-processes are available
+		Case EcoDose_SM_PCL
+			Call Common_Sealing_DeleteTimeProg_SM1	// Remove this Call-action when automatically generated 2-material-processes are available
+			Call Common_Sealing_GenerateTimeProg_SM1
+			Call Common_Sealing_GenerateTimeProg_PCL1
+		Case EcoDose_PCL
+			Call Common_Sealing_GenerateTimeProg_PCL1
+		Case EcoDose_PCL_PCL
+			Call Common_Sealing_GenerateTimeProg_PCL1
+//			Call Common_Sealing_GenerateTimeProg_PCL2
+	EndSelect
+	
+	GenerateTimeprogram "tpcf\referencecurve_hn1.tpcf"
+	
+	SelectCase NumberOfMainNeedles
+		Case 1
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\referencecurve_hn2.tp
+		CaseElse
+			GenerateTimeprogram "tpcf\referencecurve_hn2.tpcf"
+	EndSelect
+	SelectCase NumberOfMainNeedles
+		Case 1
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\referencecurve_hn3.tp
+		Case 2
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\referencecurve_hn3.tp
+		CaseElse
+			GenerateTimeprogram "tpcf\referencecurve_hn3.tpcf"
+	EndSelect
+	
+	SelectCase Option18
+		Case No_CleaningSystem
+			SelectCase Option21
+				Case 1
+					GenerateTimeprogram "tpcf\atomizer_clean.tpcf"
+				CaseElse
+					FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\atomizer_clean.tp
+			EndSelect
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\atomizer_clean_standby.tp
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\hometoinbox.tp
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\inboxtohome.tp
+		CaseElse
+			GenerateTimeprogram "tpcf\atomizer_clean.tpcf"
+			GenerateTimeprogram "tpcf\atomizer_clean_standby.tpcf"
+			GenerateTimeprogram "tpcf\hometoinbox.tpcf"
+			GenerateTimeprogram "tpcf\inboxtohome.tpcf"
+	EndSelect
+	SelectCase Option18
+		Case CleaningSystem_PurgeWaterAuto
+			GenerateTimeprogram "tpcf\waterquench_change.tpcf"
+			GenerateTimeprogram "tpcf\waterquench_fill.tpcf"
+			GenerateTimeprogram "tpcf\waterquench_overflow.tpcf"
+		CaseElse
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\waterquench_change.tp
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\waterquench_fill.tp
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\waterquench_overflow.tp
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_GenerateTimeProg_SM1
+	SelectNode RPC1.R11.PCU1
+	GenerateTimeprogram "tpcf\pistoncheck.tpcf"
+	GenerateTimeprogram "tpcf\pistonfill.tpcf"
+	GenerateTimeprogram "tpcf\pistonmaster.tpcf"
+	GenerateTimeprogram "tpcf\piston_purge_sm1.tpcf"
+	GenerateTimeprogram "tpcf\pistonpressurecontrol.tpcf"
+	GenerateTimeprogram "tpcf\systempressurecontrol.tpcf"
+	GenerateTimeprogram "tpcf\purgeatomizer_sm1.tpcf"
+	GenerateTimeprogram "tpcf\releasepressure_sm1.tpcf"
+	GenerateTimeprogram "tpcf\pistons_flush_sm1.tpcf"
+	GenerateTimeprogram "tpcf\leakagecheck_sm1_sub1.tpcf"
+	
+	SelectCase Option20 // Shot meter single
+		Case 0
+			GenerateTimeprogram "tpcf\leakagecheck_sm1_sub2.tpcf"
+		CaseElse
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\leakagecheck_sm1_sub2.tp
+	EndSelect
+	
+	SelectCase Circulation
+		Case No_Circulation
+			GenerateTimeprogram "tpcf\systemdepressurise_sm1.tpcf"
+			
+			SelectCase Option20 // Shot meter single
+				Case 0
+					GenerateTimeprogram "tpcf\systemdepressurise_sm1_sub1.tpcf"
+					GenerateTimeprogram "tpcf\systemdepressurise_sm1_sub2.tpcf"
+				CaseElse
+					FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1_sub1.tp
+					FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1_sub2.tp
+			EndSelect
+			
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm1.tp
+		CaseElse
+			GenerateTimeprogram "tpcf\circulation_sm1.tpcf"
+			
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1.tp
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1_sub1.tp
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1_sub2.tp
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_DeleteTimeProg_SM1
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\pistoncheck.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\pistonfill.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\pistonmaster.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\piston_purge_sm1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\pistonpressurecontrol.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systempressurecontrol.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\purgeatomizer_sm1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\releasepressure_sm1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\pistons_flush_sm1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\leakagecheck_sm1_sub1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\leakagecheck_sm1_sub2.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1_sub1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\systemdepressurise_sm1_sub2.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_sm1.tp
+Return
+
+SubRoutine Common_Sealing_GenerateTimeProg_PCL1
+	SelectNode RPC1.R11.PCU1
+	GenerateTimeprogram "tpcf\purgeatomizer_pcl1.tpcf"
+	GenerateTimeprogram "tpcf\releasepressure_pcl1.tpcf"
+	GenerateTimeprogram "tpcf\beakering.tpcf"
+	
+	SelectCase Circulation
+		Case No_Circulation
+			FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_pcl1.tp
+		CaseElse
+			GenerateTimeprogram "tpcf\circulation_pcl1.tpcf"
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_DeleteTimeProg_PCL1
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\purgeatomizer_pcl1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\releasepressure_pcl1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\circulation_pcl1.tp
+	FSDeleteFile ..\..\..\..\..\application\control\PCU1\timeprog\beakering.tp
+Return
+
+SubRoutine Common_Sealing_GeneralSetValues
+	SelectCase Option1
+		Case EcoDose_PCL_PCL
+			Call Common_Sealing_GeneralSetValues_Multi
+		Case EcoDose_SM_PCL
+			Call Common_Sealing_GeneralSetValues_Multi
+		Case EcoDose_SM_SM
+			Call Common_Sealing_GeneralSetValues_Multi
+		CaseElse
+			SelectCase NozzleExchanger
+				Case 1
+					SelectCase MaterialValve1
+						Case 1
+							FSCopy ..\SpecialOptions\NozzleExchanger\Yes\MaterialValve\Yes\Material\1\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						CaseElse
+							FSCopy ..\SpecialOptions\NozzleExchanger\Yes\MaterialValve\No\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					EndSelect
+				CaseElse
+					SelectCase MaterialValve1
+						Case 1
+							FSCopy ..\SpecialOptions\NozzleExchanger\No\MaterialValve\Yes\Material\1\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						CaseElse
+							FSCopy ..\SpecialOptions\NozzleExchanger\No\MaterialValve\No\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					EndSelect
+			EndSelect
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_GeneralSetValues_Multi
+	SelectCase NozzleExchanger
+		Case 1
+			SelectCase MaterialValve1
+				Case 1
+					FSCopy ..\SpecialOptions\NozzleExchanger\Yes\MaterialValve\Yes\Material\2_Multi\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					FSCopy ..\SpecialOptions\NozzleExchanger\Yes\MaterialValve\No\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+		CaseElse
+			SelectCase MaterialValve1
+				Case 1
+					FSCopy ..\SpecialOptions\NozzleExchanger\No\MaterialValve\Yes\Material\2_Multi\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					FSCopy ..\SpecialOptions\NozzleExchanger\No\MaterialValve\No\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_Interlocks
+	SelectCase Option1
+		Case EcoDose_PCL
+		Case EcoDose_SM
+			SelectCase Option18
+				Case CleaningSystem_PurgeWaterAuto
+					FSCopy ..\SpecialOptions\Option18\WQ_Auto\AB_Interlocks.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					FSCopy ..\SpecialOptions\Option18\No_WQ_Auto\AB_Interlocks.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+		Case EcoDose_SM_SM
+			SelectCase Option18
+				Case CleaningSystem_PurgeWaterAuto
+					FSCopy ..\SpecialOptions\Option18\WQ_Auto\AB_Interlocks.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					FSCopy ..\SpecialOptions\Option18\No_WQ_Auto\AB_Interlocks.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+		CaseElse
+			Message Process type [Option1] not supported !! (Common_Sealing_Interlocks)
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_MainChannel
+	SelectCase Option1
+		Case EcoDose_PCL
+		Case EcoDose_SM
+			SelectCase Option20
+				Case 1
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Material\1\SM\Single\Option18\WQ_Manual\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Material\1\SM\Single\Option18\WQ_Auto\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						CaseElse
+							FSCopy ..\SpecialOptions\Material\1\SM\Single\Option18\No_CS\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+					EndSelect
+				CaseElse
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Material\1\SM\Double\Option18\WQ_Manual\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Material\1\SM\Double\Option18\WQ_Auto\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						CaseElse
+							FSCopy ..\SpecialOptions\Material\1\SM\Double\Option18\No_CS\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+					EndSelect
+			EndSelect
+		Case EcoDose_SM_SM
+			SelectCase Option20
+				Case 1
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Material\2_Multi\SM\Single\Option18\WQ_Manual\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Material\2_Multi\SM\Single\Option18\WQ_Auto\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						CaseElse
+							FSCopy ..\SpecialOptions\Material\2_Multi\SM\Single\Option18\No_CS\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+					EndSelect
+				CaseElse
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Material\2_Multi\SM\Double\Option18\WQ_Manual\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Material\2_Multi\SM\Double\Option18\WQ_Auto\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+						CaseElse
+							FSCopy ..\SpecialOptions\Material\2_Multi\SM\Double\Option18\No_CS\AB_SFC_MainChannel.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles\SFCs
+					EndSelect
+			EndSelect
+		CaseElse
+			Message Process type [Option1] not supported !! (Common_Sealing_MainChannel)
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_Materials
+	SelectCase Option1
+		Case EcoDose_PCL
+			FSCopy ..\SpecialOptions\Material\1\HW_ProjectSpecificFunctions.sv ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			
+			FSCopy ..\SpecialOptions\Material\1\cfg\references\*.* ..\..\..\..\..\application\control\PCU1\cfg\references
+			
+			FSCopy ..\SpecialOptions\Material\1\cfg\statistic.cfg ..\..\..\..\..\application\control\PCU1\cfg
+		Case EcoDose_SM
+			FSCopy ..\SpecialOptions\Material\1\HW_ProjectSpecificFunctions.sv ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			
+			FSCopy ..\SpecialOptions\Material\1\cfg\references\*.* ..\..\..\..\..\application\control\PCU1\cfg\references
+			
+			SelectCase Option20
+				Case 1
+					FSCopy ..\SpecialOptions\Material\1\SM\Single\cfg\statistic.cfg ..\..\..\..\..\application\control\PCU1\cfg
+				CaseElse
+					FSCopy ..\SpecialOptions\Material\1\SM\Double\cfg\statistic.cfg ..\..\..\..\..\application\control\PCU1\cfg
+			EndSelect
+		Case EcoDose_SM_SM
+			FSCopy ..\SpecialOptions\Material\2_Multi\HW_ProjectSpecificFunctions.sv ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			
+			FSCopy ..\SpecialOptions\Material\1\cfg\references\*.* ..\..\..\..\..\application\control\PCU1\cfg\references
+			FSCopy ..\SpecialOptions\Material\2_Multi\cfg\references\*.* ..\..\..\..\..\application\control\PCU1\cfg\references
+			
+			SelectCase Option20
+				Case 1
+					FSCopy ..\SpecialOptions\Material\2_Multi\SM\Single\cfg\statistic.cfg ..\..\..\..\..\application\control\PCU1\cfg
+				CaseElse
+					FSCopy ..\SpecialOptions\Material\2_Multi\SM\Double\cfg\statistic.cfg ..\..\..\..\..\application\control\PCU1\cfg
+			EndSelect
+		CaseElse
+			Message Process type [Option1] not supported !! (Common_Sealing_Materials)
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_Simulation
+	SelectCase Option1
+		Case EcoDose_PCL
+			SelectCase HelpGun1
+				Case 1
+					SelectCase NumberOfMainNeedles
+						Case 1
+							FSCopy ..\SpecialOptions\MainNeedle\1\HelpGun\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						Case 2
+							FSCopy ..\SpecialOptions\MainNeedle\2\HelpGun\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						Case 3
+							FSCopy ..\SpecialOptions\MainNeedle\3\HelpGun\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						CaseElse
+							Message NumberOfMainNeedles not supported !! (Common_Sealing_Simulation)
+					EndSelect
+				CaseElse
+					SelectCase NumberOfMainNeedles
+						Case 1
+							FSCopy ..\SpecialOptions\MainNeedle\1\HelpGun\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						Case 2
+							FSCopy ..\SpecialOptions\MainNeedle\2\HelpGun\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						Case 3
+							FSCopy ..\SpecialOptions\MainNeedle\3\HelpGun\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						CaseElse
+							Message NumberOfMainNeedles not supported !! (Common_Sealing_Simulation)
+					EndSelect
+			EndSelect
+		Case EcoDose_SM
+			SelectCase Option20
+				Case 1
+					FSCopy ..\SpecialOptions\SM\Single\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					FSCopy ..\SpecialOptions\SM\Double\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+		Case EcoDose_SM_SM
+			SelectCase Option20
+				Case 1
+					FSCopy ..\SpecialOptions\SM\Single_Multi\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					FSCopy ..\SpecialOptions\SM\Double_Multi\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+		CaseElse
+			Message Process type [Option1] not supported !! (Common_Sealing_Simulation)
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_OptionalFixpos
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\purgehn1.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\purgehn1.tip
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\purgehn2.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\purgehn2.tip
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\purgehn3.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\purgehn3.tip
+	
+	SelectCase NumberOfMainNeedles
+		Case 1
+			FixposEnabled PurgeHN1 1
+			FixposUsedInTP PurgeHN1 1
+			FixposEnabled PurgeHN2 0
+			FixposEnabled PurgeHN3 0
+			
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+		Case 2
+			FixposEnabled PurgeHN1 1
+			FixposUsedInTP PurgeHN1 1
+			FixposEnabled PurgeHN2 1
+			FixposUsedInTP PurgeHN2 1
+			FixposEnabled PurgeHN3 0
+			
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn2.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn2.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+		Case 3
+			FixposEnabled PurgeHN1 1
+			FixposUsedInTP PurgeHN1 1
+			FixposEnabled PurgeHN2 1
+			FixposUsedInTP PurgeHN2 1
+			FixposEnabled PurgeHN3 1
+			FixposUsedInTP PurgeHN3 1
+			
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn2.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn2.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn3.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\Purge\purgehn3.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+		CaseElse
+			Message Number of main needles not supported !! (Common_Sealing_OptionalFixpos)
+	EndSelect
+	
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\blowouthn1.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\blowouthn1.tip
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\blowouthn2.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\blowouthn2.tip
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\blowouthn3.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\blowouthn3.tip
+	
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\inbox.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\inbox.tip
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\abovebox.tid
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\abovebox.tip
+	
+	SelectCase Option18
+		Case CleaningSystem_PurgeWaterManual
+			Call Common_Sealing_OptionalFixpos_BlowOut
+			Call Common_Sealing_OptionalFixpos_Box_xD
+		Case CleaningSystem_PurgeWaterAuto
+			Call Common_Sealing_OptionalFixpos_BlowOut
+			Call Common_Sealing_OptionalFixpos_Box_xD
+		CaseElse
+			SelectCase Option21
+				Case 1
+					Call Common_Sealing_OptionalFixpos_BlowOut
+				CaseElse
+					FixposEnabled BlowOutHN1 0
+					FixposEnabled BlowOutHN2 0
+					FixposEnabled BlowOutHN3 0
+			EndSelect
+			
+			SelectCase OptionGun
+				Case Gun_MD_Air
+					SelectCase Option12
+						Case Dump
+							Call Common_Sealing_OptionalFixpos_Box_MD
+						CaseElse
+							Call Common_Sealing_OptionalFixpos_NoBox
+					EndSelect
+				Case Gun_MD_El
+					SelectCase Option12
+						Case Dump
+							Call Common_Sealing_OptionalFixpos_Box_MD
+						CaseElse
+							Call Common_Sealing_OptionalFixpos_NoBox
+					EndSelect
+				CaseElse
+					Call Common_Sealing_OptionalFixpos_NoBox
+			EndSelect
+	EndSelect
+
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\nozzlechange.tip
+	FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt\nozzlechange.tid
+	
+	SelectCase NozzleHeadExchanger
+		Case 0
+			FixposEnabled NozzleChange 0
+			FixposUsedInTP NozzleChange 0
+		
+		CaseElse
+			FixposEnabled NozzleChange 1
+			FixposUsedInTP NozzleChange 1
+			
+			FSCopy ..\..\..\..\..\FixposPatterns\NozzleChange\nozzlechange.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\NozzleChange\nozzlechange.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_OptionalFixpos_BlowOut
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	
+	SelectCase NumberOfMainNeedles
+		Case 1
+			FixposEnabled BlowOutHN1 1
+			FixposUsedInTP BlowOutHN1 1
+			FixposEnabled BlowOutHN2 0
+			FixposEnabled BlowOutHN3 0
+			
+			Call Common_Sealing_OptionalFixpos_BlowOut_HN1
+		Case 2
+			FixposEnabled BlowOutHN1 1
+			FixposUsedInTP BlowOutHN1 1
+			FixposEnabled BlowOutHN2 1
+			FixposUsedInTP BlowOutHN2 1
+			FixposEnabled BlowOutHN3 0
+			
+			Call Common_Sealing_OptionalFixpos_BlowOut_HN1
+			
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\blowouthn2.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\blowouthn2.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+		Case 3
+			FixposEnabled BlowOutHN1 1
+			FixposUsedInTP BlowOutHN1 1
+			FixposEnabled BlowOutHN2 1
+			FixposUsedInTP BlowOutHN2 1
+			FixposEnabled BlowOutHN3 1
+			FixposUsedInTP BlowOutHN3 1
+			
+			Call Common_Sealing_OptionalFixpos_BlowOut_HN1
+			
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\blowouthn2.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\blowouthn2.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\blowouthn3.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\blowouthn3.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+		CaseElse
+			Message Number of main needles not supported !! (Common_Sealing_OptionalFixpos_BlowOut)
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_OptionalFixpos_BlowOut_HN1
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			SelectCase Option12
+				Case Dump
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\Box\blowouthn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\Box\blowouthn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+				CaseElse
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\No_Box\blowouthn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\No_Box\blowouthn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			EndSelect
+		Case Gun_MD_El
+			SelectCase Option12
+				Case Dump
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\Box\blowouthn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\Box\blowouthn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+				CaseElse
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\No_Box\blowouthn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+					FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\No_Box\blowouthn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			EndSelect
+		CaseElse
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\No_Box\blowouthn1.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+			FSCopy ..\..\..\..\..\FixposPatterns\BlowOut\No_Box\blowouthn1.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	EndSelect
+Return
+
+SubRoutine Common_Sealing_OptionalFixpos_Box_xD
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	
+	FixposEnabled InBox 1
+	FixposUsedInTP InBox 1
+	FixposEnabled AboveBox 1
+	FixposUsedInTP AboveBox 1
+	
+	FSCopy ..\..\..\..\..\FixposPatterns\InBox\xD\inbox.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\InBox\xD\inbox.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\AboveBox\abovebox.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\AboveBox\abovebox.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	
+	FSCopy ..\..\..\..\..\FixposPatterns\Home\Box\home.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\Home\Box\home.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+Return
+
+SubRoutine Common_Sealing_OptionalFixpos_Box_MD
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	
+	FixposEnabled InBox 1
+	FixposUsedInTP InBox 1
+	FixposEnabled AboveBox 1
+	FixposUsedInTP AboveBox 1
+	
+	FSCopy ..\..\..\..\..\FixposPatterns\InBox\MD\inbox.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\InBox\MD\inbox.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\AboveBox\abovebox.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\AboveBox\abovebox.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	
+	FSCopy ..\..\..\..\..\FixposPatterns\Home\Box\home.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\Home\Box\home.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+Return
+
+SubRoutine Common_Sealing_OptionalFixpos_NoBox
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	
+	FixposEnabled InBox 0
+	FixposEnabled AboveBox 0
+	
+	FSCopy ..\..\..\..\..\FixposPatterns\Home\No_Box\home.tid ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+	FSCopy ..\..\..\..\..\FixposPatterns\Home\No_Box\home.tip ..\..\..\..\..\application\control\teachcontrol\kin1\fixpos.tt
+Return
+
+SubRoutine Common_Sealing_Configuration
+	SelectCase Option1
+		Case EcoDose_PCL
+			SelectCase Option18
+				Case CleaningSystem_PurgeWaterManual
+					Message Cleaning system (Water quench manual) [Option18] not supported !! (Common_Sealing_Configuration)
+				Case CleaningSystem_PurgeWaterAuto
+					Message Cleaning system (Water quench auto) [Option18] not supported !! (Common_Sealing_Configuration)
+				CaseElse
+					SelectCase Option21
+						Case 1
+							SelectCase Option12
+								Case Dump
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\TankDisposal\Yes\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\TankDisposal\Yes\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								Case Material_Exhaust_Unit
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\TankDisposal\Yes\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\TankDisposal\Yes\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								CaseElse
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\TankDisposal\No\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\TankDisposal\No\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+							EndSelect
+						CaseElse
+							SelectCase Option12
+								Case Dump
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\TankDisposal\Yes\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\TankDisposal\Yes\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								Case Material_Exhaust_Unit
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\TankDisposal\Yes\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\TankDisposal\Yes\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								CaseElse
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\TankDisposal\No\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\TankDisposal\No\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+							EndSelect
+					EndSelect
+			EndSelect
+		Case EcoDose_SM
+			SelectCase Option20
+				Case 1
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Single\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Single\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Single\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Single\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						CaseElse
+							SelectCase Option21
+								Case 1
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Single\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Single\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								CaseElse
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Single\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Single\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+							EndSelect
+					EndSelect
+				CaseElse
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Double\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Double\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Double\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Double\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						CaseElse
+							SelectCase Option21
+								Case 1
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Double\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Double\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								CaseElse
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Double\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Double\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+							EndSelect
+					EndSelect
+			EndSelect
+		Case EcoDose_SM_SM
+			SelectCase Option20
+				Case 1
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Single_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Single_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Single_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Single_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						CaseElse
+							SelectCase Option21
+								Case 1
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Single_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Single_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								CaseElse
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Single_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Single_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+							EndSelect
+					EndSelect
+				CaseElse
+					SelectCase Option18
+						Case CleaningSystem_PurgeWaterManual
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Double_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Manual\SM\Double_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						Case CleaningSystem_PurgeWaterAuto
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Double_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+							FSCopy ..\SpecialOptions\Option18\WQ_Auto\SM\Double_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+						CaseElse
+							SelectCase Option21
+								Case 1
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Double_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\Yes\SM\Double_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+								CaseElse
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Double_Multi\pca.ini ..\..\..\..\..\application\control\PCU1\cfg
+									FSCopy ..\SpecialOptions\Option18\No_CS\Option21\No\SM\Double_Multi\pca.def ..\..\..\..\..\application\control\PCU1\definitions
+							EndSelect
+					EndSelect
+			EndSelect
+		CaseElse
+			Message Process type [Option1] not supported !! (Common_Sealing_Configuration)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU
+	SelectNode RPC1.R11.PCU1
+	SelectTab [Properties]
+	SelectCase Option2
+		Case xD
+			SelectCase NozzleHeadExchanger
+				Case 0
+					SelectCase NozzleExchanger
+						Case 0
+							Call Common_Description_PCU_xD
+						Case 3
+							Call Common_Description_PCU_xD_NozzleExchanger
+						Case 6
+							Call Common_Description_PCU_xD_NozzleExchanger
+						Case 10
+							Call Common_Description_PCU_xD_NozzleExchanger
+						CaseElse
+							Message NozzleExchanger type not supported !! (Common_Description_PCU)
+					EndSelect
+				CaseElse
+					Call Common_Description_PCU_xD_NozzleExchanger
+			EndSelect
+		Case xD_LASD
+			Call Common_Description_PCU_xD_LASD
+		Case MD
+			Call Common_Description_PCU_MD
+		Case Swirl
+			Call Common_Description_PCU_Swirl
+		Case IDS
+			Call Common_Description_PCU_IDS
+		CaseElse
+			Message Option 2 selection not supported !! (Common_Description_PCU)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU_xD
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 1D
+				Case EcoDose_PCL
+					Description EcoDose PCL - 1D
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 1D
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 1D
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 1D
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 1D
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 1D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 1D
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 1D
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 1D
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 1D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 1D
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 1D
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 1D
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 1D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 1D
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 1D
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 1D
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 1D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 1D
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 1D
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 1D
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 1D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 1D
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 1D
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 1D
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 1D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD)
+			EndSelect
+		Case 2
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 2D
+				Case EcoDose_PCL
+					Description EcoDose PCL - 2D
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 2D
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 2D
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 2D
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 2D
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 2D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 2D
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 2D
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 2D
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 2D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 2D
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 2D
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 2D
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 2D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 2D
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 2D
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 2D
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 2D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 2D
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 2D
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 2D
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 2D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 2D
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 2D
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 2D
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 2D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD)
+			EndSelect
+		Case 3
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 3D
+				Case EcoDose_PCL
+					Description EcoDose PCL - 3D
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 3D
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 3D
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 3D
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 3D
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 3D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 3D
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 3D
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 3D
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 3D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 3D
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 3D
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 3D
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 3D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 3D
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 3D
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 3D
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 3D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 3D
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 3D
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 3D
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 3D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 3D
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 3D
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 3D
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 3D
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD)
+			EndSelect
+		CaseElse
+			Message NumberOfMainNeedles not supported !! (Common_Description_PCU_xD)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU_xD_NozzleExchanger
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 1D - NozzleExchanger
+				Case EcoDose_PCL
+					Description EcoDose PCL - 1D - NozzleExchanger
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 1D - NozzleExchanger
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 1D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 1D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 1D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 1D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 1D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 1D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 1D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 1D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 1D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 1D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 1D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 1D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 1D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 1D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 1D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 1D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 1D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 1D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 1D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 1D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 1D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 1D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 1D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 1D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+			EndSelect
+		Case 2
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 2D - NozzleExchanger
+				Case EcoDose_PCL
+					Description EcoDose PCL - 2D - NozzleExchanger
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 2D - NozzleExchanger
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 2D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 2D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 2D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 2D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 2D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 2D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 2D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 2D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 2D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 2D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 2D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 2D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 2D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 2D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 2D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 2D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 2D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 2D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 2D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 2D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 2D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 2D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 2D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 2D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+			EndSelect
+		Case 3
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 3D - NozzleExchanger
+				Case EcoDose_PCL
+					Description EcoDose PCL - 3D - NozzleExchanger
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 3D - NozzleExchanger
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 3D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 3D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 3D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 3D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 3D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 3D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 3D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 3D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 3D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 3D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 3D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 3D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 3D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 3D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 3D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 3D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 3D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 3D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 3D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 3D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 3D - NozzleExchanger
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 3D - NozzleExchanger
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 3D - NozzleExchanger
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 3D - NozzleExchanger
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+			EndSelect
+		CaseElse
+			Message NumberOfMainNeedles not supported !! (Common_Description_PCU_xD_NozzleExchanger)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU_xD_LASD
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 1D - LASD
+				Case EcoDose_PCL
+					Description EcoDose PCL - 1D - LASD
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 1D - LASD
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 1D - LASD
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 1D - LASD
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 1D - LASD
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 1D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 1D - LASD
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 1D - LASD
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 1D - LASD
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 1D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 1D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 1D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 1D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 1D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 1D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 1D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 1D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 1D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 1D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 1D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 1D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 1D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 1D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 1D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 1D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 1D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD_LASD)
+			EndSelect
+		Case 2
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 2D - LASD
+				Case EcoDose_PCL
+					Description EcoDose PCL - 2D - LASD
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 2D - LASD
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 2D - LASD
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 2D - LASD
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 2D - LASD
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 2D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 2D - LASD
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 2D - LASD
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 2D - LASD
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 2D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 2D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 2D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 2D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 2D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 2D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 2D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 2D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 2D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 2D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 2D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 2D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 2D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 2D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 2D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 2D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 2D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD_LASD)
+			EndSelect
+		Case 3
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - 3D - LASD
+				Case EcoDose_PCL
+					Description EcoDose PCL - 3D - LASD
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - 3D - LASD
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - 3D - LASD
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - 3D - LASD
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - 3D - LASD
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - 3D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - 3D - LASD
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - 3D - LASD
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - 3D - LASD
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - 3D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - 3D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - 3D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - 3D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - 3D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - 3D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - 3D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - 3D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - 3D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - 3D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - 3D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - 3D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - 3D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - 3D - LASD
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - 3D - LASD
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - 3D - LASD
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - 3D - LASD
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_xD_LASD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_xD_LASD)
+			EndSelect
+		CaseElse
+			Message NumberOfMainNeedles not supported !! (Common_Description_PCU_xD_LASD)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU_MD
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - MD (1)
+				Case EcoDose_PCL
+					Description EcoDose PCL - MD (1)
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - MD (1)
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - MD (1)
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - MD (1)
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - MD (1)
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - MD (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - MD (1)
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - MD (1)
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - MD (1)
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - MD (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - MD (1)
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - MD (1)
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - MD (1)
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - MD (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - MD (1)
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - MD (1)
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - MD (1)
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - MD (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - MD (1)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - MD (1)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - MD (1)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - MD (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - MD (1)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - MD (1)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - MD (1)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - MD (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_MD)
+			EndSelect
+		Case 2
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - MD (2)
+				Case EcoDose_PCL
+					Description EcoDose PCL - MD (2)
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - MD (2)
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - MD (2)
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - MD (2)
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - MD (2)
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - MD (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - MD (2)
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - MD (2)
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - MD (2)
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - MD (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - MD (2)
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - MD (2)
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - MD (2)
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - MD (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - MD (2)
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - MD (2)
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - MD (2)
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - MD (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - MD (2)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - MD (2)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - MD (2)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - MD (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - MD (2)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - MD (2)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - MD (2)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - MD (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_MD)
+			EndSelect
+		Case 3
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - MD (3)
+				Case EcoDose_PCL
+					Description EcoDose PCL - MD (3)
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - MD (3)
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - MD (3)
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - MD (3)
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - MD (3)
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - MD (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - MD (3)
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - MD (3)
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - MD (3)
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - MD (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - MD (3)
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - MD (3)
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - MD (3)
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - MD (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - MD (3)
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - MD (3)
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - MD (3)
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - MD (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - MD (3)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - MD (3)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - MD (3)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - MD (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - MD (3)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - MD (3)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - MD (3)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - MD (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_MD)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_MD)
+			EndSelect
+		CaseElse
+			Message NumberOfMainNeedles not supported !! (Common_Description_PCU_MD)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU_Swirl
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - Swirl (1)
+				Case EcoDose_PCL
+					Description EcoDose PCL - Swirl (1)
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - Swirl (1)
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - Swirl (1)
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - Swirl (1)
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - Swirl (1)
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - Swirl (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - Swirl (1)
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - Swirl (1)
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - Swirl (1)
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - Swirl (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - Swirl (1)
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - Swirl (1)
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - Swirl (1)
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - Swirl (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - Swirl (1)
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - Swirl (1)
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - Swirl (1)
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - Swirl (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - Swirl (1)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - Swirl (1)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - Swirl (1)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - Swirl (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - Swirl (1)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - Swirl (1)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - Swirl (1)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - Swirl (1)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_Swirl)
+			EndSelect
+		Case 2
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - Swirl (2)
+				Case EcoDose_PCL
+					Description EcoDose PCL - Swirl (2)
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - Swirl (2)
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - Swirl (2)
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - Swirl (2)
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - Swirl (2)
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - Swirl (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - Swirl (2)
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - Swirl (2)
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - Swirl (2)
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - Swirl (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - Swirl (2)
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - Swirl (2)
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - Swirl (2)
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - Swirl (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - Swirl (2)
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - Swirl (2)
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - Swirl (2)
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - Swirl (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - Swirl (2)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - Swirl (2)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - Swirl (2)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - Swirl (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - Swirl (2)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - Swirl (2)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - Swirl (2)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - Swirl (2)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_Swirl)
+			EndSelect
+		Case 3
+			SelectCase Option1 // Process type
+				Case EcoDose_PM
+					Description EcoDose PM - Swirl (3)
+				Case EcoDose_PCL
+					Description EcoDose PCL - Swirl (3)
+				Case EcoDose_PCL_PCL
+					Description EcoDose PCL/PCL - Swirl (3)
+				Case EcoDose_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Double (113 ccm) - Swirl (3)
+								Case SM_590ccm
+									Description EcoDose SM Double (590 ccm) - Swirl (3)
+								Case SM_300ccm
+									Description EcoDose SM Double (300 ccm) - Swirl (3)
+								Case SM_600ccm
+									Description EcoDose SM Double (600 ccm) - Swirl (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM Single (113 ccm) - Swirl (3)
+								Case SM_590ccm
+									Description EcoDose SM Single (590 ccm) - Swirl (3)
+								Case SM_300ccm
+									Description EcoDose SM Single (300 ccm) - Swirl (3)
+								Case SM_600ccm
+									Description EcoDose SM Single (600 ccm) - Swirl (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_SM
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Double (113 ccm) - Swirl (3)
+								Case SM_590ccm
+									Description EcoDose SM/SM Double (590 ccm) - Swirl (3)
+								Case SM_300ccm
+									Description EcoDose SM/SM Double (300 ccm) - Swirl (3)
+								Case SM_600ccm
+									Description EcoDose SM/SM Double (600 ccm) - Swirl (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/SM Single (113 ccm) - Swirl (3)
+								Case SM_590ccm
+									Description EcoDose SM/SM Single (590 ccm) - Swirl (3)
+								Case SM_300ccm
+									Description EcoDose SM/SM Single (300 ccm) - Swirl (3)
+								Case SM_600ccm
+									Description EcoDose SM/SM Single (600 ccm) - Swirl (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				Case EcoDose_SM_PCL
+					SelectCase Option20 // Shot meter single
+						Case 0
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Double (113 ccm) - Swirl (3)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Double (590 ccm) - Swirl (3)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Double (300 ccm) - Swirl (3)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Double (600 ccm) - Swirl (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+						Case 1
+							SelectCase OptionShotMeter
+								Case SM_113ccm
+									Description EcoDose SM/PCL Single (113 ccm) - Swirl (3)
+								Case SM_590ccm
+									Description EcoDose SM/PCL Single (590 ccm) - Swirl (3)
+								Case SM_300ccm
+									Description EcoDose SM/PCL Single (300 ccm) - Swirl (3)
+								Case SM_600ccm
+									Description EcoDose SM/PCL Single (600 ccm) - Swirl (3)
+								CaseElse
+									Message ShotMeter type not supported !! (Common_Description_PCU_Swirl)
+							EndSelect
+					EndSelect
+				CaseElse
+					Message Process type not supported !! (Common_Description_PCU_Swirl)
+			EndSelect
+		CaseElse
+			Message NumberOfMainNeedles not supported !! (Common_Description_PCU_Swirl)
+	EndSelect
+Return
+
+SubRoutine Common_Description_PCU_IDS
+	SelectCase Option1 // Process type
+		Case EcoDose_ES
+			Description EcoDose ES with EcoGun Sealing IDS
+		CaseElse
+			Message Process type not supported !! (Common_Description_PCU_IDS)
+	EndSelect
+Return
+//**************End routines to set common properties*************
+
+SubRoutine Common_Enable_SCP_Fixpos
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	FixposEnabled RefSCP 1
+	FixposEnabled SyncSCP 1
+	SelectTab [VariantConfiguration]
+Return
+
+SubRoutine Common_Disable_SCP_Fixpos
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	FixposEnabled RefSCP 0
+	FixposEnabled SyncSCP 0
+	SelectTab [VariantConfiguration]
+Return
+
+SubRoutine Common_Use_SCPConfigurationRCUCfg
+	SelectNode RPC1.R11.RCU1
+	SelectTab [CfgParameter]
+	SelectCfg RCU1.SafetyControl.BrakeCheckErrorReaction
+	OptionalUsed 1
+	SelectCfg RCU1.SafetyControl.BrakeCheckErrorReaction.StopAtEndOfCar
+	OptionalUsed 1
+	SelectCfg RCU1.SafetyControl.Synchronisation
+	OptionalUsed 1
+	SelectCfg RCU1.SafetyControl.Simulation
+	OptionalUsed 1
+	SelectCfg RCU1.SafetyControl.Simulation.EnableSafeRobotics
+	Value 1
+Return
+
+SubRoutine Common_Disuse_SCPConfigurationRCUCfg
+	SelectNode RPC1.R11.RCU1
+	SelectTab [CfgParameter]
+	SelectCfg RCU1.SafetyControl.BrakeCheckErrorReaction.StopAtEndOfCar
+	OptionalUsed 0
+	SelectCfg RCU1.SafetyControl.BrakeCheckErrorReaction
+	OptionalUsed 0
+	SelectCfg RCU1.SafetyControl.Synchronisation
+	OptionalUsed 0
+	SelectCfg RCU1.SafetyControl.Simulation
+	OptionalUsed 0
+Return
+
+SubRoutine Common_Sealing_Save_Database
+	//This routine is only necessary, because several "save" calls in a row will fail, as the database can't be accessed
+	SaveAs ..\..\ecorpc_sealing.pb
+Return
+
+SubRoutine Common_SwitchToBMK2
+	SelectNode RPC1
+	BMKConvention 2 // switch to BMK2
+	Call Option14_ManagerProject //load asc files again
+	Call Common_Sealing_Save_Database
+Return

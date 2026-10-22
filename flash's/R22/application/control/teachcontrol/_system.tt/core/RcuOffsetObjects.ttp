@@ -1,0 +1,197 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : RcuOffsetObjects.ttp
+*  First Author : pen
+*  Date         : 11.1.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  supply offset objects for joints tracking
+*------------------------------------------------------------------------------
+*)
+
+(*******************************************************************************
+* globals
+*)
+
+TYPE GLOBAL
+   // Element of the array of offset objects
+   TRcuOffsObjElement : STRUCT
+      offsObjMcuId : TMcuDbObjID;
+      valid : BOOL;
+      kinMcuId : TMcuDbObjID;
+   END_STRUCT;
+END_TYPE
+
+
+VAR GLOBAL
+   // array of joint-vectors for tracking
+   gyRcuTrackingJoints : ARRAY [eRcuNrOfOffsObj] OF MAPTO TMcuVector;
+END_VAR
+
+
+(*-----------------------------------------------------------------------------
+* Set one of the reference systems
+*)
+ROUTINE RcuOffsObjSet(CONST offsObj : TRcuOffsetObject; CONST kinId : TMcuDbObjID)
+   : BOOL GLOBAL
+   VAR
+      offs : TMcuJointsOffset;
+      smName : STRING;
+   END_VAR
+
+   IF (offsObj = eRcuOffsObjInvalid) OR (offsObj = eRcuNrOfOffsObj) THEN
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjInv, -1, 1, 0, "RcuOffsetObjects.RcuOffsObjSet");
+      RETURN FALSE;
+   END_IF;
+
+   // remove mapping of the tracking vector
+   gyRcuTrackingJoints[offsObj] := MAPX("");
+   rcuOffsetObject[offsObj].valid := FALSE;
+   // delete an existing offset object with this index
+   IF rcuOffsetObject[offsObj].offsObjMcuId <> 0 THEN
+      McuReleaseDbObj(rcuOffsetObject[offsObj].offsObjMcuId);
+      rcuOffsetObject[offsObj].offsObjMcuId := 0;
+   END_IF;
+
+   // fill the joints offset data sheet
+   offs.mDBObjTyp := eMcuPermanent;
+   offs.mUpdTyp := eMcuUpdateSMemIntern;
+   offs.mKinematicID := kinId;
+
+   // create the transformation-object
+   IF NOT McuCreateJointsOffset(rcuOffsetObject[offsObj].offsObjMcuId, offs) THEN
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjCrF, -1, 1, 0, "RcuOffsetObjects.RcuOffsObjSet");
+      RETURN FALSE;
+   END_IF;
+
+   // fill the remaining members of the corresponding arrayelement
+   rcuOffsetObject[offsObj].kinMcuId := kinId;
+   // map the tracking-vector
+   McuReadJointsOffsetHdlName(rcuOffsetObject[offsObj].offsObjMcuId, smName);
+   gyRcuTrackingJoints[offsObj] := MAPX(smName);
+
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read an element of the array of offset objects
+*)
+ROUTINE RcuOffsObjRead(CONST offsObj : TRcuOffsetObject; elem :
+   TRcuOffsObjElement) : BOOL GLOBAL
+
+   IF (offsObj = eRcuOffsObjInvalid) OR (offsObj = eRcuNrOfOffsObj) THEN
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjInv, -1, 2, 0, "RcuOffsetObjects.RcuOffsObjRead");
+      RETURN FALSE;
+   END_IF;
+
+   elem := rcuOffsetObject[offsObj];
+   RETURN elem.offsObjMcuId <> 0;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read the Mcu-Id of the given offset object. Returns false when the object
+* is not yet created or when it is not valid.
+*)
+ROUTINE RcuOffsObjGetMcuId(CONST offsObj : TRcuOffsetObject; id : TMcuDbObjID) :
+   BOOL GLOBAL
+
+   IF (offsObj = eRcuOffsObjInvalid) OR (offsObj = eRcuNrOfOffsObj) THEN
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjInv, -1, 3, 0, "RcuOffsetObjects.RcuOffsObjGetMcuId");
+      RETURN FALSE;
+   END_IF;
+
+   id := rcuOffsetObject[offsObj].offsObjMcuId;
+   RETURN (id <> 0) AND rcuOffsetObject[offsObj].valid;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set a reference system as valid. Especially useful for systems with tracking.
+*)
+ROUTINE RcuOffsObjActivate(CONST offsObj : TRcuOffsetObject) : BOOL GLOBAL
+
+   IF (offsObj = eRcuOffsObjInvalid) OR (offsObj = eRcuNrOfOffsObj) THEN
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjInv, -1, 4, 0, "RcuOffsetObjects.RcuOffsObjActivate");
+      RETURN FALSE;
+   END_IF;
+
+   IF rcuOffsetObject[offsObj].offsObjMcuId <> 0 THEN
+      rcuOffsetObject[offsObj].valid := TRUE;
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjNotEx, -1, 1, 0, "RcuOffsetObjects.RcuOffsObjActivate");
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set a reference system as not valid. Especially useful for systems with
+* tracking.
+*)
+ROUTINE RcuOffsObjDeactivate(CONST offsObj : TRcuOffsetObject) : BOOL GLOBAL
+
+   IF (offsObj = eRcuOffsObjInvalid) OR (offsObj = eRcuNrOfOffsObj) THEN
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjInv, -1, 5, 0, "RcuOffsetObjects.RcuOffsObjDeactivate");
+      RETURN FALSE;
+   END_IF;
+
+   IF rcuOffsetObject[offsObj].offsObjMcuId <> 0 THEN
+      rcuOffsetObject[offsObj].valid := FALSE;
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(RcuOffsetObjects_WarOffObjNotEx, -1, 2, 0, "RcuOffsetObjects.RcuOffsObjDeactivate");
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+(*******************************************************************************
+* members
+*)
+
+VAR
+   // instance identification number (for errors)
+   instId : DINT;
+END_VAR
+
+
+(*******************************************************************************
+* private members
+*)
+
+VAR PRIVATE
+   // array of reference systems
+   rcuOffsetObject : ARRAY [eRcuNrOfOffsObj] OF TRcuOffsObjElement;
+END_VAR
+
+
+
+(*******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   instId := RcuGetInstanceId();
+END_ROUTINE
+
+ROUTINE DELETE()
+   VAR
+      i : DINT;
+   END_VAR
+
+   FOR i := 0 TO eRcuNrOfOffsObj - 1 DO
+      IF rcuOffsetObject[i].offsObjMcuId <> 0 THEN
+         McuReleaseDbObj(rcuOffsetObject[i].offsObjMcuId);
+      END_IF;
+   END_FOR;
+END_ROUTINE
+

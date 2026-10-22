@@ -1,0 +1,75 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "PistonCheck" "" 48 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "ShotMeter1Sub_?.YBV1?.Set"
+	Add_TPSignal "ShotMeter1Sub_?.BDP92PA?.FreezeActValue"
+	Add_TPSignal "ShotMeter1Sub_?.BDP92PA?.InRange"
+	Add_TPSignal "ShotMeter1Sub_?.BDP92PA?.SetRange"
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepTime "CloseAll" 0.2 True ""
+	Add_TPStepTime "Wait" 1 True ""
+	Add_TPStepEvent "Check" False 20 False 20 True False ChannelError 100 And False 0 "" ""
+	Add_TPStepEvent "CheckResult" False 0.04 False 0.04 True True Warning 67 And False 0 "" ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "1"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "ShotMeter1Sub_?.YBV1?.Set" False
+	Set_TPSignalBool "ShotMeter1Sub_?.BDP92PA?.FreezeActValue" False
+	Act_TPSignalBool "ShotMeter1Sub_?.BDP92PA?.InRange" False False
+	Set_TPSignalAnalog "ShotMeter1Sub_?.BDP92PA?.SetRange" 0
+
+	// Step 2
+	Select_TPStep "2"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "ShotMeter1Sub_?.BDP92PA?.FreezeActValue" True
+	Set_TPSignalAnalog "ShotMeter1Sub_?.BDP92PA?.SetRange" 2
+
+	// Step 3
+	Select_TPStep "3"
+	// Modify only signals changed to step before
+	Act_TPSignalBool "ShotMeter1Sub_?.BDP92PA?.InRange" True False
+
+	// Step 4
+	Select_TPStep "4"
+	// Modify only signals changed to step before
+	Act_TPSignalBool "ShotMeter1Sub_?.BDP92PA?.InRange" True True
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "pistoncheck" True
+Return

@@ -1,0 +1,197 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2013-09-30  | STL    | First release
+//  v2_01.01.00  | 2014-01-28  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 2014-04-14  | KLCH   | Change: remove cfg parameter CheckDevice
+//  v2_01.03.00  | 2014-04-28  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.04.00  | 2014-09-12  | KLCH   | Change: redesign; move SubRoutines to CommonTempControl
+//  v2_01.05.00  | 2015-04-13  | STL    | Change: Trigger configuration heating sections because of new ProcessBuilder version
+//  v2_01.06.00  | 2016-11-21  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.07.00  | 2017-09-28  | KLCH   | AddOn:  all required parameters
+//  v2_01.08.00  | 2021-09-10  | KLCH   | Change: remove device tags (BMK) in configuration values
+
+Imports Common CommonTempControl TempHeatZone4
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 EcoTempAxis1 EcoTempAxis3 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9 NumberOfMainNeedles
+
+Call CommonTempCtrl_MatHeater
+Call Main_TempHeatZone3
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_TempHeatZone3
+	SelectNode RPC1.R11
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			Call AddDeviceToShotMeter1Sub_TempHeatZone3
+			Call Main_TempHeatZone4
+		Case EcoDose_SM_PCL
+			Call AddDeviceToShotMeter1Sub_TempHeatZone3
+			Call Main_TempHeatZone4
+		Case EcoDose_SM_SM
+			Call AddDeviceToShotMeter1Sub_2Single_TempHeatZone3
+			Call Main_TempHeatZone4
+		CaseElse
+			Message Wrong process type (TempHeatZone3)!!
+	EndSelect
+Return
+
+SubRoutine AddDeviceToShotMeter1Sub_TempHeatZone3
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.AMH1_2a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.AMH1_2a
+		Delete
+	Endif
+	SelectCase TempHeatZone3
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+			Call Common_AddDevice_AMH1_2
+			
+			// Cfg parameter
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.AMH1_2a
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCase Option14 // Variant of bus system
+				Case SercosIII
+					SelectCfg AMH1_2.ControlMode
+					Value 1
+					SelectCfg AMH1_2.DeviceTemperature.ControlParam.P03_DevAlarm
+					Value 50
+					SelectCfg AMH1_2.DeviceTemperature.ControlParam.P06_Tv_Heating
+					Value 20
+					SelectCfg AMH1_2.DeviceTemperature.ControlParam.P22_Offset_Act
+					Value 999
+					SelectCfg AMH1_2.DeviceTemperature.ControlParam.TemperatureMax
+					Value 42
+					SelectCfg AMH1_2.DeviceTemperature.ControlParam.TemperatureMin
+					Value 25
+					SelectCfg AMH1_2.DeviceTemperature.ControlParam.Zone
+					Value 3
+					SelectCfg AMH1_2.SetTemperature
+					Value 35
+				Case Profibus
+					SelectCfg AMH1_2.CtrlLevel
+					Value 1
+					SelectCfg AMH1_2.03_DevAlarm
+					Value 50
+					SelectCfg AMH1_2.06_Tv_Control
+					Value 20
+					SelectCfg AMH1_2.22_Offset_Act
+					Value 99
+					SelectCfg AMH1_2.CtrlTypeSetbackTemp
+					OptionalUsed 1
+					Value 1
+					SelectCfg AMH1_2.MediumTempCtrl.ReactionLevelCtrl
+					Value 1
+					SelectCfg AMH1_2.NameSignalForFlow
+					OptionalUsed 1
+					Value "ShotMeter1.ActQuantity"
+					SelectCfg AMH1_2.SetbackTemp
+					OptionalUsed 1
+					Value 25
+					SelectCfg AMH1_2.SetTemp
+					Value 25
+					SelectCfg AMH1_2.SetTempMaterial
+					OptionalUsed 0
+					Value 25
+					SelectCfg AMH1_2.SetTempMax
+					Value 42
+					SelectCfg AMH1_2.SetTempMaxAfterHys
+					Value 42
+					SelectCfg AMH1_2.SetTempMin
+					Value 25
+					SelectCfg AMH1_2.SetTempMinAfterHys
+					Value 25
+					SelectCfg AMH1_2.TemperatureSensorName
+					Value "AP1T"
+					SelectCfg AMH1_2.TimeSetbackTemp
+					OptionalUsed 1
+					Value 0d0h30m0s0ms
+					SelectCfg AMH1_2.Zone
+					Value 3
+				CaseElse
+					Message Wrong bus master (AMH1_2a)!! Only Profibus and Sercos III supported
+			EndSelect
+			Call CommonTempCtrl_SetConfigMaterial1_AMatManager1
+	EndSelect
+Return
+
+SubRoutine AddDeviceToShotMeter1Sub_2Single_TempHeatZone3
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.AMH1_2_1a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.AMH1_2_1a
+		Delete
+	Endif
+	SelectCase TempHeatZone3
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+			Call Common_AddDevice_AMH1_2_1
+			
+			// Cfg parameter
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.AMH1_2_1a
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCase Option14 // Variant of bus system
+				Case SercosIII
+					SelectCfg AMH1_2_1.ControlMode
+					Value 1
+					SelectCfg AMH1_2_1.DeviceTemperature.ControlParam.P03_DevAlarm
+					Value 50
+					SelectCfg AMH1_2_1.DeviceTemperature.ControlParam.P06_Tv_Heating
+					Value 20
+					SelectCfg AMH1_2_1.DeviceTemperature.ControlParam.P22_Offset_Act
+					Value 999
+					SelectCfg AMH1_2_1.DeviceTemperature.ControlParam.TemperatureMax
+					Value 42
+					SelectCfg AMH1_2_1.DeviceTemperature.ControlParam.TemperatureMin
+					Value 30
+					SelectCfg AMH1_2_1.DeviceTemperature.ControlParam.Zone
+					Value 3
+					SelectCfg AMH1_2_1.SetTemperature
+					Value 25
+				Case Profibus
+					SelectCfg AMH1_2_1.CtrlLevel
+					Value 1
+					SelectCfg AMH1_2_1.03_DevAlarm
+					Value 50
+					SelectCfg AMH1_2_1.06_Tv_Control
+					Value 20
+					SelectCfg AMH1_2_1.22_Offset_Act
+					Value 99
+					SelectCfg AMH1_2_1.CtrlTypeSetbackTemp
+					OptionalUsed 1
+					Value 1
+					SelectCfg AMH1_2_1.MediumTempCtrl.ReactionLevelCtrl
+					Value 1
+					SelectCfg AMH1_2_1.NameSignalForFlow
+					OptionalUsed 1
+					Value "ShotMeter1.ActQuantity"
+					SelectCfg AMH1_2_1.SetbackTemp
+					OptionalUsed 1
+					Value 25
+					SelectCfg AMH1_2_1.SetTemp
+					Value 25
+					SelectCfg AMH1_2_1.SetTempMaterial
+					OptionalUsed 0
+					Value 25
+					SelectCfg AMH1_2_1.SetTempMax
+					Value 42
+					SelectCfg AMH1_2_1.SetTempMaxAfterHys
+					Value 42
+					SelectCfg AMH1_2_1.SetTempMin
+					Value 25
+					SelectCfg AMH1_2_1.SetTempMinAfterHys
+					Value 25
+					SelectCfg AMH1_2_1.TemperatureSensorName
+					Value "AP1T"
+					SelectCfg AMH1_2_1.TimeSetbackTemp
+					OptionalUsed 1
+					Value 0d0h30m0s0ms
+					SelectCfg AMH1_2_1.Zone
+					Value 3
+				CaseElse
+					Message Wrong bus master (AMH1_2_1a)!! Only Profibus and Sercos III supported
+			EndSelect
+			Call CommonTempCtrl_SetConfigMaterial1_AMatManager1
+	EndSelect
+Return

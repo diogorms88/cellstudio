@@ -1,0 +1,49 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2013-09-30  | STL    | First release
+//  v2_01.01.00  | 2014-01-28  | SMOH   | Change: combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 2016-10-28  | STL    | Change: check Option12 before deselect time program group AtomizerClean
+//  v2_01.03.00  | 2016-11-21  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.04.00  | 2017-10-10  | KLCH   | AddOn:  generate time programs
+//  v2_01.05.00  | 2019-01-31  | KLCH   | Change: adjustments due to structural changes (EA2.0)
+//  v2_01.06.00  | 2021-08-18  | KLCH   | Change: air supply valve of cleaning blower renamed from LV3 to LV_BL1
+//  v2_01.07.00  | 2022-01-25  | KLCH   | Change: [ECORPC-1137] adaptions to reduce variant/ option dependent software blocks
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_Option21
+Call Common_Sealing_OptionalTPGroups
+Call Common_Sealing_OptionalFixpos
+Call Common_Sealing_Configuration
+Call Common_Sealing_GenerateTimeProg
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option21
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BlowOut.YLV_BL1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BlowOut.YLV_BL1
+		Delete
+	Endif
+	SelectCase Option21
+		Case 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BlowOut
+			Else
+				SelectNode RPC1.R11.PCU1
+				//******** Add blow out 1 channel ************
+				Call Common_AddChannel_BlowOut
+			Endif
+			
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BlowOut
+			Call Common_AddValve_LV_BL1
+		CaseElse
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BlowOut
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BlowOut
+				Delete
+			Endif
+	EndSelect
+Return

@@ -1,0 +1,26 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 10.08.2020  | MWT    | First release
+//  v2_01.01.00  | 26.01.2021  | BIT    | AddOn: call of subroutine Common_ConfigureRCUCfg
+
+//Sealing
+Parameter OptionCoolingDevice Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger NozzleHeadExchanger Circulation OptionGun OptionShotMeter EcoTempAxis1 EcoTempAxis3 HelpGun1 OptionElectricalVersion OptionRCMPGen
+Imports OptionCoolingDevice Common FuseMon EcoTempAxis1 EcoTempAxis3 NozzleHeadExchanger Option12 Option14 Option15 NozzleExchanger
+
+Call Main_OptionRCMPGen
+Message Drive system might have changed ! IEC-Code change required, please search for "Option14" in your IEC-project
+END
+
+SubRoutine Main_OptionRCMPGen
+
+	Call Main_OptionCoolingDevice
+	Call Sub_FuseMon_Clear_Config
+	Call Main_FuseMon
+	Call Main_Option14
+	
+	Call Main_EcoTempAxis1
+	Call Main_EcoTempAxis3
+	Call Common_Sealing_ConfigureSystemCfg
+	Call Common_ConfigureRCUCfg
+	
+Return

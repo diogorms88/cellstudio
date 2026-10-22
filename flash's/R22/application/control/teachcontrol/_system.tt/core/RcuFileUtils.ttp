@@ -1,0 +1,36 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : RcuFileUtils.ttp                                            *
+*   Description : File utilities                                              *
+*-----------------------------------------------------------------------------*)
+
+ROUTINE FileWriteLnWithCrLf (CONST hdl : DINT; CONST s : STRING) : BOOL
+   VAR
+      len  : DINT := 0;
+      line : STRING;
+      i    : DINT;
+   END_VAR
+   
+   len := StrLen(s);
+   
+   FOR i := 1 TO len DO
+      line := line + StrMid(s,1,i);
+   END_FOR;
+   
+   line := line + CHR(13) + CHR(10);
+   len := len + 2;
+   
+   RETURN StreamWrite(hdl, len, line) = len;
+END_ROUTINE

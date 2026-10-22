@@ -1,0 +1,1636 @@
+(*-----------------------------------------------------------------------------            
+*    K2-System Robot Control Unit                                             *            
+*                                                                             *            
+*    Dürr Systems GmbH APT                                                    *            
+*    Rosenstr. 39                                                             *            
+*    74321 Bietigheim-Bissingen                                               *            
+*    Germany                                                                  *            
+*                                                                             *            
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *            
+*    All rights reserved.                                                     *            
+*                                                                             *            
+*                                                                             *            
+*    Author :     Bauder                                                      *            
+*    E-Mail:      Manfred.Bauder@durr.com                                     *            
+*                                                                             *            
+*    Modul:       RcuMasterProg.ttp                                           *            
+*    Description: Move robotaxis that white marks correspond and start        *            
+*                 program. Now robotaxis moves in both directions and detect  *            
+*                 middle of the notch. After that, robot moves to adjustment- *            
+*                 position.                                                   *            
+*-----------------------------------------------------------------------------            
+*    05.10.04  BMA: initalize of variables            
+*    18.10.04  BMA: Output of infos (Axisnumber) changed            
+*    26.01.05  nmr: Interface to Teachview added            
+*    16.02.05  BMA: handmastering enabled (command "set absolutvalue" without moving axis            
+*    16.02.05  nmr: correct Teachview interface, set flag (masterOk) if mastered successfully            
+*    29.03.05  nmr: Redesign mastering procedure, RcuMasterProgObservation unnecessary            
+*    26.04.05  BMA: hardcoded movements and velocities now fully parameterizable            
+*    11.05.05  nmr: Mastern only allowed if no other project is selected.            
+*                   start mastering set masterOk to FALSE to prevent constant "Success" Message            
+*                   Changed SELECT PaintRobot[0] to PaintRobot[0].Select(),            
+*                   else it is possible that masterprogram stops in Select-routine (if Robot             
+*                   is already selectet by another process)              
+*    15.06.05 BMA   Mastering for Duerr-Robots            
+*    04.07.05 KTO   translated into english            
+*    26.08.05 nmr:  name-changes according to naming-conventions   
+*    06.11.06 BIT:  bugfix, most loops end at max_axes, changed to mNrOfJoints
+*    29.08.07 BIT:  Mastering for Duerr-Robots modified
+*-----------------------------------------------------------------------------            
+*)                        
+TYPE GLOBAL
+   eState : (eStateUndef, eStateSuccessful, eStateFailed, eStateStopped, eStateRunning, eStateNoAxis, eStateInterrupted, eScanning, eWaitUserInput);
+   eType  : (eKuka, eDuerr);
+END_TYPE        
+
+//----------------------------------------------------------------------------------------
+// simulation of Master-Sensor-feedback
+//----------------------------------------------------------------------------------------
+ROUTINE RunSimulation(myRobot : TRcuRobot; bRun : BOOL)
+ VAR
+  i : INT;
+ END_VAR
+ 
+ IF bRun THEN
+   START SimSensor(myRobot);
+ ELSE   
+   STOP SimSensor;
+   FOR i := 0 TO max_axes-1 DO
+      IF IS_MAPPED(myRobot.masterProg.bMasterSensor1_duerr[i]) THEN
+         myRobot.masterProg.bMasterSensor1_duerr[i] := FALSE;
+      END_IF;
+   END_FOR;
+ END_IF;
+END_ROUTINE
+
+(*******************************************************************************
+* private members
+*)
+CONSTANT PRIVATE
+   max_axes : DINT := cgiRcuMaxJoints + cgiRcuMaxAuxJoints;            
+   cSensorHysteresis : REAL := 0.3; //Falling edge and raising edge has a gitter of 0.3 deg      
+END_CONSTANT
+
+//-----------------------------------------------------------------------------
+// reference axis without moving (mannual-mastering)
+//-----------------------------------------------------------------------------
+ROUTINE PreMasternAxis(rob: TRcuRobot; MainAxis : BOOL; Nr : INT; zero_offset : REAL) : BOOL PRIVATE            
+VAR            
+   lastPos    : REAL;            
+   masterProg : MAPTO TRcuMasterProg;          
+   ret        : BOOL; 
+   sLimit     : STRING; 
+   sLastPos   : STRING;         
+END_VAR  
+  
+   masterProg              := MAP(rob.masterProg);            
+   masterProg.bMain        := MainAxis;                     
+   masterProg.actualStatus := eStateRunning;
+   masterProg.iActualStatus := eStateRunning;
+   IF masterProg.bMain THEN            
+      IF (Nr < 0) OR (Nr >= rob.nrOfMainJoints) THEN
+         RcuSetMessageOnce(RcuMasterProg_ErrWrngMainAxisNr, rob.kinListInx, 2, 0, "RcuMasterProg.PreMasternAxis", STR(Nr+1));
+         RETURN FALSE;            
+      END_IF;            
+      masterProg.dInx := Nr;            
+   ELSE            
+      IF (Nr < 0) OR (Nr >= rob.nrOfAuxJoints) THEN
+         RcuSetMessageOnce(RcuMasterProg_ErrWrongAuxAxisNr, rob.kinListInx, 2, 0, "RcuMasterProg.PreMasternAxis", STR(Nr+rob.nrOfMainJoints+1));
+         RETURN FALSE;            
+      END_IF;            
+      masterProg.dInx := Nr + (rob.nrOfMainJoints);            
+   END_IF;            
+   WAIT rob.isStopped;              
+   rob.disableDriveStart := TRUE;           
+   masterProg.last_value[masterProg.dInx] := 0.0; 
+   rob.drive[masterProg.dInx].GetPos(lastPos);            
+   IF rob.drive[masterProg.dInx].simulated OR rob.drive[masterProg.dInx].ioSimulated THEN
+      masterProg.last_value[masterProg.dInx] := lastPos - zero_offset;
+      RcuResetMessage(RcuMasterProg_InfMasteringSucc, rob.kinListInx, 3, 0, "RcuMasterProg.PreMasternAxis", rob.drive[masterProg.dInx].axesName);
+      rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "Start manual mastering, but drive is simulated");
+      rob.dataRecorder.RecAxisMastering(INT(masterProg.dInx+1), FALSE, zero_offset, masterProg.last_value[masterProg.dInx]);
+      ret := TRUE;
+   ELSE       
+      rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "Start manual mastering");
+      IF rob.ReferenceDrive(masterProg.dInx, zero_offset) THEN            
+         rob.DebugPrint(eTraceEquipment, "last pos " + STR(lastPos));            
+         masterProg.last_value[masterProg.dInx] := lastPos - zero_offset;
+         WriteSaveValuesEx(eSaveProgram, "RcuMasterProg");
+         RcuResetMessage(RcuMasterProg_InfMasteringSucc, rob.kinListInx, 4, 0, "RcuMasterProg.PreMasternAxis", rob.drive[masterProg.dInx].axesName);
+         rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "Referenced offset= " + STR(zero_offset) + " diff= " + STR(masterProg.last_value[masterProg.dInx]));
+         rob.dataRecorder.RecAxisMastering(INT(masterProg.dInx+1), FALSE, zero_offset, masterProg.last_value[masterProg.dInx]);
+         ret := TRUE;
+      ELSE
+         masterProg.last_value[masterProg.dInx] := 0.0;
+         rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "ReferenceDrive failed");
+         ret := FALSE;
+      END_IF;             
+   END_IF;   
+   //Warning if mastering difference is bigger than configured
+   IF masterProg.bShowDialogTV THEN
+      IF (rAbs(masterProg.last_value[masterProg.dInx]) >= rob.drive[masterProg.dInx].masteringDiffLimit) THEN
+          sLimit   := RealToStr(rob.drive[masterProg.dInx].masteringDiffLimit, 6);
+          sLastPos := RealToStr(masterProg.last_value[masterProg.dInx], 6);
+          RcuSetMessageOnce(RcuMasterProg_WarnDiffTooBig, rob.kinListInx, masterProg.dInx, 0, "RcuMasterProg.PreMasternAxis", rob.drive[masterProg.dInx].axesName, sLastPos, sLimit);
+          rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "Difference=" + sLastPos + " too big - Cfg=" + sLimit);
+      END_IF;             
+   END_IF;   
+   rob.disableDriveStart := FALSE;
+   RETURN ret; 
+           
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// master-routine for KUKA-Robots
+//----------------------------------------------------------------------------------------
+ROUTINE MasternAxisKuka(rob: TRcuRobot; MainAxis : BOOL; Nr : INT; axis : TRcuDrive; zero_offset : REAL) PRIVATE            
+   VAR            
+      lastPos       : REAL;            
+      delta         : REAL;             
+      velo          : REAL;            
+      rBrake        : REAL;            
+      rSaveOverride : REAL;
+      iAxisCount    : INT;
+      masterProg    : MAPTO TRcuMasterProg;
+      i             : DINT;
+      x             : REAL;
+      sLimit        : STRING; 
+      sLastPos      : STRING;
+   END_VAR
+            
+   masterProg := MAP(rob.masterProg);
+   IF NOT axis.masteringExist THEN
+      RcuSetMessageOnce(RcuMasterProg_ErrMasterNotPoss, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+      RETURN;
+   END_IF;
+   
+   FOR iAxisCount := 0 TO max_axes-1 DO   //16.11.05 BIT a Kuka robot has only one sensor, so only one Axis can be mastered per cycle
+      IF (iAxisCount <> Nr) THEN          //and the user is confused if a lot of axis are valid at the teach pendant.
+          masterProg.yMasterAxis[iAxisCount] := FALSE;
+      END_IF;
+   END_FOR;
+   masterProg.bShowButtons := FALSE;
+   masterProg.bUserYes     := FALSE;
+   masterProg.bUserNo      := FALSE;
+   
+   delta := axis.masteringDelta;            
+   velo  := axis.masteringVel;            
+   
+   rob.Select();            
+   masterProg.bMain := MainAxis;            
+   masterProg.bFound := FALSE;            
+   masterProg.bEdge0 := FALSE;            
+   masterProg.bEdge1 := FALSE;            
+   masterProg.bEdge2 := FALSE;    
+   masterProg.iStartTimeEdges := 0;        
+   
+   IF masterProg.bMain THEN            
+      IF (Nr < 0) OR (Nr >= rob.nrOfMainJoints) THEN            
+         RcuSetMessageOnce(RcuMasterProg_ErrWrngMainAxisNr, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", STR(Nr+1));
+         RETURN;            
+      END_IF;            
+      masterProg.dInx := Nr;            
+   ELSE            
+      IF (Nr < 0) OR (Nr >= rob.nrOfAuxJoints) THEN            
+         RcuSetMessageOnce(RcuMasterProg_ErrWrongAuxAxisNr, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", STR(Nr+rob.nrOfMainJoints+1));
+         RETURN;            
+      END_IF;            
+      masterProg.dInx := Nr + rob.nrOfMainJoints;            
+   END_IF;            
+   
+   RcuResetMessage(RcuMasterProg_InfStartOfMaster, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+   rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Start mastering delta=" + STR(delta) + ", velo=" + STR(velo));
+   
+   masterProg.AxisNr := Nr;            
+   masterProg.A1Value1 := 0.0;            
+   masterProg.A1Value2 := 0.0;            
+   masterProg.A1Value11 := 0.0;            
+   masterProg.last_value[masterProg.dInx] := 0.0;   
+   
+   // get actual Values            
+   GetActJointPosition(rob, masterProg.A1_START);            
+   
+   masterProg.A1_TARGET := masterProg.A1_START;            
+   IF masterProg.bMain THEN            
+      masterProg.A1_TARGET.joints[masterProg.AxisNr] := masterProg.A1_TARGET.joints[masterProg.AxisNr] + delta;            
+   ELSE            
+      masterProg.A1_TARGET.auxJoints[masterProg.AxisNr] := masterProg.A1_TARGET.auxJoints[masterProg.AxisNr] + delta;            
+   END_IF;            
+               
+   rSaveOverride := REAL(rob.override)/1000.0;
+   rob.SetTimeOverride(1.0);                
+   
+   FOR i := 0 TO 4  DO
+      masterProg.bMasterSensorSignals[i] := 0;
+   END_FOR;
+   masterProg.iArrayIndex := 0;
+   masterProg.bSignalError       :=FALSE;
+   masterProg.bErrorChange       :=FALSE;
+   masterProg.bErrorLowCount     :=FALSE;
+   masterProg.bErrorNotchCount   :=FALSE;
+   
+   IF rob.drive[masterProg.dInx].simulated OR rob.drive[masterProg.dInx].ioSimulated  THEN
+      masterProg.bMasterSensor1 := TRUE;            
+      masterProg.bMasterSensor2 := TRUE;       
+   END_IF; 
+  
+   IF NOT gbEMTObservationDeactivated THEN
+      START CountDetectedNotches(rob);
+      START ObserveSensor_1_IsLow(rob);
+      START ObserveSensor_2_IsLow(rob);
+   END_IF;  
+   
+   masterProg.dAxis := masterProg.dInx+1;            
+   rob.DebugPrint(eTraceEquipment, "Forward movement started");
+   PTPAbs(masterProg.A1_TARGET, velo, masterProg.dAxis); // velocity independent from Override 
+   rob.DebugPrint(eTraceEquipment, "Waiting for Sensor1 OR Sensor2");
+   WAIT (masterProg.bMasterSensor1 OR masterProg.bMasterSensor2);
+   START Search10(rob);            
+   REPEAT            
+      Sleep(20);            
+      IF masterProg.bMain THEN            
+         masterProg.dif := rob.actJoints.mPos[masterProg.AxisNr] - masterProg.A1_TARGET.joints[masterProg.AxisNr];            
+      ELSE            
+         masterProg.dif := rob.actJoints.mPos[masterProg.AxisNr + rob.nrOfMainJoints] - masterProg.A1_TARGET.auxJoints[masterProg.AxisNr];            
+      END_IF;            
+   UNTIL (rAbs(masterProg.dif) < 0.001) OR (masterProg.bEdge1 AND masterProg.bEdge2);
+   IF masterProg.bEdge1 AND masterProg.bEdge2 THEN
+      rob.DebugPrint(eTraceEquipment, "Waiting for Sensor1 AND Sensor2");
+      WAIT masterProg.bMasterSensor1 AND masterProg.bMasterSensor2;
+      // Stop movement
+      McuStopMove(rob.kinematicMcuId);
+      IF rob.railTrackingActive THEN
+         WAIT rob.isNotMovingOnPath;
+      ELSE
+         WAIT rob.isStopped;
+      END_IF;
+      rob.progPath.EndMotionCommands();
+      IF masterProg.bMain THEN            
+         x := rob.readBackVals.mJoints.mMainJoints.mValues[masterProg.AxisNr];            
+      ELSE            
+         x := rob.readBackVals.mJoints.mAuxJoints.mValues[masterProg.AxisNr];            
+      END_IF;            
+      rob.DebugPrint(eTraceEquipment, "Forward Movement stopped at "+STR(x));
+
+      rob.RcuSetPathPos(rob.noPath);
+      rob.progPath.Reset();
+      rob.RcuSetPathPos(rob.progPath);
+      IF NOT McuMove(rob.kinematicMcuId) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, rob.kinListInx, 5, 0, "RcuMasterprog.MasternAxisKuka", rob.robotName, "McuMove");
+         RETURN;
+      END_IF;      
+   END_IF;
+               
+   rob.DebugPrint(eTraceEquipment, "Start notch     = " + STR(masterProg.A1Value11));            
+            
+   IF NOT gbEMTObservationDeactivated THEN
+      STOP CountDetectedNotches;  
+      STOP ObserveSensor_1_IsLow;
+      STOP ObserveSensor_2_IsLow;
+   END_IF;      
+   
+   IF NOT masterProg.bSignalError THEN     
+      IF masterProg.bEdge1 AND masterProg.bEdge2 THEN            
+         // store results
+         masterProg.A1Value3 := masterProg.A1Value1;
+         masterProg.A1Value4 := masterProg.A1Value2;
+
+         rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 1 = " + STR(masterProg.A1Value1));            
+         rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 2 = " + STR(masterProg.A1Value2));            
+         masterProg.bFound := TRUE;            
+      ELSE            
+         IF NOT masterProg.bEdge0 THEN            
+            RcuSetMessageOnce(RcuMasterProg_ErrWrngMovDir, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+            STOP Search10;            
+         ELSE            
+            IF NOT masterProg.bEdge1 THEN            
+               RcuSetMessageOnce(RcuMasterProg_ErrTrans10t11NFnd, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+               STOP Edge1;            
+            ELSE            
+               rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 1 = " + STR(masterProg.A1Value1));            
+            END_IF;            
+            IF NOT masterProg.bEdge2 THEN            
+               RcuSetMessageOnce(RcuMasterProg_ErrTrans11t01NFnd, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+               STOP Edge2;            
+            ELSE            
+               rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 2 = " + STR(masterProg.A1Value2));            
+            END_IF;            
+         END_IF; 
+         rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Abort mastering bEdge0=" + STR(masterProg.bEdge0) + 
+                                                                                    " bEdge1=" + STR(masterProg.bEdge1) + 
+                                                                                    " bEdge2=" + STR(masterProg.bEdge2));
+      END_IF;            
+   ELSE
+   
+      masterProg.bFound := FALSE;
+     
+      IF masterProg.bErrorChange THEN
+         RcuSetMessageOnce(RcuMasterProg_ErrChangeError, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+      ELSIF masterProg.bErrorLowCount THEN
+          RcuSetMessageOnce(RcuMasterProg_ErrChangeError, rob.kinListInx, 1, 1, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+      ELSIF masterProg.bErrorNotchCount THEN 
+          RcuSetMessageOnce(RcuMasterProg_ErrChangeError, rob.kinListInx, 1, 2, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+      END_IF;
+   END_IF;         
+            
+   IF masterProg.bFound THEN
+      FOR i := 0 TO 4  DO
+         masterProg.bMasterSensorSignals[i] := 0;
+      END_FOR;
+      masterProg.iArrayIndex := 0;
+      masterProg.bSignalError       :=FALSE;
+      masterProg.bErrorChange       :=FALSE;
+      masterProg.bErrorLowCount     :=FALSE;
+      masterProg.bErrorNotchCount   :=FALSE;
+      masterProg.bFound             := FALSE;            
+      masterProg.bEdge0             := FALSE;            
+      masterProg.bEdge1             := FALSE;            
+      masterProg.bEdge2             := FALSE;    
+      masterProg.iStartTimeEdges    := 0;        
+
+      IF rob.drive[masterProg.dInx].simulated OR rob.drive[masterProg.dInx].ioSimulated  THEN
+         masterProg.bMasterSensor1 := TRUE;            
+         masterProg.bMasterSensor2 := TRUE;       
+      END_IF; 
+
+      IF NOT gbEMTObservationDeactivated THEN
+         START CountDetectedNotches(rob);
+         START ObserveSensor_1_IsLow(rob);
+         START ObserveSensor_2_IsLow(rob);
+      END_IF;  
+
+      masterProg.dAxis := masterProg.dInx+1;            
+      rob.DebugPrint(eTraceEquipment, "Backward movement started");
+      PTPAbs(masterProg.A1_START, velo, masterProg.dAxis); // velocity independent from Override            
+      rob.DebugPrint(eTraceEquipment, "Waiting for Sensor1 OR Sensor2");
+      WAIT (masterProg.bMasterSensor1 OR masterProg.bMasterSensor2);
+      START Search10(rob);            
+      REPEAT            
+         Sleep(20);            
+         IF masterProg.bMain THEN            
+            masterProg.dif := rob.actJoints.mPos[masterProg.AxisNr] - masterProg.A1_START.joints[masterProg.AxisNr];            
+         ELSE            
+            masterProg.dif := rob.actJoints.mPos[masterProg.AxisNr + rob.nrOfMainJoints] - masterProg.A1_START.auxJoints[masterProg.AxisNr];            
+         END_IF;            
+      UNTIL (rAbs(masterProg.dif) < 0.001) OR (masterProg.bEdge1 AND masterProg.bEdge2);
+      IF masterProg.bEdge1 AND masterProg.bEdge2 THEN
+         // Stop movement
+         McuStopMove(rob.kinematicMcuId);
+         IF rob.railTrackingActive THEN
+            WAIT rob.isNotMovingOnPath;
+         ELSE
+            WAIT rob.isStopped;
+         END_IF;
+         rob.progPath.EndMotionCommands();
+         IF masterProg.bMain THEN            
+            x := rob.readBackVals.mJoints.mMainJoints.mValues[masterProg.AxisNr];            
+         ELSE            
+            x := rob.readBackVals.mJoints.mAuxJoints.mValues[masterProg.AxisNr];            
+         END_IF;            
+         rob.DebugPrint(eTraceEquipment, "Backward Movement stopped at "+STR(x));
+
+         rob.RcuSetPathPos(rob.noPath);
+         rob.progPath.Reset();
+         rob.RcuSetPathPos(rob.progPath);
+         IF NOT McuMove(rob.kinematicMcuId) THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, rob.kinListInx, 6, 0, "RcuMasterprog.MasternAxisKuka", rob.robotName, "McuMove");
+            RETURN;
+         END_IF;      
+      END_IF;
+
+      rob.DebugPrint(eTraceEquipment, "Start notch     = " + STR(masterProg.A1Value11));            
+
+      IF NOT gbEMTObservationDeactivated THEN
+         STOP CountDetectedNotches;  
+         STOP ObserveSensor_1_IsLow;
+         STOP ObserveSensor_2_IsLow;
+      END_IF;      
+
+      IF NOT masterProg.bSignalError THEN     
+         IF masterProg.bEdge1 AND masterProg.bEdge2 THEN            
+            // calculate zero-point 
+            IF masterProg.bMain THEN            
+               masterProg.A1_START.joints[masterProg.AxisNr] :=(masterProg.A1Value1+masterProg.A1Value2 +
+                                                                masterProg.A1Value3+masterProg.A1Value4)/4;  
+            ELSE            
+               masterProg.A1_START.auxJoints[masterProg.AxisNr] :=(masterProg.A1Value1+masterProg.A1Value2+
+                                                                    masterProg.A1Value3+masterProg.A1Value4)/4;
+            END_IF;  
+            rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 3 = " + STR(masterProg.A1Value1));            
+            rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 4 = " + STR(masterProg.A1Value2));            
+            rob.DebugPrint(eTraceEquipment, "Adjustmentposition  = " + STR((masterProg.A1Value1+masterProg.A1Value2+
+                                                                    masterProg.A1Value3+masterProg.A1Value4)/4));            
+            rob.DebugPrint(eTraceEquipment, "Robot moves to acquired Adjustmentposition");            
+            masterProg.bFound := TRUE;            
+         ELSE            
+            IF NOT masterProg.bEdge0 THEN            
+               RcuSetMessageOnce(RcuMasterProg_ErrWrngMovDir, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+               STOP Search10;            
+            ELSE            
+               IF NOT masterProg.bEdge1 THEN            
+                  RcuSetMessageOnce(RcuMasterProg_ErrTrans10t11NFnd, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+                  STOP Edge1;            
+               ELSE            
+                  rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 1 = " + STR(masterProg.A1Value1));            
+               END_IF;            
+               IF NOT masterProg.bEdge2 THEN            
+                  RcuSetMessageOnce(RcuMasterProg_ErrTrans11t01NFnd, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+                  STOP Edge2;            
+               ELSE            
+                  rob.DebugPrint(eTraceEquipment, "Notchbreakpoint 2 = " + STR(masterProg.A1Value2));            
+               END_IF;            
+            END_IF; 
+            rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Abort mastering bEdge0=" + STR(masterProg.bEdge0) + 
+                                                                                       " bEdge1=" + STR(masterProg.bEdge1) + 
+                                                                                       " bEdge2=" + STR(masterProg.bEdge2));
+         END_IF;            
+      ELSE
+
+         masterProg.bFound := FALSE;
+
+         IF masterProg.bErrorChange THEN
+            RcuSetMessageOnce(RcuMasterProg_ErrChangeError, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+         ELSIF masterProg.bErrorLowCount THEN
+             RcuSetMessageOnce(RcuMasterProg_ErrChangeError, rob.kinListInx, 1, 1, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+         ELSIF masterProg.bErrorNotchCount THEN 
+             RcuSetMessageOnce(RcuMasterProg_ErrChangeError, rob.kinListInx, 1, 2, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+         END_IF;
+      END_IF;         
+   END_IF;
+   
+   masterProg.dAxis := masterProg.dInx+1;            
+   PTPAbs(masterProg.A1_START, velo, masterProg.dAxis); // velocity independent from Override            
+   WAIT IS_FINISHED;            
+   DESELECT rob;            
+   IF masterProg.bFound THEN            
+      WAIT rob.isStopped;            
+      rob.disableDriveStart := TRUE;            
+      Sleep(500);
+      rob.drive[masterProg.dInx].GetPos(lastPos);
+      (* brake activation movement *)            
+      IF IS_MAPPED(rob.readBackVals) THEN            
+         IF masterProg.bMain THEN            
+            rBrake := rob.readBackVals.mJoints.mMainJoints.mValues[masterProg.AxisNr];            
+         ELSE            
+            rBrake := rob.readBackVals.mJoints.mAuxJoints.mValues[masterProg.AxisNr];            
+         END_IF;            
+         rob.DebugPrint(eTraceEquipment, "rBrake " + STR(rBrake));            
+      END_IF;            
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Start notch= " + STR(masterProg.A1Value11));
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Notchbreakpoint 1= " + STR(masterProg.A1Value3));  
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Notchbreakpoint 2= " + STR(masterProg.A1Value4));
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Notchbreakpoint 3= " + STR(masterProg.A1Value1));  
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Notchbreakpoint 4= " + STR(masterProg.A1Value2));
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Adjustmentposition= " + STR((masterProg.A1Value1+masterProg.A1Value2+masterProg.A1Value3+masterProg.A1Value4)/4));
+      rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "rBrake= " + STR(rBrake));
+                  
+      IF masterProg.bShowDialogTV THEN
+         masterProg.last_value[masterProg.dInx] := lastPos - zero_offset;
+         masterProg.bShowButtons := TRUE;
+         masterProg.bUserYes     := FALSE;
+         masterProg.bUserNo      := FALSE;
+         masterProg.iActualStatus := eWaitUserInput;
+         WAIT masterProg.bUserYes OR masterProg.bUserNo OR (NOT rob.isStopped);
+         masterProg.bShowButtons := FALSE;
+      END_IF;
+      
+      IF (NOT masterProg.bShowDialogTV) OR masterProg.bUserYes THEN
+         IF rob.ReferenceDrive(masterProg.dInx, zero_offset) THEN            
+            rob.DebugPrint(eTraceEquipment, "last pos " + STR(lastPos));            
+            masterProg.last_value[masterProg.dInx] := lastPos - zero_offset;
+            WriteSaveValuesEx(eSaveProgram, "RcuMasterProg");
+            RcuResetMessage(RcuMasterProg_InfMasteringSucc, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName);
+            masterProg.actualStatus := eStateSuccessful;
+            masterProg.iActualStatus := eStateSuccessful;
+            rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Referenced offset= " + STR(zero_offset) + " diff= " + STR(masterProg.last_value[masterProg.dInx]));
+            masterProg.bMasteringSuccessful := TRUE;
+            rob.dataRecorder.RecAxisMastering(INT(masterProg.dInx+1), TRUE, zero_offset, masterProg.last_value[masterProg.dInx]);            
+         ELSE
+            masterProg.last_value[masterProg.dInx] := 0.0; 
+            rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "ReferenceDrive failed");         
+         END_IF;      
+         //Warning if mastering difference is bigger than configured
+         IF masterProg.bShowDialogTV THEN
+            IF (rAbs(masterProg.last_value[masterProg.dInx]) >= rob.drive[masterProg.dInx].masteringDiffLimit) THEN 
+                sLimit   := RealToStr(rob.drive[masterProg.dInx].masteringDiffLimit, 6);
+                sLastPos := RealToStr(masterProg.last_value[masterProg.dInx], 6);
+                RcuSetMessageOnce(RcuMasterProg_WarnDiffTooBig, rob.kinListInx, masterProg.dInx, 0, "RcuMasterProg.MasternAxisKuka", axis.axesName, sLastPos, sLimit);
+                rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "Difference=" + sLastPos + " too big - Cfg=" + sLimit);
+            END_IF;
+         END_IF;
+      ELSE         
+         masterProg.last_value[masterProg.dInx] := 0.0; 
+         rob.loggerDrive.SetProtocol("RcuMasterProg", axis.iIecDevIndex, "User canceled writing the reference");      
+      END_IF;            
+      rob.disableDriveStart := FALSE;            
+      rob.SetTimeOverride(rSaveOverride);
+   END_IF;             
+
+END_ROUTINE             
+
+//----------------------------------------------------------------------------------------
+// Detecting, deepest point of notch KUKA-Robots
+//----------------------------------------------------------------------------------------            
+ROUTINE Edge1(rob: TRcuRobot) PRIVATE            
+VAR            
+   masterProg : MAPTO TRcuMasterProg; 
+   iTime      : LINT;
+   velo       : REAL;         
+END_VAR  
+  
+   masterProg := MAP(rob.masterProg);            
+               
+   IF rob.drive[masterProg.dInx].simulated OR rob.drive[masterProg.dInx].ioSimulated THEN            
+      Sleep(2000);            
+      masterProg.bMasterSensor1 := TRUE;            
+      masterProg.bMasterSensor2 := TRUE;            
+   END_IF;            
+   WAIT (masterProg.bMasterSensor1 AND masterProg.bMasterSensor2);            
+   IF IS_MAPPED(rob.readBackVals) THEN            
+//      rob.DebugPrint(eTraceEquipment, "use actual values");            
+      IF masterProg.bMain THEN            
+         masterProg.A1Value1 := rob.readBackVals.mJoints.mMainJoints.mValues[masterProg.AxisNr];            
+      ELSE            
+         masterProg.A1Value1 := rob.readBackVals.mJoints.mAuxJoints.mValues[masterProg.AxisNr];            
+      END_IF;            
+   ELSE            
+      rob.DebugPrint(eTraceEquipment, "no actual values available, set values used");            
+      IF masterProg.bMain THEN            
+         masterProg.A1Value1 := rob.actJoints.mPos[masterProg.AxisNr];            
+      ELSE            
+         masterProg.A1Value1 := rob.actJoints.mPos[masterProg.AxisNr + rob.nrOfMainJoints];            
+      END_IF;            
+   END_IF;            
+   masterProg.bEdge1 := TRUE;
+   SysTimerGetUs(iTime);
+   iTime := (iTime - masterProg.iStartTimeEdges) / 1000;
+   velo  := rob.drive[masterProg.dInx].masteringVel;
+   rob.DebugPrint(eTraceEquipment, "Mastering Axis " + STR(masterProg.dInx+1) + " neg. edge detected for " + STR(iTime) + " ms with velo=" + STR(velo));
+   rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "Neg. edge=" + STR(iTime) + "ms, velo=" + STR(velo));
+   WAIT IS_FINISHED;            
+END_ROUTINE            
+            
+//----------------------------------------------------------------------------------------
+// Detecting, leaving notch KUKA-Robots
+//---------------------------------------------------------------------------------------- 
+ROUTINE Edge2(rob: TRcuRobot) PRIVATE            
+VAR            
+   masterProg : MAPTO TRcuMasterProg; 
+   iTime      : LINT;
+   velo       : REAL;         
+END_VAR  
+  
+   masterProg := MAP(rob.masterProg);            
+   IF rob.drive[masterProg.dInx].simulated OR rob.drive[masterProg.dInx].ioSimulated THEN            
+      Sleep(4000);            
+      masterProg.bMasterSensor1 := TRUE;            
+      masterProg.bMasterSensor2 := FALSE;            
+   END_IF;            
+   WAIT (masterProg.bMasterSensor1 AND NOT masterProg.bMasterSensor2);            
+   IF IS_MAPPED(rob.readBackVals) THEN            
+//      rob.DebugPrint(eTraceEquipment, "actual-values are used");            
+      IF masterProg.bMain THEN            
+         masterProg.A1Value2 := rob.readBackVals.mJoints.mMainJoints.mValues[masterProg.AxisNr];            
+      ELSE            
+         masterProg.A1Value2 := rob.readBackVals.mJoints.mAuxJoints.mValues[masterProg.AxisNr];            
+      END_IF;            
+   ELSE            
+      rob.DebugPrint(eTraceEquipment, "actual-values not available. Set-values are used");            
+      IF masterProg.bMain THEN            
+         masterProg.A1Value2 := rob.actJoints.mPos[masterProg.AxisNr];            
+      ELSE            
+         masterProg.A1Value2 := rob.actJoints.mPos[masterProg.AxisNr + rob.nrOfMainJoints];            
+      END_IF;            
+   END_IF;            
+   masterProg.bEdge2 := TRUE;    
+   SysTimerGetUs(iTime);
+   iTime := (iTime - masterProg.iStartTimeEdges) / 1000;
+   velo  := rob.drive[masterProg.dInx].masteringVel;
+   rob.DebugPrint(eTraceEquipment, "Mastering Axis " + STR(masterProg.dInx+1) + " pos. edge detected for " + STR(iTime) + " ms with velo=" + STR(velo));
+   rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[masterProg.dInx].iIecDevIndex, "Pos. edge=" + STR(iTime) + "ms, velo=" + STR(velo));
+   WAIT IS_FINISHED;        
+END_ROUTINE            
+            
+//----------------------------------------------------------------------------------------
+// Detecting, entering notch KUKA-Robots
+//----------------------------------------------------------------------------------------         
+ROUTINE Search10(rob: TRcuRobot) PRIVATE            
+VAR            
+   nr : DINT;                        
+   masterProg : MAPTO TRcuMasterProg;          
+END_VAR  
+  
+   masterProg := MAP(rob.masterProg);            
+   IF rob.drive[masterProg.dInx].simulated OR rob.drive[masterProg.dInx].ioSimulated THEN            
+      Sleep(2000);            
+      masterProg.bMasterSensor1 := FALSE;            
+      masterProg.bMasterSensor2 := TRUE;            
+   END_IF;            
+   WAIT ( NOT masterProg.bMasterSensor1 AND masterProg.bMasterSensor2);            
+   IF IS_MAPPED(rob.readBackVals) THEN            
+//      rob.DebugPrint(eTraceEquipment, "actual-values are used");            
+      IF masterProg.bMain THEN            
+         masterProg.A1Value11 := rob.readBackVals.mJoints.mMainJoints.mValues[masterProg.AxisNr];            
+      ELSE            
+         masterProg.A1Value11 := rob.readBackVals.mJoints.mAuxJoints.mValues[masterProg.AxisNr];            
+      END_IF;            
+   ELSE            
+      rob.DebugPrint(eTraceEquipment, "actual-values not available. Set-values are used");            
+      IF masterProg.bMain THEN            
+         masterProg.A1Value11 := rob.actJoints.mPos[masterProg.AxisNr];            
+      ELSE            
+         masterProg.A1Value11 := rob.actJoints.mPos[masterProg.AxisNr + rob.nrOfMainJoints];            
+      END_IF;            
+   END_IF;            
+   masterProg.bEdge0 := TRUE;
+   SysTimerGetUs(masterProg.iStartTimeEdges);
+   START Edge1(rob);            
+   START Edge2(rob);            
+END_ROUTINE
+
+ROUTINE CountDetectedNotches(rob: TRcuRobot) : BOOL PRIVATE
+   VAR
+      iCount : INT;
+      masterProg : MAPTO TRcuMasterProg;    
+   END_VAR
+   masterProg := MAP(rob.masterProg);
+   WHILE TRUE DO
+      WAIT ( NOT masterProg.bMasterSensor1 AND masterProg.bMasterSensor2);
+      WAIT (masterProg.bMasterSensor1 AND masterProg.bMasterSensor2);
+      WAIT (masterProg.bMasterSensor1 AND NOT masterProg.bMasterSensor2);  
+      iCount := iCount + 1;
+      
+      IF iCount > 1 THEN
+         masterProg.bSignalError      := TRUE;
+         masterProg.bErrorNotchCount  := TRUE;
+         RETURN FALSE;
+      END_IF;
+      
+   END_WHILE;
+   RETURN TRUE;
+   
+END_ROUTINE
+
+ROUTINE ObserveSensor_1_IsLow(rob: TRcuRobot) : BOOL PRIVATE
+   VAR
+      masterProg     : MAPTO TRcuMasterProg;
+      bMasterSensor1 : BOOL;
+      iCount         : INT;
+   END_VAR
+   
+   masterProg := MAP(rob.masterProg);
+   WAIT  masterProg.bMasterSensor1 = TRUE;  
+   WHILE TRUE DO
+      WAIT  masterProg.bMasterSensor1 = FALSE;
+      iCount := iCount + 1;
+      IF iCount > 2 THEN
+         masterProg.bSignalError      := TRUE;
+         masterProg.bErrorLowCount    := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF masterProg.iArrayIndex > 0  THEN
+         IF masterProg.bMasterSensorSignals[masterProg.iArrayIndex - 1] <> 2 THEN
+            masterProg.bSignalError      := TRUE;
+            masterProg.bErrorChange      := TRUE;
+            RETURN FALSE;   
+         END_IF;
+      END_IF;
+      masterProg.bMasterSensorSignals[masterProg.iArrayIndex] := 1;
+      masterProg.iArrayIndex := masterProg.iArrayIndex + 1;
+      WAIT  masterProg.bMasterSensor1 = TRUE;    
+   END_WHILE;   
+   RETURN TRUE;
+END_ROUTINE
+
+ROUTINE ObserveSensor_2_IsLow(rob: TRcuRobot) : BOOL PRIVATE
+   VAR
+      masterProg     : MAPTO TRcuMasterProg;
+      bMasterSensor1 : BOOL;
+      iCount         : INT;
+   END_VAR
+   
+   masterProg := MAP(rob.masterProg);
+   WAIT  masterProg.bMasterSensor2 = TRUE;  
+   WHILE TRUE DO
+      WAIT  masterProg.bMasterSensor2 = FALSE;
+      iCount := iCount + 1;
+      IF iCount > 3 THEN
+         masterProg.bSignalError      := TRUE;
+         masterProg.bErrorLowCount    := TRUE;
+         RETURN FALSE;
+      END_IF;
+      IF masterProg.iArrayIndex > 0  THEN
+         IF masterProg.bMasterSensorSignals[masterProg.iArrayIndex - 1] <> 1 THEN
+            masterProg.bSignalError      := TRUE;
+            masterProg.bErrorChange      := TRUE;
+            RETURN FALSE;   
+         END_IF;
+      END_IF;
+      
+      masterProg.bMasterSensorSignals[masterProg.iArrayIndex] := 2;
+      masterProg.iArrayIndex := masterProg.iArrayIndex + 1;
+      WAIT  masterProg.bMasterSensor2 = TRUE;    
+   END_WHILE;   
+   RETURN TRUE;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------------------
+// master-routine for DUERR-Robots
+//----------------------------------------------------------------------------------------
+ROUTINE MasternAxisDuerr(rob: TRcuRobot) PRIVATE
+            
+VAR            
+   wAxisNr        : DINT;
+   velo           : REAL;            
+   velo_scan      : REAL;      
+   velo_back      : REAL;            
+   rSaveOverride  : REAL;
+   rTemp          : REAL;
+   sensorIsInNeg  : ARRAY[max_axes] OF BOOL;
+   axis           : ARRAY[max_axes] OF MAPTO TRcuDrive;                      
+   lastPos        : ARRAY[max_axes] OF REAL;            
+   masterProg     : MAPTO TRcuMasterProg;
+   sLimit         : STRING; 
+   sLastPos       : STRING;
+END_VAR              
+  
+  // init mastering sequence
+  masterProg := MAP(rob.masterProg);          
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+      IF masterProg.yMasterAxis[wAxisNr] THEN            
+         axis[wAxisNr] := MAP(rob.drive[wAxisNr]);            
+         velo          :=      axis[wAxisNr].masteringVel;   
+         velo_scan     :=  5 * axis[wAxisNr].masteringVel;   
+         velo_back     := 10 * axis[wAxisNr].masteringVel;              
+         IF NOT IS_MAPPED(axis[wAxisNr]) THEN            
+             masterProg.yMasterAxis[wAxisNr] := FALSE;
+             RcuResetMessage(RcuMasterProg_InfWrongMainAxNr, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+         ELSE
+             masterProg.last_value[wAxisNr] := 0.0;
+             masterProg.bEdgeDetected[wAxisNr] := FALSE;
+             masterProg.bDistanceZero[wAxisNr] := FALSE;
+         END_IF;
+         //Check if drive is simulated, so init sensorsignal to low
+         IF axis[wAxisNr].simulated OR axis[wAxisNr].ioSimulated THEN            
+             masterProg.bMasterSensor1_duerr[wAxisNr] := FALSE;            
+         END_IF;            
+         //if axis is linear --> masteringDelta has to be greater than 6mm --> distance from one sensor edge to the other is 6mm
+         IF (rob.kinematic.mJoints[wAxisNr].mDHParam.mTyp = eMcuJointLin) AND (rAbs(axis[wAxisNr].masteringDelta) < 6.0) THEN
+            RcuSetMessageOnce(RcuMasterProg_ErrMasteringDelta, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisDuerr", STR(axis[wAxisNr].masteringDelta), rob.drive[wAxisNr].axesName);
+            rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "MasteringDelta=" + STR(axis[wAxisNr].masteringDelta) + " too small for linear axis");
+            masterProg.bStop := TRUE;
+            masterProg.bMasteringSuccessful := FALSE; 
+         END_IF;
+         RcuResetMessage(RcuMasterProg_InfStartOfMaster, rob.kinListInx, 2, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+         rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Start mastering delta=" + STR(axis[wAxisNr].masteringDelta) + ", velo=" + STR(axis[wAxisNr].masteringVel));
+      END_IF;
+  END_FOR;
+  masterProg.bShowButtons := FALSE;
+  masterProg.bUserYes     := FALSE;
+  masterProg.bUserNo      := FALSE;
+  
+  rob.Select();
+  // get actual values as start position
+  GetActJointPosition(rob, masterProg.A1_START);
+  masterProg.A1_TARGET := masterProg.A1_START;            
+  //-----------------------------------------------------------------------------------------------
+  // Check if on sensor jet, then store sensor position  
+  //-----------------------------------------------------------------------------------------------
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+    IF masterProg.yMasterAxis[wAxisNr] THEN            
+       // on sensor jet
+       IF masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+          masterProg.bEdgeDetected[wAxisNr] := TRUE;
+          masterProg.bDistanceZero[wAxisNr] := FALSE;
+          IF (wAxisNr < rob.nrOfMainJoints) THEN
+             masterProg.A1_SENSOR.joints[wAxisNr] := rob.actJoints.mPos[wAxisNr];
+             masterProg.A1_TARGET.joints[wAxisNr] := rob.actJoints.mPos[wAxisNr];
+          ELSE
+             masterProg.A1_SENSOR.auxJoints[wAxisNr-rob.nrOfMainJoints] := rob.actJoints.mPos[wAxisNr];
+             masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := rob.actJoints.mPos[wAxisNr];
+          END_IF;
+          sensorIsInNeg[wAxisNr] := TRUE;
+       // set the targetpsoition to find the sensor   
+       ELSE    
+          IF (wAxisNr < rob.nrOfMainJoints ) THEN 
+             rTemp := masterProg.A1_START.joints[wAxisNr] - axis[wAxisNr].masteringDelta;  
+          ELSE   
+             rTemp := masterProg.A1_START.auxJoints[wAxisNr-rob.nrOfMainJoints] - axis[wAxisNr].masteringDelta;   
+          END_IF;   
+          IF NOT CheckPosToSoftEnd(rob, wAxisNr, rTemp) THEN          
+             DESELECT rob;
+             masterProg.bStop := TRUE;
+             masterProg.bMasteringSuccessful := FALSE;    
+             RETURN;
+          END_IF;
+          IF (wAxisNr < rob.nrOfMainJoints ) THEN
+             masterProg.A1_TARGET.joints[wAxisNr] := rTemp;
+          ELSE
+             masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := rTemp;
+          END_IF;
+          masterProg.bDistanceZero[wAxisNr] := FALSE;
+          START DetectSensorEdge(rob, wAxisNr);
+          END_IF;            
+      END_IF;            
+  END_FOR;            
+            
+  // store current override to backup after mastering          
+  rSaveOverride := REAL(rob.override)/1000.0;
+  // set override to 100%
+  rob.SetTimeOverride(1.0);        
+            
+  //-----------------------------------------------------------------------------------------------
+  // scan the missing sensors first time
+  //-----------------------------------------------------------------------------------------------
+  masterProg.actualStatus := eScanning;
+  masterProg.iActualStatus := eScanning;
+  PTPAbs(masterProg.A1_TARGET, velo_scan, 1);            
+  //check target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF NOT masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+           START CheckAxisTargetPosition(rob, wAxisNr);
+        END_IF;
+     END_IF;
+  END_FOR;
+  WAIT IS_FINISHED;  // wait until movement finished  
+  STOP DetectSensorEdge;
+  STOP CheckAxisTargetPosition;
+              
+  // get actual values as start position
+  GetActJointPosition(rob, masterProg.A1_START);
+  masterProg.A1_TARGET := masterProg.A1_START;
+              
+  // look if sensor edge has been detected or target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        // move back mastering delta, because no sensor singnal detected
+        IF NOT masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] THEN
+           IF (wAxisNr < rob.nrOfMainJoints ) THEN 
+              rTemp := masterProg.A1_START.joints[wAxisNr] + axis[wAxisNr].masteringDelta;  
+           ELSE   
+              rTemp := masterProg.A1_START.auxJoints[wAxisNr-rob.nrOfMainJoints] + axis[wAxisNr].masteringDelta;   
+           END_IF;
+           IF NOT CheckPosToSoftEnd(rob, wAxisNr, rTemp) THEN          
+              DESELECT rob;
+              masterProg.bStop := TRUE;
+              rob.SetTimeOverride(rSaveOverride);
+              masterProg.bMasteringSuccessful := FALSE;    
+              RETURN;
+           END_IF;
+           IF (wAxisNr < rob.nrOfMainJoints ) THEN
+              masterProg.A1_TARGET.joints[wAxisNr] := rTemp;
+           ELSE
+              masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := rTemp;
+           END_IF;
+        // edge not detected and target position not reached, so drives had been stopped    
+        ELSIF NOT masterProg.bEdgeDetected[wAxisNr] AND NOT masterProg.bDistanceZero[wAxisNr] THEN   
+           rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Canceled because drive not AF");
+           WAIT IS_FINISHED;
+           DESELECT rob;
+           masterProg.bStop := TRUE;
+           rob.SetTimeOverride(rSaveOverride);
+           RcuSetMessageOnce(RcuMasterProg_ErrDrivesNorAF, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisDuerr");  
+           masterProg.bMasteringSuccessful := FALSE; 
+           RETURN;
+        ELSIF masterProg.bEdgeDetected[wAxisNr] THEN  
+           sensorIsInNeg[wAxisNr] := TRUE;
+        END_IF;            
+     END_IF;
+  END_FOR;
+  
+  PTPAbs(masterProg.A1_TARGET, velo_back, 1);
+  //check target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF NOT masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] THEN
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+           START CheckAxisTargetPosition(rob, wAxisNr);
+        END_IF;
+     END_IF;
+  END_FOR; 
+  WAIT IS_FINISHED;  // wait until movement finished
+  STOP CheckAxisTargetPosition;
+        
+  //-----------------------------------------------------------------------------------------------
+  // scan the missing sensors second time
+  //-----------------------------------------------------------------------------------------------
+  // get actual values as start position
+  GetActJointPosition(rob, masterProg.A1_START);
+  masterProg.A1_TARGET    := masterProg.A1_START;
+  masterProg.actualStatus := eScanning;
+  masterProg.iActualStatus := eScanning;
+  // set the targetpsoition to find the sensor
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        // set the targetpsoition to find the sensor
+        IF NOT masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] THEN
+           IF (wAxisNr < rob.nrOfMainJoints ) THEN 
+              rTemp := masterProg.A1_START.joints[wAxisNr] + axis[wAxisNr].masteringDelta;  
+           ELSE   
+              rTemp := masterProg.A1_START.auxJoints[wAxisNr-rob.nrOfMainJoints] + axis[wAxisNr].masteringDelta;   
+           END_IF;
+           IF NOT CheckPosToSoftEnd(rob, wAxisNr, rTemp) THEN          
+              DESELECT rob;
+              masterProg.bStop := TRUE;
+              rob.SetTimeOverride(rSaveOverride);
+              masterProg.bMasteringSuccessful := FALSE;    
+              RETURN;
+           END_IF; 
+           IF (wAxisNr < rob.nrOfMainJoints ) THEN
+              masterProg.A1_TARGET.joints[wAxisNr] := rTemp;
+           ELSE
+              masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := rTemp;
+           END_IF;
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+           START DetectSensorEdge(rob, wAxisNr);
+        // edge not detected and target position not reached, so drives had been stopped
+        ELSIF NOT masterProg.bEdgeDetected[wAxisNr] AND NOT masterProg.bDistanceZero[wAxisNr] THEN   
+           rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Canceled because drive not AF");
+           WAIT IS_FINISHED;
+           DESELECT rob;
+           masterProg.bStop := TRUE;
+           rob.SetTimeOverride(rSaveOverride);
+           RcuSetMessageOnce(RcuMasterProg_ErrDrivesNorAF, rob.kinListInx, 2, 0, "RcuMasterProg.MasternAxisDuerr");
+           masterProg.bMasteringSuccessful := FALSE;    
+           RETURN;
+         END_IF;          
+     END_IF;   
+  END_FOR;            
+              
+  PTPAbs(masterProg.A1_TARGET, velo_scan, 1);            
+  //check target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF NOT masterProg.bEdgeDetected[wAxisNr] AND NOT masterProg.bDistanceZero[wAxisNr] THEN
+           START CheckAxisTargetPosition(rob, wAxisNr);
+        END_IF;
+     END_IF;
+  END_FOR; 
+  WAIT IS_FINISHED;  // wait until movement finished    
+  STOP DetectSensorEdge;
+  STOP CheckAxisTargetPosition;
+              
+  //-----------------------------------------------------------------------------------------------
+  // move away from sensor, to be sure sensor signal is low and no tooth profile change
+  //-----------------------------------------------------------------------------------------------
+  // get actual values as start position
+  GetActJointPosition(rob, masterProg.A1_START);
+  masterProg.A1_TARGET := masterProg.A1_START;
+  // look if sensor edge has been detected or target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF NOT masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] THEN
+           RcuSetMessageOnce(RcuMasterProg_ErrMastFail, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+        // edge detected, move away (delta from sensor)
+        ELSIF masterProg.bEdgeDetected[wAxisNr] THEN
+           //calculate hysteresis of sensor
+           IF axis[wAxisNr].masteringDelta >= 0 THEN 
+              rTemp := axis[wAxisNr].masteringDelta - cSensorHysteresis;
+           ELSE            
+              rTemp := axis[wAxisNr].masteringDelta + cSensorHysteresis;
+           END_IF;           
+           //sensor found in negative direction from startposition
+           IF sensorIsInNeg[wAxisNr] THEN
+              IF (wAxisNr < rob.nrOfMainJoints ) THEN
+                 //still on sensor, we have to move away to detect edge
+                 IF masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+                    rTemp := masterProg.A1_SENSOR.joints[wAxisNr] - rTemp;
+                 ELSE  
+                    rTemp := masterProg.A1_START.joints[wAxisNr];
+                 END_IF;
+              ELSE   
+                 //still on sensor, we have to move away to detect edge
+                 IF masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+                    rTemp := masterProg.A1_SENSOR.auxJoints[wAxisNr-rob.nrOfMainJoints] - rTemp;
+                 ELSE  
+                    rTemp := masterProg.A1_START.auxJoints[wAxisNr-rob.nrOfMainJoints];
+                 END_IF;
+              END_IF;
+           //sensor found in positive direction from startposition
+           ELSE
+               IF (wAxisNr < rob.nrOfMainJoints ) THEN
+                  rTemp := masterProg.A1_START.joints[wAxisNr] - rTemp; 
+               ELSE
+                  rTemp := masterProg.A1_START.auxJoints[wAxisNr-rob.nrOfMainJoints] - rTemp;
+               END_IF;
+           END_IF;
+           //check softends
+           IF NOT CheckPosToSoftEnd(rob, wAxisNr, rTemp) THEN          
+              DESELECT rob;
+              masterProg.bStop := TRUE;
+              rob.SetTimeOverride(rSaveOverride);
+              masterProg.bMasteringSuccessful := FALSE;    
+              RETURN;
+           END_IF;
+           //set target pos
+           IF (wAxisNr < rob.nrOfMainJoints ) THEN
+              masterProg.A1_TARGET.joints[wAxisNr] := rTemp;
+           ELSE
+              masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := rTemp;
+           END_IF;
+        // edge not detected and target position not reached, so drives had been stopped
+         ELSE            
+            rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Canceled because drive not AF");
+            WAIT IS_FINISHED;
+            DESELECT rob;
+            masterProg.bStop := TRUE;
+            rob.SetTimeOverride(rSaveOverride);
+            RcuSetMessageOnce(RcuMasterProg_ErrDrivesNorAF, rob.kinListInx, 3, 0, "RcuMasterProg.MasternAxisDuerr");
+            masterProg.bMasteringSuccessful := FALSE;    
+            RETURN;   
+         END_IF;
+     END_IF;   
+  END_FOR;            
+   
+  PTPAbs(masterProg.A1_TARGET, velo_back, 1);
+  //check target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF masterProg.bEdgeDetected[wAxisNr] THEN
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+           START CheckAxisTargetPosition(rob, wAxisNr);
+        END_IF;
+     END_IF;
+  END_FOR; 
+  WAIT IS_FINISHED;  // wait until movement finished
+  STOP CheckAxisTargetPosition;
+               
+  //-----------------------------------------------------------------------------------------------
+  // finally the mastering run - scan the position of the sensor
+  //-----------------------------------------------------------------------------------------------
+  // get actual values as start position
+  GetActJointPosition(rob, masterProg.A1_START);
+  masterProg.A1_TARGET := masterProg.A1_START;
+               
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        // sensor edge detected and at targetposition and no sensorsignal- all ok for mastering
+        IF masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] AND NOT masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+           //calc target pos
+           IF (wAxisNr < rob.nrOfMainJoints) THEN
+              rTemp := masterProg.A1_START.joints[wAxisNr] + axis[wAxisNr].masteringDelta;
+           ELSE  
+              rTemp := masterProg.A1_START.auxJoints[wAxisNr-rob.nrOfMainJoints] + axis[wAxisNr].masteringDelta;
+           END_IF;
+           //check softends
+           IF NOT CheckPosToSoftEnd(rob, wAxisNr, rTemp) THEN          
+              DESELECT rob;
+              masterProg.bStop := TRUE;
+              rob.SetTimeOverride(rSaveOverride);
+              masterProg.bMasteringSuccessful := FALSE;    
+              RETURN;
+           END_IF;   
+           //set target pos
+           IF (wAxisNr < rob.nrOfMainJoints) THEN
+              masterProg.A1_TARGET.joints[wAxisNr] := rTemp;
+           ELSE
+              masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := rTemp;
+           END_IF;
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+           masterProg.bEdgeDetected[wAxisNr] := FALSE;            
+           START DetectSensorEdge(rob, wAxisNr);
+        // mastering delta is too small to leave the sensor   
+        ELSIF masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] AND masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+           RcuSetMessageOnce(RcuMasterProg_ErrDeltaTooSmall, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+           rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "MasteringDelta=" + STR(axis[wAxisNr].masteringDelta) + " too small to leave sensor");
+           masterProg.bEdgeDetected[wAxisNr] := FALSE;
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+        // edge not detected and target position not reached, so drives had been stopped
+        ELSE
+           rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Canceled because drive not AF");
+           WAIT IS_FINISHED;
+           DESELECT rob;
+           masterProg.bStop := TRUE;
+           rob.SetTimeOverride(rSaveOverride);
+           RcuSetMessageOnce(RcuMasterProg_ErrDrivesNorAF, rob.kinListInx, 4, 0, "RcuMasterProg.MasternAxisDuerr");  
+           masterProg.bMasteringSuccessful := FALSE;  
+           RETURN;
+        END_IF;             
+     END_IF;            
+   END_FOR;            
+          
+  PTPAbs(masterProg.A1_TARGET, velo, 1);            
+  //check target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] AND NOT masterProg.bMasterSensor1_duerr[wAxisNr] THEN
+           START CheckAxisTargetPosition(rob, wAxisNr);
+        END_IF;
+     END_IF;
+  END_FOR; 
+  WAIT IS_FINISHED;  // wait until movement finished
+  STOP DetectSensorEdge;
+  STOP CheckAxisTargetPosition;
+            
+  //-----------------------------------------------------------------------------------------------
+  // move to the sensorposition and set reference there
+  //-----------------------------------------------------------------------------------------------
+  // get actual values as start position
+  GetActJointPosition(rob, masterProg.A1_START);
+  masterProg.A1_TARGET := masterProg.A1_START;
+               
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+     IF masterProg.yMasterAxis[wAxisNr] THEN 
+        // targetpoisition reached and sensor not found
+        IF NOT masterProg.bEdgeDetected[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] THEN
+           RcuSetMessageOnce(RcuMasterProg_ErrMastFail, rob.kinListInx, 2, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+           masterProg.bEdgeDetected[wAxisNr] := FALSE;
+           masterProg.bDistanceZero[wAxisNr] := FALSE;
+        // edge not detected and target position not reached, so drives had been stopped
+        ELSIF NOT masterProg.bEdgeDetected[wAxisNr] AND NOT masterProg.bDistanceZero[wAxisNr] THEN
+           rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Canceled because drive not AF");
+           WAIT IS_FINISHED;
+           DESELECT rob;
+           masterProg.bStop := TRUE;
+           rob.SetTimeOverride(rSaveOverride);
+           RcuSetMessageOnce(RcuMasterProg_ErrDrivesNorAF, rob.kinListInx, 5, 0, "RcuMasterProg.MasternAxisDuerr"); 
+           masterProg.bMasteringSuccessful := FALSE;   
+           RETURN;
+        // sensor edge detected - all ok   
+        ELSE
+           IF (wAxisNr < rob.nrOfMainJoints) THEN            
+             masterProg.A1_TARGET.joints[wAxisNr] := masterProg.A1_SENSOR.joints[wAxisNr];
+           ELSE            
+             masterProg.A1_TARGET.auxJoints[wAxisNr-rob.nrOfMainJoints] := masterProg.A1_SENSOR.auxJoints[wAxisNr-rob.nrOfMainJoints];
+           END_IF;                            
+        END_IF;            
+      END_IF;   
+   END_FOR;      
+  
+  masterProg.actualStatus := eStateRunning;
+  masterProg.iActualStatus := eStateRunning;
+  PTPAbs(masterProg.A1_TARGET, velo, 1);
+  
+  //check target position reached
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] THEN
+        IF masterProg.bEdgeDetected[wAxisNr] THEN
+           START CheckAxisTargetPosition(rob, wAxisNr);
+        END_IF;
+     END_IF;
+  END_FOR;
+  WAIT IS_FINISHED;  // wait until movement finished
+  STOP DetectSensorEdge;
+  STOP CheckAxisTargetPosition;
+  
+  //-----------------------------------------------------------------------------------------------
+  // check if sensor is reached and set reference
+  //-----------------------------------------------------------------------------------------------
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO            
+    IF masterProg.yMasterAxis[wAxisNr] THEN 
+       // now masteringposition is reached
+       IF masterProg.bDistanceZero[wAxisNr] THEN
+           IF (wAxisNr < rob.nrOfMainJoints) THEN
+             rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Sensor found position=" + STR(masterProg.A1_SENSOR.joints[wAxisNr]));     
+             PRINT(" MasterPosition von Achse " + STR(wAxisNr+1) + " Position " + STR(masterProg.A1_SENSOR.joints[wAxisNr]));
+           ELSE    
+             rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Sensor found position=" + STR(masterProg.A1_SENSOR.auxJoints[wAxisNr-rob.nrOfMainJoints]));        
+             PRINT(" MasterPosition von Achse " + STR(wAxisNr+1) + " Position " + STR(masterProg.A1_SENSOR.auxJoints[wAxisNr-rob.nrOfMainJoints]));
+           END_IF;             
+       ELSE
+          rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Canceled because drive not AF");
+          WAIT IS_FINISHED;
+          DESELECT rob;
+          masterProg.bStop := TRUE;
+          rob.SetTimeOverride(rSaveOverride);
+          RcuSetMessageOnce(RcuMasterProg_ErrDrivesNorAF, rob.kinListInx, 6, 0, "RcuMasterProg.MasternAxisDuerr");
+          masterProg.bMasteringSuccessful := FALSE;           
+          RETURN;
+        END_IF;            
+      END_IF;             
+  END_FOR;            
+   
+  //-----------------------------------------------------------------------------------------------
+  // finally set the reference
+  //-----------------------------------------------------------------------------------------------
+  DESELECT rob;
+  WAIT rob.isStopped;            
+  Sleep(500); 
+  rob.disableDriveStart           := TRUE;     
+  masterProg.bMasteringSuccessful := TRUE;       
+  
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] AND masterProg.bEdgeDetected[wAxisNr] THEN
+        IF (wAxisNr < rob.nrOfMainJoints) THEN            
+            lastPos[wAxisNr] := rob.readBackVals.mJoints.mMainJoints.mValues[wAxisNr];            
+            rob.DebugPrint(eTraceEquipment, "Axis" + STR(wAxisNr+1) + ": after disableDriveStart " + STR(lastPos[wAxisNr]));            
+        ELSE            
+            lastPos[wAxisNr] := rob.readBackVals.mJoints.mAuxJoints.mValues[wAxisNr-rob.nrOfMainJoints];            
+            rob.DebugPrint(eTraceEquipment, "Axis" + STR(wAxisNr+1) + ": after disableDriveStart " + STR(lastPos[wAxisNr]));            
+        END_IF;
+        masterProg.last_value[wAxisNr] := lastPos[wAxisNr] - masterProg.yOffset[wAxisNr];
+     END_IF;
+  END_FOR;
+
+  IF masterProg.bShowDialogTV  THEN
+     masterProg.bShowButtons := TRUE;
+     masterProg.iActualStatus := eWaitUserInput;
+     masterProg.bUserYes      := FALSE;
+     masterProg.bUserNo       := FALSE;
+     WAIT masterProg.bUserYes OR masterProg.bUserNo OR (NOT rob.isStopped);
+     masterProg.bShowButtons := FALSE;
+  END_IF;
+        
+  FOR wAxisNr := 0 TO rob.kinematic.mNrOfJoints-1 DO
+     IF masterProg.yMasterAxis[wAxisNr] AND masterProg.bDistanceZero[wAxisNr] AND masterProg.bEdgeDetected[wAxisNr] THEN
+        masterProg.bEdgeDetected[wAxisNr] := FALSE;
+        masterProg.bDistanceZero[wAxisNr] := FALSE;
+        IF (NOT masterProg.bShowDialogTV) OR masterProg.bUserYes THEN
+           IF axis[wAxisNr].simulated OR axis[wAxisNr].ioSimulated THEN
+              masterProg.last_value[wAxisNr] := lastPos[wAxisNr] - masterProg.yOffset[wAxisNr];
+              RcuResetMessage(RcuMasterProg_InfMasteringSucc, rob.kinListInx, 2, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+              rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Not referenced because simulated drive");
+              rob.dataRecorder.RecAxisMastering(INT(wAxisNr+1), TRUE, masterProg.yOffset[wAxisNr], masterProg.last_value[wAxisNr]);
+           ELSE
+              IF rob.ReferenceDrive(wAxisNr, masterProg.yOffset[wAxisNr]) THEN                      
+                 masterProg.last_value[wAxisNr] := lastPos[wAxisNr] - masterProg.yOffset[wAxisNr];
+                 rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Referenced offset= " + STR(masterProg.yOffset[wAxisNr]) + " diff= " + STR(masterProg.last_value[wAxisNr]));
+                 RcuResetMessage(RcuMasterProg_InfMasteringSucc, rob.kinListInx, 2, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName);
+                 masterProg.masterSafeEncoders[wAxisNr][1] := TRUE;
+                 rob.dataRecorder.RecAxisMastering(INT(wAxisNr+1), TRUE, masterProg.yOffset[wAxisNr], masterProg.last_value[wAxisNr]);
+              ELSE
+                 rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "ReferenceDrive failed");
+                 masterProg.last_value[wAxisNr] := 0.0;
+                 masterProg.bMasteringSuccessful := FALSE;
+              END_IF;  
+           END_IF;
+           //Warning if mastering difference is bigger than configured
+           IF masterProg.bShowDialogTV THEN
+              IF (rAbs(masterProg.last_value[wAxisNr]) >= rob.drive[wAxisNr].masteringDiffLimit) THEN
+                  sLimit   := RealToStr(rob.drive[wAxisNr].masteringDiffLimit, 6);
+                  sLastPos := RealToStr(masterProg.last_value[wAxisNr], 6);
+                  RcuSetMessageOnce(RcuMasterProg_WarnDiffTooBig, rob.kinListInx, wAxisNr, 0, "RcuMasterProg.MasternAxisDuerr", rob.drive[wAxisNr].axesName, sLastPos, sLimit);
+                  rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "Difference= " + sLastPos + " too big - Cfg=" + sLimit);
+              END_IF;
+           END_IF;
+        ELSE
+           rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[wAxisNr].iIecDevIndex, "User canceled writing the reference");
+           masterProg.last_value[wAxisNr] := 0.0;
+           masterProg.bMasteringSuccessful := FALSE;
+        END_IF; 
+     END_IF;
+  END_FOR;
+   
+  IF masterProg.bMasteringSuccessful THEN
+     masterProg.actualStatus := eStateSuccessful;
+     masterProg.iActualStatus := eStateSuccessful;
+     masterProg.signalSafeEncoders := TRUE;
+  END_IF;   
+     
+  masterProg.bStop      := TRUE;
+  rob.SetTimeOverride(rSaveOverride);
+  rob.disableDriveStart := FALSE;
+  RETURN;
+  
+END_ROUTINE           
+            
+//-----------------------------------------------------------------------------
+// detect sensor-signal DUERR-Robots
+//-----------------------------------------------------------------------------
+ROUTINE DetectSensorEdge(rob: TRcuRobot; wAxisNr : DINT) PRIVATE
+ VAR
+   masterProg : MAPTO TRcuMasterProg;
+   iAxisNr    : DINT;
+ END_VAR
+          
+  iAxisNr    := wAxisNr;
+  masterProg := MAP(rob.masterProg);        
+  WAIT masterProg.bMasterSensor1_duerr[iAxisNr] OR masterProg.bDistanceZero[iAxisNr] OR NOT rob.allDrivesReady;          
+  // drives stopped
+  IF NOT rob.allDrivesReady THEN          
+     RETURN;          
+  END_IF;
+  // targetposition reached
+  IF masterProg.bDistanceZero[iAxisNr] THEN
+     RETURN;
+  END_IF;
+  // sensor edge detected
+  IF masterProg.bMasterSensor1_duerr[iAxisNr] THEN
+     IF (iAxisNr < rob.nrOfMainJoints) THEN
+        masterProg.A1_SENSOR.joints[iAxisNr] := rob.readBackVals.mJoints.mMainJoints.mValues[iAxisNr];
+     ELSE
+         masterProg.A1_SENSOR.auxJoints[iAxisNr-rob.nrOfMainJoints] := rob.readBackVals.mJoints.mAuxJoints.mValues[iAxisNr-rob.nrOfMainJoints];
+     END_IF;
+     masterProg.bEdgeDetected[iAxisNr] := TRUE;
+  END_IF;
+            
+END_ROUTINE      
+
+//-----------------------------------------------------------------------------
+// check if axis has reached it's target position DUERR-Robots
+//-----------------------------------------------------------------------------
+ROUTINE CheckAxisTargetPosition(rob: TRcuRobot; wAxisNr : DINT) PRIVATE
+ VAR
+   masterProg : MAPTO TRcuMasterProg;
+   bChg       : BOOL;
+   diff       : REAL;
+   iAxisNr    : DINT;
+ END_VAR
+          
+  iAxisNr    := wAxisNr;        
+  masterProg := MAP(rob.masterProg);
+  bChg := IS_CHANGED(giRcuDriveControlCounter);
+  REPEAT
+    WAIT bChg;
+    bChg := FALSE;
+    IF (iAxisNr < rob.nrOfMainJoints) THEN 
+       diff := rob.actJoints.mPos[iAxisNr] - masterProg.A1_TARGET.joints[iAxisNr];
+       IF rAbs(diff) < 0.001 THEN 
+          masterProg.bDistanceZero[iAxisNr] := TRUE;
+       END_IF;
+    ELSE 
+       diff := rob.actJoints.mPos[iAxisNr] - masterProg.A1_TARGET.auxJoints[iAxisNr-rob.nrOfMainJoints];
+       IF rAbs(diff) < 0.001 THEN 
+          masterProg.bDistanceZero[iAxisNr] := TRUE;
+       END_IF;
+    END_IF;
+  
+  UNTIL masterProg.bDistanceZero[iAxisNr] OR NOT rob.allDrivesReady;
+          
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the actual joint position (ReadBackValues) - All Robots
+//-----------------------------------------------------------------------------            
+ROUTINE GetActJointPosition(rob: TRcuRobot; Axis : TRcuPositionJoints) PRIVATE            
+VAR            
+   i : INT;            
+   masterProg : MAPTO TRcuMasterProg;          
+END_VAR  
+  
+   masterProg := MAP(rob.masterProg);            
+   Axis.nrMainJoints := rob.readBackVals.mJoints.mMainJoints.mValidLen;            
+   FOR i := 0 TO  Axis.nrMainJoints-1 DO            
+      Axis.joints[i] := rob.readBackVals.mJoints.mMainJoints.mValues[i];            
+   END_FOR;            
+   Axis.nrAuxJoints := rob.readBackVals.mJoints.mAuxJoints.mValidLen;            
+   FOR i := 0 TO masterProg.A1_START.nrAuxJoints-1 DO            
+      Axis.auxJoints[i] := rob.readBackVals.mJoints.mAuxJoints.mValues[i];            
+   END_FOR;            
+                  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the actual joint position (ReadBackValues) - All Robots
+//-----------------------------------------------------------------------------            
+ROUTINE CheckPosToSoftEnd(rob: TRcuRobot; nrAxis : DINT; rPos : REAL) : BOOL PRIVATE
+
+  //check if target is out of softend
+  IF (rPos > rob.kinematic.mJoints[nrAxis].mMaxPos) THEN
+     RcuSetMessageOnce(RcuMasterProg_ErrDeltaEndPos, rob.kinListInx, 1, 0, "RcuMasterProg.MasternAxisDuerr", 
+                                                     STR(rPos), rob.drive[nrAxis].axesName, STR(rob.kinematic.mJoints[nrAxis].mMaxPos));
+     rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[nrAxis].iIecDevIndex, "Targetpos=" + STR(rPos) + " out of softend=" + STR(rob.kinematic.mJoints[nrAxis].mMaxPos));                         
+     WAIT IS_FINISHED;
+     RETURN FALSE;                                                           
+  ELSIF (rPos < rob.kinematic.mJoints[nrAxis].mMinPos) THEN
+     RcuSetMessageOnce(RcuMasterProg_ErrDeltaEndPos, rob.kinListInx, 2, 0, "RcuMasterProg.MasternAxisDuerr", 
+                                                     STR(rPos), rob.drive[nrAxis].axesName, STR(rob.kinematic.mJoints[nrAxis].mMinPos));  
+     rob.loggerDrive.SetProtocol("RcuMasterProg", rob.drive[nrAxis].iIecDevIndex, "Targetpos=" + STR(rPos) + " out of softend=" + STR(rob.kinematic.mJoints[nrAxis].mMinPos));                         
+     WAIT IS_FINISHED;                                                          
+     RETURN FALSE;
+  END_IF;   
+  RETURN TRUE;                       
+                                      
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// simulation of Master-Sensor-feedback
+//----------------------------------------------------------------------------------------
+ROUTINE SimSensor(myRobot : TRcuRobot) PRIVATE
+ VAR            
+   bChg       : BOOL;
+   i          : INT;            
+   masterProg : MAPTO TRcuMasterProg;          
+   iNrAxis    : DINT;
+ END_VAR
+
+   masterProg := MAP(myRobot.masterProg);            
+   bChg := IS_CHANGED(giRcuDriveControlCounter);
+   WHILE TRUE DO
+     WAIT bChg;
+     bChg := FALSE; 
+     iNrAxis := myRobot.readBackVals.mJoints.mMainJoints.mValidLen;            
+     FOR i := 0 TO  iNrAxis-1 DO            
+        IF (myRobot.readBackVals.mJoints.mMainJoints.mValues[i] > 0.5) AND (myRobot.readBackVals.mJoints.mMainJoints.mValues[i] < 1.0) THEN
+           IF IS_MAPPED(masterProg.bMasterSensor1_duerr[i]) THEN
+              masterProg.bMasterSensor1_duerr[i] := TRUE;
+           END_IF;
+        ELSE
+          IF IS_MAPPED(masterProg.bMasterSensor1_duerr[i]) THEN
+             masterProg.bMasterSensor1_duerr[i] := FALSE;
+          END_IF;  
+        END_IF;  
+     END_FOR;            
+     iNrAxis := myRobot.readBackVals.mJoints.mAuxJoints.mValidLen;            
+     FOR i := 0 TO iNrAxis-1 DO            
+        IF (myRobot.readBackVals.mJoints.mAuxJoints.mValues[i] > 0.5) AND (myRobot.readBackVals.mJoints.mAuxJoints.mValues[i] < 3.0) THEN
+           IF IS_MAPPED(masterProg.bMasterSensor1_duerr[i + myRobot.nrOfMainJoints]) THEN
+              masterProg.bMasterSensor1_duerr[i + myRobot.nrOfMainJoints] := TRUE;
+           END_IF;
+        ELSE
+          IF IS_MAPPED(masterProg.bMasterSensor1_duerr[i + myRobot.nrOfMainJoints]) THEN
+             masterProg.bMasterSensor1_duerr[i + myRobot.nrOfMainJoints] := FALSE;
+          END_IF;
+        END_IF;
+     END_FOR;
+   END_WHILE;
+
+END_ROUTINE
+            
+(*------------------------------------------------------------------------------            
+* systemroutines            
+*)           
+
+//-----------------------------------------------------------------------------
+// main routine, startet as separate flow when pressing a master-button
+// on teachview's master-mask. It's important to start a new flow,
+// to keep the observation running on errors in this flow
+//-----------------------------------------------------------------------------   
+ROUTINE ()
+VAR             
+   mainAxis    : BOOL; 
+   wristAxis   : BOOL;           
+   nr          : INT; 
+   i           : SINT;           
+   axis        : MAPTO TRcuDrive;            
+   wAxisNr     : DINT;            
+   sMasterAxis : STRING;
+   myRobot     : MAPTO TRcuRobot;
+   masterProg  : MAPTO TRcuMasterProg;          
+   projName    : STRING;
+END_VAR            
+          
+   myRobot                 := MAP(gRcuFocusedKinematic);
+   masterProg              := MAP(myRobot.masterProg);
+   masterProg.bInterrupted := FALSE;    
+   //other teachproject active?      
+   IF masterProg.ExistFlow(projName) THEN
+      masterProg.bMasterRequest := FALSE;            
+      masterProg.bPreMasterRequest := FALSE;            
+      RcuSetMessageOnce(RcuMasterProg_ErrPrjActive, myRobot.kinListInx, 1, 0, "RcuMasterProg.()", projName);
+      masterProg.bStop := TRUE;
+      RETURN;            
+   END_IF;            
+   myRobot.mainModeMgr.holdToRun := FALSE;            
+   //mastering-auto
+   IF masterProg.bMasterRequest THEN            
+      myRobot.DebugPrint(eTraceEquipment, "mastern requested");   
+      IF NOT masterProg.bAllAxisDuerr THEN
+         mainAxis := masterProg.iRequestedAxis < myRobot.nrOfMainJoints; 
+         IF mainAxis THEN            
+            nr := masterProg.iRequestedAxis;            
+         ELSE            
+            nr := masterProg.iRequestedAxis - myRobot.nrOfMainJoints;            
+         END_IF;           
+      END_IF;
+      IF myRobot.drive[masterProg.iRequestedAxis].masteringType = eKuka THEN          
+         myRobot.DebugPrint(eTraceEquipment, "KUKA automaster acknowledged");    
+         axis := MAP(myRobot.drive[masterProg.iRequestedAxis]);
+         myRobot.DebugPrint(eTraceEquipment, "first axis selected");
+         //Bugfix, no parameters so use default BIT 29.11.07
+         IF NOT myRobot.drive[masterProg.iRequestedAxis].masteringPar THEN
+            myRobot.DebugPrint(eTraceEquipment, "get masterparameters");
+            CASE masterProg.iRequestedAxis OF
+               0 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 2.0;            
+                   axis.masteringVel := 0.06;            
+                   axis.masteringExist := TRUE;            
+               1 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 3.0;            
+                   axis.masteringVel := 0.08;            
+                   axis.masteringExist := TRUE;            
+               2 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 3.0;            
+                   axis.masteringVel := 0.08;            
+                   axis.masteringExist := TRUE;            
+               3 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 10.0;            
+                   axis.masteringVel := 0.3;            
+                   axis.masteringExist := TRUE;            
+               4 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 8.0;            
+                   axis.masteringVel := 0.3;            
+                   axis.masteringExist := TRUE;            
+               5 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 10.0;            
+                   axis.masteringVel := 0.4;            
+                   axis.masteringExist := TRUE;            
+               6 : axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+                   axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+                   axis.masteringDelta := 12.5;
+                   axis.masteringExist := TRUE;            
+                   axis.masteringVel := 0.3;
+            ELSE            
+               mainAxis := masterProg.iRequestedAxis < myRobot.nrOfMainJoints;
+               IF mainAxis THEN
+                  nr := masterProg.iRequestedAxis;
+               ELSE
+                  nr := masterProg.iRequestedAxis - myRobot.nrOfMainJoints;
+               END_IF;
+               axis.masteringSensor1 := cHW_mMasterSig1_Kuka[myRobot.kinListInx];
+               axis.masteringSensor2 := cHW_mMasterSig2_Kuka[myRobot.kinListInx];
+               axis.masteringDelta := 5.0;            
+               axis.masteringVel := 0.3;            
+            END_CASE; 
+         END_IF; //IF NOT myRobot.drive[masterProg.iRequestedAxis].masteringPar THEN
+         
+         myRobot.DebugPrint(eTraceEquipment, "Mastering Axis " + STR(masterProg.iRequestedAxis+1) + 
+                 " with zero-offset " + STR(masterProg.yOffset[masterProg.iRequestedAxis]));
+
+         mainAxis  := masterProg.iRequestedAxis < myRobot.nrOfMainJoints;  
+         wristAxis := mainAxis AND (masterProg.iRequestedAxis >= myRobot.nrOfBaseJoints);     
+         //do not check the first wrist joint                                          
+         IF wristAxis AND (masterProg.iRequestedAxis > myRobot.nrOfBaseJoints) THEN
+            FOR i:=myRobot.nrOfBaseJoints TO (masterProg.iRequestedAxis-1) DO      
+                IF (rAbs(gRcDataRobot[myRobot.kinListInx].axisPosValue[i] - myRobot.drive[i].driveZeroOffsetConfigAuto) > 0.01) THEN
+                   RcuSetMessageOnce(RcuMasterProg_ErrWristNRefPos, myRobot.kinListInx, 1, 0, "RcuMasterProg.()", 
+                                                                      myRobot.drive[masterProg.iRequestedAxis].axesName, myRobot.drive[i].axesName);
+                   masterProg.bStop := TRUE;
+                END_IF;
+            END_FOR;
+         END_IF;
+
+         IF NOT masterProg.bStop THEN
+            IF (NOT masterProg.bAllAxisDuerr) AND (myRobot.drive[masterProg.iRequestedAxis].masteringType = eKuka) THEN
+               MasternAxisKuka(myRobot, mainAxis, nr, axis, masterProg.yOffset[masterProg.iRequestedAxis]);
+               masterProg.bStop := TRUE;
+            ELSIF masterProg.bAllAxisDuerr OR (myRobot.drive[masterProg.iRequestedAxis].masteringType = eDuerr) THEN
+               myRobot.DebugPrint(eTraceEquipment, "DUERR automaster for AuxJoints acknowledged"); 
+               axis.masteringSensor1 := cHW_mMasterSig_Duerr[myRobot.kinListInx];
+               MasternAxisDuerr(myRobot);
+            END_IF;
+         END_IF; 
+                  
+      ELSE            
+         MasternAxisDuerr(myRobot);
+      END_IF; //IF myRobot.drive[masterProg.iRequestedAxis].masteringType = eKuka THEN
+      
+   //mastering-manual
+   ELSE            
+      myRobot.DebugPrint(eTraceEquipment, "premastering requested");            
+      FOR wAxisNr := 0 TO myRobot.kinematic.mNrOfJoints-1 DO            
+         IF masterProg.yMasterAxis[wAxisNr] THEN 
+            masterProg.bMasteringSuccessful := TRUE;           
+            masterProg.iRequestedAxis       := wAxisNr;            
+            myRobot.DebugPrint(eTraceEquipment, "Pre-Mastering axis " + STR(masterProg.iRequestedAxis+1) + 
+                       " with zero-offset " + STR(masterProg.yOffset[masterProg.iRequestedAxis]));               
+            mainAxis  := masterProg.iRequestedAxis < myRobot.nrOfMainJoints;  
+            wristAxis := mainAxis AND (masterProg.iRequestedAxis >= myRobot.nrOfBaseJoints);     
+            
+            //if wrist axes are referenced the other wrist axis have to be in zero pos because of the gear
+            IF ((myRobot.kinematic.mRobotTyp = eMcuEcopaint1)   OR (myRobot.kinematic.mRobotTyp = eMcuEcopaintVWrist)  OR
+                (myRobot.kinematic.mRobotTyp = eMcuStandardArm) OR (myRobot.kinematic.mRobotTyp = eMcuStandardArmSign) OR
+                IsPaintArm7VWrist(myRobot) OR
+                (myRobot.kinematic.mRobotTyp = eMcuEcorail3))   AND wristAxis                                          THEN
+                //do not check the first wrist joint                                          
+                IF (masterProg.iRequestedAxis > myRobot.nrOfBaseJoints) THEN
+                   FOR i:=myRobot.nrOfBaseJoints TO (masterProg.iRequestedAxis-1) DO      
+                       IF (rAbs(gRcDataRobot[myRobot.kinListInx].axisPosValue[i] - myRobot.drive[i].driveZeroOffsetConfigManu) > 0.01) THEN
+                          RcuSetMessageOnce(RcuMasterProg_ErrWristNRefPos, myRobot.kinListInx, 2, 0, "RcuMasterProg.()", 
+                                                                            myRobot.drive[masterProg.iRequestedAxis].axesName, myRobot.drive[i].axesName);
+                          masterProg.bMasteringSuccessful := FALSE;
+                       END_IF;
+                   END_FOR;
+                END_IF;
+            END_IF;
+            
+            IF mainAxis THEN            
+               nr := masterProg.iRequestedAxis;            
+            ELSE            
+               nr := masterProg.iRequestedAxis - myRobot.nrOfMainJoints;            
+            END_IF;            
+            
+            IF masterProg.bMasteringSuccessful THEN
+               IF NOT PreMasternAxis(myRobot, mainAxis, nr, masterProg.yOffset[masterProg.iRequestedAxis]) THEN
+                  masterProg.bMasteringSuccessful := FALSE;
+               ELSE
+                  masterProg.yMasterAxis[wAxisNr] := FALSE;   //deselect this axis after mastering
+               END_IF;
+            END_IF;   
+         END_IF;            
+      END_FOR;   
+      IF masterProg.bMasteringSuccessful THEN
+         masterProg.actualStatus := eStateSuccessful;
+         masterProg.iActualStatus := eStateSuccessful;
+      ELSE
+         masterProg.actualStatus := eStateFailed;
+         masterProg.iActualStatus := eStateFailed;
+      END_IF;
+      masterProg.bPreMasterRequest := FALSE;                  
+      masterProg.bStop             := TRUE;
+   END_IF;   
+   IF IS_MAPPED(myRobot.mainModeMgr.actMainModeDef) THEN
+      myRobot.mainModeMgr.holdToRun := myRobot.mainModeMgr.actMainModeDef.actions.holdToRun;    
+   ELSE
+      myRobot.mainModeMgr.holdToRun := TRUE;
+   END_IF;       
+END_ROUTINE

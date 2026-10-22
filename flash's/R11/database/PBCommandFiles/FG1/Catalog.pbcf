@@ -1,0 +1,39 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 09.08.2013  | PZB    | First release
+//  v2_01.01.00  | 20.12.2016  | RHI    | Change: Change script for Catalog Robot Generation 2
+//  v2_01.02.00  | 22.09.2017  | PZB    | Change: Delete else path for option catalog = 0 because not all robots are Stop&Go by default (flaming CO2)
+
+
+// Script set Parameter for Catalog Robot
+
+Parameter Catalog Option1
+
+Call Main_Catalog
+SelectCase Option1
+	Case Handler
+		SelectNode RPC1.H12
+	CaseElse
+		SelectNode RPC1.R11
+EndSelect
+SelectTab [VariantConfiguration]
+End
+
+SubRoutine Main_Catalog
+	SelectCase Option1
+		Case Handler
+			SelectNode RPC1.H12.BCU1
+		CaseElse
+			SelectNode RPC1.R11.BCU1
+	EndSelect
+
+	SelectCase Catalog
+		Case 1
+			selecttab [CfgParameter]
+			selectcfg BCU1.StationData.StopAndGoMode
+			value 0
+	EndSelect
+Return
+
+
+

@@ -1,0 +1,2110 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuToolSensor.tts                                           *
+*   Description: Functions of one Handlertoolsensor                           *
+*-----------------------------------------------------------------------------*
+*   
+*)
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT GLOBAL
+  //Analogcards       
+  cET200sMaxValue       : REAL := 27648.0;
+  cET200sCableBroken    : REAL := 32768.0;
+  cPhoenixMaxValue      : REAL := 30000.0;
+  cPhoenixCableBroken   : REAL := 32770.0;
+  cSNNE_40A_MaxValue    : REAL := 32767.0;
+  cSNNE_40A_CableBroken : REAL := 32768.0;
+  
+  cgiMaxSeachCycles     : SINT := 5;
+  cgiMaxAutoLearnBodies : SINT := 5;
+  cgiBodiesToLearn      : SINT := 5;
+  cgiMaxPositions       : SINT := 24; //6 moves per part and 4 parts = 6x4 = 24
+  cgiMaxMoves           : SINT := 6;
+END_CONSTANT
+  
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL
+  TRcuBusType  : (eRcuProfibus:=1, eRcuSercosIII:=2);
+  TRcuVendor   : (eRcuSiemens:=1, eRcuPhoenix:=2, eRcuTurck:=3);
+  TRcuCardType : (eRcuET200sGB61:=1, eRcuPhoenixCurrent:=2, eRcuSNNE_40A_000x:=3);
+  TRcuBoostBoxType : (eRcuNoBoostBox, eRcu1GainBit, eRcu2GainBits, eRcu4GainBits);
+  tMacroValue : STRUCT
+    Dir : ARRAY [cMaxValues, 2] OF DINT;
+  END_STRUCT;
+  tBodyToLearn : STRUCT
+    iProgNr      : INT;
+    sProjectName : STRING;
+    yPosMoves    : ARRAY [cgiMaxPositions] OF tPosMove;
+  END_STRUCT;
+  tPosMove : STRUCT
+    bUsed          : BOOL;
+    iNameTV        : DINT;
+    iProgNum       : INT;
+    bLearnActive   : BOOL;
+    iLearnState    : DINT;
+    iLearnedBodies : SINT;
+    yPosValue      : ARRAY [cgiMaxSeachCycles] OF tPosValue;
+  END_STRUCT;
+END_TYPE 
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  //config
+  sName               : STRING;
+  iUnitNr             : SINT := -1;
+  BusType             : TRcuBusType;
+  CardVendor          : TRcuVendor;
+  CardType            : TRcuCardType;
+  BoostBoxType        : TRcuBoostBoxType; 
+  iCountDirections    : DINT;          //number of measurement-directions
+  
+  //states
+  ActValue            : tSensValue;   //current value of the sensor
+  MaxBoundaries       : tMacroValue;  //Limits for maxcheck
+  MinBoundaries       : tMacroValue;  //Limits for mincheck
+  PartCheckBoundaries : tMacroValue;  //Limits for partcheck
+  iSearchCounter      : DINT := 1;    //counts movements at partcontrol
+  iCycleToPartPresent : DINT;         //measurement cycles to believe that part is present
+  yManLearnedValues   : ARRAY [cgiMaxSeachCycles, cMaxValues, 2] OF DINT;
+  yAutoLearn          : ARRAY [cgiMaxAutoLearnBodies] OF tBodyToLearn;
+  iBody               : INT;
+  iPosition           : INT;
+  bCalibrated         : BOOL;                //boostbox is calibrated                                
+  bCableBroken        : BOOL;                //inputcard has detect that cable is broken
+  bValueExceeded      : BOOL;                //current sensorvalue is out of range
+  bGainSet            : BOOL;                //gain value is set to boostbox
+  iGain               : DINT;                //gain value whichis set to boostbox
+  iSeachCycles        : DINT;                //count of current search cycles
+  bPartPresent        : BOOL;                //part detected
+  bInactive           : BOOL;
+  
+  //control
+  bDoMeasure          : BOOL;                // do cyclic update from bussystem
+  bDoMaxCheck         : BOOL;                // do max check
+  bDoMinCheck         : BOOL;                // do min check
+  bDoPartCheck        : BOOL;                // do part check
+  bLearnMan           : BOOL;
+  iLearningMan        : DINT;                // shown state on teachview
+  bLearnAuto          : BOOL;
+  bAutoLearnRelease   : BOOL;
+  bSuspend            : BOOL;                //suspend sensor without errors
+  bMovedInStep        : BOOL;                //moved in step then prevent backward move
+  bSearchActive       : BOOL;                //part search is running 
+  bPartShiftUsed      : BOOL;
+
+  //TeachView
+  bStoreValue         : BOOL;
+  bCancelValue        : BOOL;
+  bStoreRelease       : BOOL;                // release the storing fuction in manual
+  bStoreReleaseAuto   : BOOL;                // release the storing fuction in auto
+  iInactive           : DINT;
+  bSetPartPresent     : BOOL;
+  bResetPart          : BOOL;
+  UserInfo            : DINT;
+  iForcedPartState    : DINT;
+  ySelectedToStore    : ARRAY [cgiMaxSeachCycles] OF BOOL;
+  bUpdateUserPage     : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//   read values from catalog
+//------------------------------------------------------------------------------------------------------
+ROUTINE init(kin : TRcuRobot; catHdl : DINT) : BOOL
+ VAR
+  tmp : DINT;
+  s   : STRING; 
+ END_VAR
+ 
+  myKin := MAP(kin);
+  IF NOT CatalogReadString(catHdl, "Name", sName, FALSE) THEN
+     sName := "Sensor " + STR(myKin.handler.tool.yUnit[iUnitNr].iCountSensor);
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Bustype", tmp, eRcuProfibus, eRcuSercosIII, FALSE) THEN
+     BusType := TRcuBusType(tmp);
+  ELSE
+     RETURN FALSE;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Cardvendor", tmp, eRcuSiemens, eRcuTurck, FALSE) THEN
+     CardVendor := TRcuVendor(tmp);
+  ELSE
+     RETURN FALSE;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Cardtype", tmp, eRcuET200sGB61, eRcuSNNE_40A_000x, FALSE) THEN
+     CardType := TRcuCardType(tmp);
+  ELSE
+     RETURN FALSE;
+  END_IF;
+  InitAnalogCard();
+  
+  IF CatalogReadIntRange(catHdl, "BoostBoxType", tmp, eRcuNoBoostBox, eRcu4GainBits, FALSE) THEN
+     BoostBoxType := TRcuBoostBoxType(tmp);
+     IF (BoostBoxType = eRcu4GainBits) THEN
+        RcuSetMessageOnce(TRcuHandlerTool_ErrOldBoostBox, myKin.kinListInx, 1, instId, "TRcuHandlerTool.ReadConfig");
+        RETURN FALSE;
+     END_IF;
+  ELSE
+     RETURN FALSE;
+  END_IF;
+  InitIO();
+  
+  IF NOT CatalogReadIntRange(catHdl, "Directions", iCountDirections, 1, 3, FALSE) THEN
+     iCountDirections := 2;
+  END_IF;
+  IF gbIsTrackingStation THEN
+     CatalogReadIntRange(catHdl, "DelayCableBroken",    sActValueTimers.iDelayCableBroken,   0, 1000, FALSE);
+     CatalogReadIntRange(catHdl, "DelayMaxValExceeded", sActValueTimers.iDelayMaxValExeeded, 0, 1000, FALSE);
+  ELSE
+     sActValueTimers.iDelayCableBroken   := 0;
+     sActValueTimers.iDelayMaxValExeeded := 0;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Suspend", tmp, 0, 1, TRUE) THEN
+     bSuspend := (tmp = 1);
+  END_IF;
+  bDoMeasure := TRUE;
+  IF NOT bSuspend THEN
+     START StartMeassureCycle();
+  END_IF;
+  
+  //start cyclic functions
+  START ObserveMaxLimit();
+  START ObserveMinLimit();
+  IF gbIsTrackingStation THEN
+      START ObservePartCheckTracking();
+   ELSE
+      START ObservePartCheck();
+   END_IF;
+  START CheckKinIsStepping();
+  InitAutoLearnArray();
+  START HandleLearningManual();
+  START WriteTeachInValues();
+  START BuildValueToStoreAuto();
+  IF myKin.ecoscreen.HandlerInterfaceSensor(myKin) THEN
+     START EcoScreenInterface();
+  ELSE
+     myKin.DebugPrint(eTraceRcuHandler, "Interface to EcoScreen for handler sensor is not running");
+  END_IF;
+  
+  RETURN TRUE;  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Calibrate the Sensor     
+//------------------------------------------------------------------------------------------------------
+ROUTINE Calibrate() : BOOL
+ VAR
+   i          : SINT;
+   CalibValue : tSensValue;
+   bOK        : BOOL;
+   iMesLoops  : SINT;
+   sValue     : STRING;
+ END_VAR
+ 
+  IF bSuspend THEN
+     RETURN TRUE;
+  ELSIF NOT IS_MAPPED(OutputCallibration) THEN
+     RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 7, instId, "TRcuSensor.CalibrateSens", cHW_OutCalib[myKin.kinListInx]);
+     RETURN FALSE;
+  END_IF;
+  
+  //feedback that calibration is active, so read values from bus even they're out of range
+  bCalibrationRuns   := TRUE;
+  OutputCallibration := TRUE;   //    _______
+  Sleep(cCalibSignalTime);      //    |      |  100ms
+  OutputCallibration := FALSE;  // ___|400ms |________x meassure
+  Sleep(cCalibTime);            //
+  
+  LABEL Meassure;
+  bOK := TRUE;
+  CalibValue := ActValue;
+  FOR i:=0 TO (iCountDirections-1) DO 
+    IF (iAbs(CalibValue.Dir[i]) > cCalibTolMax) THEN
+        bOK := FALSE;
+    END_IF;
+  END_FOR;
+  IF ((NOT bOK) AND (iMesLoops < cCycleToPartPresent)) THEN
+      iMesLoops := iMesLoops + 1;
+      Sleep(cCycleTime * 2);
+      GOTO Meassure;
+  END_IF;
+  sValue := "";
+  FOR i:=0 TO (iCountDirections-1) DO
+      sValue := sValue + " " + STR(CalibValue.Dir[i]);
+  END_FOR;
+  IF bOK THEN
+     bCalibrated := TRUE;
+     myKin.DebugPrint(eTraceRcuHandler, "Handler: Calibration of sensor " + sName + " successful - values: " + sValue);
+     //RcuSetMessageOnce(TRcuSensor_InfCalibSuccessful, myKin.kinListInx, 1, instId, "TRcuSensor.CalibrateSens", sName, sValue);
+     sLogText := "Sensor " + sName + " calibrated - values " + sValue;
+     myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+     bCalibrationRuns := FALSE;
+     RETURN TRUE;
+  ELSE
+     bCalibrated := FALSE;
+     RcuSetMessageOnce(TRcuSensor_ErrCalibNSucc, myKin.kinListInx, 1, instId, "TRcuSensor.CalibrateSens", sName, sValue);
+     bCalibrationRuns := FALSE;
+     RETURN FALSE;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Set the gain to the Sensor
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetGain(bIntern : BOOL; CONST inGain : GAIN)
+ VAR
+  i      : SINT := 0;
+  byMask : BYTE := 1;
+  byGain : BYTE := 0;
+ END_VAR  
+   
+   IF bSuspend THEN
+      RETURN;
+   ELSIF NOT bIntern THEN
+      MAINRUN();
+   END_IF;
+   
+   IF (BoostBoxType = eRcuNoBoostBox) THEN
+      iGain    := cUndef;
+      bGainSet := FALSE;
+      RcuSetMessageOnce(TRcuSensor_ErrBoostBoxNInst, myKin.kinListInx, 2, instId, "TRcuSensor.SetGain", "SET_SENSOR(.., Gain,..)", sName);
+      RETURN;
+   (*no longer supported   
+   ELSIF (BoostBoxType = eRcu4GainBits) THEN  
+      //check range of gain value
+      IF (inGain < c25_0) OR (inGain > c2_5) THEN
+         iGain    := cUndef;
+         bGainSet := FALSE; 
+         RcuSetMessageOnce(TRcuSensor_ErrWrongGain, myKin.kinListInx, 1, instId, "TRcuSensor.SetGain", "SET_SENSOR(.., Gain,..)");
+         RETURN;
+      ELSE
+         iGain  := DINT(inGain);
+         byGain := inGain;
+         WHILE (i < 4) DO
+            OutputGain[i] := ((byGain AND byMask) <> 0);
+            byMask := SHL(byMask, 1);
+            i:=i+1;
+         END_WHILE;
+         sLogText := "4 GainBit sensor " + sName + " gain set - value " + STR(iGain);
+         myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+         bGainSet := TRUE;
+      END_IF;  *)
+   ELSIF (BoostBoxType = eRcu2GainBits) THEN   
+      //check range of gain value
+      IF (inGain <> c60_0) AND (inGain <> c30_0) AND (inGain <> c15_0) AND (inGain <> c7_5) THEN
+         iGain    := cUndef;
+         bGainSet := FALSE; 
+         RcuSetMessageOnce(TRcuSensor_ErrWrongGain, myKin.kinListInx, 2, instId, "TRcuSensor.SetGain", "SET_SENSOR(.., Gain,..)");
+         RETURN;
+      ELSE
+         iGain  := DINT(inGain);
+         OutputGain[0] := (inGain = c30_0) OR (inGain = c7_5);
+         OutputGain[1] := (inGain = c15_0) OR (inGain = c7_5);
+         sLogText := "2 GainBit sensor " + sName + " gain set - value " + STR(iGain);
+         myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+         bGainSet := TRUE;
+      END_IF;
+   ELSIF (BoostBoxType = eRcu1GainBit) THEN   
+      //check range of gain value
+      IF (inGain <> c60_0) AND (inGain <> c30_0) THEN
+         iGain    := cUndef;
+         bGainSet := FALSE; 
+         RcuSetMessageOnce(TRcuSensor_ErrWrongGain, myKin.kinListInx, 3, instId, "TRcuSensor.SetGain", "SET_SENSOR(.., Gain,..)");
+         RETURN;
+      ELSE
+         iGain  := DINT(inGain);
+         OutputGain[0] := (inGain = c30_0);
+         sLogText := "1 GainBit sensor " + sName + " gain set - value " + STR(iGain);
+         myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+         bGainSet := TRUE;
+      END_IF;
+   END_IF;    
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  raise or lower the gain of the sensor
+//------------------------------------------------------------------------------------------------------
+ROUTINE ManSetGain(bRaise : BOOL)
+ VAR
+   gainWasSet : BOOL := FALSE;
+   gain       : DINT;
+   eGain      : GAIN;
+ END_VAR;
+  
+  IF ((myKin.mainModeMgr.mode = ciT1) OR (myKin.mainModeMgr.mode = ciT2)) AND (BoostBoxType <> eRcuNoBoostBox) THEN
+     (*no longer supported 
+     IF (BoostBoxType = eRcu4GainBits) THEN
+        IF bRaise THEN
+           IF (iGain > c25_0) THEN
+               gainWasSet := bGainSet;
+               gain := iGain;
+               gain := gain - 1;
+               eGain := GAIN(gain);
+               SetGain(TRUE, eGain);     
+               bGainSet := gainWasSet;
+           END_IF;    
+        ELSE
+           IF (iGain < c2_5) THEN
+              gainWasSet := bGainSet;
+              gain := iGain;
+              gain := gain + 1;
+              eGain := GAIN(gain);
+              SetGain(TRUE, eGain);     
+              bGainSet := gainWasSet;
+           END_IF;
+        END_IF; *)
+     IF (BoostBoxType = eRcu2GainBits) THEN   
+        IF bRaise THEN
+           IF (iGain < c60_0) THEN
+              gainWasSet := bGainSet;
+              gain := iGain;
+              gain := gain + 1;
+              eGain := GAIN(gain);
+              SetGain(TRUE, eGain);     
+              bGainSet := gainWasSet;          
+           END_IF;   
+        ELSE
+           IF (iGain > c7_5) THEN
+              gainWasSet := bGainSet;
+              gain := iGain;
+              gain := gain - 1;
+              eGain := GAIN(gain);
+              SetGain(TRUE, eGain);     
+              bGainSet := gainWasSet;
+           END_IF;
+        END_IF;
+     ELSIF (BoostBoxType = eRcu1GainBit) THEN
+        IF bRaise THEN
+           gainWasSet := bGainSet;
+           SetGain(TRUE, c60_0);     
+           bGainSet := gainWasSet;           
+        ELSE
+           gainWasSet := bGainSet;
+           SetGain(TRUE, c30_0);     
+           bGainSet := gainWasSet;
+        END_IF;
+     END_IF;
+  END_IF; 
+  
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------------------------------------------------
+//  called from EcoTalk - check if part is present - RETURN ePartPresent ePartNotPresent ePartRedo ePartMoveBack ePartError
+//-------------------------------------------------------------------------------------------------------------------------------
+ROUTINE GetPartPresent(inVal : SENSORVALUE) : BOOL
+  VAR 
+    i    : SINT;
+    ihdl : DINT;
+  END_VAR
+ 
+  IF bSuspend THEN
+     RETURN TRUE;
+  END_IF;
+  //If EPS has set part present for sensor then return partpresent and activate sensor for the next cycle
+  IF (myKin.ecoscreen.HandlerOutputs.bSensorInactive OR myKin.ecoscreen.HandlerOutputs.bSensorPartSet) THEN
+     myKin.ecoscreen.HandlerOutputs.bSensorPartSet  := FALSE;
+     bSetPartPresent  := FALSE;
+     iForcedPartState := 0;    
+     bSearchActive    := FALSE;
+     bDoPartCheck     := FALSE;
+     bPartShiftUsed   := FALSE;
+     RETURN TRUE;
+  END_IF;
+  IF bInactive THEN
+     bSearchActive    := FALSE;
+     bDoPartCheck     := FALSE; 
+     bPartShiftUsed   := FALSE;
+     RETURN TRUE;
+  END_IF;
+  
+  // A P P E N D  L A T E
+  //needNextSegPreDelay activate then check part in prerun and check part already active otherwise try again in mainrun
+  IF myKin.progPath.bAppendLate AND bDoPartCheck THEN
+     //Part is present or set present by HT and manual/auto learning isn't active
+     IF ((bPartPresent AND NOT bResetPart) OR bSetPartPresent) AND NOT (bLearnMan OR bLearnAuto) THEN
+        bPartPresent     := FALSE;
+        bDoPartCheck     := FALSE;
+        bPartShiftUsed   := FALSE;
+        bSearchActive    := FALSE;
+        bSetPartPresent  := FALSE;
+        bResetPart       := FALSE;
+        iForcedPartState := 0;
+        iSearchCounter   := 1;
+        FOR i:=0 TO (iCountDirections-1) DO
+           PartCheckBoundaries.Dir[i][0] := 0;  //delete limit
+           PartCheckBoundaries.Dir[i][1] := 0;
+        END_FOR;
+        myKin.DebugPrint(eTraceRcuHandler, "Part present - AppendLate");
+        RETURN TRUE; //Part already present
+     END_IF;
+  END_IF;
+    
+  // M A I N R U N
+  STOPPOINT();
+  IF NOT bDoPartCheck THEN
+     RcuSetMessageOnce(TRcuUnit_ErrPartCheckNActv, myKin.kinListInx, 1, instId, "TRcuSensor.GetPartPresent", sName);
+     bSetPartPresent  := FALSE;
+     bResetPart       := FALSE;
+     bSearchActive    := FALSE;
+     iForcedPartState := 0;
+     RETURN FALSE;
+  ELSE
+     iSearchCounter := iSearchCounter + 1;
+     LearnedPartVal := MAP(inVal);
+     // manual/auto learning isn't active
+     IF NOT (bLearnMan OR bLearnAuto) THEN
+        //part is present or set present by HMI
+        IF (bPartPresent OR bSetPartPresent) AND (NOT bResetPart) THEN
+           bPartPresent     := FALSE;
+           bDoPartCheck     := FALSE;
+           bPartShiftUsed   := FALSE;
+           bSetPartPresent  := FALSE;
+           bResetPart       := FALSE;
+           bSearchActive    := FALSE;
+           iForcedPartState := 0;
+           iSearchCounter := 1;
+           FOR i:=0 TO (iCountDirections-1) DO
+              PartCheckBoundaries.Dir[i][0] := 0;  //delete limit
+              PartCheckBoundaries.Dir[i][1] := 0;
+           END_FOR;
+           RETURN TRUE;
+        //part isn't present and seachcounter is smaller than cycles given by TeachIn   
+        ELSIF (iSearchCounter <= iSeachCycles) THEN
+           IF bMovedInStep THEN  //robot moved in STEP --> McuCreatePathPosRelativeDyn calculates wrong values
+              bSearchActive := FALSE;
+              RcuSetMessageOnce(TRcuUnit_ErrNoBackMoveInStep, myKin.kinListInx, 1, instId, "TRcuSensor.GetPartPresent");
+              RETURN FALSE;
+           ELSE
+              bSearchActive := TRUE;         //PartCheck is active
+              myKin.DebugPrint(eTraceRcuHandler, "Handlersensor - move backward - release movement ctrl");
+              myKin.handler.tool.bLastBackwardMove    := FALSE;
+              myKin.handler.tool.bReleaseMovementCtrl := TRUE;
+              RETURN TRUE;
+           END_IF;
+        //part isn't present
+        ELSE
+           IF (myKin.mainModeMgr.mode = ciAuto) THEN 
+              myKin.DebugPrint(eTraceRcuHandler, "Handlersensor - part not present - release movement ctrl");
+              myKin.handler.tool.bLastBackwardMove    := TRUE;
+              myKin.handler.tool.bReleaseMovementCtrl := TRUE;
+              //TRcuHandlerTool.CtrlMovement is setting the error message after backward movement
+           ELSE
+              bDoPartCheck   := FALSE;
+              bPartShiftUsed := FALSE;    
+              FOR i:=0 TO  iCountDirections-1 DO
+                  PartCheckBoundaries.Dir[i][0] := 0;  //delete limit
+                  PartCheckBoundaries.Dir[i][1] := 0;
+              END_FOR;
+              RcuSetMessageOnce(TRcuHandlerTool_ErrPartNPresent, myKin.kinListInx, 0, instId, "TRcuSensor.GetPartPresent");
+              bSearchActive    := FALSE;
+           END_IF;
+           bSetPartPresent  := FALSE;
+           bResetPart       := FALSE;
+           iForcedPartState := 0;
+           iSearchCounter   := 1;
+           RETURN FALSE;
+        END_IF;
+     // manual learning active
+     ELSIF bLearnMan THEN
+        //seachcounter is bigger than cycles given by TeachIn
+        IF (iSearchCounter >  iSeachCycles) THEN
+           bStoreValue   := FALSE;
+           FOR i:=0 TO cgiMaxSeachCycles - 1 DO
+              ySelectedToStore[i] := FALSE;
+           END_FOR;
+           bCancelValue         := FALSE;
+           bUserActivity        := FALSE;
+           bStoreRelease        := TRUE;
+           UserInfo             := 1;
+           RcuSetMessageOnce(TRcuUnit_WarChooseValueStore, myKin.kinListInx, 1, instId, "TRcuSensor.GetPartPresent", sName);
+           ihdl := GetProgHdl(); 
+           IF (ihdl <> 0) THEN
+              IF NOT GetProjectName(ihdl, sProjectName) THEN
+                 bUserActivity := TRUE;
+                 RcuSetMessageOnce(TRcuUnit_ErrNoAccessTTeachPrj, myKin.kinListInx, 1, instId, "TRcuSensor.GetPartPresent", sProjectName);
+              END_IF;
+           ELSE
+             bUserActivity := TRUE;
+             RcuSetMessageOnce(TRcuUnit_ErrNoAccessTTeachPrj, myKin.kinListInx, 2, instId, "TRcuSensor.GetPartPresent", "");
+           END_IF;
+           WAIT bUserActivity;
+           bUserActivity    := FALSE;
+           bDoPartCheck     := FALSE;
+           bPartPresent     := FALSE;
+           bPartShiftUsed   := FALSE;
+           bSetPartPresent  := FALSE;
+           bResetPart       := FALSE;
+           iForcedPartState := 0;
+           iSearchCounter   := 1;
+           FOR i:=0 TO  iCountDirections-1 DO
+              PartCheckBoundaries.Dir[i][0] := 0;  //delete limit
+              PartCheckBoundaries.Dir[i][1] := 0;
+           END_FOR;
+           RETURN TRUE;
+        //seachcounter is smaller than cycles given by TeachIn
+        ELSE
+           IF bMovedInStep THEN //robot moved in STEP --> McuCreatePathPosRelativeDyn calculates wrong values
+              bSearchActive := FALSE;
+              RcuSetMessageOnce(TRcuUnit_ErrNoBackMoveInStep, myKin.kinListInx, 2, instId, "TRcuSensor.GetPartPresent");
+              RETURN FALSE;
+           ELSE
+              bSearchActive := TRUE;         //PartCheck is active
+              myKin.DebugPrint(eTraceRcuHandler, "Handlersensor - move backward - release movement ctrl");
+              myKin.handler.tool.bLastBackwardMove    := FALSE;
+              myKin.handler.tool.bReleaseMovementCtrl := TRUE;
+              RETURN TRUE;
+           END_IF;
+        END_IF;
+     // auto learning active
+     ELSIF bLearnAuto THEN
+        //part is present and shift used - or seachcounter is bigger than cycles given by TeachIn
+        IF (bPartPresent AND bPartShiftUsed) OR (iSearchCounter > iSeachCycles) THEN
+           yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies := yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies + 1;
+           IF (yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies >= cgiBodiesToLearn) THEN
+               yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies := 0;
+               yAutoLearn[iBody].yPosMoves[iPosition].bLearnActive   := FALSE;
+               yAutoLearn[iBody].yPosMoves[iPosition].iLearnState    := 0;
+               bStoreReleaseAuto := TRUE;
+               bUserActivity     := FALSE;
+               ihdl := GetProgHdl(); 
+               IF (ihdl <> 0) THEN
+                  IF NOT GetProjectName(ihdl, sProjectName) THEN
+                     bUserActivity := TRUE;
+                     RcuSetMessageOnce(TRcuUnit_ErrNoAccessTTeachPrj, myKin.kinListInx, 3, instId, "TRcuSensor.GetPartPresent", sProjectName);
+                  END_IF;
+               ELSE
+                 bUserActivity := TRUE;
+                 RcuSetMessageOnce(TRcuUnit_ErrNoAccessTTeachPrj, myKin.kinListInx, 4, instId, "TRcuSensor.GetPartPresent", "");
+               END_IF;
+               UserInfo      := 2;
+               RcuSetMessageOnce(TRcuUnit_WarStoreOrCancel, myKin.kinListInx, 1, instId, "TRcuSensor.GetPartPresent", sName);
+               WAIT bUserActivity;
+               bUserActivity         := FALSE;
+           END_IF;
+           bAutoLearnRelease := FALSE;
+           bLearnAuto        := FALSE;
+           IF (bPartPresent OR bSetPartPresent OR bStoreValue) AND NOT bResetPart THEN
+              bPartPresent     := FALSE;
+              bDoPartCheck     := FALSE;
+              bPartShiftUsed   := FALSE;
+              bSetPartPresent  := FALSE;
+              bResetPart       := FALSE;
+              bSearchActive    := FALSE;
+              iForcedPartState := 0;
+              iSearchCounter   := 1;
+              FOR i:=0 TO (iCountDirections-1) DO
+                  PartCheckBoundaries.Dir[i][0] := 0;  //delete limit
+                  PartCheckBoundaries.Dir[i][1] := 0;
+              END_FOR;
+              RETURN TRUE;
+           ELSE
+              bDoPartCheck     := FALSE;
+              bPartShiftUsed   := FALSE;
+              bSetPartPresent  := FALSE;
+              bResetPart       := FALSE;
+              bSearchActive    := FALSE;
+              iForcedPartState := 0;
+              iSearchCounter   := 1;
+              FOR i:=0 TO  iCountDirections-1 DO
+                  PartCheckBoundaries.Dir[i][0] := 0;  //delete limit
+                  PartCheckBoundaries.Dir[i][1] := 0;
+              END_FOR;
+              RETURN FALSE;
+           END_IF;
+        ELSE
+           //robot moved in STEP --> McuCreatePathPosRelativeDyn calculates wrong values
+           IF bMovedInStep THEN
+              bSearchActive := FALSE;
+              RcuSetMessageOnce(TRcuUnit_ErrNoBackMoveInStep, myKin.kinListInx, 3, instId, "TRcuUnit.GetPartPresentSensor");
+              RETURN FALSE;
+           ELSE
+              bSearchActive := TRUE;         //PartCheck is active
+              myKin.DebugPrint(eTraceRcuHandler, "Handlersensor - move backward - release movement ctrl");
+              myKin.handler.tool.bLastBackwardMove    := FALSE;
+              myKin.handler.tool.bReleaseMovementCtrl := TRUE;
+              RETURN TRUE;
+           END_IF;
+        END_IF;
+     END_IF;
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   teach pendant sets part to unit
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetPart(inState : BOOL)
+  IF inState THEN
+     bSetPartPresent  := TRUE;
+     bResetPart       := FALSE;
+     iForcedPartState := 1;
+  ELSE
+     bSetPartPresent  := FALSE;
+     iForcedPartState := 0;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   teach pendant resets part to unit
+//------------------------------------------------------------------------------------------------------
+ROUTINE ResetPart(inState : BOOL)
+  IF inState THEN
+     bResetPart       := TRUE;
+     bSetPartPresent  := FALSE;
+     iForcedPartState := 2;
+  ELSE
+     bResetPart       := FALSE;
+     iForcedPartState := 0;
+  END_IF;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------------------------------------
+//  check if the boundaries are valid
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckBoundaries(inVal : tMacroValue) : BOOL
+  VAR
+    i        : SINT;
+    sValue   : STRING;
+    bRetVal  : BOOL;
+  END_VAR  
+   
+   bRetVal := TRUE;
+   FOR i:=0 TO (iCountDirections-1) DO
+        IF ((iAbs(inVal.Dir[i][0]) > cSensorMax) OR (inVal.Dir[i][0] < 0)) OR
+           ((iAbs(inVal.Dir[i][1]) > cSensorMax) OR (inVal.Dir[i][1] > 0)) THEN
+            sValue := sValue + "  " + STR(inVal.Dir[i][0]) + " " + STR(inVal.Dir[i][1]);
+            bRetVal := FALSE;
+        END_IF;     
+   END_FOR;
+   IF NOT bRetVal THEN
+      RcuSetMessageOnce(TRcuSensor_ErrValueTooBig, myKin.kinListInx, 1, instId, "TRcuSensor.CheckBoundaries", sValue);
+   END_IF;   
+   RETURN bRetVal;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  check if typelist has changed and delete changed bodies
+//------------------------------------------------------------------------------------------------------
+ROUTINE NewTypelistEntry(CONST progNr : INT; CONST projName : STRING)
+ VAR
+  i      : SINT;
+  prNr   : INT;
+  proj   : STRING;
+ END_VAR
+ 
+    prNr := progNr - 1;
+    proj := StrToLower(projName);
+    FOR i:=0 TO cgiMaxAutoLearnBodies-1 DO
+        IF yAutoLearn[i].iProgNr = prNr THEN
+           IF (yAutoLearn[i].sProjectName <> proj) THEN
+              DeleteLearnedBody(i);
+              myKin.DebugPrint(eTraceRcuHandler, "Learned values of type " + yAutoLearn[i].sProjectName + "deleted, because typelist has changed");
+              sLogText := "Sensor " + sName + " learned values of type " + yAutoLearn[i].sProjectName + "deleted, because typelist has changed";
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+              yAutoLearn[i].iProgNr := 0;
+              yAutoLearn[i].sProjectName := "";
+           END_IF;
+        END_IF;
+    END_FOR;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Init the Arrayfield for one learned body
+//------------------------------------------------------------------------------------------------------
+ROUTINE DeleteLearnedBody(i : SINT) 
+ VAR
+  CountPos    : SINT;
+  CountBodies : INT;
+  CountDir    : SINT;
+ END_VAR
+  
+  yAutoLearn[i].iProgNr := 0;
+  yAutoLearn[i].sProjectName := "";
+  FOR CountPos := 0 TO cgiMaxPositions-1 DO
+     yAutoLearn[i].yPosMoves[CountPos].bLearnActive   := FALSE;
+     yAutoLearn[i].yPosMoves[CountPos].iLearnState    := 0;
+     yAutoLearn[i].yPosMoves[CountPos].iLearnedBodies := 0;
+     FOR CountBodies := 0 TO cgiBodiesToLearn-1 DO
+         FOR CountDir:=0 TO cMaxValues-1 DO
+             yAutoLearn[i].yPosMoves[CountPos].yPosValue[CountBodies].yValue[CountDir][0] := 0;
+             yAutoLearn[i].yPosMoves[CountPos].yPosValue[CountBodies].yValue[CountDir][1] := 0;
+             yAutoLearn[i].yPosMoves[CountPos].yPosValue[CountBodies].yValue[CountDir][0] := 0;
+             yAutoLearn[i].yPosMoves[CountPos].yPosValue[CountBodies].yValue[CountDir][1] := 0;
+         END_FOR;
+     END_FOR;
+  END_FOR;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Set amount of search cycles for part control
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetSearchCycles(cycles : SINT) 
+
+  IF bSuspend OR bDoPartCheck OR bSearchActive THEN
+     RETURN;
+  ELSIF (cycles <= 0) OR (cycles > cgiMaxSeachCycles) THEN
+     RcuSetMessageOnce(TRcuUnit_ErrNoOfSearchCycl, myKin.kinListInx, 1, instId, "TRcuSensor.SetSearchCycles", STR(cycles));
+     RETURN;
+  ELSE
+     iSeachCycles := cycles;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Activate max limit observation
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetMaxLimit(activate : BOOL; OPTIONAL inVal : SENSORVALUE)
+ VAR
+   Val      : tMacroValue;
+   i        : SINT;
+ END_VAR
+ 
+  IF bSuspend OR bInactive THEN
+     RETURN;
+  ELSIF NOT activate THEN
+     bDoMaxCheck := FALSE;                    //deactivate observation
+     RETURN;
+  ELSE
+     Val.Dir[0][0] := inVal.X_Pos;
+     Val.Dir[0][1] := inVal.X_Neg;
+     Val.Dir[1][0] := inVal.Y_Pos;
+     Val.Dir[1][1] := inVal.Y_Neg;
+     Val.Dir[2][0] := 100;                    //inVal.Z_Pos;  for further use
+     Val.Dir[2][1] := -100;                   //inVal.Z_Neg;
+     IF NOT bLearnMan THEN                    //manual learning active?
+        IF NOT CheckBoundaries(Val) THEN      //check if values from TeachIn are ok
+           myKin.bNoContinue := TRUE;
+           myKin.ErrorReaction(TRUE);
+           RETURN;
+        ELSIF bDoMaxCheck THEN                   //already active set only new boundaries
+           myKin.DebugPrint(eTraceRcuHandler, "Handler: MaxCheck already active, only new limits are set");
+           //RcuSetMessageOnce(TRcuUnit_InfOnlyNewBoundaries, myKin.kinListInx, 1, instId, "TRcuSensor.SetMaxLimit", "MaxCheck");
+           MaxBoundaries := Val;
+        ELSE
+           MaxBoundaries := Val;              //set new boundaries
+           bDoMaxCheck := TRUE;               //activate observation           
+        END_IF;   
+     ELSE
+        FOR i:=0 TO iCountDirections-1 DO
+            MaxBoundaries.Dir[i][0] := 100;   //set up to 100% to avoid errors while learning
+            MaxBoundaries.Dir[i][1] := -100;  
+        END_FOR;
+        bDoMaxCheck := TRUE;                  //activate observation
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Activate min limit observation
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetMinLimit(activate : BOOL; OPTIONAL inVal : SENSORVALUE)
+ VAR
+   Val      : tMacroValue;
+   i        : SINT;
+ END_VAR
+ 
+  IF bSuspend OR bInactive THEN
+     RETURN;
+  ELSIF NOT activate THEN
+     bDoMinCheck := FALSE;                    //deactivate observation
+     RETURN;
+  ELSE
+     Val.Dir[0][0] := inVal.X_Pos;
+     Val.Dir[0][1] := inVal.X_Neg;
+     Val.Dir[1][0] := inVal.Y_Pos;
+     Val.Dir[1][1] := inVal.Y_Neg;
+     Val.Dir[2][0] := 100;                    //inVal.Z_Pos;  for further use
+     Val.Dir[2][1] := -100;                   //inVal.Z_Neg;
+     IF NOT bLearnMan THEN                    //manual learning active?
+        IF NOT CheckBoundaries(Val) THEN      //check if values from TeachIn are ok
+           myKin.bNoContinue := TRUE;
+           myKin.ErrorReaction(TRUE);
+           RETURN;
+        ELSIF bDoMinCheck THEN                   //already active set only new boundaries
+           myKin.DebugPrint(eTraceRcuHandler, "Handler: MinCheck already active, only new limits are set");
+           //RcuSetMessageOnce(TRcuUnit_InfOnlyNewBoundaries, myKin.kinListInx, 1, instId, "TRcuSensor.SetMinLimit", "MinCheck");
+           MinBoundaries := Val;
+        ELSE
+           MinBoundaries := Val;              //set new boundaries
+           bDoMinCheck := TRUE;               //activate observation           
+        END_IF;   
+     ELSE
+        FOR i:=0 TO iCountDirections-1 DO
+            MinBoundaries.Dir[i][0] := 0;   //set up to 0% to avoid errors while learning
+            MinBoundaries.Dir[i][1] := 0;  
+        END_FOR;
+        bDoMinCheck := TRUE;                  //activate observation
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Activate part check
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetPartCheck(inVal : SENSORVALUE)
+ VAR
+   Val      : tMacroValue;
+   i        : SINT;
+ END_VAR
+ 
+  IF bSuspend OR bSearchActive THEN
+     RETURN;
+  ELSE
+     Val.Dir[0][0] := inVal.X_Pos;
+     Val.Dir[0][1] := inVal.X_Neg;
+     Val.Dir[1][0] := inVal.Y_Pos;
+     Val.Dir[1][1] := inVal.Y_Neg;
+     Val.Dir[2][0] := 100;                    //inVal.Z_Pos;  for further use
+     Val.Dir[2][1] := -100;                   //inVal.Z_Neg;
+     IF NOT bLearnMan THEN                    //manual learning active?
+        IF NOT CheckBoundaries(Val) THEN      //check if values from TeachIn are ok
+           myKin.bNoContinue := TRUE;
+           myKin.ErrorReaction(TRUE);
+           RETURN;
+        ELSIF bDoPartCheck THEN               //already active
+           RETURN;
+        ELSE
+           PartCheckBoundaries := Val;
+           bDoPartCheck        := TRUE;
+           bAutoLearnRelease   := TRUE;   
+        END_IF;
+     ELSE
+        FOR i:=0 TO iCountDirections-1 DO
+            PartCheckBoundaries.Dir[i][0] := 1;     //delete boundaries to be learned new
+            PartCheckBoundaries.Dir[i][1] := -1;  
+        END_FOR;
+        bDoPartCheck := TRUE;                  //activate part check
+     END_IF;
+  END_IF;
+
+END_ROUTINE
+
+//******************************************************************************
+// private
+CONSTANT PRIVATE
+  cCycleTime          : INT  :=    8;  
+  cMaxValues          : SINT :=    3;
+  cSensorMax          : INT  :=  102;
+  cMaxOverloadPeaks   : SINT :=    2;
+  cCycleToPartPresent : SINT :=    3;
+  cMaxDevAutoLearn    : REAL :=  0.5; //0...1 = 0%...100%
+  cMinValuePartPos    : SINT := 10;
+  cMinValuePartNeg    : SINT := -10;
+  
+  //calibation
+  cCalibSignalTime   : INT := 400; //400ms for calibrationsignal
+  cCalibTime         : INT := 100; //100ms for calibration
+  cCalibTolMax       : SINT :=  5;
+END_CONSTANT
+
+TYPE PRIVATE
+  tSensValue : STRUCT
+    Dir : ARRAY [cMaxValues] OF DINT;
+  END_STRUCT;
+
+  tSensValueReal : STRUCT
+    Dir : ARRAY [cMaxValues] OF REAL;
+  END_STRUCT;
+  
+  tPosValue : STRUCT
+    yValue  : ARRAY [cMaxValues, 2] OF DINT;
+  END_STRUCT;
+  
+  tActValueTimer : STRUCT
+    bRunning  : BOOL;
+    bFlag     : BOOL;
+  END_STRUCT;
+ 
+  tActValueTimers : STRUCT
+    iDelayCableBroken   : DINT;             //delay error message that cable is broken
+    yCableBroken        : ARRAY [cMaxValues] OF tActValueTimer;
+    iDelayMaxValExeeded : DINT;             //delay error message that value exceeds limit
+    yMaxValExceeded     : ARRAY [cMaxValues] OF tActValueTimer;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  instId              : DINT;               // instance identification number
+  rValueCableBroken   : REAL := 32768.0;    // default Siemens ET200s
+  rMaxValueCard       : REAL := 27648.0;    // default Siemens ET200s
+  OutputCallibration  : MAPTO BOOL;
+  OutputGain          : ARRAY [0..3] OF MAPTO BOOL;
+  ySensVal            : ARRAY [2] OF MAPTO WORD;
+  myKin               : MAPTO TRcuRobot;
+  bSimOutput          : BOOL;
+  iValueUpdate        : INT;          //update counter for value 
+  yLearnCounter       : ARRAY [cMaxValues] OF SINT;
+  sLogText            : STRING;
+  bCalibrationRuns    : BOOL;
+  LearnedPartVal      : MAPTO SENSORVALUE;  // local copy of the learned partvalues
+  bUserActivity       : BOOL;               // flag for useractivity on the teach pendant
+  sProjectName        : STRING;             // info from the current teachproject
+  sActValueTimers     : tActValueTimers;     //timers to delay error messages (cable broken/max value exeeded)
+END_VAR
+
+VAR
+ wSimSensorVal1      : WORD := 14000;
+ wSimSensorVal2      : WORD := 13500;
+END_VAR
+
+
+//------------------------------------------------------------------------------------------------------
+//  init the PB-analogcard for the meassurement   
+//------------------------------------------------------------------------------------------------------
+ROUTINE InitAnalogCard() PRIVATE
+       
+ CASE BusType OF
+  eRcuProfibus: 
+  
+    CASE CardVendor OF
+     eRcuSiemens:
+         CASE CardType OF
+          eRcuET200sGB61:   rValueCableBroken := cET200sCableBroken;
+                            rMaxValueCard     := cET200sMaxValue;
+         ELSE
+           myKin.DebugPrint(eTraceRcuHandler, "Wrong CardType = " + STR(CardType) + " from CardVendor = "+ STR(CardVendor));
+         END_CASE;
+             
+     eRcuTurck:
+         CASE CardType OF
+          eRcuSNNE_40A_000x : rValueCableBroken := cSNNE_40A_CableBroken;
+                              rMaxValueCard     := cSNNE_40A_MaxValue;
+         ELSE
+           myKin.DebugPrint(eTraceRcuHandler, "Wrong CardType = " + STR(CardType) + " from CardVendor = "+ STR(CardVendor));
+         END_CASE;
+    ELSE
+      myKin.DebugPrint(eTraceRcuHandler, "Wrong CardVendor = "+ STR(CardVendor) + " for BusType = " + STR(BusType));
+    END_CASE; //CASE CardVendor OF
+    
+  eRcuSercosIII:
+    
+    CASE CardVendor OF
+     eRcuPhoenix:
+         CASE CardType OF
+          eRcuPhoenixCurrent:   rValueCableBroken := cPhoenixCableBroken;
+                                rMaxValueCard     := cPhoenixMaxValue;
+         ELSE
+           myKin.DebugPrint(eTraceRcuHandler, "Wrong CardType = " + STR(CardType) + " from CardVendor = "+ STR(CardVendor));
+         END_CASE;
+    ELSE
+      myKin.DebugPrint(eTraceRcuHandler, "Wrong CardVendor = "+ STR(CardVendor) + " for BusType = " + STR(BusType));
+    END_CASE; //CASE CardVendor OF
+    
+ END_CASE; //CASE BusType OF
+   
+END_ROUTINE   
+
+//------------------------------------------------------------------------------------------------------
+//  init the I/O's  
+//------------------------------------------------------------------------------------------------------
+ROUTINE InitIO() PRIVATE
+ VAR
+   sBuffer      : STRING;          // StringBufffer
+ END_VAR
+ 
+   IF gbSimulationOS OR gbFBSSActive THEN
+      OutputCallibration := MAP(bSimOutput);
+      //Assign calibartion-signal for Kemroscope
+      sBuffer := myKin.kinematic.mName + ".handler." + sName + " OutCalib";
+      SwoAddBoolVariable(OutputCallibration, sBuffer);
+      (*no longer supported
+      IF (BoostBoxType = eRcu4GainBits) THEN
+         OutputGain[0] := MAP(bSimOutput);
+         OutputGain[1] := MAP(bSimOutput);
+         OutputGain[2] := MAP(bSimOutput);
+         OutputGain[3] := MAP(bSimOutput); *)
+      IF (BoostBoxType = eRcu2GainBits) THEN
+         OutputGain[0] := MAP(bSimOutput);
+         OutputGain[1] := MAP(bSimOutput);
+      ELSIF (BoostBoxType = eRcu1GainBit) THEN
+         OutputGain[0] := MAP(bSimOutput);
+      END_IF;
+      CASE CardType OF
+        eRcuET200sGB61:     wSimSensorVal1 := 14000;
+                            wSimSensorVal2 := 13500;
+        eRcuPhoenixCurrent: wSimSensorVal1 := 15500;
+                            wSimSensorVal2 := 14500;
+      ELSE
+        wSimSensorVal1 := 14000;
+        wSimSensorVal2 := 13500;
+      END_CASE;
+      ySensVal[0] := MAP(wSimSensorVal1);
+      ySensVal[1] := MAP(wSimSensorVal2); 
+      START IOSimulation();
+   ELSE
+       //new sensor-type has calibration but no gain inputs BIT 18.11.09
+       OutputCallibration := MAPX(cHW_OutCalib[myKin.kinListInx]);
+       IF NOT IS_MAPPED(OutputCallibration) THEN
+          BoostBoxType := eRcuNoBoostBox;
+          RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 1, instId, "TRcuSensor.InitIO", cHW_OutCalib[myKin.kinListInx]);
+       ELSE
+          //Assign calibartion-signal for Kemroscope
+          sBuffer := myKin.kinematic.mName + ".handler." + sName + " OutCalib";
+          SwoAddBoolVariable(OutputCallibration, sBuffer);
+       END_IF;
+       (*no longer supported
+       IF (BoostBoxType = eRcu4GainBits) THEN
+          OutputGain[0] := MAPX(cHW_OutGain0[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[0]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 2, instId, "TRcuSensor.InitIO", cHW_OutGain0[myKin.kinListInx]);
+          END_IF;
+          OutputGain[1] := MAPX(cHW_OutGain1[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[1]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 3, instId, "TRcuSensor.InitIO", cHW_OutGain1[myKin.kinListInx]);
+          END_IF;
+          OutputGain[2] := MAPX(cHW_OutGain2[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[2]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 4, instId, "TRcuSensor.InitIO", cHW_OutGain2[myKin.kinListInx]);
+          END_IF;
+          OutputGain[3] := MAPX(cHW_OutGain3[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[3]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 5, instId, "TRcuSensor.InitIO", cHW_OutGain3[myKin.kinListInx]);
+          END_IF; *)
+       IF (BoostBoxType = eRcu2GainBits) THEN
+          OutputGain[0] := MAPX(cHW_OutSens0[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[0]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 9, instId, "TRcuSensor.InitIO", cHW_OutSens0[myKin.kinListInx]);
+          END_IF;
+          OutputGain[1] := MAPX(cHW_OutSens1[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[1]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 10, instId, "TRcuSensor.InitIO", cHW_OutSens1[myKin.kinListInx]);
+          END_IF;
+       ELSIF (BoostBoxType = eRcu1GainBit) THEN   
+          OutputGain[0] := MAPX(cHW_OutSens0[myKin.kinListInx]);
+          IF NOT IS_MAPPED(OutputGain[0]) THEN
+             BoostBoxType := eRcuNoBoostBox;
+             RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 8, instId, "TRcuSensor.InitIO", cHW_OutSens0[myKin.kinListInx]);
+          END_IF;
+       END_IF;
+       ySensVal[0] := MAPX(cHW_InSensVal1[myKin.kinListInx]);
+       ySensVal[1] := MAPX(cHW_InSensVal2[myKin.kinListInx]);
+   END_IF;
+   IF NOT IS_MAPPED(ySensVal[0]) THEN
+      RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 6, instId, "TRcuSensor.InitIO", cHW_InSensVal1[myKin.kinListInx]);
+   ELSIF NOT IS_MAPPED(ySensVal[1]) THEN  
+      RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 7, instId, "TRcuSensor.InitIO", cHW_InSensVal2[myKin.kinListInx]);
+   ELSE   
+     //Assign actual value for Kemroscope
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " ySensVal[0]";
+     SwoAddWordVariable(ySensVal[0] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " ySensVal[1]";
+     SwoAddWordVariable(ySensVal[1] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " Dir1";
+     SwoAddDIntVariable(ActValue.Dir[0] , sBuffer);   
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " Dir2";
+     SwoAddDIntVariable(ActValue.Dir[1], sBuffer);
+     //Assign max value for Kemroscope
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MaxActive";
+     SwoAddBoolVariable(bDoMaxCheck, sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MaxDir1Pos";
+     SwoAddDIntVariable(MaxBoundaries.Dir[0][0] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MaxDir1Neg";
+     SwoAddDIntVariable(MaxBoundaries.Dir[0][1] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MaxDir2Pos";
+     SwoAddDIntVariable(MaxBoundaries.Dir[1][0] , sBuffer); 
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MaxDir2Neg";
+     SwoAddDIntVariable(MaxBoundaries.Dir[1][1] , sBuffer);
+     //Assign min value for Kemroscope
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MinActive";
+     SwoAddBoolVariable(bDoMinCheck, sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MinDir1Pos";
+     SwoAddDIntVariable(MinBoundaries.Dir[0][0] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MinDir1Neg";
+     SwoAddDIntVariable(MinBoundaries.Dir[0][1] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MinDir2Pos";
+     SwoAddDIntVariable(MinBoundaries.Dir[1][0] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " MinDir2Neg";
+     SwoAddDIntVariable(MinBoundaries.Dir[1][1] , sBuffer);
+     //Assign part value for Kemroscope
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " PartActive";
+     SwoAddBoolVariable(bDoPartCheck, sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " PartDir1Pos";
+     SwoAddDIntVariable(PartCheckBoundaries.Dir[0][0] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " PartDir1Neg";
+     SwoAddDIntVariable(PartCheckBoundaries.Dir[0][1] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " PartDir2Pos";
+     SwoAddDIntVariable(PartCheckBoundaries.Dir[1][0] , sBuffer);
+     sBuffer := myKin.kinematic.mName + ".handler." + sName + " PartDir2Neg";
+     SwoAddDIntVariable(PartCheckBoundaries.Dir[1][1] , sBuffer);
+     //add sensor signals to data recorder
+     START myKin.dataRecorder.RecCyclicDint(eDint_HandlerSensor1, ActValue.Dir[0]);
+     START myKin.dataRecorder.RecCyclicDint(eDint_HandlerSensor2, ActValue.Dir[1]);
+   END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  simulate sensor values according requested observations
+//------------------------------------------------------------------------------------------------------
+ROUTINE IOSimulation() PRIVATE
+ VAR 
+  bChgMax     : BOOL;
+  bChgMin     : BOOL;
+  bChgPart    : BOOL;
+  bChgMaxVal  : BOOL;
+  bChgMinVal  : BOOL;
+  bChgPartVal : BOOL;
+ END_VAR 
+  
+  
+ bChgMax     := IS_CHANGED(bDoMaxCheck);
+ bChgMaxVal  := IS_CHANGED(MaxBoundaries);
+ bChgMin     := IS_CHANGED(bDoMinCheck); 
+ bChgMinVal  := IS_CHANGED(MinBoundaries);
+ bChgPart    := IS_CHANGED(bDoPartCheck);
+ bChgPartVal := IS_CHANGED(PartCheckBoundaries);
+ WHILE TRUE DO 
+   IF bDoMaxCheck THEN
+      IF (MaxBoundaries.Dir[0][0] > 2) THEN
+         wSimSensorVal1 := SetOneValueToBus(MaxBoundaries.Dir[0][0] - 2);
+      ELSIF (MaxBoundaries.Dir[0][1] < -2) THEN
+         wSimSensorVal1 := SetOneValueToBus(MaxBoundaries.Dir[0][0] + 2);
+      ELSE
+         wSimSensorVal1 := SetOneValueToBus(2);   
+      END_IF;
+      IF (MaxBoundaries.Dir[1][0] > 2) THEN
+         wSimSensorVal2 := SetOneValueToBus(MaxBoundaries.Dir[1][0] - 2);
+      ELSIF (MaxBoundaries.Dir[1][1] < -2) THEN
+         wSimSensorVal2 := SetOneValueToBus(MaxBoundaries.Dir[1][0] + 2);
+      ELSE
+         wSimSensorVal2 := SetOneValueToBus(2);   
+      END_IF;
+   END_IF;
+   IF bDoMinCheck THEN
+      IF (MinBoundaries.Dir[0][0] > 0) THEN
+         wSimSensorVal1 := SetOneValueToBus(MinBoundaries.Dir[0][0] + 2);
+      ELSIF (MinBoundaries.Dir[0][1] < 0) THEN
+         wSimSensorVal1 := SetOneValueToBus(MinBoundaries.Dir[0][0] - 2);
+      ELSE
+         wSimSensorVal1 := SetOneValueToBus(2);   
+      END_IF;
+      IF (MinBoundaries.Dir[1][0] > 0) THEN
+         wSimSensorVal2 := SetOneValueToBus(MinBoundaries.Dir[1][0] + 2);
+      ELSIF (MinBoundaries.Dir[1][1] < 0) THEN
+         wSimSensorVal2 := SetOneValueToBus(MinBoundaries.Dir[1][0] - 2);
+      ELSE
+         wSimSensorVal2 := SetOneValueToBus(2);   
+      END_IF;
+   END_IF;
+   IF bDoPartCheck THEN
+      IF (PartCheckBoundaries.Dir[0][0] > 0) THEN
+         wSimSensorVal1 := SetOneValueToBus(PartCheckBoundaries.Dir[0][0] + 2);
+      ELSIF (PartCheckBoundaries.Dir[0][1] < 0) THEN
+         wSimSensorVal1 := SetOneValueToBus(PartCheckBoundaries.Dir[0][0] - 2);
+      ELSE
+         wSimSensorVal1 := SetOneValueToBus(2);   
+      END_IF;
+      IF (PartCheckBoundaries.Dir[1][0] > 0) THEN
+         wSimSensorVal2 := SetOneValueToBus(PartCheckBoundaries.Dir[1][0] + 2);
+      ELSIF (PartCheckBoundaries.Dir[1][1] < 0) THEN
+         wSimSensorVal2 := SetOneValueToBus(PartCheckBoundaries.Dir[1][0] - 2);
+      ELSE
+         wSimSensorVal2 := SetOneValueToBus(2);   
+      END_IF;
+   END_IF;
+   IF NOT (bDoMaxCheck OR bDoMinCheck OR bDoPartCheck) THEN
+      CASE CardType OF
+        eRcuET200sGB61:     wSimSensorVal1 := 14000;
+                            wSimSensorVal2 := 13500;
+        eRcuPhoenixCurrent: wSimSensorVal1 := 15500;
+                            wSimSensorVal2 := 14500;
+      ELSE
+        wSimSensorVal1 := 14000;
+        wSimSensorVal2 := 13500;
+      END_CASE;
+   END_IF;    
+   WAIT bChgMax OR bChgMaxVal OR bChgMin OR bChgMinVal OR bChgPart OR bChgPartVal;
+   bChgMax     := FALSE;
+   bChgMaxVal  := FALSE;
+   bChgMin     := FALSE;
+   bChgMinVal  := FALSE;
+   bChgPart    := FALSE;
+   bChgPartVal := FALSE;
+ END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  observe if max limit exeeded and set error
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveMaxLimit() PRIVATE
+  VAR
+    i              : SINT;
+    bChg           : BOOL;
+    yOverloadCount : ARRAY [cMaxValues] OF DINT;
+  END_VAR 
+   
+  bDoMaxCheck := FALSE;
+  bChg := IS_CHANGED (iValueUpdate);
+  WHILE TRUE DO
+    WAIT (bDoMaxCheck);
+      WHILE (bDoMaxCheck) DO
+         IF NOT bCalibrated THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNotCal, myKin.kinListInx, 1, instId, "TRcuSensor.ObserveMaxLimit", sName);
+         END_IF;
+         IF (BoostBoxType <> eRcuNoBoostBox) AND NOT bGainSet THEN
+            RcuSetMessageOnce(TRcuSensor_ErrNGainSelect, myKin.kinListInx, 1, instId, "TRcuSensor.ObserveMaxLimit", sName);
+         END_IF;
+         FOR i:=0 TO (iCountDirections-1) DO
+            IF ((ActValue.Dir[i] > MaxBoundaries.Dir[i][0]) AND (ActValue.Dir[i] > 0)) OR 
+               ((ActValue.Dir[i] < MaxBoundaries.Dir[i][1]) AND (ActValue.Dir[i] < 0)) THEN
+               yOverloadCount[i] := yOverloadCount[i] + 1; 
+               IF (yOverloadCount[i] >= cMaxOverloadPeaks) THEN 
+                  myKin.SetMotionMode(eRcuMMgrModeStop); // stop on path
+                  RcuSetMessageOnce(TRcuSensor_ErrHdlMaxLimErr, myKin.kinListInx, 1, instId, "TRcuSensor.ObserveMaxLimit", sName);
+                  yOverloadCount[i] := 0;
+               END_IF;
+            ELSE
+               yOverloadCount[i] := 0;    
+            END_IF;
+         END_FOR;
+         WAIT (bChg);
+         bChg := FALSE;
+     END_WHILE;
+     FOR i:=0 TO (iCountDirections-1) DO
+        MaxBoundaries.Dir[i][0] := 0;  //delete upper limit
+        MaxBoundaries.Dir[i][1] := 0;
+     END_FOR;
+     WAIT (bDoMaxCheck);
+     bChg := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  observe if min limit exeeded and set error
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveMinLimit() PRIVATE
+  VAR
+    i              : SINT;
+    bChg           : BOOL;
+    yOverloadCount : ARRAY [cMaxValues] OF DINT;
+  END_VAR 
+   
+  bDoMinCheck := FALSE;
+  bChg := IS_CHANGED (iValueUpdate);
+  WHILE TRUE DO
+    WAIT (bDoMinCheck);
+      WHILE (bDoMinCheck) DO
+         IF NOT bCalibrated THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNotCal, myKin.kinListInx, 2, instId, "TRcuSensor.ObserveMinLimit", sName);
+         END_IF;
+         IF (BoostBoxType <> eRcuNoBoostBox) AND NOT bGainSet THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNoGainSel, myKin.kinListInx, 1, instId, "TRcuSensor.ObserveMinLimit", sName);
+         END_IF;
+         FOR i:=0 TO (iCountDirections-1) DO
+            IF ((ActValue.Dir[i] < MinBoundaries.Dir[i][0]) AND (MinBoundaries.Dir[i][0] > 0) AND (ActValue.Dir[i] >= 0)) OR
+               ((ActValue.Dir[i] > MinBoundaries.Dir[i][1]) AND (MinBoundaries.Dir[i][1] < 0) AND (ActValue.Dir[i] <= 0)) THEN
+                 yOverloadCount[i] := yOverloadCount[i] + 1;
+                 IF (yOverloadCount[i] >= cMaxOverloadPeaks) THEN 
+                   myKin.SetMotionMode(eRcuMMgrModeStop); // stop on path
+                   RcuSetMessageOnce(TRcuSensor_ErrHdlMinLimErr, myKin.kinListInx, 1, instId, "TRcuSensor.ObserveMinLimit", sName);
+                   yOverloadCount[i] := 0;
+                 END_IF;
+            ELSE
+               yOverloadCount[i] := 0;                 
+            END_IF;
+         END_FOR;
+         WAIT (bChg);
+         bChg := FALSE;
+     END_WHILE;
+     FOR i:=0 TO (iCountDirections-1) DO
+        MinBoundaries.Dir[i][0] := 0;  //delete upper limit
+        MinBoundaries.Dir[i][1] := 0;
+     END_FOR;
+     WAIT (bDoMinCheck);
+     bChg := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  observe if part check limit exeeded and set error
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObservePartCheckTracking() PRIVATE
+  VAR
+    i              : SINT;
+    bChg           : BOOL;
+    yOverloadCount : ARRAY [cMaxValues] OF DINT;
+  END_VAR 
+   
+  bDoPartCheck := FALSE;
+  bChg := IS_CHANGED (iValueUpdate);
+  WHILE TRUE DO
+    WAIT (bDoPartCheck);
+      WHILE (bDoPartCheck) DO
+         IF NOT bCalibrated THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNotCal, myKin.kinListInx, 5, instId, "TRcuSensor.ObservePartCheckTracking", sName);
+         END_IF;
+         IF (BoostBoxType <> eRcuNoBoostBox) AND NOT bGainSet THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNoGainSel, myKin.kinListInx, 5, instId, "TRcuSensor.ObservePartCheckTracking", sName);
+         END_IF;
+         FOR i:=0 TO (iCountDirections-1) DO
+            IF ((ActValue.Dir[i] < PartCheckBoundaries.Dir[i][0]) AND (PartCheckBoundaries.Dir[i][0] > 0) AND (ActValue.Dir[i] >= 0)) OR
+               ((ActValue.Dir[i] > PartCheckBoundaries.Dir[i][1]) AND (PartCheckBoundaries.Dir[i][1] < 0) AND (ActValue.Dir[i] <= 0)) THEN
+                 yOverloadCount[i] := yOverloadCount[i] + 1;
+                 IF (yOverloadCount[i] >= cMaxOverloadPeaks) THEN 
+                   myKin.SetMotionMode(eRcuMMgrModeStop); // stop on path
+                   RcuSetMessageOnce(TRcuSwitch_ErrPartLost, myKin.kinListInx, 1, instId, "TRcuSensor.ObservePartCheckTracking", sName);
+                   yOverloadCount[i] := 0;
+                 END_IF;
+            ELSE
+               yOverloadCount[i] := 0;                 
+            END_IF;
+         END_FOR;
+         WAIT (bChg);
+         bChg := FALSE;
+     END_WHILE;
+     FOR i:=0 TO (iCountDirections-1) DO
+        PartCheckBoundaries.Dir[i][0] := 0;
+        PartCheckBoundaries.Dir[i][1] := 0;
+     END_FOR;
+     WAIT (bDoPartCheck);
+     bChg := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  observe PartCheck
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObservePartCheck () PRIVATE
+  VAR
+    i             : SINT;
+    j             : SINT;
+    bChg          : BOOL;
+    bValuePresent : BOOL;
+    iCountPresent : SINT;
+    iCheckValue   : DINT;
+    iCalcValue    : DINT;
+    iProgramm     : INT;
+  END_VAR 
+  
+  bDoPartCheck := FALSE;
+  bChg := IS_CHANGED (iValueUpdate);
+  WHILE TRUE DO
+    WAIT (bDoPartCheck);
+    
+      //**********************  Check if learning is active for this project and this posmove ******************
+      IF (myKin.mainModeMgr.mode = ciAuto) AND bAutoLearnRelease THEN  //Check auto learning
+         bLearnAuto := FALSE;
+         iBody      := 0;
+         iPosition  := 0;
+         iProgramm  :=  myKin.autoControl.progNumber; //Get current program number
+         i := 0;
+         REPEAT //loop through all learning bodies (5 bodies)
+            IF yAutoLearn[i].iProgNr = iProgramm THEN
+               j := 0;
+               REPEAT //loop through all parts of the body
+                 IF yAutoLearn[i].yPosMoves[j].bLearnActive THEN
+                    IF myKin.handler.partPosPerHandler AND (yAutoLearn[i].yPosMoves[j].iProgNum = myKin.handler.progNumber) THEN
+                       bLearnAuto := TRUE; //learning activated for current move --> store current body on position
+                       iBody      := i; 
+                       iPosition  := j;
+                    ELSIF myKin.handler.partPosPerBody AND (yAutoLearn[i].yPosMoves[j].iProgNum = myKin.handler.tool.iPartToHandle) THEN    
+                       bLearnAuto := TRUE; //learning activated for current move --> store current body on position
+                       iBody      := i; 
+                       iPosition  := j;
+                    END_IF;
+                 END_IF;
+                 j := j + 1;
+               UNTIL bLearnAuto OR (j >= cgiMaxPositions);
+            END_IF;
+            i := i + 1;
+         UNTIL bLearnAuto OR (i >= cgiMaxAutoLearnBodies);
+         myKin.DebugPrint(eTraceRcuHandler, "LearningAutoActive = " +  STR(bLearnAuto) + " ProgHandler " + STR(myKin.handler.progNumber));
+      END_IF;  // bAutoLearnRelease
+         
+      IF bLearnMan OR bLearnAuto THEN            //learning active ?                      
+         FOR i:=0 TO (iCountDirections-1) DO
+             yLearnCounter[i] := 0;              //set learncounter to zero
+         END_FOR;
+      END_IF;
+    
+      WHILE (bDoPartCheck) DO
+         IF NOT bCalibrated THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNotCal, myKin.kinListInx, 3, instId, "TRcuSensor.ObservePartCheck", sName);
+         END_IF;
+         IF (BoostBoxType <> eRcuNoBoostBox) AND NOT bGainSet THEN
+            RcuSetMessageOnce(TRcuSensor_ErrSensNoGainSel, myKin.kinListInx, 2, instId, "TRcuSensor.ObservePartCheck", sName);
+         END_IF;
+         IF ((iSeachCycles <= 0) OR (iSeachCycles > cgiMaxSeachCycles)) THEN
+            RcuSetMessageOnce(TRcuSensor_ErrNoSearchCycl, myKin.kinListInx, 1, instId, "TRcuSensor.ObservePartCheck", STR(iSeachCycles));
+         END_IF;
+                  
+         WAIT ((bChg AND (NOT bPartPresent)) OR (bChg AND (bLearnMan OR bLearnAuto)));
+         bChg := FALSE;
+         bValuePresent := FALSE;                   //Check if one value is out of boundaries
+         FOR i:=0 TO (iCountDirections-1) DO       //to be partpresent
+            IF ((ActValue.Dir[i] > PartCheckBoundaries.Dir[i][0]) AND (PartCheckBoundaries.Dir[i][0] <> 0) AND (ActValue.Dir[i] > 0)) OR
+               ((ActValue.Dir[i] < PartCheckBoundaries.Dir[i][1]) AND (PartCheckBoundaries.Dir[i][1] <> 0) AND (ActValue.Dir[i] < 0)) THEN 
+                bValuePresent := TRUE;
+            END_IF;
+         END_FOR;
+                        
+         IF NOT bLearnMan THEN              //learning active?
+            IF bValuePresent THEN                    
+               iCountPresent := iCountPresent + 1;  //Count the cycles
+            END_IF;
+            IF ((iCountPresent >= cCycleToPartPresent) AND bValuePresent) THEN  
+               bPartPresent := TRUE;         //If 3 Cycle present set the part present
+            END_IF;
+         END_IF;
+         //record values only in foreward movement
+         IF (myKin.reposState = eReposStateInactive) AND (myKin.movementDirection = eDirNormal) THEN    
+            IF bValuePresent OR bLearnAuto THEN      //values are bigger then the Partboundaries OR Autolearning
+               FOR i:=0 TO (iCountDirections-1) DO
+                  IF (ActValue.Dir[i] >= 0) THEN        //Is value positive or negative?  
+                    IF bLearnMan THEN
+                        IF (ActValue.Dir[i] > yManLearnedValues[iSearchCounter-1][i][0]) AND 
+                           (yLearnCounter[i] < cCycleToPartPresent)         THEN
+                           yLearnCounter[i] := yLearnCounter[i] + 1;             
+                        ELSIF (ActValue.Dir[i] > yManLearnedValues[iSearchCounter-1][i][0]) AND 
+                          (yLearnCounter[i] >= cCycleToPartPresent)            THEN
+                          yManLearnedValues[iSearchCounter-1][i][0] := ActValue.Dir[i];
+                          yLearnCounter[i] := 0;
+                        ELSE
+                           yLearnCounter[i] := 0;
+                        END_IF;
+                     ELSIF bLearnAuto AND bAutoLearnRelease THEN
+                        iCheckValue := (PartCheckBoundaries.Dir[i][0] * cMaxDevAutoLearn);   //if Value is bigger than x% of boundary record it
+                        IF (ActValue.Dir[i] > iCheckValue) AND (yLearnCounter[i] < cCycleToPartPresent)  THEN
+                          yLearnCounter[i] := yLearnCounter[i] + 1; 
+                        ELSIF (ActValue.Dir[i] > iCheckValue) AND (yLearnCounter[i] >= cCycleToPartPresent)  THEN     
+                          iCalcValue := ((yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies].yValue[i][0] + ActValue.Dir[i]) / 2);
+                          yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies].yValue[i][0] := iCalcValue;
+                          yLearnCounter[i] := 0;
+                        ELSE
+                          yLearnCounter[i] := 0;
+                        END_IF;
+                     END_IF;    
+                    
+                  ELSE                                     //value is negative
+                     IF bLearnMan THEN
+                        IF (ActValue.Dir[i] < yManLearnedValues[iSearchCounter-1][i][1]) AND 
+                          (yLearnCounter[i] < cCycleToPartPresent)          THEN
+                          yLearnCounter[i] := yLearnCounter[i] + 1;
+                        ELSIF (ActValue.Dir[i] < yManLearnedValues[iSearchCounter-1][i][1]) AND 
+                          (yLearnCounter[i] >= cCycleToPartPresent)            THEN
+                          yManLearnedValues[iSearchCounter-1][i][1] := ActValue.Dir[i];
+                          yLearnCounter[i] := 0;
+                        ELSE
+                          yLearnCounter[i] := 0;
+                        END_IF;
+                     ELSIF bLearnAuto AND bAutoLearnRelease THEN   
+                        iCheckValue := (PartCheckBoundaries.Dir[i][1] * cMaxDevAutoLearn);   //if Value is bigger than x% of boundary record it
+                        IF (ActValue.Dir[i] < iCheckValue) AND (yLearnCounter[i] < cCycleToPartPresent)  THEN
+                          yLearnCounter[i] := yLearnCounter[i] + 1; 
+                        ELSIF (ActValue.Dir[i] < iCheckValue) AND (yLearnCounter[i] >= cCycleToPartPresent)  THEN
+                          iCalcValue := ((yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies].yValue[i][1] + ActValue.Dir[i]) / 2);
+                          yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[yAutoLearn[iBody].yPosMoves[iPosition].iLearnedBodies].yValue[i][1] := iCalcValue;
+                          yLearnCounter[i] := 0;
+                        ELSE
+                          yLearnCounter[i] := 0;
+                        END_IF;
+                     END_IF;
+                  END_IF;       
+               END_FOR;   
+            ELSE 
+               FOR i:=0 TO (iCountDirections-1) DO   
+                   yLearnCounter[i] := 0;
+               END_FOR;
+            END_IF;
+         END_IF;
+      END_WHILE;   
+      WAIT (NOT bDoPartCheck);
+      iCountPresent := 0;
+      bChg := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Reads the sensorinputs every timercycle
+//------------------------------------------------------------------------------------------------------
+ROUTINE StartMeassureCycle() PRIVATE
+ VAR
+   i             : SINT;
+   iValue        :  INT;
+   rFilterTime   : REAL := 150.0;    //filter time 150ms
+   iFilterCycles : INT;              //filter cycles
+   FilterValReal : tSensValueReal;   //current value of the sensor
+   FilterValRaw  : tSensValueReal;   //table current values unfiltered of the sensor
+ END_VAR
+
+  IF NOT IS_MAPPED(ySensVal[0]) THEN
+     RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 8, instId, "TRcuSensor.StartMeassureCycle", cHW_InSensVal1[myKin.kinListInx]);
+     RETURN;
+  ELSIF NOT IS_MAPPED(ySensVal[1]) THEN
+     RcuSetMessageOnce(TRcuSensor_ErrMapToHwFailed, myKin.kinListInx, 9, instId, "TRcuSensor.StartMeassureCycle", cHW_InSensVal2[myKin.kinListInx]);
+     RETURN;
+  END_IF;
+  
+  //in tracking stations the conveyor is shaking and because of that we have to smooth sensor values
+  IF gbIsTrackingStation THEN
+     iFilterCycles := rFilterTime / (grCycleTime*1000.0);
+  ELSE //Stop&Go
+     iFilterCycles := 1; //Don't smooth values in stop&go stations
+  END_IF;
+  
+  WHILE TRUE DO 
+    WAIT bDoMeasure;
+      WHILE bDoMeasure DO
+         FOR i:=0 TO (iCountDirections-1) DO
+             //get value from AI card
+             GetOneValueFromBus(i, FilterValRaw.Dir[i], ySensVal[i]);
+             //smoothing the values because of tracking
+             FilterValReal.Dir[i] := (FilterValReal.Dir[i]*(iFilterCycles-1) +  FilterValRaw.Dir[i]) / iFilterCycles;
+             //type cast from real to dint
+             ActValue.Dir[i] := DINT(FilterValReal.Dir[i]); 
+         END_FOR;
+         IF iValueUpdate > 10000 THEN
+            iValueUpdate := 0;
+         ELSE
+            iValueUpdate := iValueUpdate + 1;
+         END_IF;
+         Sleep(cCycleTime);
+      END_WHILE;
+      FOR i:=0 TO (iCountDirections-1) DO
+         ActValue.Dir[i] := 0;
+      END_FOR;     
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Get one value from the bussystem
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetOneValueFromBus(dir : SINT; Value : REAL; VAR_IN SensorValue : WORD) PRIVATE
+ VAR
+   iValue        : DINT;
+   rResult       : REAL;
+ END_VAR
+ 
+ iValue  := SensorValue;
+ rResult := REAL(iValue);
+ 
+ IF (rResult = rValueCableBroken) THEN
+    IF gbIsTrackingStation AND NOT sActValueTimers.yCableBroken[dir].bRunning THEN
+       sActValueTimers.yCableBroken[dir].bFlag := FALSE;
+       SysTimerSet(sActValueTimers.iDelayCableBroken, sActValueTimers.yCableBroken[dir].bFlag);
+       sActValueTimers.yCableBroken[dir].bRunning := TRUE;
+       IF NOT bCalibrationRuns THEN
+          rResult := (rMaxValueCard * 1.01);
+       END_IF;
+    ELSIF sActValueTimers.yCableBroken[dir].bFlag OR NOT gbIsTrackingStation THEN
+       RcuSetMessageOnce(TRcuSensor_ErrSensCableBrk, myKin.kinListInx, 1, instId, "TRcuSensor.GetOneValueFromBus", sName);
+       bCableBroken := TRUE;
+       IF NOT bCalibrationRuns THEN
+          rResult := (rMaxValueCard * 0.5);
+       END_IF;
+    END_IF;
+ ELSE
+    SysTimerClear(sActValueTimers.yCableBroken[dir].bFlag);
+    sActValueTimers.yCableBroken[dir].bRunning := FALSE;
+    sActValueTimers.yCableBroken[dir].bFlag    := FALSE;
+ END_IF;
+  
+ Value := (((rResult/rMaxValueCard) - 0.5) * 200.0);
+ 
+ IF (rAbs(Value) >= REAL(cSensorMax)) THEN
+    IF gbIsTrackingStation AND NOT sActValueTimers.yMaxValExceeded[dir].bRunning THEN
+       sActValueTimers.yMaxValExceeded[dir].bFlag := FALSE;
+       SysTimerSet(sActValueTimers.iDelayMaxValExeeded , sActValueTimers.yMaxValExceeded[dir].bFlag);
+       sActValueTimers.yMaxValExceeded[dir].bRunning := TRUE;
+    ELSIF sActValueTimers.yMaxValExceeded[dir].bFlag OR NOT gbIsTrackingStation THEN
+       RcuSetMessageOnce(TRcuSensor_ErrSensValueExcd, myKin.kinListInx, 1, instId, "TRcuSensor.GetOneValueFromBus", sName, STR(cSensorMax));
+       bValueExceeded  := TRUE;
+    END_IF;
+    IF NOT bCalibrationRuns THEN
+       Value := 102.0;
+    END_IF;
+ ELSE
+    SysTimerClear(sActValueTimers.yMaxValExceeded[dir].bFlag);
+    sActValueTimers.yMaxValExceeded[dir].bRunning := FALSE;
+    sActValueTimers.yMaxValExceeded[dir].bFlag    := FALSE;
+ END_IF;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Set one value to the bussystem
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetOneValueToBus(VAR_IN Value : DINT) : WORD PRIVATE
+  RETURN (INT(((REAL(Value) / 200.0) + 0.5) * rMaxValueCard));
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  init the table for learning auto
+//------------------------------------------------------------------------------------------------------
+ROUTINE InitAutoLearnArray() PRIVATE
+ VAR
+  body : SINT;
+  pos  : SINT;
+ END_VAR
+  
+   IF myKin.handler.partPosPerHandler THEN
+      FOR body:=0 TO cgiMaxAutoLearnBodies-1 DO
+          IF myKin.handler.tool.usedParts[1] THEN
+             yAutoLearn[body].yPosMoves[0].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[0].iNameTV   := 1;
+             yAutoLearn[body].yPosMoves[1].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[1].iNameTV   := 2;
+             yAutoLearn[body].yPosMoves[2].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[2].iNameTV   := 3;
+             yAutoLearn[body].yPosMoves[3].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[3].iNameTV   := 4;
+             yAutoLearn[body].yPosMoves[4].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[4].iNameTV   := 5;
+             yAutoLearn[body].yPosMoves[5].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[5].iNameTV   := 6;
+          END_IF;   
+          IF myKin.handler.tool.usedParts[2] THEN
+             yAutoLearn[body].yPosMoves[6].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[6].iNameTV   := 1;
+             yAutoLearn[body].yPosMoves[7].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[7].iNameTV   := 2;
+             yAutoLearn[body].yPosMoves[8].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[8].iNameTV   := 3;
+             yAutoLearn[body].yPosMoves[9].bUsed     := TRUE;
+             yAutoLearn[body].yPosMoves[9].iNameTV   := 4;
+             yAutoLearn[body].yPosMoves[10].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[10].iNameTV  := 5;
+             yAutoLearn[body].yPosMoves[11].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[11].iNameTV  := 6;
+          END_IF;  
+          IF myKin.handler.tool.usedParts[3] THEN
+             yAutoLearn[body].yPosMoves[12].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[12].iNameTV  := 1;
+             yAutoLearn[body].yPosMoves[13].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[13].iNameTV  := 2;
+             yAutoLearn[body].yPosMoves[14].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[14].iNameTV  := 3;
+             yAutoLearn[body].yPosMoves[15].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[15].iNameTV  := 4;
+             yAutoLearn[body].yPosMoves[16].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[16].iNameTV  := 5;
+             yAutoLearn[body].yPosMoves[17].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[17].iNameTV  := 6;
+          END_IF;   
+          IF myKin.handler.tool.usedParts[4] THEN
+             yAutoLearn[body].yPosMoves[18].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[18].iNameTV  := 1;
+             yAutoLearn[body].yPosMoves[19].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[19].iNameTV  := 2;
+             yAutoLearn[body].yPosMoves[20].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[20].iNameTV  := 3;
+             yAutoLearn[body].yPosMoves[21].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[21].iNameTV  := 4;
+             yAutoLearn[body].yPosMoves[22].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[22].iNameTV  := 5;
+             yAutoLearn[body].yPosMoves[23].bUsed    := TRUE;
+             yAutoLearn[body].yPosMoves[23].iNameTV  := 6;
+          END_IF;
+      END_FOR;
+   ELSE
+      FOR body:=0 TO cgiMaxAutoLearnBodies-1 DO
+          FOR pos:=0 TO cgiMaxNumOfParts-1 DO
+              yAutoLearn[body].yPosMoves[pos].bUsed     := TRUE;
+              yAutoLearn[body].yPosMoves[pos].iNameTV   := pos+1;
+              yAutoLearn[body].yPosMoves[pos].iProgNum  := pos+1;
+          END_FOR; 
+      END_FOR;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  init the table for learning auto - used only by old handling (partPosPerHandler)
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetMoveNrAutoLearn(iSourcePart : SINT; iSourcePos : SINT; iDestPart : SINT; iDestPos : SINT; iProgNr : INT)
+  VAR
+    iMoveNr : INT;
+    body    : SINT;
+  END_VAR 
+
+  //HOME --> FULLOPEN
+  IF ((iSourcePart=0) AND (iSourcePos=0)) AND ((iDestPart>0) AND (iDestPos=2)) THEN 
+     
+     iMoveNr := ((iDestPart-1) * cgiMaxMoves) + 0;
+     FOR body := 0 TO cgiMaxAutoLearnBodies-1 DO
+        yAutoLearn[body].yPosMoves[iMoveNr].iProgNum := iProgNr;
+     END_FOR;
+  //FULLCLOSE --> FULLOPEN  
+  ELSIF ((iSourcePart>0) AND (iSourcePos=4)) AND ((iDestPart>0) AND (iDestPos=2)) AND (iSourcePart=iDestPart) THEN
+  
+     iMoveNr := ((iDestPart-1) * cgiMaxMoves) + 1;
+     FOR body := 0 TO cgiMaxAutoLearnBodies-1 DO
+        yAutoLearn[body].yPosMoves[iMoveNr].iProgNum := iProgNr;
+     END_FOR;
+  //WAIT --> FULLOPEN   
+  ELSIF ((iSourcePart>0) AND (iSourcePos=0)) AND ((iDestPart>0) AND (iDestPos=2)) AND (iSourcePart=iDestPart) THEN 
+    
+     iMoveNr := ((iDestPart-1) * cgiMaxMoves) + 2;
+     FOR body := 0 TO cgiMaxAutoLearnBodies-1 DO
+        yAutoLearn[body].yPosMoves[iMoveNr].iProgNum := iProgNr;
+     END_FOR;
+  //HOME --> HALFOPEN
+  ELSIF ((iSourcePart=0) AND (iSourcePos=0)) AND ((iDestPart>0) AND (iDestPos=1)) THEN 
+  
+     iMoveNr := ((iDestPart-1) * cgiMaxMoves) + 3;
+     FOR body := 0 TO cgiMaxAutoLearnBodies-1 DO
+        yAutoLearn[body].yPosMoves[iMoveNr].iProgNum := iProgNr;
+     END_FOR;
+  //FULLCLOSE --> HALFOPEN  
+  ELSIF ((iSourcePart>0) AND (iSourcePos=4)) AND ((iDestPart>0) AND (iDestPos=1)) AND (iSourcePart=iDestPart) THEN
+        
+     iMoveNr := ((iDestPart-1) * cgiMaxMoves) + 4;
+     FOR body := 0 TO cgiMaxAutoLearnBodies-1 DO
+        yAutoLearn[body].yPosMoves[iMoveNr].iProgNum := iProgNr;
+     END_FOR;
+  //WAIT --> HALFOPEN 
+  ELSIF ((iSourcePart>0) AND (iSourcePos=0)) AND ((iDestPart>0) AND (iDestPos=1)) AND (iSourcePart=iDestPart) THEN
+  
+     iMoveNr := ((iDestPart-1) * cgiMaxMoves) + 5;
+     FOR body := 0 TO cgiMaxAutoLearnBodies-1 DO
+        yAutoLearn[body].yPosMoves[iMoveNr].iProgNum := iProgNr;
+     END_FOR;
+  
+  END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  activate or deactivate this switch
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetActive(active : BOOL; OPTIONAL beginAuto : BOOL) 
+  IF active THEN
+     bInactive         := FALSE;
+     iInactive         := 1;
+     bSetPartPresent   := FALSE;
+     bResetPart        := FALSE;
+     iForcedPartState  := 0;
+     bDoMeasure        := TRUE;
+     IF IS_USED(beginAuto) AND beginAuto THEN
+        bCalibrated    := FALSE;
+        bGainSet       := FALSE;
+        iGain          := cUndef;
+        bPartPresent   := FALSE;
+        bDoMaxCheck    := FALSE;
+        bDoMinCheck    := FALSE;
+        bDoPartCheck   := FALSE;
+        bLearnMan      := FALSE;
+        iSearchCounter := 1;
+        iSeachCycles   := 0;
+        bPartShiftUsed := FALSE;
+        bSearchActive  := FALSE;
+        UserInfo       := 7;
+     END_IF;
+  ELSE
+     bInactive        := TRUE;
+     iInactive        := 0;
+     bDoMeasure       := FALSE;
+     bDoMaxCheck      := FALSE;
+     bDoMinCheck      := FALSE;
+     bDoPartCheck     := FALSE;
+     bPartShiftUsed   := FALSE;
+     bSetPartPresent  := FALSE;
+     bResetPart       := FALSE;
+     iForcedPartState := 0;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   if learning in manual mode is started or stopped handle the states
+//------------------------------------------------------------------------------------------------------
+ROUTINE HandleLearningManual() PRIVATE
+ VAR
+   chg : BOOL;
+   i   : SINT;
+ END_VAR 
+      
+  chg  := IS_CHANGED(bLearnMan);
+  WHILE TRUE DO
+     IF bLearnMan THEN
+        iLearningMan := 1;
+     ELSE   
+        iLearningMan := 0;
+     END_IF;
+     bStoreValue  := FALSE;
+     bCancelValue := FALSE;
+     FOR i:=0 TO (cgiMaxSeachCycles - 1) DO    
+         ySelectedToStore[i] := FALSE;
+         yManLearnedValues[i][0][0] := 0;
+         yManLearnedValues[i][0][1] := 0;
+         yManLearnedValues[i][1][0] := 0;
+         yManLearnedValues[i][1][1] := 0;
+     END_FOR;    
+     chg := FALSE;  
+     WAIT chg;
+  END_WHILE; 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Build the average value of the 5 Bodies and save 'em to teachprog
+//------------------------------------------------------------------------------------------------------
+ROUTINE BuildValueToStoreAuto() PRIVATE
+ VAR
+   iBodyCount     : INT;
+   iAverageCount  : ARRAY [4] OF INT;
+   sPath          : STRING;
+ END_VAR
+ 
+ WHILE TRUE DO
+   WAIT ((bStoreValue OR bCancelValue) AND bStoreReleaseAuto);
+    bStoreReleaseAuto := FALSE;
+    IF bStoreValue THEN                                                             
+       sPath := ("kin" + STR(myKin.kinListInx+1) + "." + sProjectName + "." + LearnedPartVal.GetName());      
+       iAverageCount[0] := 0;
+       iAverageCount[1] := 0;
+       iAverageCount[2] := 0;
+       iAverageCount[3] := 0;
+       LearnedPartVal.X_Pos := 0;
+       LearnedPartVal.X_Neg := 0;
+       LearnedPartVal.Y_Pos := 0;
+       LearnedPartVal.Y_Neg := 0;
+       
+       FOR iBodyCount := 0 TO (cgiBodiesToLearn - 1) DO
+           IF (yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[0][0] <> 0) THEN
+               iAverageCount[0] := iAverageCount[0] + 1;
+               LearnedPartVal.X_Pos := LearnedPartVal.X_Pos + yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[0][0];
+           END_IF;    
+           IF (yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[0][1] <> 0) THEN
+               iAverageCount[1] := iAverageCount[1] + 1;
+               LearnedPartVal.X_Neg := LearnedPartVal.X_Neg + yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[0][1];
+           END_IF;    
+           IF (yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[1][0] <> 0) THEN
+               iAverageCount[2] := iAverageCount[2] + 1;
+               LearnedPartVal.Y_Pos := LearnedPartVal.Y_Pos + yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[1][0];
+           END_IF;
+           IF (yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[1][1] <> 0) THEN
+               iAverageCount[3] := iAverageCount[3] + 1;
+               LearnedPartVal.Y_Neg := LearnedPartVal.Y_Neg + yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[1][1];
+           END_IF;    
+       END_FOR;
+       
+       IF (iAverageCount[0] > 0) THEN         //To avoid division by zero!!
+          LearnedPartVal.X_Pos := LearnedPartVal.X_Pos / iAverageCount[0];
+          //don't use values smaller than minvalue
+          IF LearnedPartVal.X_Pos < cMinValuePartPos THEN
+             LearnedPartVal.X_Pos := cMinValuePartPos;
+          END_IF;
+       ELSE
+          LearnedPartVal.X_Pos := cMinValuePartPos;
+       END_IF;
+       IF (iAverageCount[1] > 0) THEN
+          LearnedPartVal.X_Neg := LearnedPartVal.X_Neg / iAverageCount[1];
+          //don't use values smaller than minvalue
+          IF LearnedPartVal.X_Neg > cMinValuePartNeg THEN
+             LearnedPartVal.X_Neg := cMinValuePartNeg;
+          END_IF;
+       ELSE
+          LearnedPartVal.X_Neg := cMinValuePartNeg;
+       END_IF;
+       IF (iAverageCount[2] > 0) THEN
+          LearnedPartVal.Y_Pos := LearnedPartVal.Y_Pos / iAverageCount[2];
+          //don't use values smaller than minvalue
+          IF LearnedPartVal.Y_Pos < cMinValuePartPos THEN
+             LearnedPartVal.Y_Pos := cMinValuePartPos;
+          END_IF;
+       ELSE
+          LearnedPartVal.Y_Pos := cMinValuePartPos;
+       END_IF;
+       IF (iAverageCount[3] > 0) THEN
+          LearnedPartVal.Y_Neg := LearnedPartVal.Y_Neg / iAverageCount[3];
+          //don't use values smaller than minvalue
+          IF LearnedPartVal.Y_Neg > cMinValuePartNeg THEN
+             LearnedPartVal.Y_Neg := cMinValuePartNeg;
+          END_IF;
+       ELSE
+          LearnedPartVal.Y_Neg := cMinValuePartNeg;
+       END_IF;
+       IF WriteInitValues(sPath) THEN       //Write learned values as new init values
+          UserInfo      := 4;
+          RcuSetMessageOnce(TRcuUnit_WarLearnedValStored, myKin.kinListInx, 2, instId, "TRcuSensor.BuildValueToStoreAuto", " Dir1 " + STR(LearnedPartVal.X_Pos) + " " + STR(LearnedPartVal.X_Neg) +
+                           "  Dir2  " + STR(LearnedPartVal.Y_Pos) + " " + STR(LearnedPartVal.Y_Neg));
+       ELSE
+          UserInfo := 5;
+          RcuSetMessageOnce(TRcuUnit_ErrStOLearnValFail, myKin.kinListInx, 1, instId, "TRcuSensor.BuildValueToStoreAuto", sPath);
+       END_IF;
+    ELSE   //cancel value
+       UserInfo := 6;
+       RcuSetMessageOnce(TRcuUnit_WarLearnValuesCancel, myKin.kinListInx, 1, instId, "TRcuSensor.BuildValueToStoreAuto", sName);
+    END_IF;
+    FOR iBodyCount := 0 TO (cgiBodiesToLearn - 1) DO
+        yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[0][0] := 0;
+        yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[0][1] := 0;
+        yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[1][0] := 0;
+        yAutoLearn[iBody].yPosMoves[iPosition].yPosValue[iBodyCount].yValue[1][1] := 0;
+    END_FOR;
+    yAutoLearn[iBody].yPosMoves[iPosition].bLearnActive := FALSE;
+    yAutoLearn[iBody].yPosMoves[iPosition].iLearnState  := 0;
+    yAutoLearn[iBody].iProgNr := 0;
+    yAutoLearn[iBody].sProjectName := "";
+    bUpdateUserPage       := TRUE;
+    bUserActivity         := TRUE;
+ END_WHILE;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  write or delete the learned value to TeachIn
+//------------------------------------------------------------------------------------------------------
+ROUTINE WriteTeachInValues() PRIVATE
+  VAR 
+    j            : SINT;
+    bSelected    : BOOL;
+    sPath        : STRING;
+  END_VAR
+
+  WHILE TRUE DO
+    WAIT ((bStoreValue OR bCancelValue) AND bStoreRelease);
+    UserInfo := 7;
+    bStoreRelease := FALSE;
+    IF bStoreValue THEN
+       sPath := ("kin" + STR(myKin.kinListInx+1) + "." + sProjectName + "." + LearnedPartVal.GetName());            
+       FOR j:=0 TO (cgiMaxSeachCycles - 1) DO                          //find the user selected values
+          IF ySelectedToStore[j] THEN
+             bSelected := TRUE;
+             LearnedPartVal.X_Pos := yManLearnedValues[j][0][0];
+             IF LearnedPartVal.X_Pos < cMinValuePartPos THEN
+                LearnedPartVal.X_Pos := cMinValuePartPos;
+                yManLearnedValues[j][0][0] := cMinValuePartPos;
+             END_IF;
+             LearnedPartVal.X_Neg := yManLearnedValues[j][0][1];
+             IF LearnedPartVal.X_Neg > cMinValuePartNeg THEN
+                LearnedPartVal.X_Neg := cMinValuePartNeg;
+                yManLearnedValues[j][0][1] := cMinValuePartNeg;
+             END_IF;
+             LearnedPartVal.Y_Pos := yManLearnedValues[j][1][0];
+             IF LearnedPartVal.Y_Pos < cMinValuePartPos THEN
+                LearnedPartVal.Y_Pos := cMinValuePartPos;
+                yManLearnedValues[j][1][0] := cMinValuePartPos;
+             END_IF;
+             LearnedPartVal.Y_Neg := yManLearnedValues[j][1][1];
+             IF LearnedPartVal.Y_Neg > cMinValuePartNeg THEN
+                LearnedPartVal.Y_Neg := cMinValuePartNeg;
+                yManLearnedValues[j][1][1] := cMinValuePartNeg;
+             END_IF;
+             IF WriteInitValues(sPath) THEN       //Write learned values as new init values
+                UserInfo := 8;
+                RcuSetMessageOnce(TRcuUnit_WarLearnedValStored, myKin.kinListInx, 1, instId, "TRcuSensor.WriteTeachInValues", " Dir1 " + STR(yManLearnedValues[j][0][0]) + " " + STR(yManLearnedValues[j][0][1]) +
+                           "  Dir2  " + STR(yManLearnedValues[j][1][0]) + STR(yManLearnedValues[j][1][1]));
+             ELSE
+                UserInfo := 5;
+                RcuSetMessageOnce(TRcuUnit_ErrStOLearnValFail, myKin.kinListInx, 2, instId, "TRcuSensor.WriteTeachInValues", sPath);
+             END_IF;
+          END_IF;       
+       END_FOR;
+             
+       IF NOT bSelected THEN
+          UserInfo := 9;
+       END_IF;
+    ELSE                                                                   //values were delete by the user
+       UserInfo := 9;
+       RcuSetMessageOnce(TRcuUnit_WarLearnValuesCancel, myKin.kinListInx, 2, instId, "TRcuSensor.WriteTeachInValues", sName);
+    END_IF;       
+    
+    bUserActivity    := TRUE;
+    bLearnMan := FALSE;
+    
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   check if kin has moved in step to prevent backward move (wrong calc in MCU)
+//------------------------------------------------------------------------------
+ROUTINE CheckKinIsStepping() PRIVATE
+
+  WHILE TRUE DO
+    WAIT myKin.selectingFlow.isStepping AND bDoPartCheck AND (NOT bMovedInStep);
+    bMovedInStep := TRUE;
+    WAIT (NOT bDoPartCheck);
+    bMovedInStep := FALSE;;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   interface to ecoscreen
+//------------------------------------------------------------------------------------------------------
+ROUTINE EcoScreenInterface() PRIVATE
+ VAR
+  i       : SINT;
+  s       : STRING;
+  chgVal1 : BOOL := TRUE;
+  chgVal2 : BOOL := TRUE;
+ END_VAR
+ 
+ myKin.ecoscreen.HandlerOutputs.bSensorInactive := UPDATE(bInactive);
+ myKin.ecoscreen.HandlerOutputs.bSensorPartSet  := UPDATE(bSetPartPresent);
+ myKin.ecoscreen.HandlerOutputs.bIgnorePartCtrl := UPDATE(myKin.fieldbusIn.IgnorePartControl.svBool);
+ chgVal1 := IS_CHANGED(ActValue.Dir[0]);
+ chgVal2 := IS_CHANGED(ActValue.Dir[1]);
+ WHILE TRUE DO
+   WAIT myKin.ecoscreen.HandlerInputs.bCalibSensor OR
+        myKin.ecoscreen.HandlerInputs.bDeactivateSensor OR
+        myKin.ecoscreen.HandlerInputs.bSetPartFound OR chgVal1 OR chgVal2;
+   chgVal1 := FALSE;
+   chgVal2 := FALSE;
+   myKin.ecoscreen.HandlerOutputs.bActValDir0 := ActValue.Dir[0];
+   myKin.ecoscreen.HandlerOutputs.bActValDir1 := ActValue.Dir[1];   
+   IF myKin.ecoscreen.HandlerInputs.bCalibSensor THEN
+      myKin.ecoscreen.HandlerInputs.bCalibSensor := FALSE;
+      myKin.ecoscreen.HandlerOutputs.bCalibRuns  := TRUE;
+      s := "Order to calibrate sensor from EcoScreen - Sensor=" + sName;
+      myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, s);
+      Calibrate();
+      myKin.ecoscreen.HandlerOutputs.bCalibRuns := FALSE;
+   END_IF;
+   IF myKin.ecoscreen.HandlerInputs.bDeactivateSensor THEN
+      SetActive(FALSE);
+      s := "Sensor " + sName + " deactivated from EcoScreen";
+      myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, s);  
+      myKin.ecoscreen.HandlerInputs.bDeactivateSensor := FALSE;
+   END_IF;
+   IF myKin.ecoscreen.HandlerInputs.bSetPartFound THEN
+      s := "Order SetPartFound to sensor from EcoScreen - Sensor=" + sName;
+      myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, s);
+      bSetPartPresent  := TRUE;
+      bResetPart       := FALSE;
+      iForcedPartState := 1;
+     myKin.ecoscreen.HandlerInputs.bSetPartFound   := FALSE;
+   END_IF;
+ END_WHILE;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   systemroutine - controller bootup
+//------------------------------------------------------------------------------
+ROUTINE NEW()
+  instId              := RcuGetInstanceId();
+  iCycleToPartPresent := cCycleToPartPresent;
+END_ROUTINE

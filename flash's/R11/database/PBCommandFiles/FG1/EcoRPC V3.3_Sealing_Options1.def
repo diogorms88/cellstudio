@@ -1,0 +1,138 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 10.01.2019  | MWT    | First release system options file
+//  v2_01.01.00  | 28.03.2019  | MWT    | minor CodeChangeRequired adjustments
+//  v2_01.02.00  | 03.12.2019  | MWT    | AddOn: new Firmware item V1.55
+//  v2_01.03.00  | 20.04.2020  | MWT    | AddOn: make ProfiBus available for Retrofit RPC V2
+//  v2_01.04.00  | 10.08.2020  | MWT    | AddOn: new fixed Domain option and fixate Option14 to sercos, because Retrofit shall not be released yet
+//  v2_01.05.00  | 16.03.2021  | MWT    | Change: default firmware for D3 platform is V1.55+
+//  v2_01.06.00  | 31.08.2021  | MWT    | Change: enable Option 14 so it can be changed to ProfiBus for Retrofit
+//  v2_01.07.00  | 15.09.2021  | MUCH   | AddOn: TeachInPendant option
+//  v2_01.08.00  | 21.02.2024  | MWT    | AddOn:  ECORPC-1722 new item RPC_V186 in OptionRPCFirmware
+//  v2_01.09.00  | 26.02.2024  | MWT    | AddOn:  ECORPC-1728 enable OptionElectricalVersion
+
+[OptionRPCFirmware]
+Name=RPC firmware
+Description=KeMotion-3000-DUERR-EcoRPC2
+Visible=1
+Enable=1
+CodeChangeRequired=
+Script=OptionRPCFirmware.pbcf
+Type=Combobox
+Item1=V1.40 - V1.50x|RPC_V140
+Item2=V1.55+|RPC_V155
+Item3=V1.86+|RPC_V186
+DefaultValue=V1.55+
+
+[OptionKeStudio]
+Name=KeStudio version
+Description=for auto generate HW config
+Visible=1
+Enable=0
+Script=OptionKeStudio.pbcf
+Type=Combobox
+Item1=V1.40+ RCMP|V1.40_RCMP
+DefaultValue=V1.40+ RCMP
+
+[Option14]
+Name=Option 14
+Description=Process Fieldbus
+Visible=1
+Enable=1
+CodeChangeRequired=Profibus
+Script=Option14.pbcf
+Type=Combobox
+Item1=Sercos III|SercosIII
+Item2=Profibus|Profibus
+DefaultValue=Sercos III
+
+[OptionElectricalVersion]
+Name=ElectricalVersion
+Description=Electrical version
+Visible=1
+Enable=1
+CodeChangeRequired=
+Script=
+Type=Combobox
+Item1=Version 1|El_V1
+Item2=Version 2|El_V2
+DefaultValue=Version 2
+
+[OptionRCMPGen]
+Name=Robot cabinet
+Description= 
+Visible=1
+Enable=0
+CodeChangeRequired=
+Script=
+Type=Combobox
+Item1=EcoRCMP with EcoRPC V3.3|RCMP1_D3
+DefaultValue=EcoRCMP with EcoRPC V3.3
+
+[OptionCoolingDevice]
+Name=Check cooling device
+Description= in robot cabinet
+Visible=1
+Enable=1
+Script=OptionCoolingDevice.pbcf
+Type=Combobox
+Item1=No|NoCooling
+Item2=Yes|Cooling
+DefaultValue=Yes
+
+[OptionSafetyType]
+Name=Safety concept
+Description=
+Visible=0
+Enable=0
+Script=OptionSafetyType.pbcf
+Type=Combobox
+Item1=No safety|NoSafety
+DefaultValue=No safety
+
+[OptionPurgeController]
+Name=Purge controller
+Description=
+Visible=0
+Enable=0
+Script=OptionPurgeController.pbcf
+Type=Combobox
+Item1=No purge controller|NoPurging
+Item2=F850S|F850S
+DefaultValue=No purge controller
+
+[OptionPDA]
+Name=PDA Interface
+Description=depending on kinematic configuration
+Visible=1
+Enable=0
+Script=OptionPDA.pbcf
+Type=Combobox
+Item1=No PDA|PDA_v0
+DefaultValue=No PDA
+
+[OptionTeachInPendant]
+Name=TeachInPendant
+Description=
+Visible=1
+Enable=1
+Script=OptionTeachInPendant.pbcf
+Type=Combobox
+Item1=T70|T70
+Item2=T70ex|T70ex
+Item3=T50|T50
+Item4=HT601Ex|HT601Ex
+DefaultValue=T50
+
+[Domain]
+Name=Domain
+Description=Application domain
+Visible=1
+Enable=0
+CodeChangeRequired=
+Script=
+Type=Combobox
+Item1=Paint|Paint
+Item2=Sealing|Sealing
+Item3=Others|Others
+DefaultValue=Sealing

@@ -1,0 +1,1392 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : TRcuPaintChecker.ttp                                        *
+*   Description : PaintChecker                                                *
+*-----------------------------------------------------------------------------*)
+
+TYPE GLOBAL
+   TRcuPaintCheckerType  : (eRcuPaintCheckerOff, eRcuPaintCheckerPhototerm, eRcuPaintCheckerMax);
+   TRcuPaintCheckerState : (eOff, eDisabled, eOk, eWarning, eError);
+   TRcuPacResultState    : (ePacResultNoError, ePacResultErrorUnderMin, ePacResultErrorOverMax, ePacResultErrorMeas);
+END_TYPE
+
+CONSTANT GLOBAL
+   cResultDataMaxNoOfPoints          : INT := 5;
+   cPacPLCErrorSignalsMaxNoOfAreas   : INT := 2;
+END_CONSTANT
+
+CONSTANT PRIVATE
+   cRelPathForDataFile               : STRING := "/Upload/";
+   cDataFileName                     : STRING := "Messung.dat";
+   cMaxNoOfPoints                    : INT    := 200;
+   cPLCErrorSignalsMaxNoOfAreas      : INT := 2;
+   cSequenceTime                     : INT    := 5000;   //timeout for Sequence feedback 1000ms = 1sec
+   
+   cTypeCodeLength                   : INT    := 4;
+   cColorCodeLength                  : INT    := 4;
+   
+   cHW_SLI_mLaserStandbyFromPLC      : STRING := "SLI_mLaserStandby";
+   cHW_SLI_mLaserEmissionFromPLC     : STRING := "SLI_mLaserOn";
+   cHW_SLI_mLaserOnFromPLC           : STRING := "SLI_mReleaseLaser";
+   cHW_SLO_mLaserOnToPLC             : STRING := "SLO_mReleaseLaser";
+ 
+   cHW_SLO_bPacPntsError           : STRING := "SLO_bPacPointsError";
+   cHW_SLO_bPacPntsThicknUnderMin  : STRING := "SLO_bPacPointsThicknUnderMin";
+   cHW_SLO_bPacPntsThicknAboveMax  : STRING := "SLO_bPacPointsThicknAboveMax";   
+   
+   cHW_SLO_bPacPntsError2          : STRING := "SLO_bPacPointsError2";
+   cHW_SLO_bPacPntsThicknUnderMin2 : STRING := "SLO_bPacPointsThicknUnderMin2";
+   cHW_SLO_bPacPntsThicknAboveMax2 : STRING := "SLO_bPacPointsThicknAboveMax2";   
+
+   cHW_SLO_mPacResultDataValid       : STRING := "SLO_mPacResultDataValid";
+   cHW_SLO_bPacResultDataPointNo     : STRING := "SLO_bPacResultDataPointNo?";
+   cHW_SLO_bPacResultDataPointState  : STRING := "SLO_bPacResultDataPointState?";   
+END_CONSTANT
+
+TYPE PRIVATE   
+   TRcuPacPLCResultPoint : STRUCT
+      iNo   : TInOutByte;
+      State  : TInOutByte; 
+   END_STRUCT;
+
+   TRcuPacPLCResultData : STRUCT
+      mEnabled : BOOL := FALSE;
+
+      mValid   : TInOutBool;
+      Points   : ARRAY[1..cResultDataMaxNoOfPoints] OF TRcuPacPLCResultPoint;
+   END_STRUCT;
+
+   TRcuPacErrorSignalsToPLC : STRUCT
+      iPacPointsError          : TInOutByte;
+      iPacPointsThicknUnderMin : TInOutByte;
+      iPacPointsThicknAboveMax : TInOutByte;
+   END_STRUCT;
+
+   TRcuPacSignalsToPLC : STRUCT
+      bLaserRelease  : TInOutBool;
+      Errors : ARRAY[1..cPLCErrorSignalsMaxNoOfAreas] OF  TRcuPacErrorSignalsToPLC;
+      
+      ResultData               : TRcuPacPLCResultData;
+   END_STRUCT;
+
+   TRcuPacSignalsFromPLC : STRUCT
+      bLaserRelease : TInOutBool;
+      bLaserStandbyMode  : TInOutBool;
+      bLaserEmissionMode : TInOutBool;
+   END_STRUCT;
+   
+   TRcuPacPLCSignals : STRUCT
+      In : TRcuPacSignalsFromPLC;
+      Out: TRcuPacSignalsToPLC;
+   END_STRUCT;
+END_TYPE
+
+VAR
+  type                 : TRcuPaintCheckerType;
+  bCfgDataRead         : BOOL;
+
+  measureData          : TRcuPacMeasureData;
+  
+  bLaserRelease        : BOOL; // Laser release from PLC
+  bLaserOn             : BOOL; // Laser is activated by teach program
+  bMeasureSeqRun       : BOOL; // Measure sequence is running
+  bMeasureRun          : BOOL; // Single measurement was started
+  
+  bFlagWriteDataToFile : BOOL;
+  
+  PLCSignals           : TRcuPacPLCSignals;
+  HMIPLCSignals        : TRcuPacPLCSignals;
+  
+  State                : TInOutWord;
+
+  bSimulateDevice      : BOOL;
+  
+  bUseTornadoLineForErrors : BOOL;
+END_VAR
+
+VAR PRIVATE
+  myRobot           : MAPTO TRcuRobot;
+  instId            : DINT;    // instance identification number
+  uploadHandshake   : TRcuUploadHandshake;
+  colorDef          : TRcuColorDef;
+
+  bMappingOk        : BOOL;
+  bLocBootupError   : BOOL;
+  pacPhototerm      : TRcuPacPhototerm;
+END_VAR
+
+VAR
+   Func1 : MAPTO ROUTINE (i : DINT) : BOOL := MAPX("TC.DLL.z.func1");
+END_VAR
+
+ROUTINE Test()
+   VAR
+      b : BOOL;
+      n : DINT;
+   END_VAR
+   
+   b := Func1(n);
+END_ROUTINE
+
+ROUTINE InitPaintChecker()
+  // Test();
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                         myRobot.kinListInx, 
+                         1, 
+                         instId, 
+                         "TRcuPaintChecker.InitPaintChecker");
+      RETURN;
+   END_IF; 
+
+   IF NOT bCfgDataRead THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Error in initialization, RobotControlCfg is not read!");
+
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        2, 
+                        instId, 
+                        "TRcuPaintChecker.InitPaintChecker");
+      RETURN;
+   END_IF;
+      
+   WAIT myRobot.initKinComplete;
+
+   measureData.Init(myRobot);
+   measureData.Reset();
+   
+   bMeasureSeqRun := FALSE;
+
+   bLaserRelease  := FALSE;
+   bLaserOn       := FALSE;
+   bMeasureSeqRun := FALSE;
+   bMeasureRun    := FALSE;
+   
+   START ObserveLaserRelease();
+   START ObserveWriteFile();
+   
+   IF bSimulateDevice THEN
+      START ObserveInputsFromHMI();
+   END_IF;
+
+   uploadHandshake.Init(myRobot, 
+                        cSV_bUploadNewPacData[myRobot.kinListInx],
+                        cSV_bUploadNewPacDataAck[myRobot.kinListInx],
+                        cSV_strUploadNewPacDataFile[myRobot.kinListInx]);
+   
+   colorDef.Init(myRobot);
+   
+   CASE type OF
+      eRcuPaintCheckerOff        : ;
+      eRcuPaintCheckerPhototerm  : pacPhototerm.InitPaintCheckerPhototerm(); 
+   END_CASE;
+END_ROUTINE
+
+ROUTINE ReadConfig(locRobot : TRcuRobot)
+   VAR
+      bError          : BOOL := FALSE;
+      iCatalogHdl     : DINT;    // handle of the Configuration directory
+      iTemp           : DINT;
+      rTemp           : REAL;
+      s               : STRING;
+   END_VAR
+    
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        3, 
+                        instId, 
+                        "TRcuPaintChecker.ReadConfig");
+      RETURN;
+   END_IF; 
+  
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "PaintChecker", iCatalogHdl) THEN
+      IF NOT CatalogReadIntRange(iCatalogHdl, "Type", iTemp, eRcuPaintCheckerOff, (eRcuPaintCheckerMax-1), FALSE) THEN
+         type := eRcuPaintCheckerOff;
+      ELSE
+         type := TRcuPaintCheckerType(iTemp);
+         IF type <> eRcuPaintCheckerOff THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC: PaintChecker is enabled");
+
+            IF NOT CatalogReadIntRange(iCatalogHdl, "SimulateDevice", iTemp, 0, 1, FALSE) THEN
+               bSimulateDevice := FALSE;
+            ELSE
+               bSimulateDevice := (iTemp=1);
+            END_IF;
+
+            IF bSimulateDevice THEN
+               myRobot.DebugPrint(eTracePaintChecker, 
+                                  "PAC: Simulation mode is enabled: Inputs are copied from HMI interface");
+            END_IF;
+
+            IF NOT CatalogReadIntRange(iCatalogHdl, "UseTornadoLineForErrors", iTemp, 0, 1, TRUE) THEN
+               bUseTornadoLineForErrors := FALSE;
+            ELSE
+               bUseTornadoLineForErrors := (iTemp=1);
+            END_IF;
+
+            IF CatalogGetHandleRelative(myRobot.rcCatHdl, "PaintChecker.ResultDataToPLc", iCatalogHdl) THEN
+               IF NOT CatalogReadIntRange(iCatalogHdl, "Enabled", iTemp, 0, 1, FALSE) THEN
+                  PLCSignals.Out.ResultData.mEnabled := FALSE;
+               ELSE
+                  PLCSignals.Out.ResultData.mEnabled := (iTemp=1);
+               END_IF;
+            END_IF;
+
+            IF PLCSignals.Out.ResultData.mEnabled THEN
+               myRobot.DebugPrint(eTracePaintChecker, 
+                   "PAC: Transfer of result data to PLC is enabled.");
+            END_IF;
+            
+            MapPLCSignalsPB(myRobot.kinListInx);
+            MapPLCSignalsIEC(myRobot.kinListInx);
+
+            CASE type OF
+               eRcuPaintCheckerPhototerm : 
+                  myRobot.DebugPrint(eTracePaintChecker, "PAC: Phototerm PS Online is enabled");
+
+                  bError := pacPhototerm.ReadConfig(myRobot); 
+            END_CASE;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   IF bError OR bLocBootupError THEN
+      IF bLocBootupError THEN
+         gbBootupError := TRUE;
+      END_IF;
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC: Error in configuration");
+      myRobot.DebugPrint(eTracePaintChecker,  
+                         "PAC: Boot-up PaintChecker failed");
+     
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        4, 
+                        instId, 
+                        "TRcuPaintChecker.ReadConfig");
+      RETURN;
+   ELSE
+      bCfgDataRead := TRUE;
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Co routines
+//-----------------------------------------------------------------------------
+ROUTINE ObserveLaserRelease() PRIVATE
+   VAR
+      bChgLaserRelease : BOOL;
+      bChgErrorPending : BOOL;
+      bChgSoftwareReady : BOOL;
+   END_VAR
+
+   bChgLaserRelease := IS_CHANGED(PLCSignals.In.bLaserRelease.svBool);
+   bChgErrorPending := IS_CHANGED(myRobot.bRcuAnyErrorPending);
+   bChgSoftwareReady := IS_CHANGED(pacPhototerm.bPTPSwReady);
+
+   WHILE TRUE DO
+      bLaserRelease := PLCSignals.In.bLaserRelease.svBool;
+      
+      PLCSignals.Out.bLaserRelease.svBool := bLaserRelease AND 
+                                             NOT myRobot.bRcuAnyErrorPending AND
+                                             pacPhototerm.bPTPSwReady;
+      
+      HMIPLCSignals.In.bLaserRelease.svBool := PLCSignals.In.bLaserRelease.svBool;
+      HMIPLCSignals.Out.bLaserRelease.svBool :=  PLCSignals.Out.bLaserRelease.svBool;
+      
+      State.svWord := eOff;
+      IF PLCSignals.Out.bLaserRelease.svBool THEN
+         State.svWord := eOk;   
+      ELSE
+         IF bLaserRelease THEN
+            IF myRobot.bRcuAnyErrorPending OR NOT pacPhototerm.bPTPSwReady THEN
+            State.svWord := eError;
+               
+               IF NOT pacPhototerm.bPTPSwReady THEN
+                  RcuSetMessageOnce(TRcuPaintChecker_NoSwReadyPtp, 
+                                    myRobot.kinListInx, 
+                                    1, 
+                                    instId, 
+                                    "TRcuPaintChecker.ObserveLaserRelease");
+
+               END_IF;
+            ELSE
+               State.svWord := eDisabled;   
+            END_IF;
+         ELSE
+            State.svWord := eDisabled;   
+         END_IF;
+      END_IF;
+      
+      WAIT bChgLaserRelease OR bChgErrorPending OR bChgSoftwareReady;
+      
+      IF bChgLaserRelease AND NOT PLCSignals.In.bLaserRelease.svBool THEN
+         IF bMeasureSeqRun THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                              "PAC: LaserRelease was resetted and a measure sequence is running");
+                              
+            RcuSetMessageOnce(TRcuPaintChecker_NoLaserRel_PLC, 
+                              myRobot.kinListInx, 
+                              1, 
+                              instId, 
+                              "TRcuPaintChecker.ObserveLaserRelease");
+         END_IF;
+      END_IF;
+      
+      bChgLaserRelease := FALSE;
+      bChgErrorPending := FALSE;
+      bChgSoftwareReady := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveInputsFromHMI()
+   VAR
+      bChgLaserRelease : BOOL;
+      bChgLaserEmissionMode : BOOL;
+      bChgLaserStandbyMode  : BOOL;
+   END_VAR 
+ 
+   bChgLaserRelease  := IS_CHANGED(HMIPLCSignals.In.bLaserRelease.svBool);
+   bChgLaserStandbyMode  := IS_CHANGED(HMIPLCSignals.In.bLaserStandbyMode.svBool);
+   bChgLaserEmissionMode := IS_CHANGED(HMIPLCSignals.In.bLaserEmissionMode.svBool);
+
+   WHILE TRUE DO
+      WAIT bChgLaserRelease OR bChgLaserStandbyMode OR bChgLaserEmissionMode;
+      
+      IF bChgLaserRelease THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC: Simulation : PLC Signal 'LaserRelease' is changed from " + STR(PLCSignals.In.bLaserRelease.svBool) + 
+                            " to " + STR(HMIPLCSignals.In.bLaserRelease.svBool));
+         bChgLaserRelease := FALSE;
+
+         PLCSignals.In.bLaserRelease.svBool := HMIPLCSignals.In.bLaserRelease.svBool;
+      END_IF;
+
+      IF bChgLaserStandbyMode THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC: Simulation : PLC Signal 'Laser is in standby mode' is changed from " + STR(PLCSignals.In.bLaserStandbyMode.svBool) + 
+                            " to " + STR(HMIPLCSignals.In.bLaserStandbyMode.svBool));
+         bChgLaserStandbyMode := FALSE;
+
+         PLCSignals.In.bLaserStandbyMode.svBool := HMIPLCSignals.In.bLaserStandbyMode.svBool;
+      END_IF;
+
+      IF bChgLaserEmissionMode THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC: Simulation : PLC Signal 'Laser is in emission mode' is changed from " + STR(PLCSignals.In.bLaserEmissionMode.svBool) + 
+                            " to " + STR(HMIPLCSignals.In.bLaserEmissionMode.svBool));
+         bChgLaserEmissionMode := FALSE;
+
+         PLCSignals.In.bLaserEmissionMode.svBool := HMIPLCSignals.In.bLaserEmissionMode.svBool;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveWriteFile()
+   VAR
+      bChgWriteDataToFile : BOOL;
+   END_VAR 
+ 
+   bChgWriteDataToFile  := IS_CHANGED(bFlagWriteDataToFile);
+
+   WHILE TRUE DO
+      WAIT bChgWriteDataToFile;
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: ObserveWriteFile Change detected");
+
+      IF bFlagWriteDataToFile THEN
+         WriteDataToFile();
+
+         WriteDataToPLC();
+
+         bFlagWriteDataToFile := FALSE;
+      END_IF;
+
+      bChgWriteDataToFile := FALSE;         
+   END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Mapping functions
+//-----------------------------------------------------------------------------
+ROUTINE MapPLCSignalsIEC(CONST iRobot : DINT) 
+                        PRIVATE
+   bMappingOk := TRUE;
+   
+   MapAndCheckBool(iRobot, HMIPLCSignals.In.bLaserStandbyMode, cSV_bPacFromPLCLaserStandbyMode[iRobot]);
+   MapAndCheckBool(iRobot, HMIPLCSignals.In.bLaserEmissionMode, cSV_bPacFromPLCLaserEmissionMode[iRobot]);
+   MapAndCheckBool(iRobot, HMIPLCSignals.In.bLaserRelease, cSV_bPacFromPLCLaserOn[iRobot]);
+
+   MapAndCheckBool(iRobot, HMIPLCSignals.Out.bLaserRelease, cSV_bPacToPLCLaserOn[iRobot]);
+
+   MapAndCheckWord(iRobot, State, cSV_iPacToHmiState[iRobot]);
+
+   IF NOT bMappingOk THEN
+      bLocBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, 0, "TRcuPaintChecker.MapPLCSignalsIEC");
+   END_IF;   
+END_ROUTINE
+
+ROUTINE MapPLCSignalsPB(CONST iRobot : DINT) PRIVATE
+   VAR
+      i : INT;
+   END_VAR;
+   
+   bMappingOk := TRUE;
+     
+   MapAndCheckBool(iRobot, PLCSignals.In.bLaserStandbyMode, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLI_mLaserStandbyFromPLC); 
+   MapAndCheckBool(iRobot, PLCSignals.In.bLaserEmissionMode, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLI_mLaserEmissionFromPLC);
+   MapAndCheckBool(iRobot, PLCSignals.In.bLaserRelease, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLI_mLaserOnFromPLC);   
+   MapAndCheckBool(iRobot, PLCSignals.Out.bLaserRelease, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_mLaserOnToPLC);
+   
+   MapAndCheckByte(iRobot, PLCSignals.Out.Errors[1].iPacPointsError, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_bPacPntsError);
+   MapAndCheckByte(iRobot, PLCSignals.Out.Errors[1].iPacPointsThicknUnderMin, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_bPacPntsThicknUnderMin);
+   MapAndCheckByte(iRobot, PLCSignals.Out.Errors[1].iPacPointsThicknAboveMax, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_bPacPntsThicknAboveMax);
+   
+   IF bUseTornadoLineForErrors THEN
+      MapAndCheckByte(iRobot, PLCSignals.Out.Errors[2].iPacPointsError, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_bPacPntsError2);
+      MapAndCheckByte(iRobot, PLCSignals.Out.Errors[2].iPacPointsThicknUnderMin, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_bPacPntsThicknUnderMin2);
+      MapAndCheckByte(iRobot, PLCSignals.Out.Errors[2].iPacPointsThicknAboveMax, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_bPacPntsThicknAboveMax2);
+   END_IF;   
+
+   IF PLCSignals.Out.ResultData.mEnabled THEN
+      FOR i := 1 TO cResultDataMaxNoOfPoints DO
+         MapAndCheckByte(iRobot, PLCSignals.Out.ResultData.Points[i].iNo, "RCU" + STR(gyiNrRcu[iRobot]) + "." + StrReplaceString(cHW_SLO_bPacResultDataPointNo, "?", STR(i)));
+         MapAndCheckByte(iRobot, PLCSignals.Out.ResultData.Points[i].State, "RCU" + STR(gyiNrRcu[iRobot]) + "." + StrReplaceString(cHW_SLO_bPacResultDataPointState, "?", STR(i)));
+      END_FOR;
+
+      MapAndCheckBool(iRobot, PLCSignals.Out.ResultData.mValid, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHW_SLO_mPacResultDataValid); 
+   END_IF;
+   
+   IF NOT bMappingOk THEN
+      bLocBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, 0, "TRcuPaintChecker.MapPLCSignalsIEC");
+   ELSE
+      measureData.ErrorCounts.ErrorCounters[1].iPointsError          := MAP(PLCSignals.Out.Errors[1].iPacPointsError.svByte);
+      measureData.ErrorCounts.ErrorCounters[1].iPointsUnderThicknMin := MAP(PLCSignals.Out.Errors[1].iPacPointsThicknUnderMin.svByte);
+      measureData.ErrorCounts.ErrorCounters[1].iPointsAboveThicknMax := MAP(PLCSignals.Out.Errors[1].iPacPointsThicknAboveMax.svByte);
+
+      IF bUseTornadoLineForErrors THEN
+         measureData.ErrorCounts.ErrorCounters[2].iPointsError          := MAP(PLCSignals.Out.Errors[2].iPacPointsError.svByte);
+         measureData.ErrorCounts.ErrorCounters[2].iPointsUnderThicknMin := MAP(PLCSignals.Out.Errors[2].iPacPointsThicknUnderMin.svByte);
+         measureData.ErrorCounts.ErrorCounters[2].iPointsAboveThicknMax := MAP(PLCSignals.Out.Errors[2].iPacPointsThicknAboveMax.svByte);
+      END_IF;
+   END_IF;   
+END_ROUTINE
+
+ROUTINE MapAndCheckBool(CONST iRobot : DINT; 
+                        bMapVar : TInOutBool; 
+                        sSvVarName : STRING) 
+                       PRIVATE
+    bMapVar.svBool := MAPX(sSvVarName);    
+    IF NOT IS_MAPPED(bMapVar.svBool) THEN
+       bMappingOk := FALSE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMapInputBit, 
+                         myRobot.kinListInx, 
+                         1, 
+                         0, 
+                         "TRcuPaintChecker.MapAndCheckBool", 
+                         sSvVarName);
+    END_IF;  
+END_ROUTINE
+
+ROUTINE MapAndCheckWord(CONST iRobot : DINT; 
+                        iMapVar : TInOutWord; 
+                        sSvVarName : STRING) 
+                       PRIVATE
+
+    iMapVar.svWord := MAPX(sSvVarName);    
+    IF NOT IS_MAPPED(iMapVar.svWord) THEN
+       bMappingOk := FALSE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutWord, 
+                         myRobot.kinListInx, 
+                         1, 
+                         0, 
+                         "TRcuPaintChecker.MapAndCheckWord", 
+                         sSvVarName);
+    END_IF;  
+
+END_ROUTINE
+
+ROUTINE MapAndCheckByte(CONST iRobot : DINT; 
+                        bMapVar : TInOutByte; 
+                        sSvVarName : STRING) 
+                       PRIVATE
+
+    bMapVar.svByte := MAPX(sSvVarName);    
+    IF NOT IS_MAPPED(bMapVar.svByte) THEN
+       bMappingOk := FALSE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutWord, 
+                         myRobot.kinListInx, 
+                         1, 
+                         0, 
+                         "TRcuPaintChecker.MapAndCheckByte", 
+                         sSvVarName);
+    END_IF;  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Macros
+//-----------------------------------------------------------------------------
+ROUTINE MacroEnableDisable(start : BOOL)
+   MAINRUN();
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroEnableDisable: start:=" + STR(start));
+   
+   IF NOT bLaserRelease THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroEnableDisable and no LaserRelease");
+
+      RcuSetMessageOnce(TRcuPaintChecker_NoLaserRelease, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuPaintChecker.MacroEnableDisable");
+      RETURN;
+   END_IF;
+      
+   IF start THEN
+      measureData.Reset();
+
+       ResetDataToPLC();
+   ELSE
+      IF bMeasureSeqRun THEN
+         bMeasureSeqRun := FALSE;
+         
+         CASE type OF
+            eRcuPaintCheckerPhototerm : pacPhototerm.StopMeasSequence(); 
+         END_CASE;
+         
+         START LogErrorCounters();
+      END_IF;
+   END_IF;
+   
+   CASE type OF
+       eRcuPaintCheckerPhototerm : 
+          bLaserOn := start;
+   END_CASE;
+END_ROUTINE
+
+ROUTINE MacroSetMeasOption(bOnlyOneShot : BOOL)
+   VAR
+      bOK            : BOOL;
+      bTimeOut       : BOOL;
+      bReadyForOrder : MAPTO BOOL;
+      bErrorPending  : MAPTO BOOL;
+      bEmissionMode  : MAPTO BOOL;
+   END_VAR;
+
+   MAINRUN();
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroSetMeasOption: start:=" + STR(bOnlyOneShot));
+
+   IF NOT bLaserRelease THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroSetMeasOption and no LaserRelease");
+
+      RETURN;
+   END_IF;
+
+   CASE type OF
+       eRcuPaintCheckerPhototerm : 
+           bReadyForOrder := MAP(pacPhototerm.bPTPReadyForOrder); 
+           bErrorPending  := MAP(pacPhototerm.bErrorPending);
+           bEmissionMode  := MAP(pacPhototerm.bPTPInEmissionMode);
+           
+   END_CASE;
+   IF bReadyForOrder AND NOT bErrorPending THEN;
+      IF bOnlyOneShot THEN
+         IF bMeasureSeqRun THEN
+           RcuSetMessageOnce(TRcuPaintChecker_ErrSeqRunning, 
+                             myRobot.kinListInx, 
+                             1, 
+                             instId, 
+                             "TRcuPaintChecker.MacroSetMeasOption");
+         ELSIF NOT bEmissionMode THEN
+           RcuSetMessageOnce(TRcuPaintChecker_ErrNotInEmMode, 
+                             myRobot.kinListInx, 
+                             1, 
+                             instId, 
+                             "TRcuPaintChecker.MacroSetMeasOption");         
+         ELSE
+            measureData.Reset();
+            
+            ResetDataToPLC();
+            
+            GetHeaderData();
+
+            IF (measureData.iColorGroup > 0) AND (measureData.iColorGroup < 32) THEN
+               bMeasureSeqRun := TRUE;
+
+
+               CASE type OF
+                   eRcuPaintCheckerPhototerm : pacPhototerm.InitNewMeasSequence(); 
+               END_CASE;
+            ELSE
+               RcuSetMessageOnce(TRcuPaintChecker_ErrColorGroup, 
+                                 myRobot.kinListInx, 
+                                 1, 
+                                 instId, 
+                                 "TRcuPaintChecker.MacroSetMeasOption", 
+                                 STR(measureData.iColorGroup));
+            END_IF;
+         END_IF;
+      END_IF;
+   ELSE
+      bMeasureSeqRun := FALSE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE MacroWriteDataToFile()   
+   MAINRUN();
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroWriteDataToFile Start");
+
+   IF NOT bLaserRelease THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroWriteDataToFile and no LaserRelease");
+
+      RETURN;
+   END_IF;
+
+   bFlagWriteDataToFile := TRUE;
+
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC: MacroWriteDataToFile End");
+END_ROUTINE
+
+ROUTINE ResetOnProgStart()
+   IF  bMeasureSeqRun  THEN
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC: A measurement sequence was active on prog start. Now it is resetet");
+      bMeasureSeqRun := FALSE;
+   END_IF;
+           
+   bMeasureRun:= FALSE;
+   
+   CASE type OF
+      eRcuPaintCheckerPhototerm : pacPhototerm.ResetOnProgStart(); 
+   END_CASE;
+END_ROUTINE
+
+ROUTINE ResetDataToPLC()
+   VAR
+      i : INT;
+   END_VAR
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Reset data to PLC");
+
+   IF PLCSignals.Out.ResultData.mEnabled THEN
+      FOR i:=1 TO cResultDataMaxNoOfPoints DO
+         IF IS_MAPPED(PLCSignals.Out.ResultData.Points[i].iNo.svByte) THEN
+            PLCSignals.Out.ResultData.Points[i].iNo.svByte   := BYTE(0);
+         END_IF;
+         
+         IF IS_MAPPED(PLCSignals.Out.ResultData.Points[i].State.svByte) THEN
+            PLCSignals.Out.ResultData.Points[i].State.svByte := BYTE(ePacResultNoError);
+         END_IF;
+      END_FOR;   
+
+      IF IS_MAPPED(PLCSignals.Out.ResultData.mValid.svBool) THEN
+         PLCSignals.Out.ResultData.mValid.svBool := FALSE;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+ROUTINE WriteDataToPLC()
+   VAR
+      j : INT;
+      k : INT;
+   END_VAR
+   
+   IF PLCSignals.Out.ResultData.mEnabled THEN
+       myRobot.DebugPrint(eTracePaintChecker, "PAC: Write result data to PLC"); 
+      k := 1;
+      
+      FOR j:= 1 TO INT(measureData.ErrorCounts.ErrorCounters[1].iPointsUnderThicknMin) DO
+         IF k <= cResultDataMaxNoOfPoints THEN
+            IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].iNo.svByte) THEN
+               PLCSignals.Out.ResultData.Points[k].iNo.svByte   := BYTE(measureData.ErrorCounts.PointsUnderThicknMin[j]);
+            END_IF;
+
+            IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].State.svByte) THEN
+               PLCSignals.Out.ResultData.Points[k].State.svByte := BYTE(ePacResultErrorUnderMin);
+            END_IF;
+            
+             myRobot.DebugPrint(eTracePaintChecker, "PAC: Result data: No:" + STR(k) + ", PointNo: " + STR(measureData.ErrorCounts.PointsUnderThicknMin[j]) + ", State: " + STR(ePacResultErrorUnderMin));
+
+            k := k + 1;
+         END_IF;
+      END_FOR;
+
+      FOR j:= 1 TO INT(measureData.ErrorCounts.ErrorCounters[1].iPointsError) DO
+         IF k <= cResultDataMaxNoOfPoints THEN
+            IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].iNo.svByte) THEN
+               PLCSignals.Out.ResultData.Points[k].iNo.svByte   := BYTE(measureData.ErrorCounts.PointsError[j]);
+            END_IF;
+
+            IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].State.svByte) THEN
+               PLCSignals.Out.ResultData.Points[k].State.svByte := BYTE(ePacResultErrorMeas);
+            END_IF;
+
+             myRobot.DebugPrint(eTracePaintChecker, "PAC: Result data: No:" + STR(k) + ", PointNo: " + STR(measureData.ErrorCounts.PointsError[j]) + ", State: " + STR(ePacResultErrorMeas));
+
+            k := k + 1;
+         END_IF;
+      END_FOR;
+
+      FOR j:= 1 TO INT(measureData.ErrorCounts.ErrorCounters[1].iPointsAboveThicknMax) DO
+         IF k <= cResultDataMaxNoOfPoints THEN
+            IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].iNo.svByte) THEN
+               PLCSignals.Out.ResultData.Points[k].iNo.svByte   := BYTE(measureData.ErrorCounts.PointsOverThicknMax[j]);
+            END_IF;
+
+            IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].State.svByte) THEN
+               PLCSignals.Out.ResultData.Points[k].State.svByte := BYTE(ePacResultErrorOverMax);
+            END_IF;
+
+             myRobot.DebugPrint(eTracePaintChecker, "PAC: Result data: No:" + STR(k) + ", PointNo: " + STR(measureData.ErrorCounts.PointsOverThicknMax[j]) + ", State: " + STR(ePacResultErrorOverMax));
+
+            k := k + 1;
+         END_IF;
+      END_FOR;
+
+      FOR k:=k TO cResultDataMaxNoOfPoints DO
+         IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].iNo.svByte) THEN
+            PLCSignals.Out.ResultData.Points[k].iNo.svByte   := BYTE(0);
+         END_IF;
+
+         IF IS_MAPPED(PLCSignals.Out.ResultData.Points[k].State.svByte) THEN
+            PLCSignals.Out.ResultData.Points[k].State.svByte := BYTE(ePacResultNoError);
+         END_IF;
+         
+          myRobot.DebugPrint(eTracePaintChecker, "PAC: Result data: No:" + STR(k) + ", PointNo: 0, State: " + STR(ePacResultNoError));
+      END_FOR;
+               
+      IF IS_MAPPED(PLCSignals.Out.ResultData.mValid.svBool) THEN
+         Sleep(100);
+
+         PLCSignals.Out.ResultData.mValid.svBool := TRUE;
+         myRobot.DebugPrint(eTracePaintChecker, "PAC: Result data: Set valid flag to " + STR(PLCSignals.Out.ResultData.mValid.svBool));
+      END_IF;
+   ELSE
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Write result data to PLC is disabled"); 
+   END_IF;
+END_ROUTINE
+
+ROUTINE WriteDataToFile()
+   VAR
+      bTimeOut        : BOOL;
+      bCsvFileWritten : MAPTO BOOL;
+   END_VAR;
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Write data to file");
+
+   CASE type OF
+      eRcuPaintCheckerPhototerm : 
+         bCsvFileWritten := MAP(pacPhototerm.bPTPCsvFileWritten); 
+   END_CASE;
+
+   bTimeOut := FALSE;
+   SysTimerSet(cSequenceTime, bTimeOut);
+   WAIT bCsvFileWritten OR bTimeOut;
+   IF bTimeOut THEN
+     myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroWriteDataToFile Waiting for Signal 'CsvFileWritten' Timeout");
+   ELSE
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: MacroWriteDataToFile Start WriteFile");
+     
+      START WriteFile(measureData);
+   END_IF;
+END_ROUTINE
+
+ROUTINE GunDirect(Number : GUNNO; Command : GUNONOFF)
+   VAR
+      iGunNumber    : DINT; // Number of the Gun (guntrigger, brushtrigger)
+      iNoOfPoints   : MAPTO INT;
+      point         : MAPTO TRcuPacMeasurePoint;
+   END_VAR
+
+   MAINRUN();
+   iGunNumber := Number+1;
+
+   IF NOT bLaserRelease THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: GunOn/Off and no LaserRelease");
+
+      RETURN;
+   END_IF;
+
+   IF (iGunNumber <> 1)  THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrGunOnNoSeq, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuPaintChecker.GunDirect");
+                        
+      RETURN;
+   END_IF;      
+
+   IF (Command = GunOn) THEN
+      IF bMeasureRun THEN
+         gTriggerError := gTriggerError+1;
+         myRobot.DebugPrint(eTraceTrigger, "PAC: Trigger: logical error in trigger execution");
+         RcuSetMessageOnce(RcuInterfToProces_WarGunTwiceOn, 
+                           myRobot.kinListInx, 
+                           1, 
+                           0, 
+                           "TRcuPaintChecker.GunDirect", 
+                           STR(iGunNumber));
+      ELSE
+         bMeasureRun := TRUE;
+ 
+         iNoOfPoints := MAP(measureData.iNoOfPoints);
+         iNoOfPoints := iNoOfPoints + 1;
+   
+         IF iNoOfPoints <= cMaxNoOfPoints THEN
+            point := MAP(measureData.Points[iNoOfPoints]);
+
+            point.iPointNo := iNoOfPoints;
+
+            CASE type OF
+               eRcuPaintCheckerPhototerm : pacPhototerm.SignalGunOn(point); 
+            ELSE
+               // FEHLER kein PaintChecker konfiguriert
+            END_CASE;
+
+            Sleep(200);
+            
+            point.Coord.frame.mPos.mValues[0] := myRobot.actObjectPos.mFrame.mPos.mValues[0];
+            point.Coord.frame.mPos.mValues[1] := myRobot.actObjectPos.mFrame.mPos.mValues[1];
+            point.Coord.frame.mPos.mValues[2] := myRobot.actObjectPos.mFrame.mPos.mValues[2];
+            point.Coord.frame.mOri.mValues[0] := myRobot.actObjectPos.mFrame.mOri.mValues[0];
+            point.Coord.frame.mOri.mValues[1] := myRobot.actObjectPos.mFrame.mOri.mValues[1];
+            point.Coord.frame.mOri.mValues[2] := myRobot.actObjectPos.mFrame.mOri.mValues[2];
+
+         ELSE
+            RcuSetMessageOnce(TRcuPaintChecker_ErrNoOfPoints, 
+                              myRobot.kinListInx, 
+                              1, 
+                              instId, 
+                              "TRcuPaintChecker.GunDirect",
+                              STR(cMaxNoOfPoints));      
+         END_IF;                    
+      END_IF;
+      
+      SwoRaiseEvent(eScopeSignalGunOn, "GunOnDirect");
+   ELSIF (Command = GunOff) THEN
+      IF NOT bMeasureRun THEN
+         gTriggerError := gTriggerError+1;
+         myRobot.DebugPrint(eTraceTrigger, "PAC: Trigger: logical error in trigger execution");
+         RcuSetMessageOnce(RcuInterfToProces_WarGunTwicOff, myRobot.kinListInx, 1, 0, "RcuInterfaceToPaint.GunDirect", STR(iGunNumber));
+      END_IF;
+      
+      bMeasureRun := FALSE;
+
+      SwoRaiseEvent(eScopeSignalGunOff, "GunOffDirect");
+   ELSE
+      RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, myRobot.kinListInx, 1, 0, "RcuInterfaceToPaint.GunDirect", STR(iGunNumber));
+   END_IF;
+   
+   myRobot.DebugPrint(eTracePaintChecker, "GUN_DIRECT " + STR(iGunNumber) + " " + STR(Command)); 
+END_ROUTINE
+
+ROUTINE SignalGun(gunData : TMcuUserData; 
+                  pos : TRcuTrigger;
+                  posInvalid : BOOL; 
+                  VAR_IN triggerIdx  : DINT)
+   VAR
+      onOff           : TRcuTriggerType;
+      iGunNumber      : DINT;
+
+      iNoOfPoints     : MAPTO INT;
+      point           : MAPTO TRcuPacMeasurePoint;
+   END_VAR
+
+   IF NOT bLaserRelease THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: GunOn/Off and no LaserRelease");
+
+      RETURN;
+   END_IF;
+
+   onOff := TRcuTriggerType(gunData.mDataInt[0]);
+   iGunNumber := gunData.mDataInt[3];
+   IF (iGunNumber <> 1)  THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrGunOnNoSeq, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuPaintChecker.SignalGun");
+                        
+      RETURN;
+   END_IF;      
+
+   IF (onOff = eTriggerGunOn) OR (onOff = eTriggerRepos) THEN
+      IF bMeasureRun THEN
+         gTriggerError := gTriggerError+1;
+         myRobot.DebugPrint(eTraceTrigger, "PAC: Trigger: logical error in trigger execution");
+         RcuSetMessageOnce(RcuInterfToProces_WarGunTwiceOn, 
+                           myRobot.kinListInx, 
+                           1, 
+                           0, 
+                           "TRcuPaintChecker.SignalGun", 
+                           STR(iGunNumber));
+      ELSE
+         bMeasureRun := TRUE;
+ 
+         iNoOfPoints := MAP(measureData.iNoOfPoints);
+         iNoOfPoints := iNoOfPoints + 1;
+   
+         IF iNoOfPoints <= cMaxNoOfPoints THEN
+            point := MAP(measureData.Points[iNoOfPoints]);
+
+            point.iPointNo := iNoOfPoints;
+
+            SetTriggerPosition(point,
+                               iGunNumber, 
+                               onOff, 
+                               gunData.mDataInt[1], 
+                               gunData.mDataInt[2], 
+                               pos, 
+                               posInvalid, 
+                               triggerIdx);
+            CASE type OF
+               eRcuPaintCheckerPhototerm : pacPhototerm.SignalGunOn(point); 
+            ELSE
+               // FEHLER kein PaintChecker konfiguriert
+            END_CASE;
+         ELSE
+            RcuSetMessageOnce(TRcuPaintChecker_ErrNoOfPoints, 
+                              myRobot.kinListInx, 
+                              1, 
+                              instId, 
+                              "TRcuPaintChecker.SignalGun",
+                              STR(cMaxNoOfPoints));      
+         END_IF;                    
+      END_IF;
+      
+      SwoRaiseEvent(eScopeSignalGunOn, "SignalGunOn");
+   ELSIF onOff = eTriggerGunOff THEN
+      IF NOT bMeasureRun THEN
+         gTriggerError := gTriggerError+1;
+         myRobot.DebugPrint(eTraceTrigger, "PAC: Trigger: logical error in trigger execution");
+         RcuSetMessageOnce(RcuInterfToProces_WarGunTwicOff, myRobot.kinListInx, 1, 0, "RcuInterfaceToPaint.SignalGun", STR(iGunNumber));
+      END_IF;
+      
+      bMeasureRun := FALSE;
+      SwoRaiseEvent(eScopeSignalGunOff, "SignalGunOff");
+   ELSE
+      RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, myRobot.kinListInx, 1, 0, "RcuInterfaceToPaint.SignalGun", STR(iGunNumber));
+   END_IF;
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Signal GUN " + STR(iGunNumber) + " " + STR(onOff)); 
+END_ROUTINE
+
+ROUTINE SetTriggerPosition(point : TRcuPacMeasurePoint;
+                           gunNumber : DINT; 
+                           onOff : TRcuTriggerType; 
+                           lastTrigger : DINT; 
+                           iTriggerStackHdl : DINT; 
+                           pos : TRcuTrigger; 
+                           posInvalid : BOOL; 
+                           triggerIdx : DINT) 
+                          PRIVATE
+   
+   VAR
+      kinPos  : TMcuVector3;
+      kinOri  : TMcuVector3;
+      diff    : TMcuVector3;
+      cartTriggerPos : TMcuPosition;
+      actRefSysId    : TMcuDbObjID;
+      validationError : BOOL;
+      d : REAL;
+      dsTrigger                 : REAL;
+   END_VAR
+   
+   IF gunNumber <> 1 THEN
+      RcuSetMessageOnce(RcuInterfToProces_ErrGunNr, myRobot.kinListInx, 2, 0, "RcuInterfaceToPaint.WaitPrewarnTime", STR(gunNumber));
+      RETURN;
+   END_IF;
+   
+   IF (onOff <= eTriggerInvalid) OR (onOff >= eTriggerMax) THEN
+      RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, myRobot.kinListInx, 2, 0, "RcuInterfaceToPaint.WaitPrewarnTime", STR(gunNumber));
+      RETURN;
+   END_IF;
+   
+   LOCK; // to set this vars consistent is very important for repos, so put them inside a lock
+
+(*
+   point.Coord.frame.mPos.mValues[0] := myRobot.actCartVals.mTcpPosRel.mValues[0];
+   point.Coord.frame.mPos.mValues[1] := myRobot.actCartVals.mTcpPosRel.mValues[1];
+   point.Coord.frame.mPos.mValues[2] := myRobot.actCartVals.mTcpPosRel.mValues[2];
+   point.Coord.frame.mOri.mValues[0] := myRobot.actCartVals.mTcpOriRel.mValues[0];
+   point.Coord.frame.mOri.mValues[1] := myRobot.actCartVals.mTcpOriRel.mValues[1];
+   point.Coord.frame.mOri.mValues[2] := myRobot.actCartVals.mTcpOriRel.mValues[2];
+*)
+
+   point.Coord.frame.mPos.mValues[0] := myRobot.actObjectPos.mFrame.mPos.mValues[0];
+   point.Coord.frame.mPos.mValues[1] := myRobot.actObjectPos.mFrame.mPos.mValues[1];
+   point.Coord.frame.mPos.mValues[2] := myRobot.actObjectPos.mFrame.mPos.mValues[2];
+   point.Coord.frame.mOri.mValues[0] := myRobot.actObjectPos.mFrame.mOri.mValues[0];
+   point.Coord.frame.mOri.mValues[1] := myRobot.actObjectPos.mFrame.mOri.mValues[1];
+   point.Coord.frame.mOri.mValues[2] := myRobot.actObjectPos.mFrame.mOri.mValues[2];
+
+   myRobot.progPath.lastExecutedTrigger := lastTrigger;
+   myRobot.progPath.lastExecJobStackHdl := iTriggerStackHdl;
+   
+   // should be reseted inside the eTriggerRepos-clause but since reposTrigger 
+   // is always the first trigger it is more safe to reset it here, to avoid 
+   // problems caused by not executed repos triggers
+   myRobot.progPath.reposTriggerGun := 0;
+   
+   UNLOCK;
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Executed trigger-pos  : " + 
+                                          STR(point.Coord.frame.mPos.mValues[0]) + "/" +
+                                          STR(point.Coord.frame.mPos.mValues[1]) + "/" +
+                                          STR(point.Coord.frame.mPos.mValues[2]));
+
+   IF (onOff = eTriggerGunOn) OR (onOff = eTriggerRepos) THEN
+      SwoRaiseEvent(eScopeSignalGunOnMR, "SignalGunOnMR");
+   ELSIF onOff = eTriggerGunOff THEN
+      SwoRaiseEvent(eScopeSignalGunOffMR, "SignalGunOffMR");
+   END_IF;
+   
+(*
+   IF TraceLevel(eTriggerVerify) THEN
+      IF NOT posInvalid THEN
+         IF myRobot.actCartVals.mRefSysIsExternalTool THEN
+            RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, actRefSysId); 
+            pos.GetMcuPos(cartTriggerPos, myRobot);
+            IF cartTriggerPos.mPosCart.mRefSysID <> actRefSysId THEN // WORLD -> Object
+               myRobot.DebugPrint(eTraceTrigger, "PAC: Transform position to actual Mcu ref-sys");
+               cartTriggerPos.mPosCart.mFrame.mOri := pos.pointFrame.mOri;
+         //               McuTransformPosCart(cartTriggerPos.mPosCart, cartTriggerPos.mPosCart, actRefSysId);
+               McuInvertFrame(cartTriggerPos.mPosCart.mFrame, cartTriggerPos.mPosCart.mFrame);
+               McuMultiplyFrames(cartTriggerPos.mPosCart.mFrame, cartTriggerPos.mPosCart.mFrame, myRobot.actExtTool);
+            END_IF;
+         ELSE
+            actRefSysId := McuGetRefSysForActCartVals(myRobot.kinematicMcuId);
+            pos.GetMcuPos(cartTriggerPos, myRobot);
+            IF cartTriggerPos.mPosCart.mRefSysID <> actRefSysId THEN
+               myRobot.DebugPrint(eTriggerVerify, "PAC: cartTriggerPos.mPosCart.mRefSysID   : "+STR(cartTriggerPos.mPosCart.mRefSysID));
+               myRobot.DebugPrint(eTriggerVerify, "PAC: actRefSysId                         : "+STR(actRefSysId));
+               myRobot.DebugPrint(eTraceTrigger, "PAC: Transform position to actual Mcu ref-sys");
+               McuTransformPosCart(cartTriggerPos.mPosCart, cartTriggerPos.mPosCart, actRefSysId); 
+            END_IF;
+         END_IF;
+
+         myRobot.DebugPrint(eTriggerVerify, "PAC: Executed trigger-pos   : "+STR(kinPos.mValues[0])+"/"+STR(kinPos.mValues[1])+"/"+STR(kinPos.mValues[2]));
+         myRobot.DebugPrint(eTriggerVerify, "PAC: Programmed trigger-pos : "+STR(cartTriggerPos.mPosCart.mFrame.mPos.mValues[0])+"/"
+            +STR(cartTriggerPos.mPosCart.mFrame.mPos.mValues[1])+"/"
+            +STR(cartTriggerPos.mPosCart.mFrame.mPos.mValues[2]));
+//         McuSubVector3(diff, pos.frame.mPos, kinPos);
+         McuSubVector3(diff, cartTriggerPos.mPosCart.mFrame.mPos, kinPos);
+         dsTrigger := McuLenVector3(diff);
+         // to calculate the time-failure it would be necesarry to know the
+         // velocity over time. 
+         //IF kinVelo <> 0.0 THEN
+         //   dtTrigger := dsTrigger/kinVelo*1000.0;
+         //ELSE
+         //   dtTrigger := -1.0;
+         //END_IF;
+         
+         myRobot.DebugPrint(eTriggerVerify, "PAC: Approximated trigger-failure: "+STR(dsTrigger)+" mm");
+         //locKinematic.DebugPrint(eTraceTrigger, "v:  "+STR(kinVelo)+" mm/s");
+         //locKinematic.DebugPrint(eTraceTrigger, "dt: "+STR(dtTrigger)+" ms");
+         
+         IF gDoTriggerVerification THEN
+            IF gInitTriggerVerification THEN
+               gTriggerEventData[triggerIdx].mainRunPos := kinPos; 
+            ELSE
+               d := kinPos.mValues[0] - gTriggerEventData[triggerIdx].mainRunPos.mValues[0];
+               validationError := d <> 0.0; //rAbs(d) > gTriggerMaxPosFailure;
+               IF d > gTriggerEventData[triggerIdx].mainRunError[0].max THEN
+                  gTriggerEventData[triggerIdx].mainRunError[0].max := d;
+               END_IF;
+               IF d < gTriggerEventData[triggerIdx].mainRunError[0].min THEN
+                  gTriggerEventData[triggerIdx].mainRunError[0].min := d;
+               END_IF;
+               d := kinPos.mValues[1] - gTriggerEventData[triggerIdx].mainRunPos.mValues[1];
+               validationError := validationError OR (d <> 0.0); //(rAbs(d) > gTriggerMaxPosFailure);
+               IF d > gTriggerEventData[triggerIdx].mainRunError[1].max THEN
+                  gTriggerEventData[triggerIdx].mainRunError[1].max := d;
+               END_IF;
+               IF d < gTriggerEventData[triggerIdx].mainRunError[1].min THEN
+                  gTriggerEventData[triggerIdx].mainRunError[1].min := d;
+               END_IF;
+               d := kinPos.mValues[2] - gTriggerEventData[triggerIdx].mainRunPos.mValues[2];
+               validationError := validationError OR (d <> 0.0); //rAbs(d) > gTriggerMaxPosFailure);
+               IF d > gTriggerEventData[triggerIdx].mainRunError[2].max THEN
+                  gTriggerEventData[triggerIdx].mainRunError[2].max := d;
+               END_IF;
+               IF d < gTriggerEventData[triggerIdx].mainRunError[2].min THEN
+                  gTriggerEventData[triggerIdx].mainRunError[2].min := d;
+               END_IF;
+            END_IF;
+            IF validationError THEN
+               PRINT(STR(kinPos.mValues[0])+ " <-> " + STR(gTriggerEventData[triggerIdx].mainRunPos.mValues[0]));
+               PRINT(STR(kinPos.mValues[1])+ " <-> " + STR(gTriggerEventData[triggerIdx].mainRunPos.mValues[1]));
+               PRINT(STR(kinPos.mValues[2])+ " <-> " + STR(gTriggerEventData[triggerIdx].mainRunPos.mValues[2]));
+               PRINT("trigger error - variation in mainrun position of trigger");
+               SwoRaiseEvent(19, "MainRunPos");
+               //RcuSetError(0, eRcuErrorRuntimeVerification, "trigger error - variation in mainrun position of trigger");
+               //locKinematic.ErrorReaction();   
+            END_IF;
+            IF dsTrigger > gTriggerMaxPosFailure THEN
+               PRINT("trigger error - position error in approximated mainrun position of trigger");
+               SwoRaiseEvent(20, "Approximation");
+               //RcuSetError(0, eRcuErrorRuntimeVerification, "trigger error - position error in approximated mainrun position of trigger");
+               //locKinematic.ErrorReaction();   
+            END_IF;
+         END_IF;
+      ELSE
+         myRobot.DebugPrint(eTriggerVerify, "PAC: No trigger verification (ptp- or circ-segment or repos-trigger)");
+      END_IF;
+      myRobot.DebugPrint(eTriggerVerify, "PAC: --------");
+   END_IF;
+*)
+END_ROUTINE
+
+ROUTINE GetHeaderData() PRIVATE
+   VAR
+      mapString   : STRING;
+      iExtTypeNo  : MAPTO INT;
+      iExtColorNo : MAPTO INT;
+      sExtType    : MAPTO STRING[cTypeCodeLength];
+      sBodyId     : MAPTO STRING[14];
+      sSkidNo     : MAPTO STRING[cColorCodeLength];
+      s           : STRING;
+      r           : REAL;
+      bIsNum      : BOOL;
+      idx         : INT;
+   END_VAR
+   
+   LOCK;
+      measureData.sKinName := myRobot.robotName;
+      mapString := GetMapString(cSV_sFifoZonePIN[myRobot.kinListInx],
+                                myRobot.RcuInterfaceToBCU.iMotionIndexFifoZone);
+      sBodyId := MAPX(mapString);
+      IF IS_MAPPED(sBodyId) THEN
+         measureData.sBodyId :=  StrRtrim(STR(sBodyId));
+      ELSE
+         RcuSetMessageOnce(RcuInterfToBCU_FaErrInvNoBodyDa, myRobot.kinListInx, 3, 0, "RcuInterfaceToBCU.MapFifos");
+      END_IF;
+   UNLOCK;
+
+   LOCK;
+      mapString := GetMapString(cSV_sFifoZoneSkidNo[myRobot.kinListInx],
+                                myRobot.RcuInterfaceToBCU.iMotionIndexFifoZone);
+      sSkidNo := MAPX(mapString);
+      IF IS_MAPPED(sSkidNo) THEN
+         measureData.sSkidNo :=  StrRtrim(STR(sSkidNo));
+      ELSE
+         RcuSetMessageOnce(RcuInterfToBCU_FaErrInvNoBodyDa, myRobot.kinListInx, 4, 0, "RcuInterfaceToBCU.MapFifos");
+      END_IF;
+   UNLOCK;
+   
+   LOCK;
+      mapString := GetMapString(cSV_sFifoZoneTypeCode_IECV1[myRobot.kinListInx],
+                                myRobot.RcuInterfaceToBCU.iMotionIndexFifoZone);
+      sExtType := MAPX(mapString);
+      IF IS_MAPPED(sExtType) THEN
+         measureData.sExtType :=  sExtType;
+      ELSE
+         mapString := GetMapString(cSV_sFifoZoneTypeCode_IECV2[myRobot.kinListInx],
+                                myRobot.RcuInterfaceToBCU.iMotionIndexFifoZone);
+      sExtType := MAPX(mapString);
+      IF IS_MAPPED(sExtType) THEN
+         measureData.sExtType :=  sExtType;
+      ELSE
+         RcuSetMessageOnce(RcuInterfToBCU_FaErrInvNoBodyDa, myRobot.kinListInx, 5, 0, "RcuInterfaceToBCU.MapFifos");
+      END_IF;
+      END_IF;
+   UNLOCK;
+   
+   LOCK;
+      mapString := GetMapString(cSV_sFifoZoneProgNr[myRobot.kinListInx],
+                                myRobot.RcuInterfaceToBCU.iMotionIndexFifoZone);
+      iExtTypeNo := MAPX(mapString);
+      IF IS_MAPPED(iExtTypeNo) THEN
+         measureData.iExtTypeNo :=  iExtTypeNo;
+      ELSE
+         RcuSetMessageOnce(RcuInterfToBCU_FaErrInvNoBodyDa, myRobot.kinListInx, 5, 0, "RcuInterfaceToBCU.MapFifos");
+      END_IF;
+   UNLOCK;
+   
+   LOCK;
+      mapString := GetMapString(cSV_sFifoZoneColorNo[myRobot.kinListInx],
+                                myRobot.RcuInterfaceToBCU.iMotionIndexFifoZone);
+      iExtColorNo := MAPX(mapString);
+      IF IS_MAPPED(iExtColorNo) THEN
+         measureData.iExtColorNo := iExtColorNo;
+      ELSE
+         RcuSetMessageOnce(RcuInterfToBCU_FaErrInvNoBodyDa, myRobot.kinListInx, 6, 0, "RcuInterfaceToBCU.MapFifos");      
+      END_IF;
+   UNLOCK;
+
+   measureData.iVariant := myRobot.RcuInterfaceToBCU.dVariants;
+   
+   colorDef.GetColorDef(iExtColorNo, 
+                        measureData.sExtColor,
+                        measureData.iColorGroup,
+                        measureData.Limits,
+                        measureData.EcoatCompColor);
+  
+   IF myRobot.RcuTypeList.GetTypelistKey("EcoatRef", idx) THEN
+      myRobot.RcuTypeList.SearchTypeListEntryFromKey("EcoatRef", iExtTypeNo, s);
+      r := StrToReal(s, bIsNum);
+      IF bIsNum THEN
+         measureData.EcoatCompType.EcoatRef := r;
+      END_IF;
+   END_IF;
+   
+   IF myRobot.RcuTypeList.GetTypelistKey("EcoatDaily", idx) THEN
+      myRobot.RcuTypeList.SearchTypeListEntryFromKey("EcoatDaily", iExtTypeNo, s);
+      r := StrToReal(s, bIsNum);
+      IF bIsNum THEN
+         measureData.EcoatCompType.EcoatDaily := r;
+      END_IF;
+   END_IF;
+   
+   measureData.TornadoLine.bEnable := bUseTornadoLineForErrors;
+   
+   IF bUseTornadoLineForErrors THEN
+      myRobot.RcuTypeList.SearchTypeListEntryFromKey("TornadoLineP1X", iExtTypeNo, s);
+      r := StrToReal(s, bIsNum);
+      IF bIsNum THEN
+         measureData.TornadoLine.StartPoint.mValues[0] := r;
+      END_IF;
+
+      myRobot.RcuTypeList.SearchTypeListEntryFromKey("TornadoLineP1Z", iExtTypeNo, s);
+      r := StrToReal(s, bIsNum);
+      IF bIsNum THEN
+         measureData.TornadoLine.StartPoint.mValues[2] := r;
+      END_IF;
+
+      myRobot.RcuTypeList.SearchTypeListEntryFromKey("TornadoLineP2X", iExtTypeNo, s);
+      r := StrToReal(s, bIsNum);
+      IF bIsNum THEN
+         measureData.TornadoLine.EndPoint.mValues[0] := r;
+      END_IF;
+
+      myRobot.RcuTypeList.SearchTypeListEntryFromKey("TornadoLineP2Z", iExtTypeNo, s);
+      r := StrToReal(s, bIsNum);
+      IF bIsNum THEN
+         measureData.TornadoLine.EndPoint.mValues[2] := r;
+      END_IF;
+   END_IF;
+
+   measureData.EcoatCompPoints.Init(myRobot);
+   measureData.EcoatCompPoints.ReadCompValues(iExtTypeNo);
+
+   START LogHeaderData();
+END_ROUTINE
+
+ROUTINE LogErrorCounters() PRIVATE
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Error count 1 - errors    : " + STR(measureData.ErrorCounts.ErrorCounters[1].iPointsError));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Error count 1 - under min : " + STR(measureData.ErrorCounts.ErrorCounters[1].iPointsUnderThicknMin));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Error count 1 - above max : " + STR(measureData.ErrorCounts.ErrorCounters[1].iPointsAboveThicknMax));
+   
+   IF bUseTornadoLineForErrors THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Error count 2 - errors    : " + STR(measureData.ErrorCounts.ErrorCounters[2].iPointsError));
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Error count 2 - under min : " + STR(measureData.ErrorCounts.ErrorCounters[2].iPointsUnderThicknMin));
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Error count 2 - above max : " + STR(measureData.ErrorCounts.ErrorCounters[2].iPointsAboveThicknMax));
+   END_IF;
+END_ROUTINE
+
+ROUTINE LogHeaderData() PRIVATE
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: PIN                 : " + measureData.sBodyId);
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Skid number         : " + measureData.sSkidNo);
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: External color no   : " + STR(measureData.iExtColorNo));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: External type code  : " + measureData.sExtType);
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: External type no    : " + STR(measureData.iExtTypeNo));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Variante            : " + STR(measureData.iVariant));
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: External color code        : " + measureData.sExtColor);
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Color group                : " + STR(measureData.iColorGroup));
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Film thickness min error   : " + STR(measureData.Limits.rThicknMinError));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Film thickness min warning : " + STR(measureData.Limits.rThicknMinWarning));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Film thickness max warning : " + STR(measureData.Limits.rThicknMaxWarning));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: Film thickness max error   : " + STR(measureData.Limits.rThicknMaxError));
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: EcoatRef                   : " + STR(measureData.EcoatCompType.EcoatRef));
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: EcoatDaily                 : " + STR(measureData.EcoatCompType.EcoatDaily));
+   
+   IF bUseTornadoLineForErrors THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Tornado line Start (X/Z)   : " + STR(measureData.TornadoLine.StartPoint.mValues[0]) + "/" + STR(measureData.TornadoLine.StartPoint.mValues[2]));
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Tornado line End (X/Z)     : " + STR(measureData.TornadoLine.EndPoint.mValues[0]) + "/" + STR(measureData.TornadoLine.EndPoint.mValues[2]));
+   ELSE
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: A global error counter is used");
+   END_IF;
+END_ROUTINE
+
+ROUTINE GetMapString(varName : STRING; 
+                     iMotionIndex : INT) 
+                    : STRING PRIVATE
+   VAR
+      posInString : DINT;
+      helpString  : STRING;
+      mapString   : STRING;
+   END_VAR
+   
+   posInString := StrFind(varName, "[") + 1;
+   helpString := STR(iMotionIndex);
+   mapString := StrInsert(varName, helpString, posInString);
+
+   RETURN mapString;
+END_ROUTINE
+
+ROUTINE WriteFile(VAR_IN data : TRcuPacMeasureData)
+                 PRIVATE
+   VAR
+      hdlFile      : DINT := -1;
+      sFileName    : STRING;
+      sFilePath    : STRING;
+      sRobotSubDir : STRING;
+      sApplPath    : STRING;
+      len          : DINT;
+   END_VAR
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: WriteFile");
+
+   sRobotSubDir := myRobot.subDirName;
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   sFilePath := sApplPath + "application/control/teachcontrol/" + sRobotSubDir + cRelPathForDataFile;
+   
+   IF NOT IsDir(sFilePath, TRUE) THEN
+      MkDir(sFilePath);
+   END_IF;
+   
+   hdlFile := FileOpen (sFilePath + cDataFileName,  eFileModeReadWriteDelete);
+   IF hdlFile <> -1 THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Write measure data data to file " + sFilePath + cDataFileName);
+
+      data.WriteHeaderDataToFile(hdlFile);
+      data.WriteMeasureDataToFile(hdlFile);
+      StreamClose(hdlFile);
+      
+      Sleep(100);
+      
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Start upload of data file " + sFilePath + cDataFileName);
+      START UploadFile(sFilePath + cDataFileName);
+   END_IF;
+END_ROUTINE
+
+ROUTINE UploadFile(strFileName : STRING) 
+                  PRIVATE
+   uploadHandshake.UploadFile(strFileName);
+END_ROUTINE
+  

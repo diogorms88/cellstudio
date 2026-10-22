@@ -1,0 +1,95 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2016-11-21  | KLCH   | First release
+//  v2_01.01.00  | 2019-02-15  | KLCH   | Change: adjustments due to structural changes (EA2.0)
+//  v2_01.02.00  | 2021-09-10  | KLCH   | Change: remove device tags (BMK) in configuration values
+
+Imports Common OptionGun
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Option15_CheckGun
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option15
+	Call Option15_ResetAll
+	
+	SelectCase Option15
+		Case 1
+			SelectCase OptionGun
+				Case Gun_MD_Air
+					SelectCase Option1
+						Case EcoDose_PCL
+							Call Option15_AddDeviceToMainChannel
+							
+							FSCopy ..\SpecialOptions\Option15\Yes\AB_SwitchValvesProcessInSleep.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+						CaseElse
+							Message Process type [Option1] not supported !! (Main_Option15)
+					EndSelect
+				CaseElse
+					Message Gun type not supported !! (Main_Option15)
+			EndSelect
+		CaseElse
+			SelectCase Option1
+				Case EcoDose_PCL
+					FSCopy ..\SpecialOptions\Option15\No\AB_SwitchValvesProcessInSleep.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				Case EcoDose_PCL_PCL
+					FSCopy ..\SpecialOptions\Option15\No\AB_SwitchValvesProcessInSleep.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+	EndSelect
+Return
+
+SubRoutine Option15_CheckGun
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Call Main_OptionGun
+		CaseElse
+			Message Gun type not supported !! (Option15_CheckGun)
+	EndSelect
+Return
+
+SubRoutine Option15_ResetAll
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YKPL1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YKPL1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YZY1AB1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YZY1AB1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BKPL1DU
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BKPL1DU
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BAB1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BAB1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BGF2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BGF2
+		Delete
+	Endif
+Return
+
+SubRoutine Option15_AddDeviceToMainChannel
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_YKPL1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_YZY1AB1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_BKPL1DU
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_BAB1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_BGF2
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD1
+	SelectTab [CfgParameter]
+	SelectCfg AMD1.ChangingSystem
+	OptionalUsed 1
+	SelectCfg AMD1.ChangingSystem.NameActValueCoverValve
+	Value "ZY1AB1.ActValue"
+Return

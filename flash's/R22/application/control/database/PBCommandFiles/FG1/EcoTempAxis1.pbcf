@@ -1,0 +1,179 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.03.00  | 12.09.2014  | KLCH   | Change: move SubRoutines to CommonTempControl
+//  v2_01.04.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.05.00  | 31.01.2017  | KLCH   | Change: configuration of EcoTemp PT
+
+Imports Option14 Common CommonTempControl
+
+Parameter Option1 Option14 EcoTempAxis1 EcoTempAxis3
+
+Call CommonTempCtrl_TempCtrlSupply
+Call Main_EcoTempAxis1
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_EcoTempAxis1
+	SelectNode RPC1.R11
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL
+			Call AddDeviceToMaterial1_EcoTempAxis1
+		Case EcoDose_SM
+			Call AddDeviceToMaterial1_EcoTempAxis1
+		Case EcoDose_PM
+			Call AddDeviceToMaterial1_EcoTempAxis1
+		Case EcoDose_ES
+			Call AddDeviceToMaterial1_EcoTempAxis1
+		Case EcoDose_PCL_PCL
+			Call AddDeviceToMaterial1_Multi_EcoTempAxis1
+		Case EcoDose_SM_PCL
+			Call AddDeviceToMaterial1_Multi_EcoTempAxis1
+		Case EcoDose_SM_SM
+			Call AddDeviceToMaterial1_Multi_EcoTempAxis1
+		CaseElse
+			Message Wrong process type !! (Main_EcoTempAxis1)
+	EndSelect
+Return
+
+SubRoutine AddDeviceToMaterial1_EcoTempAxis1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase EcoTempAxis1	//Peltier type
+		Case No_EcoTempAxis1
+			//
+		Case EcoTempAxis1_Air_large
+			Call Common_AddDevice_ATCP1_WT12_AC_L
+		Case EcoTempAxis1_Air_small
+			Call Common_AddDevice_ATCP1_WT12_AC_S
+		Case EcoTempAxis1_Water_large
+			Call Common_AddDevice_ATCP1_WT12_WC_L
+		Case EcoTempAxis1_Water_small
+			Call Common_AddDevice_ATCP1_WT12_WC_S
+		CaseElse
+			Message Wrong type EcoTempAxis1 !! (AddDeviceToMaterial1_EcoTempAxis1)
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+		
+		Call CommonTempCtrl_SetConfigMaterial1_AMatManager1
+		Call CommonTempCtrl_SetConfigMaterial1_EcoTempPT
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATCP1_WT12_ActTemp
+	  			BusType 6 //Sercos III
+	  			Vendor  2 //Phoenix Contact
+	  			Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATCP1_WT12_ActTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			CaseElse
+				Message Wrong bus master !! Only Profibus and Sercos III supported (AddDeviceToMaterial1_EcoTempAxis1)
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_Multi_EcoTempAxis1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase EcoTempAxis1	//Peltier type
+		Case No_EcoTempAxis1
+			//
+		Case EcoTempAxis1_Air_large
+			Call Common_AddDevice_ATCP1_WT12_1_AC_L
+		Case EcoTempAxis1_Air_small
+			Call Common_AddDevice_ATCP1_WT12_1_AC_S
+		Case EcoTempAxis1_Water_large
+			Call Common_AddDevice_ATCP1_WT12_1_WC_L
+		Case EcoTempAxis1_Water_small
+			Call Common_AddDevice_ATCP1_WT12_1_WC_S
+		CaseElse
+			Message Wrong type EcoTempAxis1 !! (AddDeviceToMaterial1_Multi_EcoTempAxis1)
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+		
+		Call CommonTempCtrl_SetConfigMaterial1_AMatManager1
+		Call CommonTempCtrl_SetConfigMaterial1_Multi_EcoTempPT
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATCP1_WT12_1_ActTemp
+	  			BusType 6 //Sercos III
+	  			Vendor  2 //Phoenix Contact
+	  			Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATCP1_WT12_1_ActTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			CaseElse
+				Message Wrong bus master !! Only Profibus and Sercos III supported (AddDeviceToMaterial1_Multi_EcoTempAxis1)
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial2_Multi_EcoTempAxis1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectCase EcoTempAxis1	//Peltier type
+		Case No_EcoTempAxis1
+			//
+		Case EcoTempAxis1_Air_large
+			Call Common_AddDevice_ATCP1_WT12_2_AC_L
+		Case EcoTempAxis1_Air_small
+			Call Common_AddDevice_ATCP1_WT12_2_AC_S
+		Case EcoTempAxis1_Water_large
+			Call Common_AddDevice_ATCP1_WT12_2_WC_L
+		Case EcoTempAxis1_Water_small
+			Call Common_AddDevice_ATCP1_WT12_2_WC_S
+		CaseElse
+			Message Wrong type EcoTempAxis1 !! (AddDeviceToMaterial2_Multi_EcoTempAxis1)
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+		
+		Call CommonTempCtrl_SetConfigMaterial2_AMatManager2
+		Call CommonTempCtrl_SetConfigMaterial2_Multi_EcoTempPT
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATCP1_WT12_2_ActTemp
+	  			BusType 6 //Sercos III
+	  			Vendor  2 //Phoenix Contact
+	  			Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATCP1_WT12_2_ActTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			CaseElse
+				Message Wrong bus master !! Only Profibus and Sercos III supported (AddDeviceToMaterial2_Multi_EcoTempAxis1)
+		EndSelect
+	Endif
+Return

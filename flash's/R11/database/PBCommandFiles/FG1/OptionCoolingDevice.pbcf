@@ -1,0 +1,52 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 20.12.2016  | RHI    | First release
+//  v2_01.00.01  | 01.06.2017  | KTO    | BugFix: handler are named H12
+//  v2_01.00.02  | 19.06.2017  | BIT    | AddOn: EnableCoolingDeviceError=1 and DelayCoolingError=2h set for RCMP2
+//  v2_01.01.00  | 04.08.2020  | MWT    | AddOn: new RCMP type for RCMP2.1
+
+Parameter OptionCoolingDevice Option1 OptionRCMPGen
+
+Call Main_OptionCoolingDevice
+
+SelectCase Option1
+	Case Handler
+		SelectNode RPC1.H12
+	CaseElse
+		SelectNode RPC1.R11
+EndSelect
+		
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_OptionCoolingDevice
+	SelectCase OptionCoolingDevice
+		Case Cooling
+			SelectNode RPC1.System
+			SelectTab [CfgParameter]
+			SelectCfg System.RCMP.CheckCoolingDevice
+			value 1
+			
+			SelectCase OptionRCMPGen
+				Case RCMP2_Rev2
+					SelectCfg System.RCMP.EnableCoolingDeviceError
+					value 1
+					SelectCfg System.RCMP.DelayCoolingError
+					value 0d2h0m0s0ms
+				Case RCMP2.1
+					SelectCfg System.RCMP.EnableCoolingDeviceError
+					value 1
+					SelectCfg System.RCMP.DelayCoolingError
+					value 0d2h0m0s0ms
+					
+			EndSelect
+			
+		Case NoCooling
+			SelectNode RPC1.System
+			SelectTab [CfgParameter]
+			SelectCfg System.RCMP.CheckCoolingDevice
+			value 0
+	EndSelect
+Return
+
+

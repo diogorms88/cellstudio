@@ -1,0 +1,369 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2006 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuReadCfg.tts                                              *
+*   Description: Read out a *.cfg (RC2-ini) file and copy to array to get     *
+*                values by access-functions                                   *
+*-----------------------------------------------------------------------------*
+*   28.07.06 sbj: adapted to current VSS application
+*   11.10.06 BIT: ROUTINE CopyIniGroupToMemory to read only a single
+*                 group of the file
+*)
+
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT PRIVATE
+   cMaxParamGroup    : INT := 50;
+   cMaxGroupsFile    : INT :=  2;
+END_CONSTANT
+
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE PRIVATE
+  tIniParam   : STRUCT
+   sName      : STRING;
+   iParamType : INT;
+   sValue     : STRING;
+  END_STRUCT;
+  tIniGroup   : STRUCT
+    sName     : STRING;
+    yParam    : ARRAY [cMaxParamGroup] OF tIniParam;  
+  END_STRUCT;
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR PRIVATE
+  yIniFile       : ARRAY [cMaxGroupsFile] OF tIniGroup;
+  iCountGroups   : INT;
+  bReadingFile   : BOOL;            
+END_VAR
+
+(******************************************************************************
+***  Open a ini file and get the handle of it *********************************
+******************************************************************************)
+ROUTINE OpenIniFile(CONST sPath : STRING) : DINT
+  VAR
+   iFileHandle   : DINT;
+  END_VAR 
+   
+  iFileHandle := FileOpen(sPath, eFileModeReadOnly);
+  IF (iFileHandle = -1) THEN
+     RcuSetMessageOnce(TRcuReadCfg_ErrNoFileHandle, -1, 1, 0, "TRcuReadCfg.OpenIniFile", sPath);
+  END_IF;
+  RETURN iFileHandle;
+END_ROUTINE
+
+(******************************************************************************
+***  Close a ini file and get feedback of it **********************************
+******************************************************************************)
+ROUTINE CloseIniFile(CONST iFileHandle : DINT) : BOOL
+  IF NOT StreamClose(iFileHandle) THEN
+     RcuSetMessageOnce(TRcuReadCfg_ErrCloseFile, -1, 1, 0, "TRcuReadCfg.CloseIniFile", STR(iFileHandle));
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+END_ROUTINE
+
+(******************************************************************************
+*** Read out a *.ini file and copy to array ***********************************
+******************************************************************************)
+ROUTINE CopyIniFileToMemory(CONST iFileHandle : DINT; OPTIONAL sGroup : STRING) : BOOL
+  VAR
+   bReadreading    : BOOL := TRUE;
+   sReadLine       : STRING;
+   iLen            : DINT;
+   I               : DINT;
+   sChr            : STRING;
+   sReadString     : STRING;
+   bRecordChr      : BOOL;
+   bGroupFound     : BOOL;
+   iCountParam     : INT;
+   iDataType       : SINT;
+   bError          : BOOL;
+   bHandleChecked  : BOOL;
+   iCountComma     : SINT;
+  END_VAR
+  
+  WAIT NOT bReadingFile;
+  bReadingFile := TRUE;
+  iCountGroups := 0;
+  REPEAT
+    sReadString := "";
+    sReadLine   := "";
+    IF NOT FileReadLn(iFileHandle, sReadLine) THEN
+       FileSetPosition(iFileHandle,1);
+       IF NOT bHandleChecked THEN
+          RcuSetMessageOnce(TRcuReadCfg_ErrNoFileHandle, -1, 2, 0, "TRcuReadCfg.CopyIniFileToMemory", STR(iFileHandle));
+          bError := TRUE;
+       END_IF;
+       bReadreading := FALSE;
+    ELSE
+      bHandleChecked := TRUE;
+      IF (sReadLine <> "") THEN
+         sReadLine := StrToLower(sReadLine);
+         //It must be a Group because of [xxxxx]
+         IF (StrFind(sReadLine, "[") <> 0) AND (StrFind(sReadLine, "]") <> 0) AND (StrFind(sReadLine, "//") = 0) AND bReadreading THEN
+            IF IS_USED(sGroup) AND bGroupFound THEN
+               bReadreading := FALSE;
+            END_IF;
+            iLen   := StrLen(sReadLine);
+            bRecordChr := FALSE;
+            I := 0;
+            REPEAT
+              I := I + 1;
+              sChr := StrMid(sReadLine, 1, I);
+              IF (sChr = "[") AND NOT bRecordChr THEN
+                  bRecordChr := TRUE;
+              ELSIF (sChr = "]") AND bRecordChr THEN
+                  bRecordChr := FALSE;
+              ELSIF (bRecordChr AND (sChr <> "[") AND (sChr <> "]") AND (sChr <> "=") AND (sChr <> " ") AND 
+                    (ORD(sChr) >= ORD("0")) AND (ORD(sChr) <= ORD("z"))) THEN
+                 sReadString := sReadString + sChr;
+              END_IF;
+            UNTIL (I > iLen - 1);
+            IF (sReadString <> "") THEN
+              IF (IS_USED(sGroup) AND (sGroup = sReadString)) OR (NOT IS_USED(sGroup)) THEN
+                  yIniFile[iCountGroups].sName := sReadString;
+                  iCountParam := 0;
+                  bGroupFound := TRUE;
+                  sReadString := "";
+                  sReadLine := "";
+                  iCountGroups := iCountGroups + 1;
+                  IF (iCountGroups >= cMaxGroupsFile) THEN
+                      bReadreading := FALSE;
+                      bGroupFound  := FALSE;
+                      bError := TRUE;
+                      RcuSetMessageOnce(TRcuReadCfg_ErrCfgTooMuchGroups, -1, 1, 0, "TRcuReadCfg.CopyIniFileToMemory", STR(iCountGroups + 10));
+                  END_IF;                    
+              END_IF;    
+            END_IF;
+         //Param
+         ELSIF (bReadreading AND bGroupFound AND (StrFind(sReadLine, "//") = 0) AND 
+                         (StrFind(sReadLine, "[") = 0) AND (StrFind(sReadLine, "]") = 0)) THEN   
+            iLen   := StrLen(sReadLine);
+            I := 0;
+            bRecordChr := FALSE;
+            REPEAT
+              I := I + 1;
+              sChr := StrMid(sReadLine, 1, I);
+              IF (NOT bRecordChr AND (sChr <> " ") AND (ORD(sChr) >= ORD("0")) AND (ORD(sChr) <= ORD("z")) AND (sChr <> "=")) THEN
+                  sReadString := sReadString + sChr;
+              END_IF;
+            UNTIL (I > iLen - 1) OR (sChr = "=");  
+            IF (I <= iLen) AND NOT bRecordChr AND (sReadString <> "") THEN
+              yIniFile[iCountGroups - 1].yParam[iCountParam].sName := sReadString;
+              iCountParam := iCountParam + 1;
+              IF (iCountParam >= cMaxParamGroup) THEN
+                 RcuSetMessageOnce(TRcuReadCfg_ErrCfgTooMuchParam, -1, 1, 0, "TRcuReadCfg.CopyIniFileToMemory", STR(iCountParam), STR(iCountGroups));
+                 bReadreading := FALSE;
+                 bError := TRUE;
+              END_IF;
+              sReadString := "";
+              bRecordChr := TRUE;
+            END_IF;    
+            REPEAT
+              I := I + 1;
+              sChr := StrMid(sReadLine, 1, I);
+              IF (bRecordChr AND (sChr <> " ") AND (ORD(sChr) >= ORD("0")) AND (ORD(sChr) <= ORD("9")) AND (sChr <> ",")) THEN
+                  sReadString := sReadString + sChr;
+              END_IF;  
+            UNTIL (I > iLen - 1) OR (sChr = ",");
+            IF (sReadString = "0") AND bRecordChr THEN            //
+               yIniFile[iCountGroups - 1].yParam[iCountParam - 1].iParamType := 0;
+            ELSIF (sReadString = "1") AND bRecordChr THEN
+               yIniFile[iCountGroups - 1].yParam[iCountParam - 1].iParamType := 1;
+            //ELSIF (sReadString = "2") AND bRecordChr THEN
+            //   yIniFile[iCountGroups - 1].yParam[iCountParam - 1].iParamType := 2;
+            ELSIF (sReadString = "3") AND bRecordChr THEN
+               yIniFile[iCountGroups - 1].yParam[iCountParam - 1].iParamType := 4;
+            ELSIF (sReadString = "4") AND bRecordChr THEN
+               yIniFile[iCountGroups - 1].yParam[iCountParam - 1].iParamType := 5;
+            ELSIF bRecordChr THEN
+               RcuSetMessageOnce(TRcuReadCfg_ErrCfgInvalidValue, -1, 1, 0, "TRcuReadCfg.CopyIniFileToMemory", sReadString, yIniFile[iCountGroups - 1].sName,
+                                 yIniFile[iCountGroups - 1].yParam[iCountParam - 1].sName);
+               yIniFile[iCountGroups - 1].yParam[iCountParam - 1].iParamType := 99;
+            END_IF;
+            sReadString := "";
+            iCountComma := 0;
+            REPEAT
+              I := I + 1;
+              sChr := StrMid(sReadLine, 1, I);
+              IF (bRecordChr AND (sChr <> " ") AND (ORD(sChr) >= ORD("0")) AND (ORD(sChr) <= ORD("z")) AND (sChr <> "=") AND (sChr <> ",") OR 
+                 (sChr = ".") OR (sChr = "-")) THEN
+                  sReadString := sReadString + sChr;
+              END_IF;  
+              IF (sChr = ",") THEN
+                 iCountComma := iCountComma + 1;
+              END_IF;
+            UNTIL (I > iLen - 1) OR (iCountComma >= 2);
+            IF (sReadString <> "") AND bRecordChr THEN
+               yIniFile[iCountGroups - 1].yParam[iCountParam - 1].sValue := sReadString;
+               sReadString := "";
+               sReadLine := "";
+            END_IF;
+            bRecordChr := FALSE;
+         END_IF;
+      END_IF;   
+    END_IF;
+  UNTIL (NOT bReadreading);
+  bReadingFile := FALSE;
+  RETURN NOT bError;
+END_ROUTINE
+
+
+(******************************************************************************
+*** Read out a *.ini file and copy one group to array *************************
+******************************************************************************)
+ROUTINE CopyIniGroupToMemory(CONST iFileHandle : DINT; sGroup : STRING) : BOOL
+    sGroup := StrToLower(sGroup);
+    RETURN CopyIniFileToMemory(iFileHandle, sGroup);
+END_ROUTINE
+
+(******************************************************************************
+*** access-functions to get a string from array *******************************
+******************************************************************************)
+ROUTINE GetIniValue(sGroup : STRING; sParam : STRING; sValue : TDataVariant) : BOOL
+   VAR
+    iGroupCount   : INT;
+    iParamCount   : INT;
+    bGroupFound   : BOOL;
+    iFoundGroup   : INT;
+    bParamFound   : BOOL;
+    sChr          : STRING;
+    I             : DINT;
+    iLen          : DINT;
+    iReadInt      : DINT;
+    rReadReal1    : REAL;
+    rReadReal2    : REAL;
+    iFigure       : DINT;
+    ioType        : TIoDataType;
+    bPointReached : BOOL;
+    bNegValue     : BOOL;
+  END_VAR;
+   
+   WAIT NOT bReadingFile;
+   IF (sGroup = "") THEN
+     RcuSetMessageOnce(TRcuReadCfg_ErrCfgGroup, -1, 1, 0, "TRcuReadCfg.GetIniValue", "GetIniValue");
+     RETURN FALSE;
+   END_IF;
+   IF (sParam = "") THEN
+     RcuSetMessageOnce(TRcuReadCfg_ErrCfgParam, -1, 1, 0, "TRcuReadCfg.GetIniValue", "GetIniValue");
+     RETURN FALSE;
+   END_IF;
+   
+   sGroup      := StrToLower(sGroup);
+   sParam      := StrToLower(sParam);
+   bGroupFound := FALSE;
+   FOR iGroupCount := 0 TO (cMaxGroupsFile - 1) DO
+     IF (yIniFile[iGroupCount].sName = sGroup) THEN
+        iFoundGroup := iGroupCount;
+        bGroupFound := TRUE;
+        iGroupCount := cMaxGroupsFile;
+     END_IF;
+   END_FOR;
+   IF bGroupFound THEN
+      bParamFound := FALSE;
+      FOR iParamCount := 0 TO (cMaxParamGroup - 1) DO
+        IF (yIniFile[iFoundGroup].yParam[iParamCount].sName = sParam) THEN
+           bParamFound := TRUE;
+           CASE yIniFile[iFoundGroup].yParam[iParamCount].iParamType OF
+            0:  IF sValue.dataType = eDataTypeSint THEN
+                   sChr := StrMid(yIniFile[iFoundGroup].yParam[iParamCount].sValue, 1, 1);
+                   IF (sChr = "0") THEN
+                       sValue.dataSint := 0;
+                   ELSIF (sChr = "1") THEN
+                       sValue.dataSint := 1;
+                   ELSE
+                      sValue.dataSint := 0;
+                      RcuSetMessageOnce(TRcuReadCfg_ErrCfgInvalidValue, -1, 2, 0, "TRcuReadCfg.GetIniValue", STR(sValue.dataSint), sGroup, sParam);
+                   END_IF;
+                ELSE
+                   RcuSetMessageOnce(TRcuReadCfg_ErrCfgWrongDataType, -1, 1, 0, "TRcuReadCfg.GetIniValue", "bool", sGroup, sParam);
+                END_IF;
+                
+            1:  IF sValue.dataType = eDataTypeInt THEN
+                   iLen         := StrLen(yIniFile[iFoundGroup].yParam[iParamCount].sValue);
+                   iReadInt := 0;
+                   sChr := "";
+                   I := 0;
+                   REPEAT 
+                      I := I + 1;
+                      sChr := StrMid(yIniFile[iFoundGroup].yParam[iParamCount].sValue, 1, I);
+                      IF ((sChr <> "=") AND (sChr <> " ") AND (ORD(sChr) >= ORD("0")) AND (ORD(sChr) <= ORD("9"))) THEN
+                          iReadInt := iReadInt * 10;
+                          iFigure := ORD(sChr) - ORD("0");
+                          iReadInt := iReadInt + iFigure;
+                      END_IF;
+                   UNTIL (I > iLen - 1);
+                   sValue.dataInt := iReadInt;
+                ELSE
+                   RcuSetMessageOnce(TRcuReadCfg_ErrCfgWrongDataType, -1, 2, 0, "TRcuReadCfg.GetIniValue", "integer", sGroup, sParam);
+                END_IF;
+                
+            4:  IF sValue.dataType = eDataTypeReal THEN
+                   iLen         := StrLen(yIniFile[iFoundGroup].yParam[iParamCount].sValue);
+                   rReadReal1 := 0.0;
+                   rReadReal2 := 0.0;
+                   sChr := "";
+                   bPointReached := FALSE;
+                   I := 0;
+                   REPEAT 
+                      I := I + 1;
+                      sChr := StrMid(yIniFile[iFoundGroup].yParam[iParamCount].sValue, 1, I);
+                      IF ((sChr <> "=") AND (sChr <> " ") AND (ORD(sChr) >= ORD("0")) AND (ORD(sChr) <= ORD("9")) OR 
+                          (sChr = ".") OR (sChr = "-")) THEN
+                         IF (sChr = "-") AND NOT bPointReached THEN
+                            bNegValue := TRUE;
+                         ELSIF (sChr <> ".") AND NOT bPointReached THEN
+                            rReadReal1 := rReadReal1 * 10;
+                            iFigure := ORD(sChr) - ORD("0");
+                            rReadReal1 := rReadReal1 + iFigure;
+                         ELSIF (sChr = ".") THEN
+                            bPointReached := TRUE;
+                         ELSIF (sChr <> ".") AND bPointReached THEN
+                            iFigure := ORD(sChr) - ORD("0");
+                            rReadReal2 := rReadReal2 + iFigure;
+                            rReadReal2 := rReadReal2 / 10;
+                         END_IF;
+                       END_IF;
+                     UNTIL (I > iLen - 1);
+                     sValue.dataReal := rReadReal1 + rReadReal2;
+                     IF bNegValue THEN
+                        sValue.dataReal := sValue.dataReal * (-1.0);
+                     END_IF;
+                ELSE
+                   RcuSetMessageOnce(TRcuReadCfg_ErrCfgWrongDataType, -1, 3, 0, "TRcuReadCfg.GetIniValue", "real", sGroup, sParam);
+                END_IF;
+                     
+            5:  IF sValue.dataType = eDataTypeString THEN
+                   sValue.dataString := yIniFile[iFoundGroup].yParam[iParamCount].sValue;
+                ELSE
+                   RcuSetMessageOnce(TRcuReadCfg_ErrCfgWrongDataType, -1, 4, 0, "TRcuReadCfg.GetIniValue", "string", sGroup, sParam);
+                END_IF;
+           END_CASE;
+           
+           iParamCount := cMaxParamGroup;
+        END_IF;
+      END_FOR;
+   END_IF;
+   IF (bGroupFound AND bParamFound) THEN
+      RETURN TRUE;
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE

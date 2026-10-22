@@ -1,0 +1,179 @@
+//  Version     | ReleaseDate | Respon  | Changes
+//  -----------------------------------------------------------------------------------------------
+//  V2_01.00.00 | 2016-11-21  | KLCH    | First release
+//  V2_01.01.00 | 2022-09-21  | KLCH    | Bugfix: [ECORPC-1275] logical channels configuration not correct (property "Relevant for overall state of logical channel" may not be activated for the shot meter subs)
+//  V2_01.02.00 | 2024-07-11  | KLCH    | Change: [ECORPC-1837] new option 31 to enable initiator of EcoShot Meter (end position)
+
+Imports Common Option31 OptionShotMeter
+
+Parameter Option1 Option2 Option20 Option31
+
+Call Main_Option20
+Call Common_Description_PCU
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option20
+	SelectCase Option1 // Process type
+		Case EcoDose_SM EcoDose_SM_PCL
+			Call Option20_ShotMeter1Sub
+			Call Option20_ConfigureLogChannel_ShotMeter1Sub
+		Case EcoDose_SM_SM
+			Call Option20_ShotMeter1Sub_Multi
+			Call Option20_ShotMeter2Sub_Multi
+			Call Option20_ConfigureLogChannel_ShotMeter1Sub
+			Call Option20_ConfigureLogChannel_ShotMeter2Sub
+		CaseElse
+			Message Wrong process type (Main_Option20)!!
+	EndSelect
+	
+	Call Main_OptionShotMeter
+	Call Main_Option31
+Return
+
+SubRoutine Option20_ShotMeter1Sub
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+		Delete
+	Endif
+	
+	SelectCase Option20 // Shot meter single
+		Case 1
+			Call Common_AddChannel_ShotMeter1Sub_a
+		Case 0
+			Call Common_AddChannel_ShotMeter1Sub_ab
+	EndSelect
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+	Call Common_AddDevice_YBV1
+	
+	SelectCase Option20 // Shot meter single
+		Case 1
+			SelectCase Option2 // Variant of process group
+				Case xD_LASD
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+					Call Common_AddDevice_YAV1
+			EndSelect
+		Case 0
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+			Call Common_AddDevice_YAV1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.YAV1b
+			VisuInterface 1 1 3
+			WearCounter 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.YBV1b
+			VisuInterface 1 1 4
+			WearCounter 1
+	EndSelect
+Return
+
+SubRoutine Option20_ShotMeter1Sub_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+		Delete
+	Endif
+	
+	SelectCase Option20 // Shot meter single
+		Case 1
+			Call Common_AddChannel_ShotMeter1Sub_a
+		Case 0
+			Call Common_AddChannel_ShotMeter1Sub_ab
+	EndSelect
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+	Call Common_AddDevice_YBV1_1
+	
+	SelectCase Option20 // Shot meter single
+		Case 1
+			SelectCase Option2 // Variant of process group
+				Case xD_LASD
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+					Call Common_AddDevice_YAV1_1
+			EndSelect
+		Case 0
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+			Call Common_AddDevice_YAV1_1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.YAV1_1b
+			VisuInterface 1 1 3
+			WearCounter 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.YBV1_1b
+			VisuInterface 1 1 4
+			WearCounter 1
+	EndSelect
+Return
+
+SubRoutine Option20_ShotMeter2Sub_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+		Delete
+	Endif
+	
+	SelectCase Option20 // Shot meter single
+		Case 1
+			Call Common_AddChannel_ShotMeter2Sub_a
+		Case 0
+			Call Common_AddChannel_ShotMeter2Sub_ab
+	EndSelect
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+	Call Common_AddDevice_YBV1_2
+	
+	SelectCase Option20 // Shot meter single
+		Case 1
+			SelectCase Option2 // Variant of process group
+				Case xD_LASD
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+					Call Common_AddDevice_YAV1_2
+			EndSelect
+		Case 0
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+			Call Common_AddDevice_YAV1_2
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.YAV1_2b
+			VisuInterface 1 3 3
+			WearCounter 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.YBV1_2b
+			VisuInterface 1 3 4
+			WearCounter 1
+	EndSelect
+Return
+
+SubRoutine Option20_ConfigureLogChannel_ShotMeter1Sub
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	//*********** Add physical ShotMeter1Sub_a*****************
+	SelectLogChannel PCU1.LogMaterial1
+	LogChannelAddPhysChannel ShotMeter1Sub_.a
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 0
+	//*********** Add physical ShotMeter1Sub_b*****************
+	SelectCase Option20 // Shot meter single
+		Case 0
+			SelectLogChannel PCU1.LogMaterial1
+			LogChannelAddPhysChannel ShotMeter1Sub_.b
+			//Parameter 1: Channelgroup or Channelgroup.Channel
+			LogChannelPropertyLogMainChannel 0
+			LogChannelPropertyOverallStateRelevant 0
+	EndSelect
+Return
+
+SubRoutine Option20_ConfigureLogChannel_ShotMeter2Sub
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	//*********** Add physical ShotMeter2Sub_a*****************
+	SelectLogChannel PCU1.LogMaterial2
+	LogChannelAddPhysChannel ShotMeter2Sub_.a
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 0
+	//*********** Add physical ShotMeter2Sub_b*****************
+	SelectCase Option20 // Shot meter single
+		Case 0
+			SelectLogChannel PCU1.LogMaterial2
+			LogChannelAddPhysChannel ShotMeter2Sub_.b
+			//Parameter 1: Channelgroup or Channelgroup.Channel
+			LogChannelPropertyLogMainChannel 0
+			LogChannelPropertyOverallStateRelevant 0
+	EndSelect
+Return

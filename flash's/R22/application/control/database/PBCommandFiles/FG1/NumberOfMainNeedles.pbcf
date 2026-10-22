@@ -1,0 +1,948 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 15.04.2014  | SMOH   | Option22 script converted to BoostAirSupply
+//  v2_01.03.00  | 12.09.2014  | KLCH   | Change: adaptions for new type T004 of ATC
+//  v2_01.04.00  | 13.04.2015  | STL    | Change: Trigger configuration heating sections because of new ProcessBuilder version
+//  v2_01.05.00  | 15.04.2015  | STL    | Change: Pressure controlled piston
+//  v2_01.06.00  | 28.10.2016  | STL    | Add: Option HelpGun
+//  v2_01.07.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.08.00  | 14.12.2017  | KLCH   | Change: generate time programs (copy operation not needed)
+
+Imports Common Option21
+
+Parameter Option1 Option2 Option14 Option18 Option20 Option21 MaterialValve1 NumberOfMainNeedles HelpGun1
+
+Call Main_NumberOfMainNeedles
+Call Common_Description_PCU
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_NumberOfMainNeedles
+	SelectNode RPC1.R11.PCU1
+	
+	// add devices
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YHN1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YHN1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YHN2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YHN2
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YHN3
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YHN3
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_YHN1
+	SelectCase NumberOfMainNeedles
+		Case 1
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PurgeHN2.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PurgeHN2.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PurgeHN3.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PurgeHN3.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\Spray_HN2.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\Spray_HN2.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\Spray_HN3.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\Spray_HN3.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\PurgeHN2.tid
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\PurgeHN2.tip
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\Spray_HN2.tid
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\Spray_HN2.tip
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\PurgeHN3.tid
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\PurgeHN3.tip
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\Spray_HN3.tid
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\Spray_HN3.tip
+			
+			FSCopy ..\SpecialOptions\MainNeedle\1MainNeedle\FB_Interlocks_MainNeedle.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			
+			SelectCase MaterialValve1
+				Case 0
+					SelectCase Option1
+						Case EcoDose_PCL // Process type
+							SelectCase HelpGun1
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\HelpGun1\No\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\HelpGun1\Yes\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_SM
+							SelectCase Option20 // Shot meter single
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\purgeatomizer_degrade.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_PM
+						Case EcoDose_ES
+						Case EcoDose_PCL_PCL
+						Case EcoDose_SM_PCL
+						Case EcoDose_SM_SM
+							FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\purgeatomizer_sm1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\referencecurve_hn1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							SelectCase Option20 // Shot meter single
+								Case 0
+									Message Only shot meter single supported (NumberOfMainNeedles)
+							EndSelect
+						CaseElse
+							Message Wrong process type (NumberOfMainNeedles)!!
+					EndSelect
+				Case 1
+					SelectCase Option1
+						Case EcoDose_PCL // Process type
+							SelectCase HelpGun1
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\HelpGun1\No\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\HelpGun1\Yes\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_SM
+							SelectCase Option20 // Shot meter single
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\purgeatomizer_degrade.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_PM
+						Case EcoDose_ES
+						Case EcoDose_PCL_PCL
+						Case EcoDose_SM_PCL
+						Case EcoDose_SM_SM
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\purgeatomizer_sm1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\referencecurve_hn1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							SelectCase Option20 // Shot meter single
+								Case 0
+									Message Only shot meter single supported (NumberOfMainNeedles)
+							EndSelect
+						CaseElse
+							Message Wrong process type (NumberOfMainNeedles)!!
+					EndSelect
+				CaseElse
+					Message Wrong parameter MaterialValve1 in script NumberOfMainNeedles
+			EndSelect
+			
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+				FSCopy ..\SpecialOptions\MainNeedle\1MainNeedle\HelpGun1\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			Else
+				SelectCase Option1
+					Case EcoDose_PCL
+						FSCopy ..\SpecialOptions\MainNeedle\1MainNeedle\HelpGun1\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					CaseElse
+						FSCopy ..\SpecialOptions\MainNeedle\1MainNeedle\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				EndSelect
+			Endif
+			
+		Case 2
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+			Call Common_AddDevice_YHN2
+			
+			SelectCase Option1
+				Case EcoDose_SM_SM
+					FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PistonMaster_2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+			EndSelect
+			
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PurgeHN2.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PurgeHN2.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PurgeHN3.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PurgeHN3.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\Spray_HN2.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\Spray_HN2.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\Spray_HN3.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\Spray_HN3.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\PurgeHN3.tid
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\PurgeHN3.tip
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\Spray_HN3.tid
+			FSDeleteFile ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt\Spray_HN3.tip
+			
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\FB_Interlocks_MainNeedle.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			
+			SelectCase MaterialValve1
+				Case 0
+					SelectCase Option1
+						Case EcoDose_PCL // Process type
+							SelectCase HelpGun1
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\HelpGun1\No\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\HelpGun1\Yes\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_SM
+							SelectCase Option20 // Shot meter single
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\purgeatomizer_degrade.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_PM
+						Case EcoDose_ES
+						Case EcoDose_PCL_PCL
+						Case EcoDose_SM_PCL
+						Case EcoDose_SM_SM
+							FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\referencecurve_hn1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\referencecurve_hn2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							SelectCase Option20 // Shot meter single
+								Case 0
+									Message Only shot meter single supported (NumberOfMainNeedles)
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\purgeatomizer_sm1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\purgeatomizer_sm2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						CaseElse
+							Message Wrong process type (NumberOfMainNeedles)!!
+					EndSelect
+				Case 1
+					SelectCase Option1
+						Case EcoDose_PCL // Process type
+							SelectCase HelpGun1
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\HelpGun1\No\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\HelpGun1\Yes\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_SM
+							SelectCase Option20 // Shot meter single
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\purgeatomizer_degrade.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_PM
+						Case EcoDose_ES
+						Case EcoDose_PCL_PCL
+						Case EcoDose_SM_PCL
+						Case EcoDose_SM_SM
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\referencecurve_hn1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\referencecurve_hn2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							SelectCase Option20 // Shot meter single
+								Case 0
+									Message Only shot meter single supported (NumberOfMainNeedles)
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\purgeatomizer_sm1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\purgeatomizer_sm2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						CaseElse
+							Message Wrong process type (NumberOfMainNeedles)!!
+					EndSelect
+				CaseElse
+					Message Wrong parameter MaterialValve1 in script NumberOfMainNeedles
+			EndSelect
+			
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+				FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\HelpGun1\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			Else
+				SelectCase Option1
+					Case EcoDose_PCL
+						FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\HelpGun1\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					CaseElse
+						FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				EndSelect
+			Endif
+			
+		Case 3
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+			Call Common_AddDevice_YHN2
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+			Call Common_AddDevice_YHN3
+			
+			SelectCase Option1
+				Case EcoDose_SM_SM
+					FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PistonMaster_2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+			EndSelect
+			
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PurgeHN2.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\PurgeHN2.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PurgeHN3.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\PurgeHN3.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\Spray_HN2.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\Spray_HN2.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\Spray_HN3.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\Spray_HN3.tip ..\..\..\..\..\application\control\teachcontrol\Kin1\Fixpos.tt
+			
+			FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\FB_Interlocks_MainNeedle.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			
+			SelectCase MaterialValve1
+				Case 0
+					SelectCase Option1
+						Case EcoDose_PCL // Process type
+							SelectCase HelpGun1
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\HelpGun1\No\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\HelpGun1\Yes\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_SM
+							SelectCase Option20 // Shot meter single
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\purgeatomizer_degrade.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								CaseElse
+							EndSelect
+						Case EcoDose_PM
+						Case EcoDose_ES
+						Case EcoDose_PCL_PCL
+						Case EcoDose_SM_PCL
+						Case EcoDose_SM_SM
+							FSCopy ..\SpecialOptions\MaterialValve1\No\1MainNeedle\referencecurve_hn1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\No\2MainNeedles\referencecurve_hn2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\referencecurve_hn3.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							SelectCase Option20 // Shot meter single
+								Case 0
+									Message Only shot meter single supported (NumberOfMainNeedles)
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\purgeatomizer_SM1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\No\3MainNeedles\purgeatomizer_SM2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						CaseElse
+							Message Wrong process type (NumberOfMainNeedles)!!
+					EndSelect
+				Case 1
+					SelectCase Option1
+						Case EcoDose_PCL // Process type
+							SelectCase HelpGun1
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\HelpGun1\No\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\HelpGun1\Yes\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						Case EcoDose_SM
+							SelectCase Option20 // Shot meter single
+								Case 0
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\purgeatomizer_degrade.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+								CaseElse
+							EndSelect
+						Case EcoDose_PM
+						Case EcoDose_ES
+						Case EcoDose_PCL_PCL
+						Case EcoDose_SM_PCL
+						Case EcoDose_SM_SM
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\1MainNeedle\referencecurve_hn1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\2MainNeedles\referencecurve_hn2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\referencecurve_hn3.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							SelectCase Option20 // Shot meter single
+								Case 0
+									Message Only shot meter single supported (NumberOfMainNeedles)
+								Case 1
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\purgeatomizer.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\purgeatomizer_sm1.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+									FSCopy ..\SpecialOptions\MaterialValve1\Yes\3MainNeedles\purgeatomizer_sm2.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+							EndSelect
+						CaseElse
+							Message Wrong process type (NumberOfMainNeedles)!!
+					EndSelect
+				CaseElse
+					Message Wrong parameter MaterialValve1 in script NumberOfMainNeedles
+			EndSelect
+			
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+				FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\HelpGun1\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			Else
+				SelectCase Option1
+					Case EcoDose_PCL
+			           		FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\HelpGun1\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					CaseElse
+						FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				EndSelect
+			Endif
+			
+		CaseElse
+			Message Wrong number of MainNeedles!!
+	EndSelect
+	
+	// configure TriggerBrush
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	SelectCase Option1
+		Case EcoDose_PCL // Process type
+			Call ConfigureTriggers1Material_PCL
+		Case EcoDose_SM
+			Call ConfigureTriggers1Material_SM
+		Case EcoDose_PM
+			//Call ConfigureTriggers1Material_PM
+		Case EcoDose_PCL_PCL
+			//Call ConfigureTriggers2Materials_PCL
+		Case EcoDose_SM_PCL
+			//Call ConfigureTriggers2Materials_SM_PCL
+		Case EcoDose_SM_SM
+			Call ConfigureTriggers2Materials_SM
+		CaseElse
+			Message Wrong process type (NumberOfMainNeedles)!!
+	EndSelect
+	
+	//configure fixpositions
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	//*********** set präfix *******************************
+	FixposPrefix R
+	FixposEnabled PurgeHN1 1
+	FixposUsedInTP PurgeHN1 1 // Purge HN 1
+	SelectCase NumberOfMainNeedles
+	 	Case 1
+			//
+		Case 2
+			FixposEnabled PurgeHN2 1
+			FixposUsedInTP PurgeHN2 1 // Purge HN 2
+		Case 3
+			FixposEnabled PurgeHN2 1
+			FixposUsedInTP PurgeHN2 1 // Purge HN 2
+			FixposEnabled PurgeHN3 1
+			FixposUsedInTP PurgeHN3 1 // Purge HN 3
+		CaseElse
+			Message Wrong number of MainNeedles!!
+	EndSelect
+	
+	//Check BlowOut
+	SelectCase Option18
+		Case No_CleaningSystem
+			Call Main_Option21
+		CaseElse
+			FSCopy ..\SpecialOptions\_globalvars.tid ..\..\..\..\..\application\control\teachcontrol\Kin1\_global.tt
+			SelectCase NumberOfMainNeedles
+				Case 1
+					FSCopy ..\SpecialOptions\Option21\No\1MainNeedle\AB_InterlocksFixpositionsRob.pu ..\..\..\..\..\application\control\ieccontrol\BCU1\EngineeringFiles
+				Case 2
+					FSCopy ..\SpecialOptions\Option21\No\2MainNeedles\AB_InterlocksFixpositionsRob.pu ..\..\..\..\..\application\control\ieccontrol\BCU1\EngineeringFiles
+				Case 3
+					FSCopy ..\SpecialOptions\Option21\No\3MainNeedles\AB_InterlocksFixpositionsRob.pu ..\..\..\..\..\application\control\ieccontrol\BCU1\EngineeringFiles
+				CaseElse
+					Message Wrong parameter NumberOfMainNeedles in script NumberOfMainNeedles
+			EndSelect
+	EndSelect
+Return
+
+SubRoutine ConfigureTriggers1Material_PCL
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 1
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			SetTriggerGun1 AMV2FC.OrderSet 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 YHG1.Set 1
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_11
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_11.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_52
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_52.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		Case 2
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 2
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			NotResetTriggerAtEnd YHN2.Set 0
+			SetInverseTrigger YHN2.Set 0
+			SetTriggerGun2 YHN2.Set 1
+			SetTriggerGun1 AMV2FC.OrderSet 1
+			SetTriggerGun2 AMV2FC.OrderSet 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 YHG1.Set 1
+				SetTriggerGun2 YHG1.Set 1
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+				SetTriggerGun2 AMatManager1.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_11
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_11.SetNewTemp 1
+						SetTriggerGun2 AMH1_11.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12.SetNewTemp 1
+					 	SetTriggerGun2 AMH1_12.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51.SetNewTemp 1
+						SetTriggerGun2 AMH1_51.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_52
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_52.SetNewTemp 1
+						SetTriggerGun2 AMH1_52.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+						SetTriggerGun2 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		Case 3
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 3
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			NotResetTriggerAtEnd YHN2.Set 0
+			SetInverseTrigger YHN2.Set 0
+			SetTriggerGun2 YHN2.Set 1
+			NotResetTriggerAtEnd YHN3.Set 0
+			SetInverseTrigger YHN3.Set 0
+			SetTriggerGun3 YHN3.Set 1
+			SetTriggerGun1 AMV2FC.OrderSet 1
+			SetTriggerGun2 AMV2FC.OrderSet 1
+			SetTriggerGun3 AMV2FC.OrderSet 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 YHG1.Set 1
+				SetTriggerGun2 YHG1.Set 1
+				SetTriggerGun3 YHG1.Set 1
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+				SetTriggerGun2 AMatManager1.OrderSet 1
+				SetTriggerGun3 AMatManager1.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_11
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_11.SetNewTemp 1
+						SetTriggerGun2 AMH1_11.SetNewTemp 1
+						SetTriggerGun3 AMH1_11.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12.SetNewTemp 1
+					 	SetTriggerGun2 AMH1_12.SetNewTemp 1
+					 	SetTriggerGun3 AMH1_12.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51.SetNewTemp 1
+						SetTriggerGun2 AMH1_51.SetNewTemp 1
+						SetTriggerGun3 AMH1_51.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_52
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_52.SetNewTemp 1
+						SetTriggerGun2 AMH1_52.SetNewTemp 1
+						SetTriggerGun3 AMH1_52.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+						SetTriggerGun2 AMH1_7.SetNewTemp 1
+						SetTriggerGun3 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		CaseElse
+			Message Wrong number of MainNeedles!!
+	EndSelect
+Return
+
+SubRoutine ConfigureTriggers1Material_SM
+	SelectCase NumberOfMainNeedles
+		Case 1
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 1
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			SetTriggerGun1 BShotMeter1.OrderMove 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_11
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_11.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_52
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_52.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		Case 2
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 2
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			NotResetTriggerAtEnd YHN2.Set 0
+			SetInverseTrigger YHN2.Set 0
+			SetTriggerGun2 YHN2.Set 1
+			SetTriggerGun1 BShotMeter1.OrderMove 1
+			SetTriggerGun2 BShotMeter1.OrderMove 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+				SetTriggerGun2 AMatManager1.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_11
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_11.SetNewTemp 1
+						SetTriggerGun2 AMH1_11.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12.SetNewTemp 1
+					 	SetTriggerGun2 AMH1_12.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51.SetNewTemp 1
+						SetTriggerGun2 AMH1_51.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_52
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_52.SetNewTemp 1
+						SetTriggerGun2 AMH1_52.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+						SetTriggerGun2 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		Case 3
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 3
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			NotResetTriggerAtEnd YHN2.Set 0
+			SetInverseTrigger YHN2.Set 0
+			SetTriggerGun2 YHN2.Set 1
+			NotResetTriggerAtEnd YHN3.Set 0
+			SetInverseTrigger YHN3.Set 0
+			SetTriggerGun3 YHN3.Set 1
+			SetTriggerGun1 BShotMeter1.OrderMove 1
+			SetTriggerGun2 BShotMeter1.OrderMove 1
+			SetTriggerGun3 BShotMeter1.OrderMove 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+				SetTriggerGun2 AMatManager1.OrderSet 1
+				SetTriggerGun3 AMatManager1.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_11
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_11.SetNewTemp 1
+						SetTriggerGun2 AMH1_11.SetNewTemp 1
+						SetTriggerGun3 AMH1_11.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12.SetNewTemp 1
+					 	SetTriggerGun2 AMH1_12.SetNewTemp 1
+					 	SetTriggerGun3 AMH1_12.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51.SetNewTemp 1
+						SetTriggerGun2 AMH1_51.SetNewTemp 1
+						SetTriggerGun3 AMH1_51.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_52
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_52.SetNewTemp 1
+						SetTriggerGun2 AMH1_52.SetNewTemp 1
+						SetTriggerGun3 AMH1_52.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+						SetTriggerGun2 AMH1_7.SetNewTemp 1
+						SetTriggerGun3 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		CaseElse
+			Message Wrong number of MainNeedles!!
+	EndSelect
+Return
+
+SubRoutine ConfigureTriggers2Materials_SM
+	SelectCase NumberOfMainNeedles	
+		Case 2
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BShotMeter1
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCfg BShotMeter1.ActiveWithGuns
+			Value 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BShotMeter2
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCfg BShotMeter2.ActiveWithGuns
+			Value 2
+			SelectNode RPC1.R11.PCU1
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 2
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			NotResetTriggerAtEnd YHN2.Set 0
+			SetInverseTrigger YHN2.Set 0
+			SetTriggerGun2 YHN2.Set 1
+			SetTriggerGun1 BShotMeter1.OrderMove 1
+			SetTriggerGun2 BShotMeter1.OrderMove 0
+			SetTriggerGun2 BShotMeter2.OrderMove 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+				SetTriggerGun2 AMatManager1.OrderSet 0
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager2.OrderSet 0
+				SetTriggerGun2 AMatManager2.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12_1
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12_1.SetNewTemp 1
+						SetTriggerGun2 AMH1_12_1.SetNewTemp 0
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMH1_12_2
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun2 AMH1_12_2.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51_1
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51_1.SetNewTemp 1
+						SetTriggerGun2 AMH1_51_1.SetNewTemp 0
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMH1_51_2
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun2 AMH1_51_2.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+						SetTriggerGun2 AMH1_7.SetNewTemp 0
+					Endif
+			EndSelect
+		Case 3
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BShotMeter1
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCfg BShotMeter1.ActiveWithGuns
+			Value 3
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BShotMeter2
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCfg BShotMeter2.ActiveWithGuns
+			Value 4
+			SelectNode RPC1.R11.PCU1
+			SelectTab [BrushTriggerConfiguration]
+			NoOfGuns 3
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHN1.Set 0
+			SetInverseTrigger YHN1.Set 0
+			SetTriggerGun1 YHN1.Set 1
+			NotResetTriggerAtEnd YHN2.Set 0
+			SetInverseTrigger YHN2.Set 0
+			SetTriggerGun2 YHN2.Set 1
+			NotResetTriggerAtEnd YHN3.Set 0
+			SetInverseTrigger YHN3.Set 0
+			SetTriggerGun3 YHN3.Set 1
+			SetTriggerGun1 BShotMeter1.OrderMove 1
+			SetTriggerGun2 BShotMeter1.OrderMove 1
+			SetTriggerGun2 BShotMeter2.OrderMove 0
+			SetTriggerGun3 BShotMeter2.OrderMove 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 AMatManager1.OrderSet 1
+				SetTriggerGun2 AMatManager1.OrderSet 1
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun2 AMatManager2.OrderSet 0
+				SetTriggerGun3 AMatManager2.OrderSet 1
+			Endif
+			SelectCase Option14 // Variant of bus system
+				Case Profibus
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_12_1
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_12_1.SetNewTemp 1
+						SetTriggerGun2 AMH1_12_1.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMH1_12_2
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun3 AMH1_12_2.SetNewTemp 1
+						SetTriggerGun2 AMH1_12_2.SetNewTemp 0
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_51_1
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_51_1.SetNewTemp 1
+						SetTriggerGun2 AMH1_51_1.SetNewTemp 1
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMH1_51_2
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun3 AMH1_51_2.SetNewTemp 1
+						SetTriggerGun2 AMH1_51_2.SetNewTemp 0
+					Endif
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMH1_7
+						SelectNode RPC1.R11.PCU1
+						SelectTab [BrushTrigger]
+						SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+						SetTriggerGun1 AMH1_7.SetNewTemp 1
+						SetTriggerGun2 AMH1_7.SetNewTemp 1
+					Endif
+			EndSelect
+		CaseElse
+			Message Wrong number of MainNeedles!!
+	EndSelect
+Return

@@ -1,0 +1,2771 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuProgPath.tts
+*  First Author : pen
+*  Date         : 15.11.2001
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  The Path used for user defined motion.
+*------------------------------------------------------------------------------
+* 08.11.2004 BMA  Bugfixing AppendSegment
+*                 Observing Triggerorder in segment was off
+* 26.11.2004 BMA  Bugfixing AppendSegment
+*                 In PTP and circlesegments mGeo.mAutoOrientation must be 
+*                 switched on in order that MCU calculates the plane.
+*                 Becaus segmentparameter will be set random at 0.5 on PTP and 
+*                 circlesegments, a big failure arise on long segments.
+*                 All triggers on such a segment switching in the middle.
+*                 In this case dont use segmenttriggers!
+* 20.01.2005 nmr: Changes, to make it possible to reach triggerpositions,
+*                 some changes in triggerparts, partitionally as preparation 
+*                 for goldenRepos (move some data to userdatas of the jobs),
+*                 move CalcOri to  nach TRcuTrigger
+* 16.02.2005 nmr: Extensions for GoldenRepos, outsourcing common code for PTP, 
+*                 LIN und CIRC in new routine Move
+*                 Change-over to traceword controlled debug outputs.
+*                 improved protection from WaitForMainRun
+* 22.03.2005 nmr: with McuCreatePosFromPathPos generated positions must be explicit
+*                 released
+* 24.03.2005 nmr: In SavePathPos() it is not allowed to wait for mIsStoppedJoints,
+*                 because its required to save pathposition before leaving the path
+*                 on triggering a StopJoints 
+* 25.04.2005 nmr: Saving last pathvelocity before braking into new variable
+*                 speedBeforeInterrupt
+* 29.04.2005 nmr: By using restarttriggers it was possible to get problems if last
+*                 activated trigger was in a line > breakline
+*                 (possible bevause overlap)
+* 13.05.2005 nmr: Correction to allow multiple repositionings
+* 05.07.2005 nmr: correction at generating of a new path
+* 26.08.2005 nmr: bugfix in routine RebuildPath()
+* 08.09.2005 nmr: lastSegment removed, now it is possible to get 
+*                 let the mcu signal, when a new segment is neede to
+*                 avoid decelerating (needs to be configured in [MC])
+* 03.10.2005 nmr: improvements concerning backward movement and a bugfix
+*                 for overlapping after setPC
+* 01.12.2005 BMA: modifications for tracking.
+*                 in the ROUTINE gun(): the flag bGunOffReached is set to signal
+*                 that the next point is a possible stop point.
+*                 in the ROUTINE move(): at the first point in objectsystem the
+*                 routine waits until this point is in the window (inbound,
+*                 outbound) around the actual tcp. If railtracking is active
+*                 all positions in objectsystem get a reference of a so-called
+*                 Axisoffsetobject ( -> Description Railtracking from KEBA)
+* 15.02.06 BMA: signaling the name of the module before moving to the first
+*               position in this module
+* 02.11.06 BMA: modifications for tracking phase 1 with macros SECTION, ...
+*)
+
+
+INHERIT TRcuPath;
+
+
+(*-----------------------------------------------------------------------------
+* globals
+*)
+
+TYPE GLOBAL
+   TRcuTriggerType : (eTriggerInvalid := -1, eTriggerGunOn, eTriggerGunOff, eTriggerBrush, eTriggerVision ,eTriggerRepos, 
+                      eTriggerProcess, eTriggerBkAction, eTriggerZAction, eTriggerMax);
+END_TYPE
+
+
+(*-----------------------------------------------------------------------------
+* members
+*)
+
+VAR   
+   // Disable overlapping. This is just for test purposes.
+   noOverlapping : BOOL;
+      
+   // data for golden repos
+   interruptProgStack : TUserProgStackInfo; // callstack in which the program has been interrupted
+   interruptSegParam : REAL;
+   skipTriggers      : BOOL;
+   lastExecutedTrigger : DINT;
+   lastExecJobStackHdl : DINT;
+   reposTriggerGun     : DINT;
+   reposCircHelpPosId : TMcuDbObjID;
+   reposPosMcuId      : TMcuDbObjID;
+   lastTriggerOnInterrSeg : DINT;
+   speedBeforeInterrupt : REAL;
+   reposLastGunOn    : DINT;
+   reposLastJobNum   : DINT;
+   reposLastStackHdl : DINT;
+   reposIsOnPathEnd  : BOOL; // robot was on path end when interrupt happend 
+   stopPointCallStackHdl : DINT;
+   
+   // to signal when mcu needs a new segment to avoid stopping
+   tNeedNextSM        : MAPTO TMcuNeedNextSegState;
+   bAppendLate        : BOOL;
+   bAppendLateSMReady : BOOL;
+   
+   restartActCommand : BOOL; // set true upon error when act command should be restarted   
+ 
+   rSmoothDiff       : REAL; // difference between original path and smooth path
+   smoothOrgPos      : TMcuVector3;
+   smoothOrgOri      : TMcuVector3;
+   smoothTcpPos      : TMcuVector3;
+   smoothTcpOri      : TMcuVector3;
+   rSmoothDx         : REAL;
+   rSmoothDy         : REAL;
+   rSmoothDz         : REAL;
+   
+   // flags for first movement of tracking
+   bMoveBlocked      : BOOL; // wait until flag is reset
+   bWait7Cycles      : BOOL; // wait 6 cycles
+   bNextMove         : BOOL; // next move is pending
+   TrckOnDyn         : TMcuDynamic;
+   TrckOnDynID       : TMcuDbObjID;
+   TrckOffDyn        : TMcuDynamic;
+   TrckOffDynID      : TMcuDbObjID;
+   bUseTrckOnDyn     : BOOL;
+   bUseTrckOffDyn    : BOOL;
+END_VAR
+
+
+// Save the current position in pathPosId
+ROUTINE SavePathPos()
+   VAR
+      pathPos : TMcuPosition;
+   END_VAR
+   
+   IF myKinematic.actExecData.mActPathID <> pathMcuId THEN
+      RcuSetMessageOnce(TRcuProgPath_WarOnWrongPath, myKinematic.kinListInx, 1, instId, "TRcuProgPath.SavePathPos", myKinematic.robotName,
+      INSTANCE_NAME());
+      RETURN;
+   END_IF;
+   IF myKinematic.actExecData.mActSegmentID = 0 THEN
+      // empty path! reset to make sure.
+      McuReleaseDbObj(pathPosMcuId);
+      pathPosMcuId := McuGetInitPathPosID(pathMcuId);
+      segmentMcuId := 0;
+   ELSE
+      // save actual position
+      IF myKinematic.stopMicroIPActive THEN
+         IF (myKinematic.actDrivesExt.mMicroIPPathPos.mPathID = pathMcuId) THEN
+            DebugPrint(eTraceCommon, "********* Save path position after McuStopMicroIP *********");
+            pathPos.mPosPath.mSegmentID := myKinematic.actDrivesExt.mMicroIPPathPos.mSegmentID;
+            pathPos.mPosPath.mSegmentParam := myKinematic.actDrivesExt.mMicroIPPathPos.mSegParam;
+         ELSE   
+            DebugPrint(eTraceMotionModesFine, "********* Save path position after McuStopMicroIP not valid *********");
+            DebugPrint(eTraceMotionModesFine, "********* Take path position of main interpolator *********");
+            pathPos.mPosPath.mSegmentID := myKinematic.actExecData.mActSegmentID;
+            pathPos.mPosPath.mSegmentParam := myKinematic.actExecData.mActSegParam;
+         END_IF;
+         myKinematic.stopMicroIPActive := FALSE;
+      ELSE
+         DebugPrint(eTraceCommon, "********* Save path position after McuStopMove *********");
+         pathPos.mPosPath.mSegmentID := myKinematic.actExecData.mActSegmentID;
+         pathPos.mPosPath.mSegmentParam := myKinematic.actExecData.mActSegParam;
+      END_IF;
+      // save reference joint values
+      pathPos.mPosJoints.mJoints.mValues := myKinematic.actExecData.mLastPathJoints.mValues;
+      pathPos.mPosJoints.mJoints.mValidLen := myKinematic.actExecData.mLastPathJoints.mValidLen;
+      // prepare the position
+      pathPos.mDBObjTyp := eMcuPermanent;
+      pathPos.mKinematicID := myKinematic.kinematicMcuId;
+      pathPos.mPosTyp := eMcuPosPath;
+      pathPos.mPosPath.mOccurenceCount := 0;
+      pathPos.mPosPath.mPathID := pathMcuId;
+      pathPos.mPosPath.mUseMainRefJoints := TRUE;
+      pathPos.mJointsOffsetID := 0;
+      pathPos.mName := "saved_progPath_pos";
+      // get info for mcu limiter messages
+      pathPos.mUserData.mDataInt[0] := -1;
+      pathPos.mUserData.mIntValidLen := 1;
+
+      // save segment
+      segmentMcuId := pathPos.mPosPath.mSegmentID;
+      segmentMcuParam := pathPos.mPosPath.mSegmentParam;
+      // release old position and create new one
+      McuReleaseDbObj(pathPosMcuId);
+      McuCreatePosition(pathPosMcuId, pathPos);
+      myKinematic.DebugPrint(eTraceMotionModesFine, "Save pathPos on progPath: " + 
+         STR(pathPosMcuId) + ", pathId: " + STR(pathMcuId));
+      //RcuPrintPosition(pathPosMcuId);
+   END_IF;
+END_ROUTINE
+
+
+// Save the current position
+ROUTINE SavePathPosBeforeBrake()
+   
+   myKinematic.progPath.speedBeforeInterrupt := myKinematic.actCartVals.mPathVelo;
+   IF myKinematic.actExecData.mActSegmentID = 0 THEN
+      // empty path! reset to make sure.
+      reposSegmentMcuId := 0;
+   ELSE
+      // save segment
+      reposSegmentMcuId    := myKinematic.actExecData.mActSegmentID;
+      reposSegmentMcuParam := myKinematic.actExecData.mActSegParam;
+      reposLastGunOn    := myKinematic.RcuInterfaceToProcess.lastGunOn;
+      reposLastJobNum   := lastExecutedTrigger;
+      reposLastStackHdl := lastExecJobStackHdl;
+      reposIsOnPathEnd  := myKinematic.actExecData.mIsOnPathEnd;
+   END_IF;
+END_ROUTINE
+
+
+// Restore Path Settings from the actual-values of the Mcu.
+ROUTINE ReadMcuActSettings() : BOOL
+   VAR
+      tmpSegHdl : TMcuSegHdl;
+      userData  : TMcuUserData;
+   END_VAR
+
+   myKinematic.DebugPrint(eTraceMotionModesFine, "Restore settings from segment "+STR(segmentMcuId));
+   // do nothing when standing on an empty path
+   IF segmentMcuId = 0 THEN
+      myKinematic.DebugPrint(eTraceMotionModesFine, "Empty path");
+      RETURN TRUE;
+   END_IF;
+
+   // read segmenthandler
+   IF NOT McuReadSegHdl(segmentMcuId, tmpSegHdl) THEN
+      RETURN FALSE;
+   END_IF;
+   IF McuReadUserData(segmentMcuId,2,0,userData) THEN
+      RETURN ReadMcuSettingsFromSegHdl(tmpSegHdl, userData.mDataInt[eSegOvlId]);
+   ELSE
+      RETURN ReadMcuSettingsFromSegHdl(tmpSegHdl);
+   END_IF;
+END_ROUTINE
+
+
+// Restore Path Settings from the segment Handler of specified segment
+ROUTINE ReadMcuSettingsFromSegHdl(locSegHdl : TMcuSegHdl; 
+      OPTIONAL CONST ovlIdOri : DINT) : BOOL
+   VAR
+      dynId : TMcuDbObjID;
+      ovlId : TMcuDbObjID;
+      toolId : TMcuDbObjID;
+      dyn : TMcuDynamic;
+      userData : TMcuUserData;
+   END_VAR
+
+   // fetch settings from segmenthandler
+   dynId := locSegHdl.mDynamicID;
+   IF IS_USED(ovlIdOri) THEN
+      ovlId := ovlIdOri;
+   END_IF;
+   IF ovlId = 0 THEN // ovlIdOri given but not valid
+      ovlId := locSegHdl.mOverlapID;
+   END_IF;
+   // check if overlap is a wait-overlap (used for wait segments)
+   myKinematic.DebugPrint(eTraceMotionModesFine, "ReadMcuSettingsFromSegHdl:  ovlId = " +STR(ovlId));
+
+   IF McuReadUserData(ovlId, 1, 0, userData) AND (userData.mIntValidLen > 0) AND
+         (userData.mDataInt[0] <> 0) THEN
+      McuReleaseDbObj(ovlId); // release wait-overlap
+      myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl release wait-overlap McuReleaseDbObj() ovlId = " +STR(ovlId));
+      ovlId := userData.mDataInt[0];
+      myKinematic.DebugPrint(eTraceMotionModesFine, "ReadMcuSettingsFromSegHdl:  userData.mDataInt[0] = " +STR(userData.mDataInt[0]));
+      myKinematic.DebugPrint(eTraceMotionModesFine, "Path-Overlap restored from Wait-Overlap");
+   ELSIF McuReadUserData(locSegHdl.mSegmentID, 5, 0, userData) AND (userData.mIntValidLen > 0) 
+         AND (userData.mDataInt[eSegNextOvlId] <> 0) THEN  // check if a stored next overlap exists
+      IF (ovlId <> defaultOvlMcuId) THEN
+         McuReleaseDbObj(ovlId); // release actual overlap
+         myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl release actual overlap McuReleaseDbObj() ovlId = " +STR(ovlId));
+      END_IF;
+      ovlId := userData.mDataInt[eSegNextOvlId];
+      myKinematic.DebugPrint(eTraceMotionModesFine, "ReadMcuSettingsFromSegHdl:  userData.mDataInt[eSegNextOvlId] = " +STR(userData.mDataInt[eSegNextOvlId]));
+      myKinematic.DebugPrint(eTraceMotionModesFine, "Path-Overlap restored from stored Next-Overlap");
+   ELSE 
+      myKinematic.DebugPrint(eTraceMotionModesFine, "Path-Overlap restored from common overlap");
+   END_IF;
+
+   toolId := locSegHdl.mRobotToolID;
+   McuReadDynamic(dynId, dyn);
+
+   // release original objects if appropriate
+   IF (segHdl.mDynamicID <> dynamicId) AND (segHdl.mDynamicID <> cartDynamicId) 
+         AND (segHdl.mDynamicID <> defaultCartDynMcuId) 
+         AND (segHdl.mDynamicID <> defaultDynMcuId) AND (segHdl.mDynamicID <> dynId) THEN
+      myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl: McuReleaseDbObj segHdl.mDynamicID = " + STR(segHdl.mDynamicID));
+      McuReleaseDbObj(segHdl.mDynamicID);
+   END_IF;
+   IF (segHdl.mOverlapID <> defaultOvlMcuId) AND (segHdl.mOverlapID <> ovlId) THEN
+      McuReleaseDbObj(segHdl.mOverlapID);
+      myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl McuReleaseDbObj() segHdl.mOverlapID = " +STR(segHdl.mOverlapID));
+   END_IF;
+   IF (dynamic.mAcceRamp <> defaultAcceRampMcuId) AND (dynamic.mAcceRamp <> dyn.mAcceRamp) THEN
+      McuReleaseDbObj(dynamic.mAcceRamp);
+   END_IF;
+   IF (dynamic.mDeceRamp <> defaultDeceRampMcuId) AND (dynamic.mDeceRamp <> dyn.mDeceRamp) THEN
+      McuReleaseDbObj(dynamic.mDeceRamp);
+   END_IF;
+
+   // reserve actualdata again when they were already released
+   IF (dyn.mAcceRamp <> defaultAcceRampMcuId) AND (dyn.mAcceRamp <> dynamic.mAcceRamp) THEN // already released, reserve again
+      McuReserveDbObj(dyn.mAcceRamp);
+   END_IF;
+
+   IF (dyn.mDeceRamp <> defaultDeceRampMcuId) AND (dyn.mDeceRamp <> dynamic.mDeceRamp) THEN // already released, reserve again
+      McuReserveDbObj(dyn.mDeceRamp);
+   END_IF;
+
+   IF (dynId <> dynamicId) AND (dynId <> cartDynamicId) AND (dynId <> defaultCartDynMcuId) 
+         AND (dynId <> defaultDynMcuId) AND (dynId <> segHdl.mDynamicID) THEN // already released, reserve again
+      myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl: McuReserveDbObj dynId = "+STR(dynId)+" not executed!!!!");
+      //McuReserveDbObj(dynId);
+   END_IF;
+
+   IF (ovlId <> defaultOvlMcuId) AND (ovlId <> oldOvlMcuId) AND (ovlId <> segHdl.mOverlapID) THEN // already released, reserve again
+      myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl: McuReserveDbObj ovlId = "+STR(ovlId));
+      McuReserveDbObj(ovlId);
+   END_IF;
+   
+   IF (toolId <> defaultToolMcuId) AND (toolId <> segHdl.mRobotToolID) THEN // already released, reserve again
+      myKinematic.DebugPrint(eTraceReposDebug, "ReadMcuSettingsFromSegHdl: McuReserveDbObj toolId = "+STR(toolId));
+      McuReserveDbObj(toolId);
+   END_IF;
+
+   // copy new settingsc
+   segHdl.mDynamicID := dynId;
+   segHdl.mOverlapID := ovlId;
+   IF NOT setToolInStepMode THEN
+      myKinematic.DebugPrint(eTraceMotionModesFine, "ReadMcuSettingsFromSegHdl setToolInStepMode = FALSE");
+      myKinematic.SetToolIdIntern(toolId); // set tool in each path
+   END_IF;
+   IF dyn.mUserData.mFloatValidLen = 4 THEN
+      // this is a cartDynamic, restore jointDynamic from stored userdata
+      dyn.mJoint.mVelo := dyn.mUserData.mDataFloat[0];
+      dyn.mJoint.mDece := dyn.mUserData.mDataFloat[1];
+      dyn.mJoint.mAcce := dyn.mUserData.mDataFloat[2];
+      dyn.mJoint.mJerk := dyn.mUserData.mDataFloat[3];
+   END_IF;
+   IF VeloChgInStepMode THEN
+      myKinematic.DebugPrint(eTraceMotionModesFine, "ReadMcuSettingsFromSegHdl VeloChgInStepMode MCU: "+STR(dyn.mCart.mVelo)+" Step: "+STR(dynamic.mCart.mVelo));
+      dyn.mJoint.mVelo := dynamic.mJoint.mVelo;
+      dyn.mCart.mVelo  := dynamic.mCart.mVelo;
+      dyn.mTurn.mVelo  := dynamic.mTurn.mVelo;
+   END_IF;
+   IF AccChgInStepMode THEN
+      myKinematic.DebugPrint(eTraceMotionModesFine, "ReadMcuSettingsFromSegHdl AccChgInStepMode MCU: "+STR(dyn.mCart.mAcce)+" Step: "+STR(dynamic.mCart.mAcce));
+      dyn.mJoint.mAcce := dynamic.mJoint.mAcce;
+      dyn.mJoint.mDece := dynamic.mJoint.mDece;
+      dyn.mCart.mAcce  := dynamic.mCart.mAcce;
+      dyn.mCart.mDece  := dynamic.mCart.mDece;
+      dyn.mTurn.mAcce  := dynamic.mTurn.mAcce;
+      dyn.mTurn.mDece  := dynamic.mTurn.mDece;
+   END_IF;
+   IF JerkChgInStepMode THEN
+      dyn.mJoint.mJerk := dynamic.mJoint.mJerk;
+      dyn.mCart.mJerk  := dynamic.mCart.mJerk;
+      dyn.mTurn.mJerk  := dynamic.mTurn.mJerk;
+   END_IF;
+   IF RampChgInStepMode THEN
+      dyn.mAcceRamp := dynamic.mAcceRamp;
+      dyn.mDeceRamp := dynamic.mDeceRamp;
+   END_IF;
+   dynamic := dyn;
+   dynamicChg := TRUE; 
+   RETURN TRUE;
+END_ROUTINE
+
+
+// end all motioncommands within this path and simultanously all routines waiting
+// for motion related events (WaitForMainRun, WaitForJobSignal)
+ROUTINE EndMotionCommands()
+
+   cancelFlipFlop := NOT cancelFlipFlop;
+   cmdCount := 0;
+   cmdLimitReached := FALSE;
+   actMainRunSignal := MAPX("");
+   actMainRunCounter := MAPX("");
+END_ROUTINE
+
+
+// Append a segment with triggers to the path
+ROUTINE AppendSegment(
+   posId : TMcuDbObjID;        // Mcu-Id of the endposition
+   helpPosId : TMcuDbObjID;    // Mcu-Id of a helpposition (for circle segment)
+   useExtTool : BOOL;          // Use an external Tool
+   segType : TMcuSegmentTyp;  // type of the segment (lin, ptp, circ)
+   jobParam : REAL;     // parameter in the segment at which a signal will be generated
+   signal : BOOL;       // variable which will be set by the signal
+   dynId : TMcuDbObjID;         // Mcu-Id of the dynamic to use, 0 for the dynamic stored with the path.
+   OPTIONAL delete : BOOL;             // variable which will be set by the signal
+   (*$$$$$* spline *$$$$$*)             
+   OPTIONAL spline : TMcuSegSpline
+   )
+   VAR
+      i        : DINT;
+      lTrafoID : TMcuDbObjID;
+      locTrafo : TMcuTransformation; // center and orientation of trigger-plane
+      locJob   : TJobArray;
+      fire     : TJobBoolArray;
+      abort    : TJobBoolArray;
+      jobDelete   : TJobBoolArray;
+      startPos : TMcuPosition;   // Startposition of the segment
+      endPos   : TMcuPosition;   // Endposition of the segment
+      trPos    : TMcuPosition;   // position of trigger on segment
+      previousSegmentPos : REAL; // segmentparameter of previous trigger
+      currentSegmentPos  : REAL; // segmentparameter of current trigger
+      segParamTrigger    : BOOL;
+      segEndDistance     : REAL;
+      str      : STRING;
+      reposTriggerAdded : BOOL;
+      jobSet : TMcuJobSet;
+      lastParam : REAL;
+      // !! array-order has changed with TC 3.00
+      tActStackInfo   : TUserProgStackInfo;
+      cnt : DINT;
+      ret    : BOOL;
+      result : DINT;
+      prog : STRING; line : DINT; hdl : DINT;
+      isEndUserFlow : BOOL;
+      moduleChangeSignal : BOOL;
+   END_VAR
+
+   isEndUserFlow := GetUserProgInfo(prog,line,hdl);
+   IF isEndUserFlow AND NOT GetUserProgCallStackInfo(0, tActStackInfo) THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, myKinematic.kinListInx, 2, 
+         instId, "AppendSegment", myKinematic.robotName, "GetUserProgCallStackInfo");
+      myKinematic.ErrorReaction(FALSE);
+   ELSE
+      tOldStackInfo := tActStackInfo;
+   END_IF;
+   IF endPosId = 0 THEN
+      IF lastEndPosId <> 0 THEN
+         McuReleaseDbObj(lastEndPosId);
+         lastEndPosId := 0;
+      END_IF;
+      IF McuCreatePosFromPathPos(pathPosMcuId, lastEndPosId) THEN
+         endPosId := lastEndPosId;
+      ELSE
+         RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, myKinematic.kinListInx, 2, 
+            instId, "AppendSegment", myKinematic.robotName, "McuCreatePosFromPathPos");
+         myKinematic.ErrorReaction(FALSE);
+      END_IF;
+   END_IF;
+   IF triggers.validLen > 0 THEN  
+      startPosValid := (McuReadPosition(endPosId, startPos) AND McuReadPosition(posId, endPos));
+   END_IF;
+   FOR i := 1 TO triggers.validLen DO
+      triggers.elems[i-1].exist := TRUE;
+      IF (triggers.elems[i-1].type < eTriggerGunOn) OR (triggers.elems[i-1].type >= eTriggerMax) THEN
+         triggers.elems[i-1].exist := FALSE;
+         MAINRUN();
+         myKinematic.DebugPrint(eTraceTrigger, "Invalid trigger type (1): " + STR(triggers.elems[i-1].type));
+         RcuSetMessageOnce(TRcuProgPath_ErrInvTrg, myKinematic.kinListInx, 1, instId, "TRcuProgPath.AppendSegment",
+            triggers.elems[i-1].trigger.GetName(), GetSource());
+         IF myRobot.bHasProcess THEN
+            IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+               myRobot.ErrorReaction(TRUE);
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      IF triggers.elems[i-1].exist THEN  
+         locJob[i-1] := triggerJob;
+         // calculate orientation of the plane and save it into triggers.elems[i-1].trigger.pos.frame.ori
+         // after teaching
+         IF segType <> eMcuLine THEN
+            myKinematic.DebugPrint(eTraceTrigger, "Using autoorientation (circ- or ptp-segment (" + 
+               triggers.elems[i-1].trigger.GetName() + "))");
+            locJob[i-1].mGeo.mAutoOrientation := TRUE;
+         ELSE       
+            // in case of errors, autoorientation will be used
+            locJob[i-1].mGeo.mAutoOrientation := 
+               NOT triggers.elems[i-1].trigger.CalcOri(startPos, endPos, segType, SELF);
+
+            IF locJob[i-1].mGeo.mAutoOrientation THEN
+               myKinematic.DebugPrint(eTraceTrigger, "Calculating orientation of triggerplane failed (" + 
+                  triggers.elems[i-1].trigger.GetName() + ")");
+               iCntMinorError := iCntMinorError + 1;
+            END_IF;
+         END_IF;
+         triggers.elems[i-1].trigger.SetSegType(segType);
+
+         // check it seperatly for each triggercreation, whether the plane 
+         // really intersects the segment
+         triggers.elems[i-1].trigger.GetMcuPos(trPos, myKinematic);
+         trPos.mKinematicID := myKinematic.kinematicMcuId;
+
+         IF GetSegParam(startPos, endPos, trPos, triggers.elems[i-1].trigger.pointFrame , locJob[i-1].mGeo, 
+               segType, currentSegmentPos, segEndDistance, myRobot.eps) THEN
+
+            // Check if trigger is nearby the end of the segment,
+            // to prevent problems in overlap use a segmentparam-trigger
+            // BMA 26.11.2004
+            // Because segmentparameter is set on 0.5 in circles and this is 
+            // quite aside. For example, if a GunOn and a GunOff lay on the same
+            // circle it will be never activated!
+            // nmr 14.02.2005
+            // same problem on invalid startpositions (eg. empty path)
+            IF (segType = eMcuCirc) OR (segType = eMcuSpline) OR NOT startPosValid THEN
+               segParamTrigger := FALSE;
+            ELSIF currentSegmentPos <= myRobot.eps THEN
+               segParamTrigger := TRUE;
+               IF currentSegmentPos < 0 THEN
+                  // BIT 18.05.06
+                  IF (triggers.elems[i-1].type = eTriggerGunOn) OR (triggers.elems[i-1].type = eTriggerGunOff) THEN
+                     RcuResetMessage(TRcuProgPath_WarTriggerOutOfSeg, myKinematic.kinListInx, 
+                        1, instId, "TRcuProgPath.AppendSegment",
+                     triggers.elems[i-1].trigger.GetName());
+                  END_IF;  
+                  currentSegmentPos := 0;
+               END_IF;
+           ELSIF currentSegmentPos >= (1 - myRobot.eps) THEN
+               segParamTrigger := TRUE;
+               IF currentSegmentPos > 1 THEN
+                  IF (triggers.elems[i-1].type = eTriggerGunOn) OR (triggers.elems[i-1].type = eTriggerGunOff) THEN
+                     RcuResetMessage(TRcuProgPath_WarTriggerOutOfSeg, myKinematic.kinListInx, 
+                        1, instId, "TRcuProgPath.AppendSegment",
+                     triggers.elems[i-1].trigger.GetName());
+                  END_IF;
+                  currentSegmentPos := 1;
+               END_IF;
+            ELSIF segEndDistance < myRobot.minDist THEN
+               segParamTrigger := TRUE;
+            ELSE 
+               segParamTrigger := FALSE; // BMA 08.11.2004
+            END_IF;
+            IF currentSegmentPos < previousSegmentPos THEN
+               myKinematic.DebugPrint(eTraceTrigger, "--------");
+               myKinematic.DebugPrint(eTraceTrigger, "Invalid Trigger: " + triggers.elems[i-1].trigger.GetName());
+               myKinematic.DebugPrint(eTraceTrigger, "actual Triggerprojection on Segment: " + STR(currentSegmentPos));
+               myKinematic.DebugPrint(eTraceTrigger, "previous Triggerprojection on Segment: " + STR(previousSegmentPos));
+               myKinematic.DebugPrint(eTraceTrigger, "--------");
+               triggers.elems[i-1].exist := FALSE;
+               MAINRUN();
+               RcuSetMessageOnce(TRcuProgPath_ErrTrgOrd, myKinematic.kinListInx, 1, instId, "TRcuProgPath.AppendSegment",
+               triggers.elems[i-1].trigger.GetName(), GetSource());
+               IF myRobot.bHasProcess THEN
+                  IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+                     myRobot.ErrorReaction(TRUE);
+                  END_IF;
+               END_IF;
+           ELSE
+               previousSegmentPos := currentSegmentPos; // BMA 08.11.2004
+               IF segParamTrigger THEN
+                  locJob[i-1].mJobTyp := eMcuJobParam;
+                  locJob[i-1].mGeo.mValue := currentSegmentPos;
+               ELSE			
+                  locTrafo.mDBObjTyp := eMcuTemp;
+                  locTrafo.mFrame := triggers.elems[i-1].trigger.frame;
+                  locTrafo.mName := "triggerPlane";
+                  RcuRefSysGetMcuId(triggers.elems[i-1].trigger.refSys, locTrafo.mRefSysID);
+                  IF NOT McuCreateTrsf(lTrafoID, locTrafo) THEN
+                     MAINRUN();
+                     RcuSetMessageOnce(TRcuProgPath_ErrPlaneCrTrsf, myKinematic.kinListInx, 1, instId, "TRcuProgPath.AppendSegment",
+                        triggers.elems[i-1].trigger.GetName(), GetSource());
+                     IF myRobot.bHasProcess THEN
+                        IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+                           myRobot.ErrorReaction(TRUE);
+                        END_IF;
+                     END_IF;
+                     triggers.elems[i-1].exist := FALSE;
+                     RETURN;
+                  END_IF;  
+                  // insert data in TMcuJob 
+                  locJob[i-1].mGeo.mDataObjID := lTrafoID;
+               END_IF;
+            END_IF;
+
+            IF triggers.elems[i-1].exist THEN
+               locJob[i-1].mEvent.mEventHdl := InternalHandle(fire[i-1]);
+               locJob[i-1].mUserData.mDataInt[0] := triggers.elems[i-1].type;
+               locJob[i-1].mUserData.mDataInt[2] := triggers.elems[i-1].stackHdl;
+               CASE triggers.elems[i-1].type OF
+                  eTriggerGunOn, eTriggerRepos : 
+                     locJob[i-1].mUserData.mIntValidLen := 4;
+                     IF myRobot.bEnableDvdGluing THEN
+                        locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.iMultiGun;
+                        locJob[i-1].mName := "MULTIGUN " + STR(locJob[i-1].mUserData.mDataInt[3]) + " ON";
+                     ELSE
+                        locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.gunNumber;
+                        locJob[i-1].mName := "GUN" + STR(locJob[i-1].mUserData.mDataInt[3]) + " ON";
+                     END_IF;
+                  eTriggerGunOff : 
+                     locJob[i-1].mUserData.mIntValidLen := 4;
+                     IF myRobot.bEnableDvdGluing THEN
+                        locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.iMultiGun;
+                        locJob[i-1].mName := "MULTIGUN " + STR(locJob[i-1].mUserData.mDataInt[3]) + " OFF";
+                     ELSE
+                        locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.gunNumber;
+                        locJob[i-1].mName := "GUN" + STR(locJob[i-1].mUserData.mDataInt[3]) + " OFF";
+                     END_IF;
+                  eTriggerBrush : 
+                     locJob[i-1].mUserData.mIntValidLen := 5;
+                     locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.gunNumber;
+                     locJob[i-1].mUserData.mDataInt[4] := triggers.elems[i-1].trigger.brushNumber;
+                     locJob[i-1].mName := "SBR G" + STR(locJob[i-1].mUserData.mDataInt[3]) + 
+                        "/B" + STR(locJob[i-1].mUserData.mDataInt[4]);
+                  eTriggerProcess: 
+                     locJob[i-1].mUserData.mIntValidLen := 4;
+                     locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.command;
+                     locJob[i-1].mName := "Command " + STR(locJob[i-1].mUserData.mDataInt[3]) + " to process";
+                  eTriggerVision: 
+                     locJob[i-1].mUserData.mIntValidLen := 4;
+                     locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.command;
+                     locJob[i-1].mName := "Command " + STR(locJob[i-1].mUserData.mDataInt[3]) + " to Vision";
+                  eTriggerBkAction: 
+                     locJob[i-1].mUserData.mIntValidLen := 4;
+                     locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.pointNumber;
+                     locJob[i-1].mName := "PointNr " + STR(locJob[i-1].mUserData.mDataInt[3]) + " to Bk";
+                  eTriggerZAction:
+                     locJob[i-1].mUserData.mIntValidLen := 4;
+                     locJob[i-1].mUserData.mDataInt[3] := triggers.elems[i-1].trigger.pointNumber;
+                     locJob[i-1].mName := "PointNr " + STR(locJob[i-1].mUserData.mDataInt[3]) + " to Zeiss";
+               ELSE
+                  triggers.elems[i-1].exist := FALSE;
+                  locJob[i-1].mUserData.mIntValidLen := 1;
+                  locJob[i-1].mUserData.mDataInt[0] := eTriggerInvalid;
+                  MAINRUN();
+                  myKinematic.DebugPrint(eTraceTrigger, "Invalid trigger type (2): " + STR(triggers.elems[i-1].type));
+                  RcuSetMessageOnce(TRcuProgPath_ErrInvTrg, myKinematic.kinListInx, 2, instId, "TRcuProgPath.AppendSegment",
+                     triggers.elems[i-1].trigger.GetName(), GetSource());
+                  IF myRobot.bHasProcess THEN
+                     IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+                        myRobot.ErrorReaction(TRUE);
+                     END_IF;
+                  END_IF;
+               END_CASE;
+
+                IF locJob[i-1].mJobTyp = eMcuJobParam THEN
+                  str := STR(currentSegmentPos);
+                  str := StrLeft(str,5);
+                  str := " (P:" + str + ") ";
+               ELSE
+                  str := " ";
+               END_IF;
+               locJob[i-1].mName := locJob[i-1].mName + str + triggers.elems[i-1].trigger.GetName();              
+            END_IF;
+
+         ELSE
+            triggers.elems[i-1].exist := FALSE;
+            MAINRUN();
+            myKinematic.DebugPrint(eTraceTrigger, "GetSegParam failed " + STR(currentSegmentPos) + "/" + STR(segEndDistance));
+            RcuSetMessageOnce(TRcuProgPath_ErrInvTrg, myKinematic.kinListInx, 3, instId, "TRcuProgPath.AppendSegment",
+               triggers.elems[i-1].trigger.GetName(), GetSource());
+            IF myRobot.bHasProcess THEN
+               IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+                  myRobot.ErrorReaction(TRUE);
+               END_IF;
+            END_IF;
+         END_IF;      
+      
+         // wait for next tick to avoid a jitter in program execution
+         // because of not reproducible points of interrupt by higher prior tasks
+         IF smooth.mSmoothFactor = 0.0 THEN
+            cnt := myKinematic.actExecData.mUpdateCounterMain;
+            WAIT cnt <> myKinematic.actExecData.mUpdateCounterMain;
+            IF gDoRuntimeVerification THEN
+               RuntimeVerification(myKinematic, "AppendSegment_1", 19, FALSE, 0);
+            END_IF;
+         END_IF;      
+      END_IF;      
+   END_FOR; 
+
+   IF isEndUserFlow THEN
+      IF skipTriggers THEN
+         // line to restart triggers 
+         IF (interruptProgStack.depth-1 >= 0) THEN
+             myKinematic.DebugPrint(eTraceReposDebug, "SkipTriggers: Itrpt "+ STR(interruptProgStack.progNames[interruptProgStack.depth-1]) 
+                  + ":" + STR(interruptProgStack.lineNrs[interruptProgStack.depth-1]) + "/" +
+                  "Act " + STR(tActStackInfo.progNames[tActStackInfo.depth-1]) + ":" + STR(tActStackInfo.lineNrs[tActStackInfo.depth-1]));
+         END_IF;
+
+         ret := RcCompareStacks(interruptProgStack, tActStackInfo, result);
+         IF ret AND (result = 0) THEN
+            // it has to be the same program because segments and triggers are 
+            // allways defined in the same module
+            myKinematic.DebugPrint(eTraceReposDebug, "SkipTriggers: in line for restarting");
+            skipTriggers := FALSE;
+            myKinematic.DebugPrint(eTraceReposDebug, "SkipTriggers: lastTriggerOnInterrSeg: " + STR(lastTriggerOnInterrSeg));
+            i := 1;
+            WHILE (i <= lastTriggerOnInterrSeg) AND (i <= triggers.validLen) DO
+               triggers.elems[i-1].exist := FALSE;
+               myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: Trigger (nr. " + STR(i) + ") " + 
+                  triggers.elems[i-1].trigger.GetName() + " skipped in line " + 
+                  STR(tActStackInfo.lineNrs[tActStackInfo.depth-1]));
+               i := i + 1;
+            END_WHILE;
+            FOR i := lastTriggerOnInterrSeg + 1 TO triggers.validLen DO
+               IF triggers.elems[i-1].exist THEN         
+                  myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Trigger (nr. " + STR(i) + ") " 
+                     + triggers.elems[i-1].trigger.GetName() +  
+                     " activated in line " + STR(tActStackInfo.lineNrs[tActStackInfo.depth-1]));
+               END_IF;
+            END_FOR; 
+            reposTriggerAdded := AddReposTrigger(locJob[triggers.validLen], fire[triggers.validLen]);
+         // stop skipping triggers if actual line > line from stack
+         ELSIF ret AND (result < 0) THEN
+            myKinematic.DebugPrint(eTraceReposDebug, "SkipTriggers: after line for restarting");
+            skipTriggers := FALSE;
+         ELSE  // still skipping triggers and not in interrupt line -> skip triggers
+            myKinematic.DebugPrint(eTraceReposDebug, "SkipTriggers: before line for restarting");
+            FOR i := 1 TO triggers.validLen DO
+               IF triggers.elems[i-1].exist THEN         
+                  triggers.elems[i-1].exist := FALSE;
+                  myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: Trigger (nr. " + STR(i) + ") " + 
+                     triggers.elems[i-1].trigger.GetName() + " skipped in line " + STR(tActStackInfo.lineNrs[tActStackInfo.depth-1]));
+               END_IF;
+            END_FOR; 
+         END_IF;
+      END_IF;
+
+
+        // add job signalising module change (seg-param-job with prewarn-time at param 0.0)
+        IF tActStackInfo.depth > 0 THEN
+          IF (tActStackInfo.progNames[tActStackInfo.depth-1] <> oldProgName) THEN // test of changes in the actual program
+             // (test happens in the pre-run, while the main-run waits in the calling program)
+             // Attention: this condition meets not only after the return from a subroutine
+             // but also after the jump from a mainprogram into a subroutine
+             //(only when there is a move command in the mainprogram and as well as at the first
+             // move command at all
+
+             myKinematic.DebugPrint(eTraceTrigger, " program <"+tActStackInfo.progNames[tActStackInfo.depth-1]+">");
+             // do something, e.g. append the motionbuffer to the path
+             IF myKinematic.trackingActive THEN
+                TransferBufferToPathWithCheck(myKinematic.iActMotionBuffer);
+             END_IF;
+             // set parameter-job
+             modChgSigJob.mName := tActStackInfo.progNames[tActStackInfo.depth-1];
+             modChgSigJob.mEvent.mEventHdl := InternalHandle(moduleChangeSignal);
+             IF McuCreateJob(jobSet.mJobIDs[0], modChgSigJob) THEN
+                myKinematic.DebugPrint(eTraceTrigger, "Module change job created: " + modChgSigJob.mName + " (" + STR(jobSet.mJobIDs[0]) + ")");
+                myKinematic.DebugPrint(eTraceTrigger, "Module change job created: modChgSigJob.mEvent.mEventHdl = " + STR(modChgSigJob.mEvent.mEventHdl));
+             ELSE
+                myKinematic.DebugPrint(eTraceTrigger, "Module change job not created: " + oldProgName + " -> " + tActStackInfo.progNames[tActStackInfo.depth-1]);
+                MAINRUN();
+                RcuSetMessageOnce(TRcuProgPath_ErrCreateJob, myKinematic.kinListInx, 2, instId, "TRcuProgPath.AppendSegment",
+                                  "Module change job", INSTANCE_NAME());
+                IF myRobot.bHasProcess THEN
+                   IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+                      myRobot.ErrorReaction(TRUE);
+                   END_IF;
+                END_IF;
+             END_IF;
+             jobSet.mValidLen := 1;
+
+             // Update the module name
+             START SignalPrgName(moduleChangeSignal, tActStackInfo.progNames[tActStackInfo.depth-1]);
+             oldProgName := tActStackInfo.progNames[tActStackInfo.depth-1];
+          ELSE
+             jobSet.mValidLen := 0;
+          END_IF;
+        END_IF;
+
+
+
+      IF NOT SetUpJobs(locJob, reposTriggerAdded, TRUE, fire, abort, jobDelete, tActStackInfo.lineNrs[tActStackInfo.depth-1], jobSet, lastParam) THEN
+         RETURN;
+      END_IF;
+   ELSE // no enduser flow
+      IF NOT SetUpJobs(locJob, FALSE, TRUE, fire, abort, jobDelete, 0, jobSet, lastParam) THEN
+         RETURN;
+      END_IF;
+   END_IF;
+   IF (reposCircHelpPosId <> 0) AND (segType = eMcuCirc) THEN
+      AppendSegmentWithJobSet(posId, reposCircHelpPosId, useExtTool, segType, jobParam, signal, dynId, jobSet, , delete);
+   (*$$$$$* spline *$$$$$*)             
+   ELSIF segType = eMcuSpline THEN
+      IF IS_USED(spline) THEN
+         AppendSegmentWithJobSet(posId, helpPosId, useExtTool, segType, jobParam, signal, dynId, jobSet,,delete,spline);
+      ELSE
+//         RcuSetMessage(TRcuPath_ErrSplineParam, instId, INSTANCE_NAME());
+         RcuSetMessageOnce(TRcuPath_ErrSplineParam, myKinematic.kinListInx, 1, instId, 
+               "TRcuProgPath.AppendSegment", INSTANCE_NAME());
+         myKinematic.ErrorReaction(TRUE);
+      END_IF;
+   ELSE
+      AppendSegmentWithJobSet(posId, helpPosId, useExtTool, segType, jobParam, signal, dynId, jobSet, , delete);
+   END_IF;
+   reposCircHelpPosId := 0;
+   myKinematic.bBeforeFirstMove := FALSE;  
+
+   // wait for next tick to avoid a jitter in program execution
+   // because of not reproducible points of interrupt by higher prior tasks
+   IF smooth.mSmoothFactor = 0.0 THEN
+      cnt := myKinematic.actExecData.mUpdateCounterMain;
+      WAIT cnt <> myKinematic.actExecData.mUpdateCounterMain;
+      myKinematic.bEmptyProgPath := FALSE;
+      IF gDoRuntimeVerification THEN
+         RuntimeVerification(myKinematic, "AppendSegment_2", 19, FALSE, 0);
+      END_IF;
+   END_IF;
+   myKinematic.bEmptyProgPath := FALSE;
+END_ROUTINE
+
+
+// Rebuild a path after backward movement
+// this routine should be used if it is clear that we haven't stopped in overlap
+// area
+ROUTINE RebuildPathSimple() : BOOL
+VAR
+   reposPosId : TMcuDbObjID;
+   toolId     : TMcuDbObjID;
+   ret : BOOL;
+END_VAR
+
+   //RcuPrintPosition(reposPosMcuId, eTraceMotionStep);
+   //DebugPrint(eTraceMotionStep, "Repos: McuCreatePosFromPathPos: " + 
+   //   STR(McuCreatePosFromPathPos(reposPosMcuId, reposPosId)));
+   McuCreatePosFromPathPos(reposPosMcuId, reposPosId);
+   //RcuPrintPosition(reposPosId, eTraceMotionStep);
+   IF McuGetToolFromPathPos(reposPosMcuId, toolId) THEN
+      IF (toolId <> defaultToolMcuId) AND (toolId <> segHdl.mRobotToolID) THEN // already released, reserve again
+         myKinematic.DebugPrint(eTraceReposDebug, "RebuildPathSimple: McuReserveDbObj toolId = "+STR(toolId));
+         McuReserveDbObj(toolId);
+      END_IF;
+      myKinematic.SetToolIdIntern(toolId);
+   ELSE
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: McuGetToolFromPathPos failed");
+      iCntMinorError := iCntMinorError + 1;
+   END_IF;
+   ret := RebuildPathNoOverlap(reposPosId);
+   myKinematic.DebugPrint(eTraceMotionStep, "Repos: Path rebuilt for foreward movement");
+   RETURN ret;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* technology commands
+*)
+
+// Move to a point using axes-interpolation
+ROUTINE Ptp(pos : TRcuPosition)
+   VAR
+      locPos : TMcuPosition;
+      locHelpPos : TMcuPosition;
+      ref : TRcuReferenceSystem;
+   END_VAR
+   
+   triggers.validLen := triggers.cntTriggerJobs;
+   triggers.cntTriggerJobs := 0;
+
+   IF myRobot.vision.BK_MODUS = ModeApplication THEN
+      IF IS_INSTANCE(pos, TRcuPositionCart) THEN
+         IF pos.GetReferenceSystem(myRobot) = myRobot.RcuRefSystemObject THEN
+            myRobot.vision.BK_AutoCorr();
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // read position and check for errors
+   IF NOT pos.GetMcuPos(locPos, myKinematic) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrGetMcuPos, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Ptp", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   IF NOT myKinematic.kinematic.mInvCoordTrafo AND
+         ((locPos.mPosTyp = eMcuPosCart) OR (locPos.mPosTyp = eMcuPosMixed)) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrProgPosNoInv, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Ptp", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;      
+
+   ref := pos.GetReferenceSystem(myKinematic);
+   Move(locPos, locHelpPos, eMcuPTP, ref);
+END_ROUTINE
+
+
+(*$$$$$* spline *$$$$$*)             
+// Move through a set of points using a spline
+ROUTINE Spline(pos : TRcuPosition; CONST splineFactor : REAL;
+      CONST type : TMcuSplineDefType; finish : BOOL; OPTIONAL CONST tangentPos : TRcuPosition)
+   VAR
+      locPos : TMcuPosition;
+      locTangentPos : TMcuPosition;
+      ref : TRcuReferenceSystem;
+   END_VAR
+   
+   triggers.validLen := triggers.cntTriggerJobs;
+   triggers.cntTriggerJobs := 0;
+
+   IF myRobot.vision.BK_MODUS = ModeApplication THEN
+      IF IS_INSTANCE(pos, TRcuPositionCart) THEN
+         IF pos.GetReferenceSystem(myRobot) = myRobot.RcuRefSystemObject THEN
+            myRobot.vision.BK_AutoCorr();
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // read position and check for errors
+   IF NOT pos.GetMcuPos(locPos, myKinematic) THEN
+//      RcuSetMessage( TRcuProgPath_ErrGetMcuPos, instId, INSTANCE_NAME());
+      RcuSetMessageOnce(TRcuPath_ErrSplineParam, myKinematic.kinListInx, 1, instId, 
+            "TRcuProgPath.Spline", INSTANCE_NAME());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   IF NOT myKinematic.kinematic.mInvCoordTrafo AND
+         ((locPos.mPosTyp = eMcuPosCart) OR (locPos.mPosTyp = eMcuPosMixed)) THEN
+//      RcuSetMessage( TRcuProgPath_ErrProgPosNoInv, instId, INSTANCE_NAME());
+      RcuSetMessageOnce(TRcuProgPath_ErrProgPosNoInv, myKinematic.kinListInx, 1, instId, 
+            "TRcuProgPath.Spline", INSTANCE_NAME());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;  
+   IF IS_USED(tangentPos) THEN
+      // read position and check for errors
+      IF NOT tangentPos.GetMcuPos(locTangentPos, myKinematic) THEN
+//         RcuSetMessage( TRcuProgPath_ErrGetMcuPos, instId, INSTANCE_NAME());
+         RcuSetMessageOnce(TRcuPath_ErrSplineParam, myKinematic.kinListInx, 1, instId, 
+               "TRcuProgPath.Spline", INSTANCE_NAME());
+         myKinematic.ErrorReaction(TRUE);
+      END_IF;
+      IF NOT myKinematic.kinematic.mInvCoordTrafo AND
+            ((locTangentPos.mPosTyp = eMcuPosCart) OR (locTangentPos.mPosTyp = eMcuPosMixed)) THEN
+//         RcuSetMessage( TRcuProgPath_ErrProgPosNoInv, instId, INSTANCE_NAME());
+         RcuSetMessageOnce(TRcuPath_ErrSplineParam, myKinematic.kinListInx, 1, instId, 
+               "TRcuProgPath.Spline", INSTANCE_NAME());
+         myKinematic.ErrorReaction(TRUE);
+      END_IF;  
+      locTangentPos.mKinematicID := myKinematic.kinematicMcuId;
+   END_IF;
+
+   ref := pos.GetReferenceSystem(myKinematic);
+   splineFinish := finish;
+   Move(locPos, locTangentPos, eMcuSpline, ref,, splineFactor, type);
+END_ROUTINE
+
+
+(*$$$$$* spline *$$$$$*)             
+// Move through a set of points using a spline
+ROUTINE EndSpline()
+   
+   IF splineActive THEN
+      McuFinishMultiSegment(myKinematic.kinematicMcuId, pathMcuId);
+      splineActive := FALSE;
+   END_IF;
+END_ROUTINE
+
+// Move to a point using axes-interpolation
+ROUTINE PtpAbs(pos : TRcuPosition)
+   VAR
+      locPos : TMcuPosition;
+      locHelpPos : TMcuPosition;
+      ref : TRcuReferenceSystem;
+   END_VAR
+   
+   triggers.validLen := triggers.cntTriggerJobs;
+   triggers.cntTriggerJobs := 0;
+
+   IF myRobot.vision.BK_MODUS = ModeApplication THEN
+      IF IS_INSTANCE(pos, TRcuPositionCart) THEN
+         IF pos.GetReferenceSystem(myRobot) = myRobot.RcuRefSystemObject THEN
+            myRobot.vision.BK_AutoCorr();
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // read position and check for errors
+   IF NOT pos.GetMcuPos(locPos,myKinematic) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrGetMcuPos, myKinematic.kinListInx, 2, instId, "TRcuProgPath.PtpAbs", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   IF NOT myKinematic.kinematic.mInvCoordTrafo AND
+         ((locPos.mPosTyp = eMcuPosCart) OR (locPos.mPosTyp = eMcuPosMixed)) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrProgPosNoInv, myKinematic.kinListInx, 2, instId, "TRcuProgPath.PtpAbs", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;      
+
+   ref := pos.GetReferenceSystem(myKinematic);
+   Move(locPos, locHelpPos, eMcuPTP, ref, TRUE);
+   triggers.cntTriggerJobs := 0;
+END_ROUTINE
+
+
+// Move to a point using cartesian interpolation, called from EcoTalk
+ROUTINE Lin(CONST pos : TRcuPosition)
+   VAR
+      locPos : TMcuPosition;
+      locHelpPos : TMcuPosition;
+      ref : TRcuReferenceSystem;
+   END_VAR
+
+   triggers.validLen := triggers.cntTriggerJobs;
+
+   // check for inverse transformation
+   IF NOT myKinematic.kinematic.mInvCoordTrafo THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrProgLinNoInv, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Lin", myKinematic.robotName,
+      GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   IF myRobot.vision.BK_MODUS = ModeApplication THEN
+      IF IS_INSTANCE(pos, TRcuPositionCart) THEN
+         IF pos.GetReferenceSystem(myRobot) = myRobot.RcuRefSystemObject THEN
+            myRobot.vision.BK_AutoCorr();
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // read position
+   IF NOT pos.GetMcuPos(locPos,myKinematic) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrGetMcuPos, myKinematic.kinListInx, 3, instId, "TRcuProgPath.Lin", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   ref := pos.GetReferenceSystem(myKinematic);
+   Move(locPos, locHelpPos, eMcuLine, ref);
+   triggers.cntTriggerJobs := 0;
+END_ROUTINE
+
+
+// Move to a point using cartesian interpolation. Called internal e.g. TrcuTracking
+ROUTINE LinIntern(CONST pos : TRcuPosition)
+   VAR
+      locPos : TMcuPosition;
+      locHelpPos : TMcuPosition;
+      ref : TRcuReferenceSystem;
+   END_VAR
+
+   triggers.validLen := 0;
+
+   // check for inverse transformation
+   IF NOT myKinematic.kinematic.mInvCoordTrafo THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrProgLinNoInv, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Lin", myKinematic.robotName,
+      GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   IF myRobot.vision.BK_MODUS = ModeApplication THEN
+      IF IS_INSTANCE(pos, TRcuPositionCart) THEN
+         IF pos.GetReferenceSystem(myRobot) = myRobot.RcuRefSystemObject THEN
+            myRobot.vision.BK_AutoCorr();
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // read position
+   IF NOT pos.GetMcuPos(locPos,myKinematic) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrGetMcuPos, myKinematic.kinListInx, 3, instId, "TRcuProgPath.Lin", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   ref := pos.GetReferenceSystem(myKinematic);
+   Move(locPos, locHelpPos, eMcuLine, ref);
+END_ROUTINE
+
+
+// move on a circle-segment
+ROUTINE Circ(helpPos : TRcuPosition; pos : TRcuPosition)
+   VAR
+      locPos : TMcuPosition;
+      locHelpPos : TMcuPosition;
+      ref : TRcuReferenceSystem;
+   END_VAR
+
+   triggers.validLen := triggers.cntTriggerJobs;
+
+   // check for inverse transformation
+   IF NOT myKinematic.kinematic.mInvCoordTrafo THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrProgCircNoInv, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Circ", myKinematic.robotName,
+      GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   IF myRobot.vision.BK_MODUS = ModeApplication THEN
+      IF IS_INSTANCE(pos, TRcuPositionCart) THEN
+         IF pos.GetReferenceSystem(myRobot) = myRobot.RcuRefSystemObject THEN
+            myRobot.vision.BK_AutoCorr();
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // read positions
+   IF NOT pos.GetMcuPos(locPos,myKinematic) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrGetMcuPos, myKinematic.kinListInx, 4, instId, "TRcuProgPath.Circ", pos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+   IF NOT helpPos.GetMcuPos(locHelpPos,myKinematic) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrGetMcuPos, myKinematic.kinListInx, 5, instId, "TRcuProgPath.Circ", helpPos.GetName(), GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   ref := pos.GetReferenceSystem(myKinematic);
+   Move(locPos, locHelpPos, eMcuCirc, ref);
+   triggers.cntTriggerJobs := 0;
+END_ROUTINE
+
+
+ROUTINE StartSmooth(rFactor : REAL; OPTIONAL bVeloFlag : BOOL)
+   IF smooth.mSmoothFactor = 0.0 THEN
+      // Einschalten von SPM. Wenn mSmoothFactor <> 0.0, dann werden die Bewegungsbefehle nicht mehr künstlich
+      // verzögert ( jeden 3.Takt ein Segment an die MCU), um die Reproduzierbarkeit der Trigger zu gewährleisten.
+      // Deshalb muss hier gewartet werden bis der Fahrbefehl vor dem START_SMOOTH abgesetzt ist, da er sonst von
+      // den Fahrbefehlen nach dem START_SMOOTH "überholt" wird!!!
+      myKinematic.WaitMcMainCycles(2);
+   END_IF;
+   smooth.mSmoothFactor := rFactor;
+   IF IS_USED (bVeloFlag) THEN
+      smooth.mHasPathVelCompensation := bVeloFlag;
+   END_IF;
+   START SmoothInMainrun(rFactor);
+   myKinematic.DebugPrint(eTraceMotionStep,"StartSmooth factor = "+STR(rFactor));
+END_ROUTINE
+
+ROUTINE EndSmooth()
+   smooth.mSmoothFactor := 0.0;
+//   McuFinishMultiSegment(myKinematic.kinematicMcuId, pathMcuId); //????
+   START SmoothInMainrun(0.0);
+   myKinematic.DebugPrint(eTraceMotionStep,"EndSmooth factor = 0.0");
+END_ROUTINE
+
+ROUTINE SmoothInMainrun(rFactor : REAL) //evtl auch bVeloFlag, wenn es im MAKRO bleibt!!!!!
+VAR
+   lSmooth : REAL;
+END_VAR
+
+   lSmooth := rFactor;
+   MAINRUN();
+   rSmoothMR := rFactor;
+END_ROUTINE
+
+//03-11-2003 BMA
+// wait until the process signals that movement can start
+ROUTINE wait_process_ready(kinListInx : DINT)
+
+   PaintRobot[kinListInx].RcuInterfaceToProcess.WaitProcessReady(FALSE, kinListInx);
+END_ROUTINE
+
+
+// append a null-segment to the path
+ROUTINE SegZero()
+   VAR
+      finished : BOOL;
+      delete   : BOOL;
+      progHdl  : DINT;
+      progName : STRING;
+      lineNr   : DINT;
+   END_VAR
+   
+   triggers.validLen := triggers.cntTriggerJobs;
+   
+   // wait until number of active motioncommands below limit
+      WAIT NOT cmdLimitReached;
+   
+   // append null-segment
+   progHdl :=GetProgHdl();
+   GetUserProgLine(progHdl, FALSE, progName, lineNr);
+   IF segment.mSegTyp = eMcuPTP THEN       
+      segment.mName := progName + ".ZEROPTP(" + endPosName + ")";
+      AppendSegment(endPosId, 0, myKinematic.lastUseExtTool, eMcuPTP, 1.0, finished, 0);
+   ELSE
+      segment.mName := progName + ".ZEROLIN(" + endPosName + ")";
+      AppendSegment(endPosId, 0, myKinematic.lastUseExtTool, eMcuLine, 1.0, finished, 0);
+   END_IF;
+   
+   // Uphold the routine until motion is finished
+   START WaitFinished(finished, delete);
+   
+   // If overlapping shall be disabled for test purposes, this is done by waiting until the actual LIN movement is done,
+   // and IS_FINISHED turns TRUE. In consequence, the next motion command cannot be started.
+   IF noOverlapping THEN
+      WAIT IS_FINISHED;
+   END_IF;
+   triggers.cntTriggerJobs := 0;
+END_ROUTINE
+
+
+// 15-02-2006 BMA
+ROUTINE SignalPrgName(signal: BOOL; CONST PrgName: STRING)
+   VAR
+      cancel : BOOL;
+   END_VAR
+   
+   // signal for cancelling all open commands
+   cancel := IS_CHANGED(cancelFlipFlop);
+   
+   WAIT signal OR cancel;
+   
+   IF signal THEN
+      myKinematic.RcuInterfaceToProcess.sModuleName := PrgName;      
+      DebugPrint(eTraceTrigger, "Signal PrewarnPrgName = " + PrgName + "<--PaintRobot["+STR(myKinematic.kinListInx)+"]" );
+   END_IF;
+   
+END_ROUTINE
+
+// wait on the path for a given period of time
+ROUTINE WaitSecs(VAR_IN waitingTime : REAL)
+VAR
+   dTime : DINT;
+   cnt : DINT;
+END_VAR
+
+   IF waitingTime <= 0.0 THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrPathOutORng, myKinematic.kinListInx, 1, instId, "TRcuProgPath.WaitSecs", "waitingTime",
+      GetSource());
+      myKinematic.ErrorReaction(TRUE);
+   END_IF;
+
+   // wait for next tick to avoid a jitter in program execution
+   // because of not reproducible points of interrupt by higher prior tasks
+   IF smooth.mSmoothFactor = 0.0 THEN
+      cnt := myKinematic.actExecData.mUpdateCounterMain;
+      WAIT cnt <> myKinematic.actExecData.mUpdateCounterMain;
+      IF gDoRuntimeVerification THEN
+         RuntimeVerification(myKinematic, "WaitSecs", 19, FALSE, 0);
+      END_IF;
+   END_IF;
+
+   IF myKinematic.bToolOrObjChanged THEN
+      dTime := waitingTime*1000;
+      DebugPrint(eTraceCommon, "WaitSecs: SegZero not possible");
+      STOPPOINT();
+      Sleep(dTime);
+      RETURN;
+   END_IF;
+
+   oldOvlMcuId := segHdl.mOverlapID; // save old overlap-datas
+   OvlNoneWait(waitingTime, oldOvlMcuId);
+   SetStopPoint();
+   SegZero();        // insert zerosegment
+   
+   // recover old overlapdatas
+   IF oldOvlMcuId <> 0 THEN
+       IF (segHdl.mOverlapID <> defaultOvlMcuId)  AND (segHdl.mOverlapID <> 0) THEN
+         McuReleaseDbObj(segHdl.mOverlapID);
+         myKinematic.DebugPrint(eTraceReposDebug, "WaitSecs McuReleaseDbObj() segHdl.mOverlapID = " +STR(segHdl.mOverlapID));
+       END_IF;
+       segHdl.mOverlapID := oldOvlMcuId;
+   END_IF;
+   oldOvlMcuId := defaultOvlMcuId;
+END_ROUTINE
+
+
+ROUTINE ResetTriggers()
+
+   skipTriggers := TRUE;
+   triggers.cntTriggerJobs := 0;
+END_ROUTINE
+
+
+ROUTINE SetStopPoint()
+VAR
+   ret : TStoreCallStack;
+END_VAR
+
+   ret := StoreUserProgCallStack(stopPointCallStackHdl);
+   IF ret = eStoreOK THEN
+      RcuPrintUserProgCallStack(stopPointCallStackHdl, "Stoppoint .. stored callstack " 
+         + STR(stopPointCallStackHdl), eTraceMotionModesFine);
+   ELSE
+      myKinematic.DebugPrint(eTraceMotionStep, "Stoppoint .. callstack storage failed (ret: " + STR(ret) + ")");
+      iCntMinorError := iCntMinorError + 1;
+   END_IF;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* private members
+*)
+
+
+CONSTANT PRIVATE
+   // one job is reserved for the parameter job of the segment and a second one
+   // for the job at segment-start (for repositioning)
+   cMaxTriggerJobs : DINT := cMcuMaxSegJobs - 2;
+END_CONSTANT
+
+
+TYPE PRIVATE
+   TJobArray     : ARRAY [cMaxTriggerJobs] OF TMcuJob;
+   TJobBoolArray : ARRAY [cMaxTriggerJobs] OF BOOL;
+
+   TRcuTriggerList : STRUCT
+      elems : ARRAY[cMaxTriggerJobs] OF TRcuTriggerListElem;
+      cntTriggerJobs: INT; // counter for used triggerJobs for this segment
+      validLen : INT;
+   END_STRUCT;
+
+   TRcuTriggerListElem : STRUCT
+      type    : TRcuTriggerType; 
+      trigger : TRcuTrigger;
+      abort   : MAPTO BOOL;
+      signal  : MAPTO BOOL;
+      delete  : MAPTO BOOL;
+      exist   : BOOL;
+      stackHdl : DINT;
+   END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   // the finished signal of the last open motion-command
+   actMainRunSignal : MAPTO BOOL;
+   // the counter of waiting commands for the last open motion-command
+   actMainRunCounter : MAPTO DINT;
+   
+   triggers           : TRcuTriggerList;  // trigger for one segment
+   triggerJob         : TMcuJob;
+   modChgSigJob       : TMcuJob;
+   
+   //waiting position for tracking
+   waitPos : TMcuPosition;
+   waitHelpPos : TMcuPosition;
+   waitType : TMcuSegmentTyp; 
+   waitRef : TRcuReferenceSystem;
+   bCheckNextMove : BOOL;
+   deltaX    : REAL;
+   tOldStackInfo   : TUserProgStackInfo;
+   oldProgName : STRING;
+   
+   (*$$$$$* spline *$$$$$*)             
+   splineActive : BOOL;
+   splineFinish : BOOL;
+END_VAR
+
+
+(*$$$$$* spline *$$$$$*)             
+// common move-routine for lin-, circ- and ptp-segments
+ROUTINE Move(ppos : TMcuPosition; phelpPos : TMcuPosition; ptype : TMcuSegmentTyp; 
+             pref : TRcuReferenceSystem; OPTIONAL pabs : BOOL; OPTIONAL CONST pfactor : REAL;
+             OPTIONAL CONST psplineType : TMcuSplineDefType
+) PRIVATE
+   VAR
+      posId      : TMcuDbObjID;
+      helpPosId  : TMcuDbObjID;
+      refId      : TMcuDbObjID;
+      mObjRefSysID : TMcuDbObjID;
+      typeStr    : STRING;
+      finished   : BOOL;
+      delete     : BOOL;
+      iDebugMode : TDebugMode;
+      iStepState : TStepState;
+      absrel     : BOOL;
+      progHdl    : DINT;
+      progName   : STRING;
+      lineNr     : DINT;
+      pointName  : STRING;
+      strPos1    : DINT;
+      strPos2    : DINT;
+      strLen     : DINT;
+      cnt        : DINT;
+      fixposNr   : INT;
+      (*$$$$$* spline *$$$$$*)             
+      locFactor : REAL := 1.0;
+      spline : TMcuSegSpline;
+      prevSeg   : TMcuSegment;
+      prevEndPos : TMcuPosition;
+      prevStartPos : TMcuPosition;
+      prevSegHdl : TMcuSegHdl;
+      tangentStart : TMcuPosCart;
+      tangentEnd : TMcuPosCart;
+      RestoreSmooth : REAL;
+      dynId      : TMcuDbObjID;
+      
+      // local copies of parameter
+      pos : TMcuPosition; 
+      helpPos : TMcuPosition; 
+      type : TMcuSegmentTyp; 
+      ref : TRcuReferenceSystem; 
+      abs : BOOL; 
+      factor : REAL;
+      splineType : TMcuSplineDefType;     
+      isusedabs        : BOOL;
+      isusedfactor     : BOOL;
+      isusedsplineType : BOOL;
+   END_VAR
+   
+   pos := ppos;
+   helpPos := phelpPos;
+   type := ptype;
+   ref  := pref;
+   IF IS_USED (pabs) THEN
+      abs := pabs;
+      isusedabs := TRUE;
+   ELSE
+      isusedabs := FALSE;
+   END_IF;
+   IF IS_USED (pfactor) THEN
+      factor := pfactor;
+      isusedfactor := TRUE;
+   ELSE
+      isusedfactor := FALSE;
+   END_IF;
+   IF IS_USED (psplineType) THEN
+      splineType := psplineType;
+      isusedsplineType := TRUE;
+   ELSE
+      isusedsplineType := FALSE;
+   END_IF;
+   
+   
+   IF bMoveBlocked THEN
+      bNextMove := TRUE;
+      myKinematic.DebugPrint(eTraceTracking, "Move() to " + pos.mName + " blocked ");
+      WAIT NOT bMoveBlocked;
+      bNextMove := FALSE;
+   END_IF;
+   
+   IF bUseTrckOnDyn THEN
+      bUseTrckOnDyn := FALSE;
+      dynId := TrckOnDynID;
+   ELSE
+      dynId := 0;
+   END_IF;
+   IF bUseTrckOffDyn THEN
+      bUseTrckOffDyn := FALSE;
+      dynId := TrckOffDynID;
+   ELSE
+      dynId := 0;
+   END_IF;
+   
+   IF bWait7Cycles THEN // delay movement because of trackingstart
+      bMoveBlocked := TRUE; // delay next m6ove from ecotalk
+      myKinematic.DebugPrint(eTraceTracking, "Move() to " + pos.mName + " delayed ");
+      myKinematic.WaitMcMainCycles(7);
+      IF bNextMove THEN // next movement is already pending. movement because of tracking is
+         bMoveBlocked := FALSE; // not necessary
+         bWait7Cycles := FALSE;
+         myKinematic.DebugPrint(eTraceTracking, "Move() to " + pos.mName + " not necessary ");
+         RETURN;
+      END_IF;
+      bWait7Cycles := FALSE;
+   END_IF;
+   
+   // wait for next tick to avoid a jitter in program execution
+   // because of not reproducible points of interrupt by higher prior tasks
+   IF smooth.mSmoothFactor = 0.0 THEN
+      cnt := myKinematic.actExecData.mUpdateCounterMain;
+      WAIT cnt <> myKinematic.actExecData.mUpdateCounterMain;
+      IF gDoRuntimeVerification THEN
+         RuntimeVerification(myKinematic, "Move", 19, FALSE, 0);
+      END_IF;
+   END_IF;
+   bMoveBlocked := FALSE;
+
+   IF isusedabs THEN
+      absrel := abs;
+   ELSE
+      absrel := FALSE;
+   END_IF;
+   
+   CASE type OF
+      eMcuPTP  : typeStr := "PTP";
+      eMcuLine : typeStr := "LIN"; 
+      eMcuCirc : typeStr := "CIRC";
+      (*$$$$$* spline *$$$$$*)             
+      eMcuSpline : typeStr := "_spline_";
+   ELSE
+      RETURN;
+   END_CASE;
+   (*$$$$$* spline *$$$$$*)             
+   IF isusedfactor THEN
+      locFactor := factor;
+   END_IF;
+   
+   myKinematic.DebugPrint(eTraceTracking, "Move() to " + pos.mName + ": Begin type = " + typeStr);
+   
+   myKinematic.bToolOrObjChanged := FALSE;
+
+   // wait until number of active motioncommands below limit
+   WAIT NOT cmdLimitReached;
+   (*$$$$$* spline *$$$$$*)
+   IF type = eMcuSpline THEN
+      IF myKinematic.motionStepMode = eMotionStepInterpreter THEN
+         type := eMcuLine;
+         myKinematic.DebugPrint(eTraceMotionStep,"Using LIN for Spline-Segments in Step-Mode");
+      END_IF;
+   END_IF;
+
+   IF smooth.mSmoothFactor <> 0.0 THEN
+     IF myKinematic.motionStepMode = eMotionStepInterpreter THEN
+         myKinematic.DebugPrint(eTraceMotionStep,"Using smooth 0.0 in Step-Mode");
+         RestoreSmooth := smooth.mSmoothFactor;
+         smooth.mSmoothFactor := 0.0;
+         rSmoothMR := 0.0;
+      END_IF;
+   END_IF;
+
+   (*$$$$$* spline *$$$$$*)
+   IF (type <> eMcuSpline) AND splineActive THEN
+      EndSpline();
+   END_IF;
+
+   // create positions
+   pos.mKinematicID := myKinematic.kinematicMcuId;
+   
+   // tracking
+   IF myKinematic.bNewTracking THEN
+      IF myKinematic.lineTracking THEN
+   //      GetDebugInfo(myKinematic.selectingFlow.flowId, iDebugMode, iStepState);
+         IF NOT myKinematic.trackingActive AND (pos.mPosTyp = eMcuPosCart) AND
+                myKinematic.tracking.bIsTrackingObject THEN
+   //             (iStepState = eStepOff) THEN
+            IF ref = myKinematic.RcuRefSystemObject THEN
+               // wait until pos is in the limits of inbound, outbound around the
+               // actual position. then start tracking
+               WAIT IS_FINISHED;
+               WAIT MAIN_RUN;
+               myKinematic.bStartPosReached := TRUE;
+               myKinematic.DebugPrint(eTraceTracking, "waiting until object is in window");
+               myKinematic.tracking.WaitPosInTrackingWindow(myKinematic, pos);
+             END_IF;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   IF myKinematic.trackingActive THEN
+      myKinematic.bStartPosReached := FALSE;
+      // railtracking active
+      IF myKinematic.railTrackingActive THEN
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + deltaX;
+   //      pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0]
+   //                     + myKinematic.signOfRail*myKinematic.trackingPos;
+         IF pos.mPosTyp = eMcuPosCart THEN
+            IF RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, refId) THEN
+               IF pos.mPosCart.mRefSysID = refId THEN
+                  pos.mJointsOffsetID := myKinematic.offsetID;
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID set for point " + pos.mName);
+                  IF (type = eMcuPTP) AND NOT pos.mPosCart.mMode.mIsValid THEN
+                     myKinematic.DebugPrint(eTraceTracking, "PTP to Cartesian Target " + pos.mName);
+                     RcuResetMessage(TRcuProgPath_WarTrackingPTP, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Move", pos.mName);
+                  END_IF;
+               ELSE
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID not set for point " + pos.mName);
+                  IF NOT myKinematic.bNewTracking THEN
+                     MAINRUN();
+                     RcuSetMessageOnce(TRcuProgPath_ErrTrackingWorld, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Move", pos.mName);
+                     myKinematic.ErrorReaction(TRUE);
+                     RETURN;
+                  END_IF;
+               END_IF;
+            ELSE
+               MAINRUN();
+               RcuSetMessageOnce(TRcuProgPath_ErrRefSysObjFailed, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Move");
+               myKinematic.ErrorReaction(TRUE);
+               RETURN;
+            END_IF;
+         ELSE // pos.mPosTyp = eMcuPosJoints
+            IF type = eMcuPTP THEN
+               IF absrel = FALSE THEN
+                  pos.mJointsOffsetID := myKinematic.offsetID;
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID set for point " + pos.mName);
+               ELSE
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID not set for point " + pos.mName);
+               END_IF;
+            ELSE // type = eMcuLin, ...
+               // AXIS -> OBJECT
+               pos.mJointsOffsetID := myKinematic.offsetID;
+               myKinematic.DebugPrint(eTraceTracking, "offsetID set for point " + pos.mName);
+               RcuResetMessage(TRcuProgPath_WarTrackingAxis, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Move", pos.mName);
+            END_IF;
+         END_IF;
+      ELSE // linetracking
+         IF pos.mPosTyp = eMcuPosCart THEN
+            IF RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, refId) THEN
+               IF pos.mPosCart.mRefSysID = refId THEN
+                  IF (type = eMcuPTP) AND NOT pos.mPosCart.mMode.mIsValid THEN
+                     RcuResetMessage(TRcuProgPath_WarTrackingPTP, myKinematic.kinListInx, 2, instId, "TRcuProgPath.Move", pos.mName);
+                  END_IF;
+               ELSE
+                  IF NOT myKinematic.bNewTracking THEN
+                     MAINRUN();
+                     RcuSetMessageOnce(TRcuProgPath_ErrTrackingWorld, myKinematic.kinListInx, 2, instId, "TRcuProgPath.Move", pos.mName);
+                     myKinematic.ErrorReaction(TRUE);
+                     RETURN;
+                  END_IF;
+               END_IF;
+            ELSE
+               MAINRUN();
+               RcuSetMessageOnce(TRcuProgPath_ErrRefSysObjFailed, myKinematic.kinListInx, 2, instId, "TRcuProgPath.Move");
+               myKinematic.ErrorReaction(TRUE);
+               RETURN;
+            END_IF;
+         ELSE // pos.mPosTyp = eMcuPosJoints
+            MAINRUN();
+            RcuSetMessageOnce(TRcuProgPath_ErrTrackingAxis, myKinematic.kinListInx, 2, instId, "TRcuProgPath.Move", pos.mName);
+            myKinematic.ErrorReaction(TRUE);
+            RETURN;
+         END_IF;
+      END_IF;
+   ELSE
+//      IF myKinematic.railTracking THEN
+      IF myKinematic.railTrackingActive AND NOT myKinematic.mainModeMgr.externControl THEN
+         IF pos.mPosTyp = eMcuPosCart THEN
+            IF RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, refId) THEN
+               IF pos.mPosCart.mRefSysID = refId THEN
+                  pos.mJointsOffsetID := myKinematic.offsetID;
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID set for point " + pos.mName);
+               ELSE
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID not set for point " + pos.mName);
+               END_IF;
+            END_IF;
+         ELSE // pos.mPosTyp = eMcuPosJoints
+            IF type = eMcuPTP THEN
+               IF absrel = FALSE THEN
+                  pos.mJointsOffsetID := myKinematic.offsetID;
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID set for point " + pos.mName);
+               ELSE
+                  myKinematic.DebugPrint(eTraceTracking, "offsetID not set for point " + pos.mName);
+               END_IF;
+            ELSE // type = eMcuLin, ...
+               // AXIS -> OBJECT
+               pos.mJointsOffsetID := myKinematic.offsetID;
+               myKinematic.DebugPrint(eTraceTracking, "offsetID set for point " + pos.mName);
+            END_IF;
+         END_IF;
+      END_IF;
+   END_IF; //myKinematic.trackingActive
+   
+   // get info for mcu limiter messages
+   progHdl :=GetProgHdl();
+   GetUserProgLine(progHdl, FALSE, progName, lineNr);
+   pos.mUserData.mDataInt[0] := lineNr;
+   pos.mUserData.mIntValidLen := 1;
+   
+   IF lastPosId <> 0 THEN
+      McuReleaseDbObj(lastPosId);
+      lastPosId := 0;
+   END_IF;
+
+   IF myKinematic.extToolActive THEN
+      RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, mObjRefSysID);
+      IF (pos.mPosTyp = eMcuPosCart) AND (pos.mPosCart.mRefSysID = mObjRefSysID) THEN
+         pos.mPosCart.mPosInExternalTool := TRUE;
+      ELSIF pos.mPosTyp = eMcuPosJoints THEN
+         IF RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, refId) THEN
+            pos.mPosJoints.mRefSysID := refId;
+         END_IF;
+      END_IF;
+      IF (type = eMcuCirc) AND (helpPos.mPosTyp = eMcuPosCart) AND (helpPos.mPosCart.mRefSysID = mObjRefSysID) THEN
+         helpPos.mPosCart.mPosInExternalTool := TRUE;
+      ELSIF helpPos.mPosTyp = eMcuPosJoints THEN
+         IF RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, refId) THEN
+            helpPos.mPosJoints.mRefSysID := refId;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   IF NOT McuCreatePosition(lastPosId, pos) THEN
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrCreatePos, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Move", pos.mName, INSTANCE_NAME());
+      myKinematic.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   posId := lastPosId;
+   IF lastHelpPosId <> 0 THEN
+      McuReleaseDbObj(lastHelpPosId);
+      lastHelpPosId := 0;
+   END_IF;
+   IF type = eMcuCirc THEN
+      helpPos.mKinematicID := myKinematic.kinematicMcuId;
+      IF NOT McuCreatePosition(lastHelpPosId, helpPos) THEN
+         MAINRUN();
+         RcuSetMessageOnce(TRcuProgPath_ErrCreateDynFail, myKinematic.kinListInx, 1, instId, "TRcuProgPath.Move", INSTANCE_NAME());
+         myKinematic.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+   (*$$$$$* spline *$$$$$*)
+   ELSIF type = eMcuSpline THEN
+      spline.mFinished := FALSE;
+      IF helpPos.mKinematicID <> 0 THEN // valid helpPos is provided for use as tangentPoint
+         IF NOT splineActive THEN
+            IF (endSegId <> 0) THEN
+            spline.mStartTangentValid := TRUE;
+            McuReadSegment(endSegId, prevSeg);
+            McuReadSegHdl(endSegId, prevSegHdl);
+            McuReadPosition(prevSeg.mPosEnd, prevEndPos);
+            RcuTransformPosToCart(prevEndPos, tangentEnd, ref, myKinematic.kinematicMcuId, prevSegHdl.mRobotToolID);         
+            RcuTransformPosToCart(helpPos, tangentStart, ref, myKinematic.kinematicMcuId, prevSegHdl.mRobotToolID);         
+            McuSubVector3(spline.mStartTangent, tangentStart.mFrame.mPos, tangentEnd.mFrame.mPos);
+         ELSE
+            spline.mStartTangentValid := FALSE;
+               myKinematic.DebugPrint(eTraceMotionStep, "Computation of startTangent failed because endSegId = 0"); 
+            END_IF;
+         ELSE
+            spline.mStartTangentValid := FALSE;
+         END_IF;
+         IF splineFinish THEN
+            IF splineActive THEN
+            spline.mEndTangentValid := TRUE;
+            RcuTransformPosToCart(pos, tangentStart, ref, myKinematic.kinematicMcuId, segHdl.mRobotToolID);         
+            RcuTransformPosToCart(helpPos, tangentEnd, ref, myKinematic.kinematicMcuId, segHdl.mRobotToolID);         
+            McuSubVector3(spline.mEndTangent, tangentStart.mFrame.mPos, tangentEnd.mFrame.mPos);
+         ELSE
+            spline.mEndTangentValid := FALSE;
+               myKinematic.DebugPrint(eTraceMotionStep, "Computation of endTangent failed because no active spline"); 
+            END_IF;
+         ELSE
+            spline.mEndTangentValid := FALSE;
+         END_IF;
+      ELSE
+         spline.mStartTangentValid := FALSE;
+         spline.mEndTangentValid := FALSE;
+      END_IF;
+      IF isusedsplineType THEN
+         spline.mSplineDefType := splineType;
+      ELSE
+         spline.mSplineDefType := eMcuSplineCubicAkima;
+      END_IF;
+      spline.mSplineScaleFactor := locFactor;
+      spline.mFinished := splineFinish;
+      splineActive := NOT splineFinish;
+   ELSE
+      lastHelpPosId := 0;
+   END_IF;
+   helpPosId := lastHelpPosId;
+   
+   // consider mode if valid
+   SupplyMode(pos);
+   
+   // append segment
+   pointName := pos.mName;
+   strPos1 := StrFind(pointName, ".");
+   strPos2 := StrFindRight(pointName, ".");
+   IF strPos1 <> strPos2 THEN
+      strLen := strPos2 - strPos1 -1;
+      strPos1 := strPos1 + 1;
+      pointName := StrMid(pointName, strLen, strPos1);
+   ELSE
+      strPos1 := StrFind(pointName, ".pos");
+      IF strPos1 > 0 THEN
+         strPos1 := strPos1 - 1;
+         pointName := StrLeft(pointName, strPos1);
+      END_IF;
+   END_IF;
+   
+   strPos1 := StrFindRight(progName, ".");
+   IF strPos1 > 0 THEN // shorten names to avoid truncate by mc which makes debugging easier
+      progName := StrDelete(progName, strPos1, 0);
+   END_IF;
+   IF segment.mSegTyp = eMcuCirc THEN
+      segment.mName := progName + "." + typeStr + "(" + helpPos.mName + "," + pointName + ")";
+   ELSE
+      segment.mName := progName + "." + typeStr + "(" + pointName + ")";
+   END_IF;
+   (*$$$$$* spline *$$$$$*)
+   RcuRefSysGetMcuId(myKinematic.RcuRefSystemObject, mObjRefSysID);
+   //mObjRefSysID := gMcuWorldRefSysId;
+   IF (myKinematic.extToolActive) AND (pos.mPosTyp = eMcuPosCart) AND (pos.mPosCart.mRefSysID = mObjRefSysID) THEN
+      AppendSegment(posId, helpPosId, myKinematic.extToolActive, type, 1.0, finished, dynId, delete, spline);
+   ELSE
+      AppendSegment(posId, helpPosId, FALSE, type, 1.0, finished, dynId, delete, spline);    
+   END_IF;
+   endPosName := pointName;
+   
+   IF myKinematic.fixpos.bExtFixpos THEN
+      IF myKinematic.fixpos.IsFixposition(endPosName, fixposNr) THEN
+         START WaitSegEndForFixpos(endPosName, finished, delete);
+      END_IF;
+   END_IF;
+   
+   IF (myRobot.vision.BK_MODUS = Mode_PP_Ref) OR (myRobot.vision.BK_MODUS = ModeApplication) THEN
+      IF type = eMcuCirc THEN
+         //myRobot.VmtBk.BK_PP_Ref(helpPos); Hilfspunkt kann keine eigene Korrektur haben!!!
+         myRobot.vision.BK_PP_Ref(pos);
+      ELSIF type = eMcuLine THEN
+         myRobot.vision.BK_PP_Ref(pos);
+      END_IF;
+   END_IF;
+     
+   // Uphold the routine until motion is finished
+   START WaitFinished(finished, delete);
+   
+   // If overlapping shall be disabled for test purposes, this is done by waiting until the actual movement is done,
+   // and IS_FINISHED turns TRUE. In consequence, the next motion command cannot be started.
+   IF noOverlapping THEN
+      WAIT IS_FINISHED;
+   END_IF;
+   IF RestoreSmooth <> 0.0 THEN
+      smooth.mSmoothFactor := RestoreSmooth;
+   END_IF;
+END_ROUTINE
+
+
+// add a gun on trigger at point of interrupt
+ROUTINE AddReposTrigger(locJob : TMcuJob; fire : BOOL) : BOOL PRIVATE
+VAR
+   str : STRING;
+END_VAR
+
+   IF reposTriggerGun <> 0 THEN
+      myKinematic.DebugPrint(eTraceReposDebug, "AddReposTrigger: reposTriggerGun " + STR(reposTriggerGun));
+      locJob                        := triggerJob;
+      locJob.mJobTyp                := eMcuJobParam;
+      locJob.mGeo.mValue            := interruptSegParam;
+      locJob.mUserData.mIntValidLen := 4;
+      locJob.mUserData.mDataInt[0]  := eTriggerRepos;
+      locJob.mUserData.mDataInt[1]  := lastExecutedTrigger;
+      locJob.mUserData.mDataInt[2]  := lastExecJobStackHdl;
+      locJob.mUserData.mDataInt[3]  := reposTriggerGun;
+      str := STR(interruptSegParam);
+      str := StrLeft(str,5);
+      locJob.mName := "ReposTrigger GUN" + STR(locJob.mUserData.mDataInt[3]) + " ON (P:" + str + ")";
+      locJob.mEvent.mEventHdl := InternalHandle(fire);
+      triggers.elems[triggers.validLen].type  := eTriggerGunOn;
+      triggers.elems[triggers.validLen].exist := TRUE;
+      triggers.validLen := triggers.validLen + 1;
+      myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: GUN" + STR(locJob.mUserData.mDataInt[3]) +  
+         " ON added at point of interrupt (segParam: " + str + ")");
+      RETURN TRUE;
+   END_IF;      
+   RETURN FALSE;
+END_ROUTINE
+
+
+// create all trigger-jobs an append it to a jobset for a segment-handler
+ROUTINE SetUpJobs(
+   jobs               : TJobArray; 
+   CONST reposTrigger : BOOL; 
+   CONST newSegment   : BOOL; 
+   fire               : TJobBoolArray;
+   abort              : TJobBoolArray;
+   delete             : TJobBoolArray;
+   lineNr             : DINT;
+   jobSet             : TMcuJobSet;
+   lastParam          : REAL
+) : BOOL PRIVATE
+VAR
+   i      : DINT;
+   lJobID : TMcuDbObjID;
+END_VAR
+
+   FOR i := 1 TO triggers.validLen DO
+      IF triggers.elems[i-1].exist THEN    
+         // number of repos trigger = number of replaced trigger
+         IF reposTrigger AND (i = triggers.validLen) THEN
+            jobs[i-1].mUserData.mDataInt[1] := lastTriggerOnInterrSeg + (lineNr * 100);
+         ELSIF newSegment THEN
+            // save no. of trigger on current segment in userdata[1]
+            // @? add lineNr to avoid reset of triggerNumber at end of every segment
+            jobs[i-1].mUserData.mDataInt[1] := i + (lineNr * 100);
+         END_IF;
+
+        IF McuCreateJob(lJobID, jobs[i-1]) THEN
+            jobSet.mJobIDs[jobSet.mValidLen] := lJobID;
+            jobSet.mValidLen := jobSet.mValidLen + 1;
+            triggers.elems[i-1].abort := MAP(abort[i-1]);
+            triggers.elems[i-1].signal := MAP(fire[i-1]);
+            triggers.elems[i-1].delete := MAP(delete[i-1]);
+            START WaitTrigger(triggers.elems[i-1], lJobID, lastParam, jobs[i-1]) PRIO 1;
+         ELSE
+            RcuSetMessageOnce(TRcuProgPath_ErrCreateJob, myKinematic.kinListInx, 1, instId, "TRcuProgPath.SetUpJobs",
+            triggers.elems[i-1].trigger.GetName(), INSTANCE_NAME());
+            RETURN FALSE;
+         END_IF;
+      END_IF;
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE
+
+
+//15-08-2003 Bauder
+ROUTINE AddJobToList(trigger : TRcuTrigger; CONST type : TRcuTriggerType)
+VAR
+   stackHdl    : DINT;
+   cnt : DINT;
+END_VAR
+
+   IF triggers.cntTriggerJobs < cMaxTriggerJobs - 1 THEN
+      IF myKinematic.progPath.bMoveBlocked THEN
+         myKinematic.DebugPrint(eTraceTrigger, "AddJobToList: bMoveBlocked Trigger = " + trigger.GetName() + ")");
+         WAIT NOT myKinematic.progPath.bMoveBlocked;
+      END_IF;
+      trigger.SetName(); // copy instancename to trigger.name
+      triggers.elems[triggers.cntTriggerJobs].trigger := trigger;
+      triggers.elems[triggers.cntTriggerJobs].type := type;
+      IF StoreUserProgCallStack(stackHdl) = eStoreOK THEN
+         triggers.elems[triggers.cntTriggerJobs].stackHdl := stackHdl;
+         RcuPrintUserProgCallStack(stackHdl, "Trigger '" + trigger.GetName() 
+            + "' added to segment '" + segment.mName + "'", eTraceTrigger);
+      ELSE
+         RcuPrintUserProgCallStack(stackHdl, "Trigger '" + trigger.GetName() 
+            + "' could not be added to segment '" + segment.mName + "'", eTraceTrigger);
+         iCntMinorError := iCntMinorError + 1;
+      END_IF;
+      triggers.cntTriggerJobs := triggers.cntTriggerJobs + 1; 
+      // wait for next tick to avoid a jitter in program execution
+      // because of not reproducible points of interrupt by higher prior tasks     
+      IF smooth.mSmoothFactor = 0.0 THEN
+         cnt := myKinematic.actExecData.mUpdateCounterMain;
+         WAIT cnt <> myKinematic.actExecData.mUpdateCounterMain;
+         IF gDoRuntimeVerification THEN
+            RuntimeVerification(myKinematic, "AddJobToList", 19, FALSE, 0);
+         END_IF;
+      END_IF;
+   ELSE
+      MAINRUN();
+      RcuSetMessageOnce(TRcuProgPath_ErrTooManyJobs, myKinematic.kinListInx, 1, instId, "TRcuProgPath.AddJobToList", STR(cMaxTriggerJobs-1),
+      GetSource());
+      IF myRobot.bHasProcess THEN
+         IF myRobot.RcuInterfaceToProcess.svProcessActive THEN
+            myRobot.ErrorReaction(TRUE);
+         END_IF;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// Core function for rebuilding a path after backward movement
+ROUTINE RebuildPathNoOverlap(reposPosId : TMcuDbObjID) : BOOL PRIVATE
+VAR
+   tmpPos   : TMcuPosition;
+   userData : TMcuUserData;
+   finished : BOOL;
+   jobSet   : TMcuJobSet;
+END_VAR
+
+   IF McuReadPosition(reposPosMcuId, tmpPos) THEN
+      IF tmpPos.mPosTyp = eMcuPosPath THEN
+         // also path-data has to be restored from this repos-segment and 
+         // not from segmentMcuId (this is the mainrun-position where interrupt occured)
+         segmentMcuId := tmpPos.mPosPath.mSegmentID;
+         // set currect user data for repositioning, otherwise repeated repos can cause troubles
+         McuReadUserData(tmpPos.mPosPath.mSegmentID, 4, 0, userData);
+         RcuPrintUserProgCallStack(userData.mDataInt[eSegStackHdl], segment.mName, eTraceSegment);
+      ELSE
+         myKinematic.DebugPrint(eTraceMotionStep, "Repos: Stored restart-position (" 
+            + STR(reposPosMcuId) + ") is no path-position, pos-type: "+STR(tmpPos.mPosTyp));
+         RcuPrintPosition(reposPosMcuId, eTraceMotionStep); 
+         iCntMinorError := iCntMinorError + 1;
+      END_IF;
+   ELSE
+      myKinematic.DebugPrint(eTraceMotionStep, "Repos: Restart-position (" 
+         + STR(reposPosMcuId) + ") could not be read");
+      iCntMinorError := iCntMinorError + 1;
+   END_IF;   
+   IF reposPosMcuId <> pathPosMcuId THEN
+      McuReleaseDbObj(reposPosMcuId);         
+   END_IF;
+   
+   IF NOT ReadMcuActSettings() THEN
+      RcuSetMessageOnce(TRcuProgPath_WarReadActSettings, myKinematic.kinListInx, 
+         1, instId, "TRcuProgPath.RebuildPathNoOverlap");
+   END_IF;
+   Clear();
+   myKinematic.DebugPrint(eTraceMotionStep, "Repos: Append segment: "+STR(reposPosId));
+
+   // Insert a wait-segment to allow mc-prerun to gain a certain advance 
+   oldOvlMcuId := segHdl.mOverlapID; // save old overlap-datas
+   OvlNoneWait(0.15, oldOvlMcuId);
+   segment.mName := "RebuildPathSegment_Wait";
+   IF lastEndPosId <> 0 THEN
+      McuReleaseDbObj(lastEndPosId);
+      lastEndPosId := 0;
+   END_IF;
+   IF McuCreatePosFromPathPos(pathPosMcuId, lastEndPosId) THEN
+      endPosId := lastEndPosId;
+   ELSE
+      myKinematic.DebugPrint(eTraceCommon, "McuCreatePosFromPathPos failed");
+      iCntMinorError := iCntMinorError + 1;         
+   END_IF;
+   IF userData.mDataInt[eSegStackHdl] <> 0 THEN
+      RcuPrintUserProgCallStack(userData.mDataInt[eSegStackHdl], "Repos: CallStack from userData from reposStartPos - " + segment.mName, eTraceMotionStep);
+   ELSE
+      myKinematic.DebugPrint(eTraceMotionStep, "Repos: No CallStack from userData from reposStartPos");
+   END_IF;
+   userData.mDataInt[eSegOvlId] := segHdl.mOverlapID; // 17-12-2013
+   AppendSegmentWithJobSet(endPosId, 0, FALSE, eMcuPTP, 1.0, finished, 0, jobSet, userData);
+   // recover old overlapdatas
+   IF oldOvlMcuId <> 0 THEN
+       IF (segHdl.mOverlapID <> defaultOvlMcuId)  AND (segHdl.mOverlapID <> 0) THEN
+          McuReleaseDbObj(segHdl.mOverlapID);
+          myKinematic.DebugPrint(eTraceReposDebug, "RebuildPathNoOverlap McuReleaseDbObj() segHdl.mOverlapID = " +STR(segHdl.mOverlapID));
+       END_IF;
+       segHdl.mOverlapID := oldOvlMcuId;
+   END_IF;
+   oldOvlMcuId := defaultOvlMcuId;
+   segment.mName := "RebuildPathSegment";
+   userData.mDataInt[eSegOvlId] := segHdl.mOverlapID; // 17-12-2013
+   IF myKinematic.saveHandlerBackPos THEN
+      myKinematic.HandlerBackPosSegId  := AppendSegmentWithJobSet(reposPosId, 0, FALSE, eMcuPTP, 1.0, finished, 0, jobSet, userData);
+      myKinematic.HandlerBackPosSegPar := 0.0;
+      myKinematic.DebugPrint(eTraceBackward, "Direction: Backward movement position for -Partcheck- stored on new path");
+      myKinematic.saveHandlerBackPos := FALSE;
+   ELSE
+      AppendSegmentWithJobSet(reposPosId, 0, FALSE, eMcuPTP, 1.0, finished, 0, jobSet, userData);
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE PrintTriggerInfo(VAR_IN jobName : STRING; VAR_IN pos : TMcuVector3; 
+   VAR_IN eventData : TMcuJobEventData) PRIVATE
+      
+   myKinematic.DebugPrint(eTraceTrigger, "--------");
+   myKinematic.DebugPrint(eTraceTrigger, "Trigger " + jobName + ":");
+   myKinematic.DebugPrint(eTraceTrigger, "Position:  " + "x="  + STR(pos.mValues[0]) + " y=" + 
+      STR(pos.mValues[1]) + " z=" + STR(pos.mValues[2]));
+   myKinematic.DebugPrint(eTraceTrigger, "Parameter: " + "s=" + STR(eventData.mSegParam) + 
+      " v=" + STR(eventData.mPathVelo) + " t=" + STR(eventData.mPrewarnTime));
+   myKinematic.DebugPrint(eTraceTrigger, "--------");
+END_ROUTINE
+
+
+//15-08-2003 BMA
+// Wait until the event is signaled or WaitTrigger is aborted
+// 20.01.05 nmr: separation between printing of job data and evaluating of eventdata
+ROUTINE WaitTrigger(VAR_IN locElem : TRcuTriggerListElem; VAR_IN jobID : TMcuDbObjID; 
+   lastParam : REAL; VAR_IN locJob : TMcuJob) PRIVATE
+   VAR
+      triggerType    : TRcuTriggerType;
+      eventData      : TMcuJobEventData;
+      dSleep         : DINT;
+      signalPos      : TMcuVector3;
+      validationError : BOOL;
+      diff : REAL;
+      cancel : BOOL;
+      posInvalid : BOOL;
+   END_VAR
+
+   cancel := IS_CHANGED(cancelFlipFlop);
+   triggerType := TRcuTriggerType(locJob.mUserData.mDataInt[0]);  
+   // wait for trigger or abort
+   WAIT locElem.signal OR locElem.abort OR locElem.delete OR cancel;
+   
+   IF locElem.signal THEN
+      signalPos := myKinematic.actCartVals.mPos;
+      // raise swo-event for debugging
+      IF triggerType = eTriggerBrush THEN
+         SwoRaiseEvent(eScopeTriggerBrush, "SetBrushTrigger");
+      ELSIF (triggerType = eTriggerGunOn) OR (triggerType = eTriggerRepos) THEN
+         SwoRaiseEvent(eScopeTriggerGunOn, "GunOnTrigger");
+      ELSIF triggerType = eTriggerGunOff THEN
+         SwoRaiseEvent(eScopeTriggerGunOff, "GunOffTrigger");
+      ELSIF triggerType = eTriggerProcess THEN
+         SwoRaiseEvent(eScopeTriggerProcess, "ProcessTrigger");
+      ELSIF triggerType = eTriggerVision THEN
+         SwoRaiseEvent(eScopeTriggerVision, "VisionTrigger");
+      END_IF;
+      IF McuReadJobEventData(jobID, eventData) THEN  
+         IF (triggerType <> eTriggerRepos) THEN
+            START locElem.trigger.GetTcpData(eventData.mPrewarnTime, myKinematic, lastParam); 
+         END_IF;
+         posInvalid := locJob.mGeo.mAutoOrientation;
+         
+         // Triggers aren't signaled precisely by the MCU, but too early.
+         // However this inaccuracy can be read out -> Sleep
+         // its better to wait some mc-cycles instead of doing a sleep
+         IF (triggerType = eTriggerVision) OR (triggerType = eTriggerBkAction) OR (triggerType = eTriggerZAction) OR
+            ( ((triggerType = eTriggerGunOn) OR (triggerType = eTriggerGunOff )) AND (myRobot.paintChecker.type <> eRcuPaintCheckerOff) ) THEN
+            dSleep := (eventData.mPrewarnTime - redPrewarnTime
+                     + grCycleTime/2.0 + grPrewarnTime) / grCycleTime;
+         ELSE
+            dSleep := (eventData.mPrewarnTime - redPrewarnTime
+                     + grCycleTime/2.0) / grCycleTime;
+         END_IF;
+         
+         IF (triggerType = eTriggerZAction) THEN
+            myRobot.vision.VisionZeiss.PreTriggerProgPath(locElem.trigger.pointFrame, locElem.trigger.pointNumber, locElem.trigger.mpType);
+         END_IF;
+         
+         myKinematic.WaitMcMicroCycles(dSleep);
+      ELSE
+         myKinematic.DebugPrint(eTraceTrigger, "JobEventData could not read");
+         iCntMinorError := iCntMinorError + 1;
+      END_IF;      
+      // Triggeraction  @? sent to Process (IEC-System)
+      // raise swo-event for debugging
+      IF triggerType = eTriggerBrush THEN
+//         SwoRaiseEvent(eScopeBrushCorrPreWarn, "SetBrushCorrPreWarn");
+         myKinematic.RcuInterfaceToProcess.SignalBrush(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+      ELSIF (triggerType = eTriggerRepos) OR (triggerType = eTriggerGunOn) THEN
+//         SwoRaiseEvent(eScopeGunOnCorrPreWarn, "GunOnCorrPreWarn");
+         IF myRobot.paintChecker.type <> eRcuPaintCheckerOff THEN
+            myRobot.paintChecker.SignalGun(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+         ELSIF myRobot.bEnableDvdGluing THEN 
+            myKinematic.RcuInterfaceToProcess.SignalMultiGun(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+         ELSE
+            myKinematic.RcuInterfaceToProcess.SignalGun(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+         END_IF;
+      ELSIF triggerType = eTriggerGunOff THEN
+//         SwoRaiseEvent(eScopeGunOffCorrPreWarn, "GunOffCorrPreWarn");
+         IF myRobot.paintChecker.type <> eRcuPaintCheckerOff THEN
+            myRobot.paintChecker.SignalGun(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+         ELSIF myRobot.bEnableDvdGluing THEN 
+            myKinematic.RcuInterfaceToProcess.SignalMultiGun(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+         ELSE
+            myKinematic.RcuInterfaceToProcess.SignalGun(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+         END_IF;
+      ELSIF triggerType = eTriggerProcess THEN
+//         SwoRaiseEvent(eScopeProcessCommandCorrPreWarn, "ProcessCommandCorrPreWarn"); // sbj
+         myKinematic.RcuInterfaceToProcess.SignalProcessCommand(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+      ELSIF triggerType = eTriggerVision THEN
+//         SwoRaiseEvent(eScopeVisionCommandCorrPreWarn, "VisionCommandCorrPreWarn");
+         myKinematic.vision.SignalVisionCommand(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+      ELSIF triggerType = eTriggerBkAction THEN
+         myKinematic.vision.SignalVmtBk(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+      ELSIF triggerType = eTriggerZAction THEN
+         myKinematic.vision.VisionZeiss.SignalZeissTrigger(locJob.mUserData, locElem.trigger, posInvalid, gTriggerNumber);
+      END_IF;
+      IF TraceLevel(eTraceTrigger) THEN
+         PrintTriggerInfo(locJob.mName, signalPos, eventData);   
+      END_IF;
+
+      IF gDoTriggerVerification THEN
+         IF gInitTriggerVerification THEN
+            gTriggerEventData[gTriggerNumber].eventData := eventData; 
+            gTriggerEventData[gTriggerNumber].signalPos := signalPos; 
+         ELSE
+            validationError := eventData.mIsSignalTooLate <> gTriggerEventData[gTriggerNumber].eventData.mIsSignalTooLate;
+            validationError := validationError OR (eventData.mPrewarnTime <> gTriggerEventData[gTriggerNumber].eventData.mPrewarnTime);
+            validationError := validationError OR (eventData.mPathVelo <> gTriggerEventData[gTriggerNumber].eventData.mPathVelo);
+            validationError := validationError OR (eventData.mSegParam <> gTriggerEventData[gTriggerNumber].eventData.mSegParam);
+            IF validationError THEN
+               PRINT("trigger error - variation in mcu event data");
+               SwoRaiseEvent(18, "Eventdata");
+               //RcuSetError(0, eRcuErrorTriggerVerification, "trigger error - variation in mcu event data");
+            END_IF;
+            diff := signalPos.mValues[0] - gTriggerEventData[gTriggerNumber].signalPos.mValues[0];
+            IF diff > gTriggerEventData[gTriggerNumber].signalPosError[0].max THEN
+               gTriggerEventData[gTriggerNumber].signalPosError[0].max := diff;
+            END_IF;
+            IF diff < gTriggerEventData[gTriggerNumber].signalPosError[0].min THEN
+               gTriggerEventData[gTriggerNumber].signalPosError[0].min := diff;
+            END_IF;
+            validationError := diff <> 0.0;
+            diff := signalPos.mValues[1] - gTriggerEventData[gTriggerNumber].signalPos.mValues[1];
+            IF diff > gTriggerEventData[gTriggerNumber].signalPosError[1].max THEN
+               gTriggerEventData[gTriggerNumber].signalPosError[1].max := diff;
+            END_IF;
+            IF diff < gTriggerEventData[gTriggerNumber].signalPosError[1].min THEN
+               gTriggerEventData[gTriggerNumber].signalPosError[1].min := diff;
+            END_IF;
+            validationError := validationError OR (diff <> 0.0);
+            diff := signalPos.mValues[2] - gTriggerEventData[gTriggerNumber].signalPos.mValues[2];
+            IF diff > gTriggerEventData[gTriggerNumber].signalPosError[2].max THEN
+               gTriggerEventData[gTriggerNumber].signalPosError[2].max := diff;
+            END_IF;
+            IF diff < gTriggerEventData[gTriggerNumber].signalPosError[2].min THEN
+               gTriggerEventData[gTriggerNumber].signalPosError[2].min := diff;
+            END_IF;
+            validationError := validationError OR (diff <> 0.0);
+            IF validationError THEN
+               PRINT(STR(signalPos.mValues[0])+ " <-> " + STR(gTriggerEventData[gTriggerNumber].signalPos.mValues[0]));
+               PRINT(STR(signalPos.mValues[1])+ " <-> " + STR(gTriggerEventData[gTriggerNumber].signalPos.mValues[1]));
+               PRINT(STR(signalPos.mValues[2])+ " <-> " + STR(gTriggerEventData[gTriggerNumber].signalPos.mValues[2]));
+               PRINT("trigger error - variation in signaling position of trigger");
+               SwoRaiseEvent(17, "Signalpos");
+               //RcuSetError(0, eRcuErrorTriggerVerification, "trigger error - variation in signaling position of trigger");
+            END_IF;
+         END_IF;
+         gTriggerNumber := gTriggerNumber + 1;
+      END_IF;
+   ELSIF locElem.abort THEN
+      // Trigger was not signaled
+      //@? missing: organisation of unused triggers in a seperate list
+      RcuSetMessageOnce(TRcuProgPath_ErrTrigNotSignaled, myKinematic.kinListInx, 1, instId, 
+         "TRcuProgPath.WaitTrigger", locJob.mName, INSTANCE_NAME());
+   ELSE
+      myKinematic.DebugPrint(eTraceTrigger, "Trigger deleted: "+locJob.mName);
+   END_IF;
+END_ROUTINE
+
+
+(*
+ROUTINE waitForRealPos(time : REAL)
+VAR
+   dSleep : DINT;
+END_VAR
+
+   dSleep := 1000.0 * time;            
+   Sleep(dSleep);
+   RcuPrintVector3(myKinematic.actCartVals.mTcp.mPos,"pos: ");
+   RcuPrintVector3(myKinematic.actCartVals.mTcp.mOri,"ori: ");
+END_ROUTINE
+*)
+
+
+ROUTINE WaitSegEndForFixpos(endPosName : STRING; finished : BOOL; delete : BOOL) PRIVATE
+   VAR
+      cancel : BOOL;
+      PosName : STRING;
+   END_VAR
+
+   // signal for cancelling all open commands
+   cancel := IS_CHANGED(cancelFlipFlop);
+   PosName := endPosName;
+
+   // Wait until the motion command is finished
+   WAIT finished OR cancel OR delete;
+
+   IF finished THEN
+      START myKinematic.fixpos.ExtFixposReached(PosName);
+      myKinematic.fixpos.SearchNextFixpos();
+   END_IF;
+   
+END_ROUTINE
+
+
+
+// Wait until a single motion command is finished. 
+// In addition the maximum number of active motion-commands is limited, and 
+// the necessary preparations are done to allow the subsequent command to be delayed
+// until the main run has reached the programmed position.
+// checks if all trigger belonging to this segment have been signaled by the MCU
+// Stops the WaitTrigger-functions by the abort-signal
+ROUTINE WaitFinished(finished : BOOL; delete : BOOL) PRIVATE
+   VAR
+      cnt : DINT;
+      cancel : BOOL;
+      i : DINT;
+      triggerList : TRcuTriggerList;
+   END_VAR
+
+   // signal for cancelling all open commands
+   cancel := IS_CHANGED(cancelFlipFlop);
+
+   // local copy of triggerlist, must be done first
+   triggerList := triggers;
+
+   // Preparations for subsequent commands
+   actMainRunSignal := MAP(finished);
+   actMainRunCounter := MAP(cnt);
+
+   // Increase the number of active motion-commands
+   cmdCount := cmdCount + 1;
+   IF cmdCount = giRcuMaxCmd THEN
+      cmdLimitReached := TRUE;
+   END_IF;
+
+   // Wait until the motion command is finished
+   WAIT finished OR cancel OR delete;
+
+   IF NOT cancel THEN
+      // wait until all clients for this motioncommand have finished
+      WAIT cnt = 0;
+      //WaitForIntValue(cnt, 0);
+
+      // Decrease the number of active motion-commands
+      cmdCount := cmdCount - 1;
+      cmdLimitReached := FALSE;
+   END_IF;
+
+   // checking at the end of the segment all triggers in the list of triggers
+   FOR i := 0 TO triggerList.validLen - 1 DO
+      IF IS_MAPPED(triggerList.elems[i].abort) AND finished THEN  // still no signal from this job
+         triggerList.elems[i].abort := TRUE;   // finish WaitTrigger function
+      ELSIF IS_MAPPED(triggerList.elems[i].delete) AND delete THEN  // still no signal from this job
+         triggerList.elems[i].delete := TRUE;   // finish WaitTrigger function without error
+      END_IF;
+   END_FOR;
+   
+END_ROUTINE
+
+
+// supply the mode to the following segment when appropriate
+ROUTINE SupplyMode(pos : TMcuPosition) PRIVATE
+
+   CASE pos.mPosTyp OF
+   eMcuPosCart:
+      IF pos.mPosCart.mMode.mIsValid THEN
+         segHdl.mTargetMode := pos.mPosCart.mMode;
+      ELSE
+         segHdl.mTargetMode.mIsValid := FALSE;
+      END_IF;
+   eMcuPosMixed:
+      IF pos.mPosMixed.mMode.mIsValid THEN
+         segHdl.mTargetMode := pos.mPosMixed.mMode;
+      ELSE
+         segHdl.mTargetMode.mIsValid := FALSE;
+      END_IF;
+   END_CASE;
+END_ROUTINE
+
+
+// nmr: calculation of the segment-parameter for the trigger
+ROUTINE GetSegParam(VAR_IN p1 : TMcuPosition; VAR_IN p2 : TMcuPosition; 
+      VAR_IN tr : TMcuPosition; CONST trOri : TMcuFrame; CONST geo : TMcuJobGeometric; 
+      CONST type : TMcuSegmentTyp; segParam : REAL; segmentEndDistance : REAL; epsilon : REAL) : BOOL PRIVATE
+   VAR
+      p1p2   : TMcuVector3; // vector from p1 to p2
+      p1tr   : TMcuVector3; // vector from p1 to tr
+      n      : TMcuVector3; // normal-vector
+      p1Cart : TMcuPosCart;
+      p2Cart : TMcuPosCart;
+      trCart : TMcuPosCart;
+      p      : TMcuVector3;
+      diff   : TMcuVector3;
+      lengthSeg : REAL;
+      distance  : REAL;
+      nTr       : REAL;
+      nSeg      : REAL;
+      fr        : TMcuFrame;
+      locFrame  : TMcuFrame;
+   END_VAR
+   
+   segParam := 0.5; // default value, used if the parameter can't be calculated
+   
+   // nmr: a trigger on the first segment of the path cannot be validated
+   // because in this case the startpos is not set
+   IF NOT startPosValid THEN
+      RcuSetMessageOnce(TRcuProgPath_WarNoStartPos, myKinematic.kinListInx, 1, instId, "TRcuProgPath.GetSegParam", INSTANCE_NAME());
+      RETURN TRUE;
+   END_IF;
+   
+   IF type <> eMcuLine THEN  // nmr: projection is only calculated for lines
+      RETURN TRUE;
+   END_IF;
+   
+   (* orig
+   IF NOT RcuTransformPosToCart(p1, p1Cart, myKinematic.RcuRefSystemObject, myKinematic.kinematicMcuId, segHdl.mRobotToolID) OR
+      NOT RcuTransformPosToCart(p2, p2Cart, myKinematic.RcuRefSystemObject, myKinematic.kinematicMcuId, segHdl.mRobotToolID) OR 
+      NOT RcuTransformPosToCart(tr, trCart, myKinematic.RcuRefSystemObject, myKinematic.kinematicMcuId, segHdl.mRobotToolID) THEN
+      RETURN FALSE;
+   END_IF;
+   *)
+   IF myKinematic.extToolActive THEN 
+      IF tr.mPosCart.mRefSysID <> gMcuWorldRefSysId THEN
+         locFrame := tr.mPosCart.mFrame;
+         tr.mPosCart.mFrame.mOri := trOri.mOri;
+         tr.mPosCart.mPosInExternalTool := TRUE;
+      END_IF;
+      IF NOT RcuTransformPosToCart(p1, p1Cart, eRcuRefSystemWorld, myKinematic.kinematicMcuId, segHdl.mRobotToolID) OR
+         NOT RcuTransformPosToCart(p2, p2Cart, eRcuRefSystemWorld, myKinematic.kinematicMcuId, segHdl.mRobotToolID) OR 
+         NOT RcuTransformPosToCart(tr, trCart, eRcuRefSystemWorld, myKinematic.kinematicMcuId, segHdl.mRobotToolID) THEN
+         RETURN FALSE;
+      END_IF;
+      IF tr.mPosCart.mRefSysID <> gMcuWorldRefSysId THEN
+         trCart.mFrame.mOri := locFrame.mOri;
+      END_IF;
+   ELSE
+      IF NOT RcuTransformPosToCart(p1, p1Cart, myKinematic.RcuRefSystemObject, myKinematic.kinematicMcuId, segHdl.mRobotToolID) OR
+         NOT RcuTransformPosToCart(p2, p2Cart, myKinematic.RcuRefSystemObject, myKinematic.kinematicMcuId, segHdl.mRobotToolID) OR 
+         NOT RcuTransformPosToCart(tr, trCart, myKinematic.RcuRefSystemObject, myKinematic.kinematicMcuId, segHdl.mRobotToolID) THEN
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   (* Test
+   IF NOT RcuTransformPosToCartExt(p1, p1Cart, myKinematic.extToolActive, myKinematic) OR
+      NOT RcuTransformPosToCartExt(p2, p2Cart, myKinematic.extToolActive, myKinematic) OR 
+      NOT RcuTransformPosToCartExt(tr, trCart, myKinematic.extToolActive, myKinematic) THEN
+      RETURN FALSE;
+   END_IF;
+   *)
+   McuSubVector3(p1p2, p2Cart.mFrame.mPos, p1Cart.mFrame.mPos);
+   McuSubVector3(p1tr, trCart.mFrame.mPos, p1Cart.mFrame.mPos);
+      
+   // length of segment
+   lengthSeg := McuLenVector3(p1p2);
+   // calculation of the normal-vector of the plane
+   IF geo.mAutoOrientation THEN
+      // normal-vector = direction-vector of segment
+      //RcuVectDivScalar(p1p2, lengthSeg, n); 
+      McuUnifyVec3(n, p1p2); 
+   ELSE
+      (*
+      fr.mOri := trCart.mFrame.mOri;
+      IF trCart.mFrame.mFrameTyp = eMcuFrameKardan THEN
+         fr.mFrameTyp := eMcuFrameEuler;
+         McuKardanToEuler(fr.mOri, fr.mOri);
+      END_IF;
+      RcuEulerToNormal(fr.mOri, n); // besser von der Mcu rechnen lassen
+      //RcuPrintVector3(n, STR(fr.mFrameTyp)+" rc: ");
+      *)
+      fr.mFrameTyp := trCart.mFrame.mFrameTyp;
+      fr.mOri := trCart.mFrame.mOri;
+      McuMultiplyFrameVector(n,fr,eZ);
+      //RcuPrintVector3(n, STR(fr.mFrameTyp)+" mc: ");
+   END_IF;
+   
+   //RcuDotProduct(n, p1tr, nTr);
+   //RcuDotProduct(n, p1p2, nSeg);
+   nTr := McuDotProductVec3(n, p1tr);
+   nSeg := McuDotProductVec3(n, p1p2);
+   IF nSeg <> 0 THEN         
+      // cut-parameter on segment
+      segParam := nTr / nSeg;
+   ELSE
+      RcuSetMessageOnce(TRcuProgPath_WarTriggerOrthog, myKinematic.kinListInx, 1, instId, "TRcuProgPath.GetSegParam", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+   
+   //RcuVectMultScalar(p1p2, segParam, diff);   
+   McuMultiplyScalarVec3(diff, p1p2, segParam); 
+   // position of cut-point         
+   distance := McuLenVector3(diff);
+
+   IF segParam < 0.5 THEN
+      // closer to startpoint
+      segmentEndDistance := distance;
+   ELSE
+      segmentEndDistance := lengthSeg - distance;
+   END_IF;
+
+   McuAddVector3(p, p1Cart.mFrame.mPos, diff);
+   // distance between triggerpoint and cut-point
+   McuSubVector3(diff, trCart.mFrame.mPos, p);
+   distance := McuLenVector3(diff);
+      
+   // nmr: true if projection on segment
+   RETURN (segParam > (0 - epsilon)) AND (segParam < (1 + epsilon)) AND (distance < geo.mValue / 2); 
+END_ROUTINE
+
+// Release the path and create it again, release all pathobjects. Returns FALSE when the kinematic
+// is on this path (clear impossible), TRUE otherwise.
+ROUTINE Reset() : BOOL
+
+   //lastTriggerOnInterrSeg := 0;
+   reposTriggerGun := 0;
+   RETURN SUPER.Reset();
+END_ROUTINE
+
+
+ROUTINE Clear() : BOOL
+VAR
+   clear : BOOL;
+END_VAR
+
+   clear := SUPER.Clear();
+   stopPointCallStackHdl := 0; // can be set zero since there can't be a valid stoppoint when path is cleared
+   GetAppendLateSM();
+   (*$$$$$* spline *$$$$$*)             
+   splineActive := FALSE;
+   RETURN clear;
+END_ROUTINE
+
+
+ROUTINE Create(kin : TRcuKinematic)
+VAR
+   s : STRING;
+END_VAR
+
+   SUPER.Create(kin);
+   GetAppendLateSM();
+   (*$$$$$* spline *$$$$$*)             
+   splineActive := FALSE;
+   
+   IF gbSmoothAvailable THEN
+      s := kin.kinematic.mName + ".Smooth.DiffAbs";
+      SwoAddRealVariable(rSmoothDiff, s);
+      s := kin.kinematic.mName + ".Smooth.Org.X";
+      SwoAddRealVariable(smoothOrgPos.mValues[0], s);
+      s := kin.kinematic.mName + ".Smooth.Org.Y";
+      SwoAddRealVariable(smoothOrgPos.mValues[1], s);
+      s := kin.kinematic.mName + ".Smooth.Org.Z";
+      SwoAddRealVariable(smoothOrgPos.mValues[2], s);
+      s := kin.kinematic.mName + ".Smooth.Org.A";
+      SwoAddRealVariable(smoothOrgOri.mValues[0], s);
+      s := kin.kinematic.mName + ".Smooth.Org.B";
+      SwoAddRealVariable(smoothOrgOri.mValues[1], s);
+      s := kin.kinematic.mName + ".Smooth.Org.C";
+      SwoAddRealVariable(smoothOrgOri.mValues[2], s);
+      s := kin.kinematic.mName + ".Smooth.DiffX";
+      SwoAddRealVariable(rSmoothDx, s);
+      s := kin.kinematic.mName + ".Smooth.DiffY";
+      SwoAddRealVariable(rSmoothDy, s);
+      s := kin.kinematic.mName + ".Smooth.DiffZ";
+      SwoAddRealVariable(rSmoothDz, s);
+
+      s := kin.kinematic.mName + ".Smooth.Tcp.X";
+      SwoAddRealVariable(smoothTcpPos.mValues[0], s);
+      s := kin.kinematic.mName + ".Smooth.Tcp.Y";
+      SwoAddRealVariable(smoothTcpPos.mValues[1], s);
+      s := kin.kinematic.mName + ".Smooth.Tcp.Z";
+      SwoAddRealVariable(smoothTcpPos.mValues[2], s);
+      s := kin.kinematic.mName + ".Smooth.Tcp.A";
+      SwoAddRealVariable(smoothTcpOri.mValues[0], s);
+      s := kin.kinematic.mName + ".Smooth.Tcp.B";
+      SwoAddRealVariable(smoothTcpOri.mValues[1], s);
+      s := kin.kinematic.mName + ".Smooth.Tcp.C";
+      SwoAddRealVariable(smoothTcpOri.mValues[2], s);
+
+      START ObserveSmoothDiff();
+   END_IF;
+END_ROUTINE
+
+
+// Smooth data to kemroscope
+ROUTINE ObserveSmoothDiff() PRIVATE
+VAR
+   PathPos         : TMcuPathPos;
+   IPPosition      : TMcuIPPosition; 
+   ErrorReason     : TMcuIPPosErrorType;
+   lastErrorReason : TMcuIPPosErrorType;
+   mJoints         : TMcuVector;
+   rDx             : REAL;
+   rDy             : REAL;
+   rDz             : REAL;
+   i               : INT;
+   j               : INT;
+   posCart         : TMcuPosCart; 
+   posJoints       : TMcuPosJoints; 
+   posAuxJoints    : TMcuVector;
+   refSysId        : TMcuDbObjID;
+END_VAR   
+
+   WHILE TRUE DO
+      IF (rSmoothMR <> 0.0) AND (myKinematic.actExecData.mActSegmentID <> 0) AND (myKinematic.actExecData.mActPathID <> 0) THEN
+         PathPos.mSegmentID := myKinematic.actExecData.mActSegmentID;
+         PathPos.mPathID    := myKinematic.actExecData.mActPathID;
+         PathPos.mSegParam  := myKinematic.actExecData.mActSegParam;
+         McuGetInterpolationPosition(IPPosition, ErrorReason, PathPos, eMcuIPCalcOriginal);
+         IF (IPPosition.mPosType = eMcuIPPosCart) AND (ErrorReason = eMcuIPPosOK) THEN
+            smoothOrgPos := IPPosition.mFrame.mPos;
+            smoothOrgOri := IPPosition.mFrame.mOri;
+            smoothTcpPos := myKinematic.actCartVals.mPos;
+            smoothTcpOri := myKinematic.actCartVals.mOri;
+            rSmoothDx := myKinematic.actCartVals.mPos.mValues[0] - IPPosition.mFrame.mPos.mValues[0];
+            rSmoothDy := myKinematic.actCartVals.mPos.mValues[1] - IPPosition.mFrame.mPos.mValues[1];
+            rSmoothDz := myKinematic.actCartVals.mPos.mValues[2] - IPPosition.mFrame.mPos.mValues[2];
+            Sqrt(rSmoothDx*rSmoothDx + rSmoothDy*rSmoothDy + rSmoothDz*rSmoothDz, rSmoothDiff);
+            i := 1;
+         ELSIF (IPPosition.mPosType = eMcuIPPosJoints) AND (ErrorReason = eMcuIPPosOK) THEN
+            mJoints := IPPosition.mJoints;
+            posJoints.mJoints.mValidLen := myKinematic.nrOfMainJoints;
+            FOR j := 0 TO myKinematic.nrOfMainJoints-1 DO
+               posJoints.mJoints.mValues[j] := mJoints.mValues[j];
+            END_FOR;
+            posAuxJoints.mValidLen := myKinematic.nrOfAuxJoints;
+            FOR j := 0 TO myKinematic.nrOfAuxJoints-1 DO
+               posAuxJoints.mValues[j] := mJoints.mValues[myKinematic.nrOfMainJoints+j];
+            END_FOR;
+
+            IF myKinematic.kinematic.mForwCoordTrafo THEN
+               smoothTcpPos := myKinematic.actCartVals.mPos;
+               smoothTcpOri := myKinematic.actCartVals.mOri;
+               IF McuForwardTrafoAux(posCart, posJoints, posAuxJoints, gMcuWorldRefSysId, 
+                                    myKinematic.kinematicMcuId, myKinematic.kinToolMcuId) THEN
+                  smoothOrgPos := posCart.mFrame.mPos;
+                  smoothOrgOri := posCart.mFrame.mOri;
+                  rSmoothDx := myKinematic.actCartVals.mPos.mValues[0] - smoothOrgPos.mValues[0];
+                  rSmoothDy := myKinematic.actCartVals.mPos.mValues[1] - smoothOrgPos.mValues[1];
+                  rSmoothDz := myKinematic.actCartVals.mPos.mValues[2] - smoothOrgPos.mValues[2];
+                  Sqrt(rSmoothDx*rSmoothDx + rSmoothDy*rSmoothDy + rSmoothDz*rSmoothDz, rSmoothDiff);
+               END_IF;
+            END_IF;
+            
+            i := 2;
+         ELSIF (IPPosition.mPosType = eMcuIPPosMixed) AND (ErrorReason = eMcuIPPosOK) THEN
+            i := 3;
+         ELSIF (IPPosition.mPosType = eMcuIPPosInvalid) THEN
+            i := 4;
+         ELSE
+            lastErrorReason := ErrorReason;
+            i := 5;
+         END_IF;
+      END_IF;
+      myKinematic.WaitMcMainCycles(1);
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE GetAppendLateSM() PRIVATE
+VAR
+   sNeedNextSMName : STRING;
+END_VAR
+
+   bAppendLate := FALSE;
+   bAppendLateSMReady := FALSE;
+   IF gbMcAppendLate THEN
+      IF McuReadNeedNextSegSMemName(pathMcuId, sNeedNextSMName) THEN
+         START WaitSMReady();
+         tNeedNextSM := MAPX(sNeedNextSMName);
+         bAppendLate := TRUE;
+      END_IF; 
+   END_IF; 
+END_ROUTINE
+
+
+ROUTINE ObserveDynamic() PRIVATE
+VAR
+   bChgJointVel  : BOOL;
+   bChgCartVel   : BOOL;
+   bChgTurnVel   : BOOL;
+   bChgJointAcc  : BOOL;
+   bChgJointDec  : BOOL;
+   bChgCartAcc   : BOOL;
+   bChgCartDec   : BOOL;
+   bChgTurnAcc   : BOOL;
+   bChgTurnDec   : BOOL;
+   bChgJointJerk : BOOL;
+   bChgCartJerk  : BOOL;
+   bChgTurnJerk  : BOOL;
+   bChgAcceRamp  : BOOL;
+   bChgDeceRamp  : BOOL;
+END_VAR   
+
+   bChgJointVel  := IS_CHANGED(dynamic.mJoint.mVelo);
+   bChgCartVel   := IS_CHANGED(dynamic.mCart.mVelo);
+   bChgTurnVel   := IS_CHANGED(dynamic.mTurn.mVelo);
+   bChgJointAcc  := IS_CHANGED(dynamic.mJoint.mAcce);
+   bChgJointDec  := IS_CHANGED(dynamic.mJoint.mDece);
+   bChgCartAcc   := IS_CHANGED(dynamic.mCart.mAcce);
+   bChgCartDec   := IS_CHANGED(dynamic.mCart.mDece);
+   bChgTurnAcc   := IS_CHANGED(dynamic.mTurn.mAcce);
+   bChgTurnDec   := IS_CHANGED(dynamic.mCart.mDece);
+   bChgJointJerk := IS_CHANGED(dynamic.mJoint.mJerk);
+   bChgCartJerk  := IS_CHANGED(dynamic.mCart.mJerk);
+   bChgTurnJerk  := IS_CHANGED(dynamic.mTurn.mJerk);
+   bChgAcceRamp  := IS_CHANGED(dynamic.mAcceRamp);
+   bChgDeceRamp  := IS_CHANGED(dynamic.mDeceRamp);
+
+   WHILE TRUE DO
+      WAIT bChgJointVel OR bChgCartVel OR bChgTurnVel OR bChgJointAcc OR
+           bChgJointDec OR bChgCartAcc OR bChgCartDec OR bChgTurnAcc OR
+           bChgTurnDec OR bChgJointJerk OR bChgCartJerk OR bChgTurnJerk OR
+           bChgAcceRamp OR bChgDeceRamp;
+      IF myKinematic.selectingFlow.isStepping THEN
+         IF bChgJointVel OR bChgCartVel OR bChgTurnVel THEN
+            VeloChgInStepMode := TRUE;
+            myKinematic.DebugPrint(eTraceMotionModesFine, "New Velo in Stepmode: "+STR(dynamic.mCart.mVelo));
+         END_IF;
+         IF bChgJointAcc OR bChgJointDec OR bChgCartAcc OR bChgCartDec OR
+            bChgTurnAcc OR bChgTurnDec THEN
+            AccChgInStepMode := TRUE;
+            myKinematic.DebugPrint(eTraceMotionModesFine, "New Acce in Stepmode: "+STR(dynamic.mCart.mAcce));
+         END_IF;
+         IF bChgJointJerk OR bChgCartJerk OR bChgTurnJerk THEN
+            JerkChgInStepMode := TRUE;
+         END_IF;
+         IF bChgAcceRamp OR bChgDeceRamp THEN
+            RampChgInStepMode := TRUE;
+         END_IF;
+      END_IF;
+      bChgJointVel := FALSE;
+      bChgCartVel  := FALSE;
+      bChgTurnVel  := FALSE;
+      bChgJointAcc  := FALSE;
+      bChgJointDec  := FALSE;
+      bChgCartAcc   := FALSE;
+      bChgCartDec   := FALSE;
+      bChgTurnAcc   := FALSE;
+      bChgTurnDec   := FALSE;
+      bChgJointJerk := FALSE;
+      bChgCartJerk  := FALSE;
+      bChgTurnJerk  := FALSE;
+      bChgAcceRamp  := FALSE;
+      bChgDeceRamp  := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE WaitSMReady() PRIVATE
+
+   myKinematic.WaitMcMainCycles(2); // shared memory need max. 2 mcu-cycles to get ready
+   bAppendLateSMReady := TRUE;
+END_ROUTINE
+
+ROUTINE InitTrigger()
+    
+    VAR
+        i :DINT;
+    END_VAR
+   
+    FOR i:=0 TO giNumberOfRobots - 1 DO
+        WAIT PaintRobot[i].initRobComplete;
+    END_FOR;
+   IF IS_MAPPED (myRobot) THEN
+      // insert data into TMcuJob
+      triggerJob.mDBObjTyp := eMcuTemp;
+      triggerJob.mPreWarnActiv := TRUE;
+      triggerJob.mIsActive := TRUE;
+      triggerJob.mEvent.mIsActiv := TRUE;
+      triggerJob.mJobTyp := eMcuJobPlane;
+      triggerJob.mGeo.mTriggerTyp := eMcuTriggerBoth;
+      triggerJob.mGeo.mValue := myRobot.triggerPlaneDiameter;    
+
+       modChgSigJob.mDBObjTyp := eMcuTemp;
+       modChgSigJob.mPreWarnActiv := TRUE;
+       modChgSigJob.mJobTyp := eMcuJobParam;
+       modChgSigJob.mIsActive := TRUE;
+       modChgSigJob.mEvent.mIsActiv := TRUE;
+       // Workaround MCU problem
+//       modChgSigJob.mGeo.mValue := 0.0;
+       // Jobs auf Parameter 0 bei Wartesegmenten werden nach Unterbrechung unter 
+       // bestimmten Umständen nicht ausgeführt. Das führt im vorliegenden Fall 
+       // dazu, dass das Programm beim Modulwechsel-Trigger hängen bleibt.
+       // Den Modulwechsel-Job nicht auf Parameter 0 setzen, sondern bspw. 0.1%.
+       modChgSigJob.mGeo.mValue := 0.001;
+    END_IF;
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE NEW()
+   
+   SUPER.NEW();
+   
+   START InitTrigger();
+   START ObserveDynamic();
+   triggers.cntTriggerJobs := 0;
+   //segsBeforeMove := giRcuMaxCmd;
+END_ROUTINE
+
+
+ROUTINE RELEASE()
+   
+   IF NOT myKinematic.bReleaseBlockedByHandler THEN
+      (*$$$$$* spline *$$$$$*)             
+      EndSpline();
+      myKinematic.motionBuffer[myKinematic.iActMotionBuffer].bCheckMotionBuffer := FALSE;
+      TransferBufferToPathWithCheck(myKinematic.iActMotionBuffer); // transfer non-empty motion buffer to the path
+      SUPER.RELEASE();
+      
+      lastExecutedTrigger := 0;
+      lastExecJobStackHdl := 0;
+      myKinematic.HandlerBackPosSegId  := 0;
+      myKinematic.HandlerBackPosSegPar := 0.0;
+      myKinematic.RcuInterfaceToProcess.lastGunOn := 0;
+      reposTriggerGun := 0;
+      reposLastGunOn    := 0;   
+      reposLastJobNum   := 0;   
+      reposLastStackHdl := 0;  
+      stopPointCallStackHdl := 0;
+      skipTriggers      := FALSE;
+    
+      // Tracking
+      IF myKinematic.trackingActive AND NOT myKinematic.homing.bHomingRun THEN
+         myKinematic.tracking.StopTracking(myKinematic);
+         deltaX := 0.0;
+      END_IF;
+      
+      ReleaseAllMotionBuffers();
+      (*$$$$$* motionstep *$$$$$*)             
+      McuReleaseDbObj(oldPathPosMcuId);
+      McuReleaseDbObj(newPathPosMcuId);
+      oldPathPosMcuId := 0;
+      smooth.mSmoothFactor := 0.0;
+      rSmoothMR := 0.0;
+   ELSE
+      DebugPrint(eTraceCommon, "TRcuProgPath.RELEASE: FORCE TRACKING");
+   END_IF;
+   restartActCommand := FALSE;  
+   
+   bMoveBlocked      := FALSE;
+   bWait7Cycles      := FALSE;
+   bNextMove         := FALSE;
+   bUseTrckOnDyn     := FALSE;
+   bUseTrckOffDyn    := FALSE;
+END_ROUTINE
+
+
+ROUTINE RESERVE() 
+   
+   triggers.cntTriggerJobs := 0;
+   IF myKinematic.lineTracking THEN
+      myKinematic.bStartPosReached := FALSE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE INTERRUPT() 
+   
+   bAppendLateSMReady := TRUE; // special case when stepping
+   // when starting a new path while stepping on a no-movement macro,
+   // execution is stopped (and also routine waiting until the shared memory 
+   // gets ready is stopped) before shared memory gets ready - in this 
+   // case the flag would never be set 
+END_ROUTINE
+
+
+ROUTINE SETPC()
+
+   IF NOT restartActCommand THEN
+      triggers.cntTriggerJobs := 0;
+   ELSE
+      restartActCommand := FALSE;
+   END_IF;
+   DebugPrint(eTraceCommon, "SETPC in progPath, cntTriggerJobs: " + STR(triggers.cntTriggerJobs));
+END_ROUTINE
+

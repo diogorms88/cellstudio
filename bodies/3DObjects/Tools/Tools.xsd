@@ -1,0 +1,214 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+
+<xs:schema attributeFormDefault="unqualified" elementFormDefault="qualified"
+           xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="AdapterBetweenFlangeTool" maxOccurs="1" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element type="xs:string" name="RelativePathToModelFileVwrist" />
+              <xs:element type="xs:string" name="RelativePathToModelFileNotVwrist" />
+              <xs:element type="xs:float" name="OffsetZinMm" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="FlangeToolAdapters" maxOccurs="1" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="FlangeToolAdapter" type="FlangeToolAdapterType" maxOccurs="unbounded" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+
+          <xs:unique name="FlangeToolAdapterIdUnique">
+            <xs:selector xpath="FlangeToolAdapter" />
+            <xs:field xpath="@FlangeToolAdapterId" />
+          </xs:unique>
+        </xs:element>
+
+        <xs:element name="Tools" maxOccurs="1" minOccurs="1">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Tool" type="ToolType" maxOccurs="unbounded" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+
+          <xs:unique name="ToolIdUnique">
+            <xs:selector xpath="Tool" />
+            <xs:field xpath="@ToolId" />
+          </xs:unique>
+        </xs:element>
+
+        <xs:element name="FanLists" maxOccurs="1" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="FanList" type="FanListType" maxOccurs="unbounded" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+
+          <xs:unique name="FanListIdUnique">
+            <xs:selector xpath="FanList" />
+            <xs:field xpath="@FanListId" />
+          </xs:unique>
+        </xs:element>
+
+        <xs:element name="Fans" maxOccurs="1" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Fan" type="FanType" maxOccurs="unbounded" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+
+          <xs:unique name="FanIdUnique">
+            <xs:selector xpath="Fan" />
+            <xs:field xpath="@FanId" />
+          </xs:unique>
+        </xs:element>
+
+        <xs:element name="Categories" maxOccurs="1" minOccurs="1">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element ref="Category" maxOccurs="unbounded" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+
+          <xs:unique name="CategoryNameUnique">
+            <xs:selector xpath="Category" />
+            <xs:field xpath="@Name" />
+          </xs:unique>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="Category">
+    <xs:complexType mixed="true">
+      <xs:sequence>
+        <xs:element name="Tool" maxOccurs="unbounded" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element type="xs:string" name="ToolId" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element ref="Category" minOccurs="0" maxOccurs="unbounded" />
+      </xs:sequence>
+      <xs:attribute type="xs:string" name="Name" />
+    </xs:complexType>
+  </xs:element>
+
+  <xs:complexType name="FlangeToolAdapterType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="RelativePathToModelFile" />
+      <xs:element type="xs:float" name="OffsetZinMm" />
+    </xs:sequence>
+    <xs:attribute type="xs:token" name="FlangeToolAdapterId" />
+  </xs:complexType>
+
+  <xs:complexType name="FanType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="Path" />
+      <xs:element type="xs:string" name="ScaleOnlyInZ" minOccurs="0" />
+      <xs:element type="xs:string" name="AlwaysOn" minOccurs="0" />
+      <xs:element type="xs:string" name="FixedColorAndSize" minOccurs="0" />
+      <xs:element type="xs:string" name="FixedSize" minOccurs="0" />
+      <xs:element type="xs:string" name="ShowEdgesOnly" minOccurs="0" />
+      <xs:element type="xs:string" name="Label" minOccurs="0" />
+    </xs:sequence>
+    <xs:attribute type="xs:token" name="FanId" />
+  </xs:complexType>
+
+  <xs:complexType name="UsedFanType">
+    <xs:sequence>
+      <xs:element type="xs:token" name="FanId" />
+      <xs:element type="xs:token" name="FanList" minOccurs="0" maxOccurs="1" />
+      <xs:element type="xs:float" name="OffsetXinMm" />
+      <xs:element type="xs:float" name="OffsetYinMm" />
+      <xs:element type="xs:float" name="OffsetZinMm" />
+      <xs:element type="xs:float" name="OffsetAinGrad" />
+      <xs:element type="xs:float" name="OffsetBinGrad" />
+      <xs:element type="xs:float" name="OffsetCinGrad" />
+    </xs:sequence>
+    <xs:attribute type="xs:short" name="Id" use="optional" />
+  </xs:complexType>
+
+  <xs:complexType name="GunType">
+    <xs:sequence>
+      <xs:element name="Fans">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Fan" type="UsedFanType" maxOccurs="unbounded" minOccurs="0" />
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute type="xs:byte" name="Number" use="optional" />
+  </xs:complexType>
+
+  <xs:complexType name="ToolType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="Name" />
+      <xs:element type="xs:string" name="Description" />
+      <xs:element type="xs:string" name="Path" />
+      <xs:element type="xs:string" name="PathPreviewPicture" />
+      <xs:element type="xs:byte" name="NoAdapterIfVwrist" minOccurs="0" maxOccurs="1"/>
+      <xs:element type="xs:byte" name="NoAdapter" minOccurs="0" maxOccurs="1"/>
+      <xs:element type="xs:string" name="UseAdapterIfRs20i" minOccurs="0" maxOccurs="1"/>
+	    <xs:element type="xs:string" name="UseAdapterIfRs020n" minOccurs="0" maxOccurs="1"/>
+
+      <xs:element name="CompatibilityKeys">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="CompatibilityKey" type="xs:string" maxOccurs="unbounded" minOccurs="0" />
+          </xs:sequence>
+        </xs:complexType>
+
+        <xs:unique name="CompatibilityKeyUnique">
+          <xs:selector xpath="CompatibilityKey" />
+          <xs:field xpath="." />
+        </xs:unique>
+      </xs:element>
+
+      <xs:element name="Guns">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Gun" type="GunType" maxOccurs="unbounded" minOccurs="0" />
+          </xs:sequence>
+        </xs:complexType>
+
+        <xs:unique name="GunIdUnique">
+          <xs:selector xpath=".//Gun" />
+          <xs:field xpath="@Number" />
+        </xs:unique>
+
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute type="xs:string" name="ToolId" use="optional" />
+  </xs:complexType>
+
+  <xs:complexType name="FanItemType">
+    <xs:attribute type="xs:token" name="Id" />
+  </xs:complexType>
+
+  <xs:complexType name="FanListType">
+    <xs:sequence>
+      <xs:element name="FanItems">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="FanItem" type="FanItemType" maxOccurs="unbounded" minOccurs="0" />
+          </xs:sequence>
+        </xs:complexType>
+
+        <xs:unique name="FanItemIdUnique">
+          <xs:selector xpath=".//FanItem" />
+          <xs:field xpath="@Id" />
+        </xs:unique>
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute type="xs:string" name="FanListId" use="optional" />
+  </xs:complexType>
+
+
+</xs:schema>

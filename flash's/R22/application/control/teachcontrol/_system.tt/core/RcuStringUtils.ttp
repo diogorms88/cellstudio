@@ -1,0 +1,79 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : RcuStringUtils.ttp                                          *
+*   Description : String utilities not included in _FWString.ttp              *
+*-----------------------------------------------------------------------------*)
+
+ROUTINE StrRtrim(CONST s : STRING) 
+                : STRING GLOBAL
+   VAR
+      i       : DINT;
+      l       : DINT;
+      sLine   : STRING;
+   END_VAR
+
+   sLine := s;
+   
+   i := StrLen(sLine);
+   WHILE (i>0) AND (StrMid(sLine, 1, i) =  " ") DO
+      sLine := StrLeft(sLine, 
+                       StrLen(sLine)-1);
+      
+      i := i - 1;
+   END_WHILE;
+
+   RETURN sLine;
+END_ROUTINE
+
+ROUTINE StrLtrim(CONST s : STRING) 
+                : STRING GLOBAL
+   VAR
+      i       : DINT;
+      l       : DINT;
+      sResult : STRING := "";
+   END_VAR
+   
+   i := 1;
+   l := StrLen(s);
+   
+   WHILE (i<=l) AND (StrLen(sResult)=0) DO
+      IF StrMid(s, 1, i) <> " " THEN
+         sResult := StrMid(s, StrLen(s)-(i-1), i); 
+      END_IF;
+      
+      i := i + 1;
+   END_WHILE;
+  
+   RETURN sResult;
+END_ROUTINE
+
+ROUTINE StrReplaceString(CONST s : STRING;
+                         CONST sToReplaced : STRING;
+                         CONST sReplaceWith : STRING)
+                : STRING GLOBAL
+   VAR
+      iPos    : DINT;
+      sResult : STRING;
+   END_VAR
+
+   sResult := s;
+ 
+   iPos := StrFind(s, sToReplaced);
+   IF iPos > 0 THEN
+     sResult := StrReplace(s, sReplaceWith, StrLen(sToReplaced), iPos);
+   END_IF;
+   
+   RETURN sResult;
+END_ROUTINE

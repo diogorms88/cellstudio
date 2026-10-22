@@ -1,0 +1,140 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 17.10.2016  | STL    | First release
+//  v2_01.01.00  | 31.01.2019  | KLCH   | Change: adjustments due to structural changes (EA2.0)
+//  v2_01.02.00  | 16.05.2022  | KLCH   | Change: [ECORPC-763] internal handling of HelpGun - no trigger device
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_HelpGun1
+Call Common_Sealing_Simulation
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_HelpGun1
+	SelectNode RPC1.R11
+	SelectCase Option1
+		Case EcoDose_PCL // Process type
+			Call AddDeviceToMaterial1_HelpGun1
+		Case EcoDose_PM
+			SelectCase Option2 // Variant of process group
+				Case 3D
+					//
+				CaseElse
+					Message Wrong variant type (Main_HelpGun1)!!
+			EndSelect
+		Case EcoDose_ES
+			SelectCase Option2 // Variant of process group
+				Case 3D
+					//
+				CaseElse
+					Message Wrong variant type (Main_HelpGun1)!!
+			EndSelect
+		Case EcoDose_PCL_PCL
+			SelectCase Option2 // Variant of process group
+				Case 3D
+					//
+				CaseElse
+					Message Wrong variant type (Main_HelpGun1)!!
+			EndSelect
+		Case EcoDose_SM_PCL
+			SelectCase Option2 // Variant of process group
+				Case 3D
+					//
+				CaseElse
+					Message Wrong variant type (Main_HelpGun1)!!
+			EndSelect
+		CaseElse
+			Message Wrong process type (Main_HelpGun1)!!
+	EndSelect
+Return
+
+SubRoutine AddDeviceToMaterial1_HelpGun1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase HelpGun1
+		Case 1
+			Call Common_AddValve_HG1
+			SelectNode RPC1.R11.PCU1
+			SelectTab [BrushTrigger]
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			NotResetTriggerAtEnd YHG1.Set 0
+			SetInverseTrigger YHG1.Set 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.HelpGunValve
+				OptionalUsed 1
+				Value "HG1"
+				SelectCfg AMV2FC.Nozzle1.ControlMode
+				OptionalUsed 1
+				Value 1
+				SelectCfg AMV2FC.Nozzle1.HG_TimeOn
+				OptionalUsed 1
+				Value 0d0h0m0s70ms
+				SelectCfg AMV2FC.Nozzle1.HG_TimeOff
+				OptionalUsed 1
+				Value 0d0h0m0s70ms
+				SelectCfg AMV2FC.Nozzle2.ControlMode
+				OptionalUsed 1
+				Value 1
+				SelectCfg AMV2FC.Nozzle2.HG_TimeOn
+				OptionalUsed 1
+				Value 0d0h0m0s70ms
+				SelectCfg AMV2FC.Nozzle2.HG_TimeOff
+				OptionalUsed 1
+				Value 0d0h0m0s70ms
+				SelectCfg AMV2FC.Nozzle3.ControlMode
+				OptionalUsed 1
+				Value 1
+				SelectCfg AMV2FC.Nozzle3.HG_TimeOn
+				OptionalUsed 1
+				Value 0d0h0m0s70ms
+				SelectCfg AMV2FC.Nozzle3.HG_TimeOff
+				OptionalUsed 1
+				Value 0d0h0m0s70ms
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.HelpGunValve
+				Value "''"
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle1.ControlMode
+				Value 0
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle1.HG_TimeOn
+				Value 0d0h0m0s0ms
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle1.HG_TimeOff
+				Value 0d0h0m0s0ms
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle2.ControlMode
+				Value 0
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle2.HG_TimeOn
+				Value 0d0h0m0s0ms
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle2.HG_TimeOff
+				Value 0d0h0m0s0ms
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle3.ControlMode
+				Value 0
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle3.HG_TimeOn
+				Value 0d0h0m0s0ms
+				OptionalUsed 0
+				SelectCfg AMV2FC.Nozzle3.HG_TimeOff
+				Value 0d0h0m0s0ms
+				OptionalUsed 0
+			Endif
+	EndSelect
+Return

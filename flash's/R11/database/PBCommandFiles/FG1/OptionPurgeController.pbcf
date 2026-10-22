@@ -1,0 +1,34 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 20.12.2016  | KTO    | First release
+
+Parameter OptionPurgeController Option1
+
+Call Main_OptionPurgeController
+
+SelectCase Option1
+	Case Handler
+		SelectNode RPC1.H12
+	CaseElse
+		SelectNode RPC1.R11
+EndSelect
+		
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_OptionPurgeController
+	SelectCase OptionPurgeController
+		Case EXPS
+			SelectNode RPC1.System
+			SelectTab [CfgParameter]
+			SelectCfg System.PurgeController
+			OptionalUsed 1
+		CaseElse
+			SelectNode RPC1.System
+			SelectTab [CfgParameter]
+			SelectCfg System.PurgeController
+			OptionalUsed 0
+	EndSelect
+Return
+
+

@@ -1,0 +1,184 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2019-03-06  | STL    | First release [ECORPC-198]
+//  v2_01.01.00  | 2019-03-27  | STL    | Change: workaround - select HW-Signals of prop valve to avoid PB error
+//  v2_01.02.00  | 2019-07-08  | STL    | Bugfix: the air supply valve of the nozzle head exchanger (LV5) must be a main air valve
+//  v2_01.03.00  | 2020-03-11  | KLCH   | AddOn:  [ECORPC-482] copy configuration file of alternative fixpositions
+//  v2_01.04.00  | 2023-03-20  | KLCH   | Bugfix: [ECORPC-1426] missing configuration of hardware signals of BL1
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger NozzleHeadExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_NozzleHeadExchanger
+Call Common_Sealing_OptionalFixpos
+Call Common_Sealing_OptionalBCUCfg_ProgStart
+Call Common_Sealing_GenerateTimeProg
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_NozzleHeadExchanger
+	SelectNode RPC1.R11.PCU1
+	
+	// Delete channel
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+		Delete
+	Endif
+	
+	SelectCase NozzleHeadExchanger
+		Case 0
+			FSDeleteFile ..\..\..\..\..\application\control\config\alternativeFixpos.cfg
+		Case 1
+			Call NozzleHeadExchanger_General
+			Call NozzleHeadExchanger_Place1
+		Case 2
+			Call NozzleHeadExchanger_General
+			Call NozzleHeadExchanger_Place1
+			Call NozzleHeadExchanger_Place2
+		Case 3
+			Call NozzleHeadExchanger_General
+			Call NozzleHeadExchanger_Place1
+			Call NozzleHeadExchanger_Place2
+			Call NozzleHeadExchanger_Place3
+		Case 4
+			Call NozzleHeadExchanger_General
+			Call NozzleHeadExchanger_Place1
+			Call NozzleHeadExchanger_Place2
+			Call NozzleHeadExchanger_Place3
+			Call NozzleHeadExchanger_Place4
+		Case 5
+			Call NozzleHeadExchanger_General
+			Call NozzleHeadExchanger_Place1
+			Call NozzleHeadExchanger_Place2
+			Call NozzleHeadExchanger_Place3
+			Call NozzleHeadExchanger_Place4
+			Call NozzleHeadExchanger_Place5
+		Case 6
+			Call NozzleHeadExchanger_General
+			Call NozzleHeadExchanger_Place1
+			Call NozzleHeadExchanger_Place2
+			Call NozzleHeadExchanger_Place3
+			Call NozzleHeadExchanger_Place4
+			Call NozzleHeadExchanger_Place5
+			Call NozzleHeadExchanger_Place6
+		CaseElse
+			Message Number of exchanger places [NozzleHeadExchanger] not supported !! (Main_NozzleHeadExchanger)
+	EndSelect
+Return
+
+SubRoutine NozzleHeadExchanger_General
+	SelectNode RPC1.R11.PCU1
+	Call Common_AddChannel_NhExchanger
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_NHEX1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger.ANHEX1
+	SelectTab [CfgParameter]
+	SelectCfg ANHEX1.NrOfPlaces
+	Value NozzleHeadExchanger
+	SelectCfg ANHEX1.DeviceNames.InitiatorGlobalCollisionProtection
+	OptionalUsed 1
+	SelectCfg ANHEX1.DeviceNames.ValveAirSupply
+	OptionalUsed 1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSS1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BLV_BL1	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger.BLV_BL1
+	
+	SelectCase Option14 // Variant of bus system
+		Case SercosIII
+			SelectCase OptionElectricalVersion
+				Case El_V2
+					SelectTab [HWSignals]
+					SelectHWSignal HWO_wBLV_BL1
+					BusType 6 //Sercos III
+					Vendor  19 //FESTO
+					Card    3 //Proportional Valve (CPX,10Bar) - 542222
+					SelectHWSignal HWI_wBLV_BL1
+					BusType 6 //Sercos III
+					Vendor  19 //FESTO
+					Card    4 //Proportional Valve (CPX,10Bar) - 542222
+				CaseElse
+					Message OptionElectricalVersion not supported !! (NozzleHeadExchanger_General)
+			EndSelect
+		CaseElse
+			Message Wrong bus master (NozzleHeadExchanger_General)!! Only Sercos III supported
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+	Else
+		SelectNode RPC1.R11.PCU1
+		Call Common_AddChannel_AirSupply
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.YLV5
+	Else
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+		Call Common_AddDevice_YLV5_Main
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.ARPI_M
+	ELSE
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+		Call Common_AddDevice_ARPI_M
+	Endif
+	
+	FSCopy ..\SpecialOptions\NozzleHeadExchanger\alternativeFixpos.cfg ..\..\..\..\..\application\control\config
+Return
+
+SubRoutine NozzleHeadExchanger_Place1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKPL1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSK1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BTO1
+Return
+
+SubRoutine NozzleHeadExchanger_Place2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKPL2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSK2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BTO2
+Return
+
+SubRoutine NozzleHeadExchanger_Place3
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKPL3
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSK3
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BTO3
+Return
+
+SubRoutine NozzleHeadExchanger_Place4
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKPL4
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSK4
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BTO4
+Return
+
+SubRoutine NozzleHeadExchanger_Place5
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKPL5
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSK5
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BTO5
+Return
+
+SubRoutine NozzleHeadExchanger_Place6
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKPL6
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BKSK6
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].NhExchanger
+	Call Common_AddDevice_BTO6
+Return

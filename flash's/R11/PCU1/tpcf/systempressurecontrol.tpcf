@@ -1,0 +1,80 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option20
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "SystemPressureControl" "" 14 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+    SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, add following signal
+			Add_TPSignal "ShotMeter1Sub_?.YAV1?.Set"
+	EndSelect
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.SetPressure"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.PressureInRange"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.PressureSetValueExtern"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.PressureActValueExtern"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.OrderSetPressure"
+	Add_TPSignal "ShotMeter1Sub_?.MDP92?.PressureBest"
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepTime "OpenYAV1" 0.2 True ""
+	Add_TPStepEvent "PressureControl" False 5 False 0 True True ChannelError 19 Or True 1 "" ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "1"
+	// First: Apply base settings to all signals
+	SelectCase Option20 // Shot Meter Single
+		Case 0  // If not selected, set following signal
+			Set_TPSignalBool "ShotMeter1Sub_?.YAV1?.Set" True
+	EndSelect
+	Set_TPSignalAnalog "ShotMeter1Sub_?.MDP92?.SetPressure" 50
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureInRange" False False
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureSetValueExtern" False
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureActValueExtern" False
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderSetPressure" False
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureBest" False False
+
+	// Step 2
+	Select_TPStep "2"
+	// Modify only signals changed to step before
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureInRange" True True
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureSetValueExtern" True
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureActValueExtern" True
+	Set_TPSignalBool "ShotMeter1Sub_?.MDP92?.OrderSetPressure" True
+	Act_TPSignalBool "ShotMeter1Sub_?.MDP92?.PressureBest" True True
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "systempressurecontrol" True
+Return

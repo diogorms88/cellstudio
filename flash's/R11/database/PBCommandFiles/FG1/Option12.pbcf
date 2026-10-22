@@ -1,0 +1,152 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 21.11.2016  | KLCH   | First release
+//  v2_01.01.00  | 28.09.2017  | KLCH   | AddOn: Option12_AddDeviceToExhaustUnit_BLISA (moved from Option14-script)
+//  v2_01.02.00  | 31.01.2019  | KLCH   | Change: adjustments due to structural changes (EA2.0)
+//  v2_01.03.00  | 08.05.2019  | KLCH   | AddOn: sensor BLISA on FESTO CPX
+
+Imports Common OptionGun
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Option12_CheckGun
+Call Common_Sealing_OptionalTPGroups
+Call Common_Sealing_OptionalFixpos
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option12
+	Call Option12_ResetAll
+	
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			SelectCase Option12
+				Case No_Dump
+				Case Dump
+					Call Option12_AddDeviceToMDClean
+				Case Material_Exhaust_Unit
+					Call Option12_AddDeviceToExhaustUnit
+					Call Option12_AddDeviceToExhaustUnit_BLISA
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD1
+					SelectTab [CfgParameter]
+					SelectCfg AMD1.ExhaustUnit
+					OptionalUsed 1
+				CaseElse
+					Message Option 12 selection not supported !! (Main_Option12)
+			EndSelect
+		CaseElse
+			Message Gun type not supported !! (Main_Option12)
+	EndSelect
+Return
+
+SubRoutine Option12_CheckGun
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Call Main_OptionGun
+		CaseElse
+			Message Gun type not supported !! (Option12_CheckGun)
+	EndSelect
+Return
+
+SubRoutine Option12_ResetAll
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+		Delete
+	Endif
+Return
+
+SubRoutine Option12_AddDeviceToMDClean
+	//******** Add MDClean channel************
+	// Add channel
+	Call Common_AddChannel_MDClean
+	// Add valves
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_YZYAD1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_YZYRZ1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_BMS1
+	// Add initiators
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_BSP1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_BZYAD1ER
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_BZYAD1EV
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_BZYRZER
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MDClean
+	Call Common_AddDevice_BZYRZ1EV
+Return
+
+SubRoutine Option12_AddDeviceToExhaustUnit
+	//******** Add ExhaustUnit channel************
+	// Add channel
+	Call Common_AddChannel_ExhaustUnit
+	// Add valves
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_YABS1zu
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_YABS1auf
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_YABS1_KPzu
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_YABS1_KPauf
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_YVG1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_YP1
+	// Add initiators
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_BPU1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_BABS1zu
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_BABS1auf
+Return
+
+SubRoutine Option12_AddDeviceToExhaustUnit_BLISA
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit.BLISA
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit.BLISA
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit
+	Call Common_AddDevice_BLISA
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit.BLISA
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ExhaustUnit.BLISA
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBLISA
+	  			BusType 1 //Profibus-DP
+	  			Vendor  3 //Turck
+	  			Card    3 //Analog input current(4-20mA) - 68 244 62_
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBLISA
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBLISA
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option12_AddDeviceToExhaustUnit_BLISA)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (Option12_AddDeviceToExhaustUnit_BLISA)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return

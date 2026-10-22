@@ -1,0 +1,147 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-12-13  | KLCH/NOA  | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter MaterialValve1 Circulation OptionShotMeter
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties FirstStep "" "" 62 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+	Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+	Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN3"
+	Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN3"
+	Add_TPSignal "Material1.BShotMeter1.OrderPreparation"
+	Add_TPSignal "Material1.BShotMeter1.OrderDone"
+	Add_TPSignal "Material1.BShotMeter1.OrderMove"
+	Add_TPSignal "MainChannel.YHN3.Set"
+	Add_TPSignal "Material1.AMatManager1.OrderCharacteristicRef"
+	Add_TPSignal "Material1.AMatManager1.OrderDone"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefValueMin"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefValueMax"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefSteps"
+	Add_TPSignal "Material1.AMatManager1.CharacteristicRefValue"
+	Add_TPSignal "Material1.BShotMeter1.SetQuantity"
+	Add_TPSignal "Material1.AMatManager1.MaxFlow"
+	Add_TPSignal "Material1.AMatManager1.MaxPressure"
+	Add_TPSignal "Material1.AMatManager1.MinFlow"
+	Add_TPSignal "Material1.AMatManager1.MinPressure"
+	SelectCase MaterialValve1 //Automatic Material Valve at Supply/Robot Interface
+		Case 1 // Automatic Material Valve selected
+			Add_TPSignal "MaterialSupply1.AYMV1.Set"
+	EndSelect
+	SelectCase Circulation // Variants of Circulation
+		Case Circ_OnRobot_NoRL // Add following Signal, if robot internal circulation is used.
+			Add_TPSignal "MaterialSupply1.YFDR.Set"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepEvent "GoPurgePosHN3" False 30 False 0 True True ChannelError 105 And False 0 "" ""
+	Add_TPStepEvent "Preparation" False 30 False 0 True True ChannelError 404 And False 0 "" ""
+	Add_TPStepEvent "Characteristics" False 60 False 0 True True ChannelError 403 And False 0 "" ""
+	Add_TPStepTime "Wait" 0.2 True ""
+	Add_TPStepEvent "GoHome" False 30 False 0 True True ChannelError 100 And False 0 "" ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "1"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False True
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" True True
+	Set_TPSignalBool "Material1.BShotMeter1.OrderPreparation" True
+	Act_TPSignalBool "Material1.BShotMeter1.OrderDone" False False
+	Set_TPSignalBool "Material1.BShotMeter1.OrderMove" False
+	Set_TPSignalBool "MainChannel.YHN3.Set" False
+	Set_TPSignalBool "Material1.AMatManager1.OrderCharacteristicRef" False
+	Act_TPSignalBool "Material1.AMatManager1.OrderDone" False False
+	SelectCase OptionShotMeter
+		Case SM_600ccm
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMin" -30
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMax" -50
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefSteps" 5
+		CaseElse
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMin" -10
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValueMax" -20
+			Set_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefSteps" 6
+	EndSelect
+	Act_TPSignalAnalog "Material1.AMatManager1.CharacteristicRefValue" False 0 GreaterEqual 0
+	Set_TPSignalAnalog "Material1.BShotMeter1.SetQuantity" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MaxFlow" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MaxPressure" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MinFlow" 0
+	Set_TPSignalAnalog "Material1.AMatManager1.MinPressure" 0
+	SelectCase MaterialValve1 //Automatic Material Valve at Supply/Robot Interface
+		Case 1 // Automatic Material Valve selected
+			Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+	EndSelect
+	SelectCase Circulation // Variants of Circulation
+		Case Circ_OnRobot_NoRL // Set following Signal, if robot internal circulation is used.
+			Set_TPSignalBool "MaterialSupply1.YFDR.Set" True
+	EndSelect
+
+	// Step 2
+	Select_TPStep "2"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN3" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN3" False False
+	Act_TPSignalBool "Material1.BShotMeter1.OrderDone" True True
+
+	// Step 3
+	Select_TPStep "3"
+	// Modify only signals changed to step before
+	Act_TPSignalBool "Material1.BShotMeter1.OrderDone" False False
+	Set_TPSignalBool "Material1.BShotMeter1.OrderMove" True
+	Set_TPSignalBool "MainChannel.YHN3.Set" True
+	Set_TPSignalBool "Material1.AMatManager1.OrderCharacteristicRef" True
+	Act_TPSignalBool "Material1.AMatManager1.OrderDone" True True
+	Set_TPSignalAnalogVar "Material1.BShotMeter1.SetQuantity" "Material1.AMatManager1.CharacteristicRefValue"
+
+	// Step 4
+	Select_TPStep "4"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "Material1.BShotMeter1.OrderMove" False
+	Set_TPSignalBool "MainChannel.YHN3.Set" False
+	Set_TPSignalBool "Material1.AMatManager1.OrderCharacteristicRef" False
+	Act_TPSignalBool "Material1.AMatManager1.OrderDone" False False
+	Set_TPSignalAnalog "Material1.BShotMeter1.SetQuantity" 0
+
+	// Step 5
+	Select_TPStep "5"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" True True
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "referencecurve_hn3" True
+Return

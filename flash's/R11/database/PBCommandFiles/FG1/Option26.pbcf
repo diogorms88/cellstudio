@@ -1,0 +1,253 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.03.00  | 11.11.2016  | STL    | Change: PCL 2.0
+//  v2_01.04.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 OptionElectricalVersion
+
+Call Main_Option26
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option26
+	SelectNode RPC1.R11
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL_PCL
+			Call Option26_2Materials
+		Case EcoDose_SM_PCL
+			Call Option26_2Materials
+		Case EcoDose_SM_SM
+			Call Option26_2Materials
+		CaseElse
+			Call Option26_1Material
+	EndSelect
+Return
+
+SubRoutine Option26_1Material
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase Option26
+		Case 1
+			Call Common_AddDevice_BAP1P
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "AP1P"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "AP1P"
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "MV2PA"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "MV2PA"
+			Endif
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBAP1P
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP1P
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP1P
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option26_1Material)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BAP1P)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option26_2Materials
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase Option26
+		Case 1
+			Call Common_AddDevice_BAP1P
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "AP1P"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "AP1P"
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC_1
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "MV2PA_1"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PA_2
+					Value "MV2PA_1"
+				Else
+					Value "''"
+				Endif
+			Endif
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1P
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBAP1P
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP1P
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP1P
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option26_2Materials; 1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BAP1P)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2P
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2P
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectCase Option26
+		Case 1
+			Call Common_AddDevice_BAP2P
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_2.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "AP2P"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager2.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "AP2P"
+			Endif
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMV2FC_2
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC_2.DeviceNames.PressureSensor
+				OptionalUsed 1
+				Value "MV2PA_2"
+			Endif
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+				SelectTab [CfgParameter]
+				SelectCfg AMatManager1.DeviceNames.PressureSensor
+				OptionalUsed 1
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PA_2
+					Value "MV2PA_2"
+				Else
+					Value "''"
+				Endif
+			Endif
+	EndSelect
+		
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2P
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2P
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBAP2P
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase OptionElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP2P
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP2P
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message OptionElectricalVersion not supported !! (Option26_2Materials; 2)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BAP2P)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return

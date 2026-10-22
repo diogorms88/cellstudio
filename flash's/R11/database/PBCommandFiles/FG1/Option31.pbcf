@@ -1,0 +1,205 @@
+//  Version     | ReleaseDate | Respon  | Changes
+//  -----------------------------------------------------------------------------------------------
+//  V2_01.00.00 | 2024-07-11  | KLCH    | First release [ECORPC-1837]
+
+Imports Common
+
+Parameter Option1 Option20 Option31 OptionShotMeter
+
+Call Main_Option31
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option31
+	SelectCase Option1 // Process type
+		Case EcoDose_SM EcoDose_SM_PCL
+			Call Option31_ShotMeter1Sub
+		Case EcoDose_SM_SM
+			Call Option31_ShotMeter1Sub_Multi
+			Call Option31_ShotMeter2Sub_Multi
+		CaseElse
+			Message Process type [Option1] not supported !! (Main_Option31)
+	EndSelect
+Return
+
+SubRoutine Option31_ShotMeter1Sub
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a
+		IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92GRa
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92GRa
+			Delete
+		Endif
+		SelectCase OptionShotMeter // ShotMeter type
+			Case SM_113ccm SM_590ccm SM_300ccm SM_600ccm
+				SelectCase Option31 // End position initiator
+					Case 1
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+						Call Common_AddDevice_BDP92GR
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+						SelectTab [CfgParameter]
+						SelectCfg MDP92.PistonEndPosSensorName
+						OptionalUsed 1
+						Value DP92GRa
+						SelectCase Option20 // Shot meter single
+							Case 0
+								IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92GRb
+									VisuInterface 1 4
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.MDP92b
+									SelectTab [CfgParameter]
+									SelectCfg MDP92.PistonEndPosSensorName
+									OptionalUsed 1
+									Value DP92GRb
+								Else
+									Message Script error - check script for [Option31] !! (Option31_ShotMeter1Sub; Enable)
+								Endif
+						EndSelect
+					Case 0
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+						SelectTab [CfgParameter]
+						SelectCfg MDP92.PistonEndPosSensorName
+						OptionalUsed 1
+						Value -
+						OptionalUsed 0
+						SelectCase Option20 // Shot meter single
+							Case 0
+								IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.MDP92b
+									SelectTab [CfgParameter]
+									SelectCfg MDP92.PistonEndPosSensorName
+									OptionalUsed 1
+									Value -
+									OptionalUsed 0
+								Else
+									Message Script error - check script for [Option31] !! (Option31_ShotMeter1Sub; Disable)
+								Endif
+						EndSelect
+				EndSelect
+			CaseElse
+				Message ShotMeter type not supported !! (Option31_ShotMeter1Sub)
+		EndSelect
+	Else
+		Message Script error - check script for [Option31] !! (Option31_ShotMeter1Sub; SM1a)
+	Endif
+Return
+
+SubRoutine Option31_ShotMeter1Sub_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a
+		IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92GR_1a
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92GR_1a
+			Delete
+		Endif
+		SelectCase OptionShotMeter // ShotMeter type
+			Case SM_113ccm SM_590ccm SM_300ccm SM_600ccm
+				SelectCase Option31 // End position initiator
+					Case 1
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+						Call Common_AddDevice_BDP92GR_1
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+						SelectTab [CfgParameter]
+						SelectCfg MDP92_1.PistonEndPosSensorName
+						OptionalUsed 1
+						Value DP92GR_1a
+						SelectCase Option20 // Shot meter single
+							Case 0
+								IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92GR_1b
+									VisuInterface 1 4
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.MDP92_1b
+									SelectTab [CfgParameter]
+									SelectCfg MDP92_1.PistonEndPosSensorName
+									OptionalUsed 1
+									Value DP92GR_1b
+								Else
+									Message Script error - check script for [Option31] !! (Option31_ShotMeter1Sub_Multi; Enable)
+								Endif
+						EndSelect
+					Case 0
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+						SelectTab [CfgParameter]
+						SelectCfg MDP92_1.PistonEndPosSensorName
+						OptionalUsed 1
+						Value -
+						OptionalUsed 0
+						SelectCase Option20 // Shot meter single
+							Case 0
+								IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.MDP92_1b
+									SelectTab [CfgParameter]
+									SelectCfg MDP92_1.PistonEndPosSensorName
+									OptionalUsed 1
+									Value -
+									OptionalUsed 0
+								Else
+									Message Script error - check script for [Option31] !! (Option31_ShotMeter1Sub_Multi; Disable)
+								Endif
+						EndSelect
+				EndSelect
+			CaseElse
+				Message ShotMeter type not supported !! (Option31_ShotMeter1Sub_Multi)
+		EndSelect
+	Else
+		Message Script error - check script for [Option31] !! (Option31_ShotMeter1Sub_Multi; SM1a)
+	Endif
+Return
+
+SubRoutine Option31_ShotMeter2Sub_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a
+		IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92GR_2a
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92GR_2a
+			Delete
+		Endif
+		SelectCase OptionShotMeter // ShotMeter type
+			Case SM_113ccm SM_590ccm SM_300ccm SM_600ccm
+				SelectCase Option31 // End position initiator
+					Case 1
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+						Call Common_AddDevice_BDP92GR_2
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+						SelectTab [CfgParameter]
+						SelectCfg MDP92_2.PistonEndPosSensorName
+						OptionalUsed 1
+						Value DP92GR_2a
+						SelectCase Option20 // Shot meter single
+							Case 0
+								IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.BDP92GR_2b
+									VisuInterface 1 4
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.MDP92_2b
+									SelectTab [CfgParameter]
+									SelectCfg MDP92_2.PistonEndPosSensorName
+									OptionalUsed 1
+									Value DP92GR_2b
+								Else
+									Message Script error - check script for [Option31] !! (Option31_ShotMeter2Sub_Multi; Enable)
+								Endif
+						EndSelect
+					Case 0
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+						SelectTab [CfgParameter]
+						SelectCfg MDP92_2.PistonEndPosSensorName
+						OptionalUsed 1
+						Value -
+						OptionalUsed 0
+						SelectCase Option20 // Shot meter single
+							Case 0
+								IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b
+									SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.MDP92_2b
+									SelectTab [CfgParameter]
+									SelectCfg MDP92_2.PistonEndPosSensorName
+									OptionalUsed 1
+									Value -
+									OptionalUsed 0
+								Else
+									Message Script error - check script for [Option31] !! (Option31_ShotMeter2Sub_Multi; Disable)
+								Endif
+						EndSelect
+				EndSelect
+			CaseElse
+				Message ShotMeter type not supported !! (Option31_ShotMeter2Sub_Multi)
+		EndSelect
+	Else
+		Message Script error - check script for [Option31] !! (Option31_ShotMeter2Sub_Multi; SM1a)
+	Endif
+Return
