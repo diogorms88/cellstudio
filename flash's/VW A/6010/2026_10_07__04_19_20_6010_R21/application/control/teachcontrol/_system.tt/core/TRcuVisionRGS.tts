@@ -1,0 +1,1781 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuRgsSensor.tts                                            *
+*   Description: Interface to ISRA-RGS-System and handling of Vision-data     *
+*-----------------------------------------------------------------------------*
+*   27.03.08 BIT: 
+
+
+
+   direkte Schnittstelle zu ISRA (ohne SPS) 
+
+
+
+
+Schnittstelle zur ISRA:
+
+ Eingänge:                                        Ausgänge:
+   0.0  Betriebsart Bit 0                         0.0  Betriebsart Bit 0        
+   0.1  Betriebsart Bit 1                         0.1  Betriebsart Bit 1        
+   0.2  Betriebsart Bit 2                         0.2  Betriebsart Bit 2        
+   0.3  Betriebsart Bit 3                         0.3  Betriebsart Bit 3        
+   0.4  Bildaufnahme läuft                        0.4  Start Messung      
+   0.5  Messung läuft                             0.5  Ergebnisanfrage            
+   0.6  Ergebnisübertragung läuft                 0.6  Fehler quitt
+   0.7  Typ/Farbe OK                              0.7  Typ/Farbe gültig             
+   
+   1.0  Bereit für Messung (optional)             1    Typ
+        Bit 1-7 Reserve
+                                                  2    Subtyp / Spaltnr.
+   2.0  Kommunikationsfehler mit SPS              
+   2.1  Reserve                                   3    Farbe
+   2.2  Kommunikationsfehler mit Rob
+   2.3  Fehler bei Erkennung
+   2.4  Fehler Typ/Farbe
+   2.5  Reserve
+   2.6  Reserve
+   2.7  Fehler Messwert
+   
+   3.0  Warnung Handmessung
+   3.1  Warnung Unsicherheit
+   3.2  Warnung Kamera 1
+   3.3  Warnung Kamera 2
+   3.4  Warnung Kamera 3
+   3.5  Warnung Kamera 4
+   3.6  Warnung Kamera 5
+   3.7  Reserve
+   
+    4, 5  Messwert X / Spaltmaß (Nur auf Anfrage 0.5)
+    6, 7  Messwert Y / Bündigkeit (Nur auf Anfrage 0.5)
+    8, 9  Messwert Z
+   10,11  Messwert A
+   12,13  Messwert B
+   14,15  Messwert C
+   
+   16.0 IO-Status Lage
+   16.1 IO-Status Spalt/Bündigkeit 1 
+   16.2 IO-Status Spalt/Bündigkeit 2 
+   16.3 IO-Status Spalt/Bündigkeit 3
+   usw.
+
+Eingaenge:
+
+0	0	BOOL	1	RCU1.SLI_mModeBit0	Betriebsart Bit 0
+	1	BOOL	1	RCU1.SLI_mModeBit1	Betriebsart Bit 1
+	2	BOOL	1	RCU1.SLI_mModeBit2	Betriebsart Bit 2
+	3	BOOL	1	RCU1.SLI_mModeBit3	Betriebsart Bit 3
+	4	BOOL	1	RCU1.SLI_mPicRecording	Bildaufnahme läuft
+	5	BOOL	1	RCU1.SLI_mMeasuring	Messung läuft
+	6	BOOL	1	RCU1.SLI_mSendingData	Ergebnisübertragung läuft
+	7	BOOL	1	RCU1.SLI_mAckData	Typ-/ Farb-ID OK
+1	0	BOOL	1	RCU1.SLI_mReady	Bereit für Messung
+	1	BOOL	1	--	Reserve
+	2	BOOL	1	--	Reserve
+	3	BOOL	1	--	Reserve
+	4	BOOL	1	--	Reserve
+	5	BOOL	1	--	Reserve
+	6	BOOL	1	--	Reserve
+	7	BOOL	1	--	Reserve
+2	0	BOOL	1	RCU1.SLI_mErrCommPbIsra	Fehler SPS-Komm. o. keine Nullmessdaten vorh.
+	1	BOOL	1	--	Reserve
+	2	BOOL	1	RCU1.SLI_mErrorCommRobIsra	Fehler Rob-Kommunikation
+	3	BOOL	1	RCU1.SLI_mErrSignIsra	Fehler bei der Erkennung
+	4	BOOL	1	RCU1.SLI_mErrWrongTypColor	Falsche/ deaktivierte Typ/ Farbe
+	5	BOOL	1	--	Reserve
+	6	BOOL	1	--	Reserve
+	7	BOOL	1	RCU1.SLI_mErrCalcIsra	Messwerte o. Verlässlichkeit außer Toleranz
+3	0	BOOL	1	RCU1.SLI_mWarnManual	Warnung Handmessung
+	1	BOOL	1	RCU1.SLI_mWarnUncertainty	Warnung Unsicherheit
+	2	BOOL	1	RCU1.SLI_mWarnCam1	Warnung Kamera 1
+	3	BOOL	1	RCU1.SLI_mWarnCam2	Warnung Kamera 2
+	4	BOOL	1	RCU1.SLI_mWarnCam3	Warnung Kamera 3
+	5	BOOL	1	RCU1.SLI_mWarnCam4	Warnung Kamera 4
+	6	BOOL	1	RCU1.SLI_mWarnCam5	Warnung Kamera 5
+	7	BOOL	1	--	Reserve
+4	0	WORD	16	RCU1.SLI_wInValueX	Mess-Ergebnis X
+6	0	WORD	16	RCU1.SLI_wInValueY	Mess-Ergebnis Y
+8	0	WORD	16	RCU1.SLI_wInValueZ	Mess-Ergebnis Z
+10	0	WORD	16	RCU1.SLI_wInValueA	Mess-Ergebnis A (RX)
+12	0	WORD	16	RCU1.SLI_wInValueB	Mess-Ergebnis B (RY)
+14	0	WORD	16	RCU1.SLI_wInValueC	Mess-Ergebnis C (RZ)
+16	0	BOOL	1	RCU1.SLI_mStatePos	IO-Status Lagebestimmung
+	1	BOOL	1	RCU1.SLI_mStateSlot1	IO-Status Spalt/ Bündigkeit 1
+	2	BOOL	1	RCU1.SLI_mStateSlot2	IO-Status Spalt/ Bündigkeit 2
+	3	BOOL	1	RCU1.SLI_mStateSlot3	IO-Status Spalt/ Bündigkeit 3
+	4	BOOL	1	RCU1.SLI_mStateSlot4	IO-Status Spalt/ Bündigkeit 4
+	5	BOOL	1	RCU1.SLI_mStateSlot5	IO-Status Spalt/ Bündigkeit 5
+	6	BOOL	1	RCU1.SLI_mStateSlot6	IO-Status Spalt/ Bündigkeit 6
+	7	BOOL	1	RCU1.SLI_mStateSlot7	IO-Status Spalt/ Bündigkeit 7
+
+Ausgaenge:
+
+0	0	BOOL	1	RCU1.SLO_mReqModeBit0	Betriebsart Bit 0
+	1	BOOL	1	RCU1.SLO_mReqModeBit1	Betriebsart Bit 1
+	2	BOOL	1	RCU1.SLO_mReqModeBit2	Betriebsart Bit 2
+	3	BOOL	1	RCU1.SLO_mReqModeBit3	Betriebsart Bit 3
+	4	BOOL	1	RCU1.SLO_mStartMeasure	Start Messung
+	5	BOOL	1	RCU1.SLO_mReqData	Ergebnisanfrage
+	6	BOOL	1	RCU1.SLO_mErrorQuit	Fehler Quittung
+	7	BOOL	1	RCU1.SLO_mDataStrobe	Typ-/ Farb-ID gültig
+1	0	BYTE	8	RCU1.SLO_bType	TypID
+2	0	BYTE	8	RCU1.SLO_bSubType	SubtypID
+3	0	BYTE	8	RCU1.SLO_bColor	FarbID
+
+
+*)
+(************************************************************************
+* Variables
+*)
+VAR
+  useDebugFunctions : BOOL := TRUE;
+  iDebugProgNr      : INT;  
+  iDebugSlotProgNr  : INT;
+  iDebugSlotSubID   : INT;
+  rDebugSlotVal     : REAL; 
+  rDebugConcision   : REAL;  
+  iLoggerNumber     : INT;
+END_VAR
+
+
+//------------------------------------------------------------------------
+// Read configuration and map PB
+//------------------------------------------------------------------------
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+   
+ VAR
+   bError          : BOOL;
+   iCatalogHdl     : DINT;    // handle of the Configuration directory
+   iTemp           : DINT;
+   s               : STRING;
+ END_VAR
+    
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   myVision := MAP(locRobot.vision);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 2, instId, "TRcuVision.ReadConfig");
+      RETURN TRUE;
+   END_IF; 
+   //read robotcontrol.cfg
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision", iCatalogHdl) THEN
+      iLoggerNumber := myRobot.logger.ActivateLogger("VisionRGS-Logger", myRobot);
+      IF (iLoggerNumber = 0) THEN
+        PRINT("LOG Kein Token fuer Logger erhalten");
+      END_IF; 
+      IF (myVision.systemType = eRgsStandard) OR (myVision.systemType = eRgsOnline) THEN
+          //Map In-/Out-Signals from PB-Master
+          MapRgsSignals(myRobot.kinListInx);
+          IF myVision.systemType = eRgsOnline THEN
+             bOutPicTrigger := MAPX(cHW_OutVisionTrigger[myRobot.kinListInx]);
+             IF NOT IS_MAPPED(bOutPicTrigger) THEN // Fehlermeldung ersetzen!!!!
+                RcuSetMessageOnce(TRcuVision_ErrPicTrigOutput, myRobot.kinListInx, 
+                                  3, instId, "TRcuVision.ReadConfig", cHW_OutVisionTrigger[myRobot.kinListInx]);
+                bError := TRUE;
+             END_IF;
+          END_IF;
+      END_IF;
+   ELSE
+      bError := TRUE;
+   END_IF;
+   
+   IF bError THEN 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler beim Initialisieren des Systems");// Fehlermeldung ersetzen!!!!
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 4, instId, "TRcuVision.ReadConfig");
+      //RcuSetError(0, eRcuErrorReceiveVisionData);
+      PRINT("------------------------------");
+      PRINT("----  Boot-up RGS failed -----");
+      PRINT("------------------------------");
+      RETURN bError;
+   ELSE
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Das lesen der Katalog-Daten erfolgreich beendet");
+   END_IF;
+ 
+   WAIT myRobot.initKinComplete;
+   //simulate system
+   bSimulateSystem := myRobot.bRcuSimulatesAllDrives AND gbRcuSimulateStationPLC;
+   //Com with RGS-Sensor
+   START ObserveErrors();
+   START HandleMainMode();
+   START ProgInfoSequence();
+   START MeasureSequence();
+   BuildStateInfo();
+   
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Boot-up RGS finished");
+   PRINT("--------------------------------");
+   PRINT("----  Boot-up RGS finished -----");
+   PRINT("--------------------------------");
+   
+   IF useDebugFunctions THEN
+      START SendProgNr();
+      START DebugSlotValues();
+   END_IF;
+   
+   RETURN bError;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// PLC starts a program
+//------------------------------------------------------------------------
+ROUTINE PlcStartProgram(progNumber : INT)
+  iProgNrToRgs     := progNumber;
+  bRunProgSequence := TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// PLC init system - it is called when teachprogramm is canceled
+//------------------------------------------------------------------------
+ROUTINE PlcInitSystem()
+ VAR
+   zeroObject : TMcuFrame;
+ END_VAR
+
+   STOP ProgInfoSequence;
+   bRunProgSequence := FALSE;
+   bProgSequenceFin := FALSE;
+   bReadyToStart    := FALSE;
+   measureJob       := eNoJob;
+   STOP MeasureSequence;
+   bRunMesSequence  := FALSE;
+   bRunLastSequence := FALSE;
+   bMesSequenceFin  := FALSE;
+   bResetDataIntern := TRUE;
+   myVision.SetVisionDataToTeachview(zeroObject, FALSE);
+   START ProgInfoSequence();
+   START MeasureSequence();
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "PlcInitSystem() ausgeführt");
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Teachprog starts a program
+//------------------------------------------------------------------------
+ROUTINE MacroStartProgram(progNumber : INT)
+ VAR
+   zeroObj : TMcuFrame;
+   sLogText: STRING;
+ END_VAR  
+ 
+  MAINRUN();
+  zeroObj.mFrameTyp := gMcuFrameTyp;
+  RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroObj, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+  myRobot.homing.StoreRefSystemVision(FALSE, zeroObj);
+  IF myVision.bShiftA7Enable THEN
+     myVision.rShiftA7Value := myVision.rShiftA7Abs;
+     sLogText := "MacroStartProgram Relative - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+     myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+  END_IF;
+  bProgSequenceFin := FALSE;
+  iProgNrToRgs     := progNumber;
+  bRunProgSequence := TRUE;
+  WAIT bProgSequenceFin;
+  bProgSequenceFin := FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+//  set up measurement job called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetJob(job : SINT)
+
+  MAINRUN();
+  measureJob := TJob(job);
+ 
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - request an object by sending the number to PLC
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOrder(CONST  inOrder : DINT)
+VAR
+   I        : SINT := 0;
+   sLogText : STRING;
+END_VAR 
+
+ (*
+   IF NOT tVisionAbsolute.bMultiObject AND NOT tVisionRelative.bMultiObject THEN // Fehlermeldung ersetzen
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 5, instId, "TRcuVision.MacroReceiveVisionData");
+      RETURN;
+   END_IF;
+   
+   IF (inOrder < 1) OR (inOrder > 16) THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Invalid Makro parameter");
+      RETURN;
+   END_IF;
+   
+   //PreRun
+   IF (inOrder <= 8) AND NOT tVisionAbsolute.bMultiObject THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Multi object Vision Absolute is not activated");
+      RETURN;
+   ELSIF (inOrder > 8) AND NOT tVisionRelative.bMultiObject THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Multi object Vision Relative is not activated");
+      RETURN;
+   ELSE
+      ResetOrderObject();
+   END_IF;
+   
+   IF (inOrder <= 8) THEN
+      myVision.bDataAbsSetByUser   := FALSE;
+      myVision.bUserAbsDataOk   := FALSE;
+      myVision.bDataAbsSetByCamera := FALSE;
+      myVision.bCameraAbsDataOk := FALSE;
+   ELSE
+      bDataRelSetByUser   := FALSE;
+      bUserRelDataOk   := FALSE;
+      bDataRelSetByCamera := FALSE;
+      bCameraRelDataOk := FALSE;
+   END_IF;
+   //MainRun
+   MAINRUN();
+   myRobot.fieldbusOut.byOrderValuesNr.svByte := BYTE(inOrder);
+   sLogText := "MacroSetOrder - Request of data set No." + STR(inOrder);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+    *)
+END_ROUTINE
+
+//------------------------------------------------------------------------
+//  robot is in measure position / last position called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetMeasurePos(bLastPos : BOOL)
+  
+  MAINRUN();
+  IF NOT bLastPos THEN
+     WAIT NOT bRunMesSequence AND NOT bRunLastSequence;
+     bMesSequenceFin := FALSE;
+     bRunMesSequence := TRUE;
+     WAIT bMesSequenceFin;
+     bMesSequenceFin := FALSE;
+  ELSE
+     WAIT NOT bRunMesSequence AND NOT bRunLastSequence;
+     bMesSequenceFin := FALSE;
+     bRunLastSequence := TRUE;
+     WAIT bMesSequenceFin; 
+     bMesSequenceFin := FALSE;
+  END_IF;
+  
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  Wait until ISRA gives the release for next measure position **************
+//----------------------------------------------------------------------------- 
+ROUTINE MacroReceiveNextCamPos() : BOOL
+
+    (*
+   IF (tVisionAbsolute.tCameraType = eCamRobot) OR (tVisionRelative.tCameraType = eCamRobot) THEN
+      MAINRUN();  //wait for mainrun
+      IF NOT myRobot.mainModeMgr.externControl OR gbRcuSimulateStationPLC THEN
+         RETURN TRUE; //nothing to do in manual or sim
+      END_IF;   
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Warten auf Freigabe nächster Messpunkt");
+//      WAIT InputGoToNextCamPos;
+//      ResetOrder();      
+      RETURN TRUE;
+   ELSE
+      myRobot.DebugPrint(eTraceVision,  " Stereohead Vision is not activated! ");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Stereomesskopf ist nicht aktiviert");   
+      RETURN FALSE;
+   END_IF;
+   *)
+   RETURN TRUE;
+   
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+// set a trigger-signal to ISRA to take a picture set from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE SignalVisionCommand(commandData : TMcuUserData; pos : TRcuTrigger;
+                            posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+VAR
+   command          : DINT;
+   bMRTriggerSignal : BOOL;
+   bTimeOut         : BOOL;
+   sTriggerName     : STRING;
+END_VAR
+  
+   command         := commandData.mDataInt[3];
+   SwoRaiseEvent(eScopeSignalVision, "SignalVision");
+      
+   IF NOT IS_MAPPED(bOutPicTrigger) THEN
+     RcuSetMessageOnce(TRcuVision_ErrPicTrigOutput, myRobot.kinListInx, 
+                       3, instId, "TRcuVision.SignalVisionCommand", cHW_OutVisionTrigger[myRobot.kinListInx]);
+     RETURN;
+   END_IF;
+   IF myVision.systemType <> eRgsOnline THEN
+     RcuSetMessageOnce(TRcuVision_ErrPicTrigRgs, myRobot.kinListInx, 
+                       3, instId, "TRcuVision.SignalVisionCommand");
+     RETURN;
+   END_IF;
+  
+   // signal to vision
+   IF bOutPicTrigger THEN
+     RcuSetMessageOnce(TRcuVision_ErrPicTrigTooFast, myRobot.kinListInx, 
+                       3, instId, "TRcuVision.SignalVisionCommand");
+     //RcuSetError(0, eRcuErrorExecTrigTooFast);
+     RETURN;
+   END_IF;
+   IF NOT bReadyToStart THEN        // MacroSetProgNr was successful
+     RcuSetMessageOnce(TRcuVision_ErrPicTrigNotReady, myRobot.kinListInx, 
+                       3, instId, "TRcuVision.SignalVisionCommand");
+     //RcuSetError(0, eRcuErrorExecTrigNotReady);
+     RETURN;
+   END_IF;
+
+   PRINT("TCP-PosZ " + STR(myRobot.readBackVals.mCartPos.mValues[2]));
+   bTimeOut         := FALSE;
+   bOutPicTrigger   := TRUE;     //Set Output to FrameGrabber
+   SysTimerSet(cTrgSignalTime, bTimeOut);
+   WAIT bTimeOut;
+   bOutPicTrigger := FALSE;   //Reset Output to FrameGrabber
+   sTriggerName := pos.GetName();
+   PRINT("PictureTrigger wurde gesetzt " + sTriggerName);
+   iCntTriggers := iCntTriggers + 1;
+  
+   IF (command = COMMAND(LastVisionTrigger)) THEN
+     GetMeasureResult();
+   END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and computes the data from PLC or TV
+//------------------------------------------------------------------------
+ROUTINE MacroReceiveVisionData(VAR_IN bRelative : BOOL) : BOOL
+ VAR
+   iTmp    : INT;
+   object  : TMcuFrame;
+   calcObj : OBJECT;
+   sLogText: STRING;
+ END_VAR 
+ 
+  //Manualmode
+  IF NOT myRobot.mainModeMgr.externControl THEN
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "RECEIVE(ISRA, Data) - Warten bis gültige von RGS/PHG");
+     WAIT (myVision.bCameraAbsDataOk AND bCameraSlotsOk) OR myVision.bUserAbsDataOk;
+     IF myVision.bCameraAbsDataOk THEN
+        myVision.bDataAbsSetByUser                := FALSE;
+        myVision.bDataAbsSetByCamera              := TRUE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "RECEIVE(ISRA, Data) - Daten von RGS erhalten");
+     ELSE
+        myVision.bDataAbsSetByUser                := TRUE;
+        myVision.bDataAbsSetByCamera              := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "RECEIVE(ISRA, Data) - Daten von PHG erhalten");
+     END_IF;
+  //Automatic
+  ELSE
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "EcoTalk - RECEIVE(ISRA, Data) - Warten bis gültige von RGS");
+     WAIT myVision.bCameraAbsDataOk AND bCameraSlotsOk;
+     myVision.bDataAbsSetByUser                := FALSE;
+     myVision.bDataAbsSetByCamera              := TRUE;
+  END_IF;
+ 
+  IF myVision.bCameraAbsDataOk AND bCameraSlotsOk THEN
+     object.mPos.mValues[0] := myVision.objectCamAbsData.mPos.mValues[0];
+     object.mPos.mValues[1] := myVision.objectCamAbsData.mPos.mValues[1];
+     object.mPos.mValues[2] := myVision.objectCamAbsData.mPos.mValues[2];
+     object.mOri.mValues[0] := myVision.objectCamAbsData.mOri.mValues[0];
+     object.mOri.mValues[1] := myVision.objectCamAbsData.mOri.mValues[1];
+     object.mOri.mValues[2] := myVision.objectCamAbsData.mOri.mValues[2];
+  ELSIF myVision.bUserAbsDataOk THEN
+     object.mPos.mValues[0] := myVision.objectUserAbsData.mPos.mValues[0];
+     object.mPos.mValues[1] := myVision.objectUserAbsData.mPos.mValues[1];
+     object.mPos.mValues[2] := myVision.objectUserAbsData.mPos.mValues[2];
+     object.mOri.mValues[0] := myVision.objectUserAbsData.mOri.mValues[0];
+     object.mOri.mValues[1] := myVision.objectUserAbsData.mOri.mValues[1];
+     object.mOri.mValues[2] := myVision.objectUserAbsData.mOri.mValues[2];
+     myVision.SaveDataGlobalFrame(object, FALSE);
+  END_IF;
+  object.mFrameTyp := eMcuFrameKardan;           // ISRA-values are Kardan
+  RcuRefSysSetKardan(myRobot.RcuRefSystemObject, object, myRobot.RcuRefSystemVisionRel, FALSE, "Object");     
+  myRobot.homing.StoreRefSystemVision(FALSE, object);
+  IF myVision.bShiftA7Enable THEN
+     IF myVision.iShiftA7Direction = 1 THEN
+        myVision.rShiftA7Value := myVision.rShiftA7Abs + object.mPos.mValues[0] * myVision.rShiftA7Sign;
+     ELSIF myVision.iShiftA7Direction = 2 THEN
+        myVision.rShiftA7Value := myVision.rShiftA7Abs + object.mPos.mValues[1] * myVision.rShiftA7Sign;
+     END_IF;
+     sLogText := "MacroReceiveVisionData Relative - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+     myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+  END_IF;
+  calcObj.X_mm  := object.mPos.mValues[0]; 
+  calcObj.Y_mm  := object.mPos.mValues[1];
+  calcObj.Z_mm  := object.mPos.mValues[2];
+  calcObj.A_deg := object.mOri.mValues[0];
+  calcObj.B_deg := object.mOri.mValues[1];
+  calcObj.C_deg := object.mOri.mValues[2];
+//  myVision.CalcActualObject(calcObj, FALSE);
+  myVision.CalcActualObject();
+  RETURN TRUE;
+  
+END_ROUTINE
+
+
+(************************************************************************
+* Types
+*)
+TYPE PRIVATE
+ TSystemType   : (eOff, eStandard, eRgsStandard, eRgsOnline, eViva, eMax);
+ TMainModes : (eNoMode, eSemiAuto, eAuto, eSimWithVal, eSimWithoutVal);
+ TJob : (eNoJob, ePosition, eSlot, ePositionSlot);
+ TSlotValues  : STRUCT
+   rSlotVal   : REAL; 
+   rConcision : REAL;
+ END_STRUCT; 
+END_TYPE
+
+(************************************************************************
+* Constants
+*)
+CONSTANT PRIVATE
+   cSequenceTime    : INT  :=  1000;   //timeout for Sequence feedback 1000ms = 1sec
+   cFeedbackTime    : INT  := 10000;   //timeout for RGS feedback 10000ms = 10sec
+   cPictureTime     : INT  :=  5000;   //timeout to take one picture 5000ms = 5sec
+   cDispValueTime   : INT  :=  3000;   //timeout to receive displacementvalues 3000ms = 3sec
+   cTrgSignalTime   : INT  :=    40;   //after this time Triggersignal is reset 40ms
+   
+   cLinLimitVision  : REAL := 50.0;    // mm 
+   cRotLimitVision  : REAL := 4.0;     // °
+END_CONSTANT
+
+
+(************************************************************************
+* Variables
+*)
+VAR PRIVATE
+
+  myRobot           : MAPTO TRcuRobot;
+  myVision          : MAPTO TRCuVision;
+  instId            : DINT;    // instance identification number
+
+  bOutPicTrigger    : MAPTO BOOL;          // HW-Output  - ISRA-FrameGrabber
+  
+  //robotcontrol.cfg
+  
+  //Operating-data
+  modeFromRGS       : TMainModes;
+  modeToRGS         : TMainModes;
+  measureJob        : TJob;
+  bFatalError       : BOOL;
+  bErrorPending     : BOOL;
+  bCheckNewErrors   : BOOL;
+  bErrorQuit        : BOOL;
+  bReadyToStart     : BOOL;
+  bRunProgSequence  : BOOL;
+  bProgSequenceFin  : BOOL;
+  iProgNrToRgs      : INT;
+  bRunMesSequence   : BOOL;
+  bRunLastSequence  : BOOL;
+  bMesSequenceFin   : BOOL;
+  bResetDataIntern  : BOOL;
+  bSimulateSystem   : BOOL;
+  iCntTriggers      : SINT;
+                    
+  bInPicRecording   : BOOL;
+  bInMeasuring      : BOOL;
+  bInSendingData    : BOOL;     
+  bInAckProgNr      : BOOL;
+  
+  bRunCtrlSequence  : BOOL;
+  iCtrlMode         : SINT;
+  bRunUpdateRobPos  : BOOL;
+
+//  myVision.objectCamAbsData  : TMcuFrame;
+//  myVision.bDataAbsSetByCamera : BOOL;
+//  myVision.bCameraAbsDataOk  : BOOL;
+  bCameraSlotsOk    : BOOL;
+//  myVision.objectUserAbsData : TMcuFrame;
+//  myVision.bDataAbsSetByUser : BOOL;
+//  myVision.bUserAbsDataOk    : BOOL;
+  
+  
+  ySlotOK           : ARRAY [8] OF BOOL;
+  ySlots            : ARRAY [8] OF TSlotValues;
+  yErrorStates      : ARRAY [8] OF BOOL;
+  bPosValid         : BOOL;
+  yMainModes        : ARRAY [4] OF BOOL;
+END_VAR
+
+//------------------------------------------------------------------------
+// Set Prognr. / mainmode / errorquit to RGS
+//------------------------------------------------------------------------
+ROUTINE ProgInfoSequence() PRIVATE
+ VAR
+   bTimeOut : BOOL;
+   bOk      : BOOL;
+   i        : SINT;
+ END_VAR
+ 
+  bProgSequenceFin := FALSE;
+  WHILE TRUE DO
+    WAIT bRunProgSequence;
+    bRunProgSequence := FALSE;
+    bProgSequenceFin := FALSE;
+    bOk              := TRUE;
+    bTimeOut         := FALSE;
+    bReadyToStart    := FALSE;
+    measureJob       := eNoJob;
+    
+   //Schritt 1 - Setzen Betriebsart Auto
+   IF bOk THEN
+      IF (modeFromRGS < eAuto) THEN 
+         modeToRGS := eAuto;
+         bTimeOut := FALSE;
+         SysTimerSet(cSequenceTime, bTimeOut);
+         WAIT (modeFromRGS = eAuto) OR bTimeOut;
+         IF bTimeOut THEN
+            //RcuSetError(0, eRcuErrorTimeOutMainMode, STR(cSequenceTime), "Automatic");
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime), "Automatic");
+            bOk := FALSE;
+         END_IF;
+      END_IF;
+   END_IF; 
+    
+   //Schritt 2 - Warten bis bereit für Messung
+   IF bOk THEN
+      IF NOT WaitSystemReady(TRUE) THEN
+         //Schritt 3 - Anstehende Fehler quittieren
+         bErrorQuit := TRUE;
+         bTimeOut   := FALSE;
+         SysTimerSet(cSequenceTime, bTimeOut);
+         WAIT NOT bErrorPending OR bTimeOut;
+         IF bTimeOut THEN
+            //RcuSetError(0, eRcuErrorTimeOutStartSeq, STR(cSequenceTime));
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutStartSeq, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime));
+         END_IF;
+         IF NOT WaitSystemReady(TRUE) THEN
+            //RcuSetError(0, eRcuErrorTimeOutSysReady, STR(cSequenceTime));
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutSysReady, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime));
+            bOk := FALSE;
+         END_IF;
+      END_IF;
+   END_IF;
+     
+   //Schritt 4 - Senden ProgrammNummer
+   IF bOk THEN
+      IF bFatalError THEN
+         //RcuSetError(0, eRcuErrorNoProgNrError);
+         RcuSetMessageOnce(TRcuVision_ErrNoProgNr, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence");
+         bOk := FALSE;
+      ELSE
+         OutSignals.byteType.svByte := iProgNrToRgs;                        //Prog-Nr to RGS
+         OutSignals.byteSubType.svByte := 0;
+         OutSignals.bDataStrobe.svBool := TRUE;      //set strobe
+         IF GetAckProg() THEN
+            iCntTriggers  := 0;
+            FOR i:=0 TO 7 DO
+               ySlotOK[i]           := FALSE;
+               ySlots[i].rSlotVal   := 0.0;
+               ySlots[i].rConcision := 0.0;
+            END_FOR;
+            bPosValid := FALSE;
+         END_IF;
+         OutSignals.bDataStrobe.svBool := FALSE; //lower strobe
+         OutSignals.byteType.svByte    := 0;                                     //Prog-Nr to 0
+      END_IF;
+   END_IF;
+    
+   IF NOT WaitSystemReady(FALSE) THEN
+      RcuSetMessageOnce(TRcuVision_ErrReadyProgNr, myRobot.kinListInx, 1, instId, "TRcuVision.ProgInfoSequence");
+      //RcuSetError(0, eRcuErrorReadyProgNr);
+      bOk := FALSE;
+   END_IF;
+    
+   IF myVision.systemType <> eRgsStandard THEN
+      //Schritt 5 - Starten Messung
+      IF bOk THEN
+         OutSignals.bStartMeasure.svBool := TRUE;
+         IF NOT GetMeasureRunning() THEN
+            //RcuSetError(0, eRcuErrorTimeOutStart, STR(cSequenceTime));
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutStart, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime));
+            bOk := FALSE;
+         ELSE
+            bReadyToStart := TRUE;   
+         END_IF;
+         OutSignals.bStartMeasure.svBool := FALSE;
+      END_IF;
+   END_IF;
+   bProgSequenceFin := TRUE;
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Set Prognr. / mainmode / errorquit to RGS
+//------------------------------------------------------------------------
+ROUTINE MeasureSequence() PRIVATE
+ VAR
+   bTimeOut : BOOL;
+   bOk      : BOOL;
+ END_VAR
+ 
+  IF myVision.systemType <> eRgsStandard THEN
+     RETURN;
+  END_IF;
+  
+  bMesSequenceFin := FALSE;
+  WHILE TRUE DO
+    WAIT bRunMesSequence OR bRunLastSequence;
+    bMesSequenceFin  := FALSE;
+    bOk              := TRUE; 
+    IF bOk THEN
+       IF NOT bReadyToStart THEN                          // MacroSetProgNr was successful
+          //RcuSetError(0, eRcuErrorReadyToStart);
+          RcuSetMessageOnce(TRcuVision_ErrReadyToStart, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.MeasureSequence");
+          bOk := FALSE;
+       END_IF;
+    END_IF;
+     
+    //Schritt 1 - Start Messung
+    IF bOk THEN
+       OutSignals.bStartMeasure.svBool := TRUE;
+       IF NOT GetReadyForMeasuring() THEN
+          OutSignals.bStartMeasure.svBool := FALSE;
+          RcuSetMessageOnce(TRcuVision_ErrWhileStarting, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.MeasureSequence");
+          //RcuSetError(0, eRcuErrorWhileStarting);
+          bOk := FALSE;
+       END_IF;
+    END_IF;
+    
+    //Schritt 2 - Bild aufgenommen
+    IF bOk THEN
+       IF NOT GetPictureReady() THEN
+          OutSignals.bStartMeasure.svBool := FALSE;
+          //RcuSetError(0, eRcuErrorEndPictureRec);
+          RcuSetMessageOnce(TRcuVision_ErrTimeOutPictureRec, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.MeasureSequence", STR(cSequenceTime));
+          bOk := FALSE;
+       END_IF;
+       OutSignals.bStartMeasure.svBool := FALSE;
+    END_IF;
+       
+    IF NOT bRunMesSequence AND bRunLastSequence THEN
+       GetMeasureResult();
+    END_IF;
+     
+    bMesSequenceFin  := TRUE;
+    bRunMesSequence  := FALSE;
+    bRunLastSequence := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+//  read in the displacement-values from RGS
+//------------------------------------------------------------------------
+ROUTINE GetMeasureResult() PRIVATE
+ VAR
+  i       : SINT;      
+  s       : STRING;
+  bStatus : BOOL;
+  bitNr   : INT;
+ END_VAR
+
+  myVision.bCameraAbsDataOk := FALSE;
+  bCameraSlotsOk   := FALSE;
+  //Schritt 1 - Messung beendet
+  IF NOT GetMeasureFinished() THEN
+     //RcuSetError(0, eRcuErrorEndMeasuring, STR(cPictureTime));
+     //RETURN; Hier steigt das neue System immmer aus! 
+     RcuSetMessageOnce(TRcuVision_ErrTimeOutEndMeasure, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.GetMeasureResult", STR(cPictureTime));
+  END_IF;
+  
+  //Schritt 2 - Warten auf Verschiebewerte
+  IF NOT WaitFormDispValues() THEN
+     //RcuSetError(0, eRcuErrorTimeOutDispValue, STR(cDispValueTime));
+     RcuSetMessageOnce(TRcuVision_ErrTimeOutDispVal, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.GetMeasureResult", STR(cDispValueTime));
+     RETURN;
+  END_IF;
+  
+  //Schritt 3 - Einlesen Daten 
+  myVision.objectCamAbsData.mPos.mValues[0] := TurnByte(InSignals.wInValueX.svWord) * myVision.tVisionAbsolute.rScaling_X; // X
+  myVision.objectCamAbsData.mPos.mValues[1] := TurnByte(InSignals.wInValueY.svWord) * myVision.tVisionAbsolute.rScaling_Y; // Y
+  myVision.objectCamAbsData.mPos.mValues[2] := TurnByte(InSignals.wInValueZ.svWord) * myVision.tVisionAbsolute.rScaling_Z; // Z
+  myVision.objectCamAbsData.mOri.mValues[0] := TurnByte(InSignals.wInValueA.svWord) * myVision.tVisionAbsolute.rScaling_A; // A
+  myVision.objectCamAbsData.mOri.mValues[1] := TurnByte(InSignals.wInValueB.svWord) * myVision.tVisionAbsolute.rScaling_B; // B
+  myVision.objectCamAbsData.mOri.mValues[2] := TurnByte(InSignals.wInValueC.svWord) * myVision.tVisionAbsolute.rScaling_C; // C
+  
+  //Get info if displacementvalues are valid
+  IF myVision.systemType = eRgsOnline THEN
+     //Spalte auswerten, wir versuchen alle Trigger, auch die Lage Trigger.
+     //Eine Anzahl gibt es laut ISRA nicht, blöd.
+     i:=0;
+     bitNr := 1;
+     REPEAT 
+       i := i + 1;
+       bitNr := bitNr + 1;
+       CASE bitNr OF
+          2 : bStatus := InSignals.bStateSlot1.svBool;
+          3 : bStatus := InSignals.bStateSlot2.svBool;
+          4 : bStatus := InSignals.bStateSlot3.svBool;
+          5 : bStatus := InSignals.bStateSlot4.svBool;
+          6 : bStatus := InSignals.bStateSlot5.svBool;
+          7 : bStatus := InSignals.bStateSlot6.svBool;
+          8 : bStatus := InSignals.bStateSlot7.svBool;
+       END_CASE;
+       IF bStatus OR bSimulateSystem THEN
+           s := "IO-Status-Spalt " + STR(i) + " OK";
+           myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+           ySlotOK[i-1] := TRUE;
+       ELSE
+           s := "IO-Status-Spalt " + STR(i) + " nicht OK";
+           myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+           ySlotOK[i-1] := FALSE;          
+       END_IF;
+     UNTIL (i >= iCntTriggers) OR (i >= 7);
+     START GetSlotValues() PRIO 2;
+     //Kein Fehler bei der Erkennung
+     IF NOT InSignals.bErrSignIsra.svBool OR bSimulateSystem THEN
+         bCameraSlotsOk := TRUE;
+         bPosValid      := TRUE;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "IO-Status-Lage OK");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "IO-Status-Spalte OK");
+     ELSE                                                    //Fehler bei der Erkennung,
+        IF InSignals.bStatePos.svBool THEN   //aber Lage ist ok
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "IO-Status-Lage OK");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler IO-Status-Spalt");
+           IF measureJob <> ePosition THEN
+              //RcuSetError(0, eRcuErrorSlotsNotOk);
+              RcuSetMessageOnce(TRcuVision_ErrSlotsNotOk, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.GetMeasureResult");
+           END_IF;
+           bPosValid := TRUE;
+        ELSE                                                 //alles Bockmist
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "IO-Status-Lage/Spalt nicht OK");
+           //RcuSetError(0, eRcuErrorSlotsPosNotOk);
+           RcuSetMessageOnce(TRcuVision_ErrSlotsPosNotOk, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.GetMeasureResult");
+           bPosValid := FALSE;
+        END_IF;
+        bCameraSlotsOk := FALSE;
+     END_IF;
+  END_IF;
+  
+  IF measureJob = ePosition THEN
+     bCameraSlotsOk := TRUE;     //user only wants to have position, so overwrite slot result
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "Daten der Spalte überschrieben, Job=Pos");
+  END_IF;
+  
+  IF measureJob = eSlot THEN
+     myVision.bCameraAbsDataOk := TRUE;
+     myVision.objectCamAbsData.mPos.mValues[0] := 0.0;
+     myVision.objectCamAbsData.mPos.mValues[1] := 0.0;
+     myVision.objectCamAbsData.mPos.mValues[2] := 0.0;
+     myVision.objectCamAbsData.mOri.mValues[0] := 0.0;
+     myVision.objectCamAbsData.mOri.mValues[1] := 0.0;
+     myVision.objectCamAbsData.mOri.mValues[2] := 0.0;
+     myVision.SetVisionDataToTeachview(myVision.objectCamAbsData, FALSE);
+     myVision.SaveDataGlobalFrame(myVision.objectCamAbsData, FALSE);
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "Daten von RGS überschrieben, Job=Slot");
+  ELSE
+     //Schritt 4 - Range prüfen dann ok
+     myVision.SetVisionDataToTeachview(myVision.objectCamAbsData, FALSE);
+     IF bPosValid THEN
+        IF myVision.CheckDataRange(myVision.objectCamAbsData, FALSE) THEN
+           myVision.bCameraAbsDataOk := TRUE;   
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Prüfung der Daten von RGS erfolgreich");
+           myVision.SaveDataGlobalFrame(myVision.objectCamAbsData, FALSE);
+        ELSE
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Prüfung der Daten von RGS fehlgeschlagen, außerhalb Toleranzbereich");
+        END_IF;
+     END_IF;  
+  END_IF;
+  
+END_ROUTINE    
+               
+//------------------------------------------------------------------------
+// Set mainmodes to RGS
+// Wenn BA von SPS sich ändert dann RGS in Auto setzen, dann von T1/T2 --> Auto
+// modeToRGS kann bei Programmstart oder UserPage beschrieben werden
+//------------------------------------------------------------------------
+ROUTINE HandleMainMode() PRIVATE
+ VAR
+   bChgModeInt : BOOL;
+   bChgModeExt : BOOL;
+   bTimeOut    : BOOL;
+ END_VAR
+  
+  START ReceiveMainModes();
+  bChgModeInt := IS_CHANGED(modeToRGS);
+  bChgModeExt := IS_CHANGED(myRobot.mainModeMgr.externControl);
+  WHILE TRUE DO
+    bChgModeExt := FALSE;
+    bChgModeInt := FALSE;
+    WAIT bChgModeExt OR bChgModeInt;
+    //BA-SPS ändert sich und RGS nicht in Auto/Geist dann in Auto setzen
+    IF bChgModeExt AND myRobot.mainModeMgr.externControl THEN
+       IF (modeFromRGS <> eAuto) AND (modeFromRGS <> eSimWithVal) AND (modeFromRGS <> eSimWithoutVal) THEN
+          IF bErrorPending THEN
+             bErrorQuit := TRUE;
+             Sleep(500);
+             IF bFatalError THEN
+                //RcuSetError(0, eRcuErrorProgNrError);
+                RcuSetMessageOnce(TRcuVision_ErrNoProgNr, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.HandleMainMode");
+                modeToRGS := eNoMode; //reset order
+             END_IF;
+          ELSE 
+             OutSignals.bReqModeBit0.svBool := FALSE;
+             OutSignals.bReqModeBit1.svBool := FALSE;
+             OutSignals.bReqModeBit2.svBool := FALSE;
+             OutSignals.bReqModeBit3.svBool := FALSE;
+             modeToRGS := eAuto;
+             OutSignals.bReqModeBit1.svBool := TRUE;  //BA_setzen
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Auto wurde an RGS gesetzt");
+             //start feedback timer
+             bTimeOut := FALSE;
+             SysTimerSet(cFeedbackTime, bTimeOut);
+             //wait for feedback or timeout
+             WAIT (modeToRGS = modeFromRGS) OR bTimeOut;
+             //Timeout --> Error 
+             IF bTimeOut THEN
+                //reset order
+                modeToRGS := eNoMode;
+                //RcuSetError(0, eRcuErrorTimeOutMainMode, STR(cFeedbackTime), "Automatic");
+                RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.HandleMainMode", STR(cFeedbackTime), "Automatic");
+             END_IF;
+          END_IF; // bErrorPending
+       END_IF;  // modeFromRGS <> eAuto
+    ELSIF bChgModeInt THEN   
+       //BA-Intern ändert sich, dann in Auto-SPS nur Auto und Geist zulassen sonst auch Teilautomatik
+       IF ((modeToRGS = eAuto) OR (modeToRGS = eSimWithVal) OR (modeToRGS = eSimWithoutVal) AND myRobot.mainModeMgr.externControl) OR
+          ((modeToRGS >= eSemiAuto) AND NOT myRobot.mainModeMgr.externControl) THEN
+          IF bErrorPending THEN
+             bErrorQuit := TRUE;
+             Sleep(500);
+             IF bFatalError THEN
+                //RcuSetError(0, eRcuErrorProgNrError);
+                RcuSetMessageOnce(TRcuVision_ErrNoProgNr, myRobot.kinListInx, 
+                       2, instId, "TRcuVision.HandleMainMode");
+                modeToRGS := eNoMode; //reset order
+             END_IF;
+          ELSE
+//             yOutData[cOutStateByte] := yOutData[cOutStateByte] AND 16#F0;
+             OutSignals.bReqModeBit0.svBool := FALSE;
+             OutSignals.bReqModeBit1.svBool := FALSE;
+             OutSignals.bReqModeBit2.svBool := FALSE;
+             OutSignals.bReqModeBit3.svBool := FALSE;
+             //Set new mainmode to RGS
+             IF (modeToRGS = eSemiAuto) THEN
+//                yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#01;
+                OutSignals.bReqModeBit0.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Teil-Auto wurde an RGS gesetzt");
+             ELSIF (modeToRGS = eAuto) THEN
+//                yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#02;
+                OutSignals.bReqModeBit1.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Auto wurde an RGS gesetzt");
+             ELSIF (modeToRGS = eSimWithVal) THEN
+//                yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#03;
+                OutSignals.bReqModeBit0.svBool := TRUE;
+                OutSignals.bReqModeBit1.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Sim mit Verschiebung wurde an RGS gesetzt");
+             ELSIF (modeToRGS = eSimWithoutVal) THEN
+//                yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#04;
+                OutSignals.bReqModeBit2.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Sim ohne Verschiebung wurde an RGS gesetzt");
+             END_IF;
+             //start feedback timer
+             bTimeOut := FALSE;
+             SysTimerSet(cFeedbackTime, bTimeOut); 
+             //wait for feedback or timeout
+             WAIT (modeToRGS = modeFromRGS) OR bTimeOut;
+             //Timeout --> Error 
+             IF bTimeOut THEN
+                //reset order
+                modeToRGS := eNoMode;
+                //RcuSetError(0, eRcuErrorTimeOutMainMode, STR(cFeedbackTime), "");
+                RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.HandleMainMode", STR(cFeedbackTime), "");
+             END_IF;
+          END_IF; // bErrorPending
+       END_IF; // eAuto / eSim
+    END_IF;  // bChgModeExt / bChgModeInt
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Receive mainmodes from RGS
+//------------------------------------------------------------------------
+ROUTINE ReceiveMainModes() PRIVATE
+ VAR
+   bChgModeFromRgs : BOOL;
+   bChgModeBit0    : BOOL;
+   bChgModeBit1    : BOOL;
+   bChgModeBit2    : BOOL;
+   bChgModeBit3    : BOOL;
+   iByteValue      : INT;
+ END_VAR
+ 
+ IF bSimulateSystem THEN
+    bChgModeFromRgs := IS_CHANGED(modeToRGS);
+    WHILE TRUE DO
+      WAIT bChgModeFromRgs;
+      bChgModeFromRgs := FALSE;
+      Sleep(50);
+      modeFromRGS := modeToRGS;
+    END_WHILE;
+ END_IF; 
+ 
+// bChgModeFromRgs := IS_CHANGED(yInData[cInStateByte]);
+ bChgModeBit0 := IS_CHANGED(InSignals.bModeBit0.svBool);
+ bChgModeBit1 := IS_CHANGED(InSignals.bModeBit1.svBool);
+ bChgModeBit2 := IS_CHANGED(InSignals.bModeBit2.svBool);
+ bChgModeBit3 := IS_CHANGED(InSignals.bModeBit3.svBool);
+ WHILE TRUE DO
+   iByteValue := 0;
+   IF InSignals.bModeBit0.svBool THEN
+      iByteValue := 1;
+   END_IF;
+   IF InSignals.bModeBit1.svBool THEN
+      iByteValue := iByteValue + 2;
+   END_IF;
+   IF InSignals.bModeBit2.svBool THEN
+      iByteValue := iByteValue + 4;
+   END_IF;
+   IF InSignals.bModeBit3.svBool THEN
+      iByteValue := iByteValue + 8;
+   END_IF;
+   CASE iByteValue OF 
+    1: modeFromRGS := eSemiAuto;
+       yMainModes[iByteValue-1] := TRUE;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "RGS in Betriebsart Teilautomatik");
+    2: modeFromRGS := eAuto;
+       yMainModes[iByteValue-1] := TRUE;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "RGS in Betriebsart Automatik");
+    3: modeFromRGS := eSimWithVal;
+       yMainModes[iByteValue-1] := TRUE;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "RGS in Betriebsart Sim mit Verschiebung");
+    4: modeFromRGS := eSimWithoutVal;
+       yMainModes[iByteValue-1] := TRUE;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "RGS in Betriebsart Sim mit Verschiebung");
+   ELSE
+       modeFromRGS := eNoMode;
+       yMainModes[0] := FALSE;
+       yMainModes[1] := FALSE;
+       yMainModes[2] := FALSE;
+       yMainModes[3] := FALSE;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "RGS in Betriebsart unbekannt");
+   END_CASE;
+   WAIT bChgModeBit0 OR bChgModeBit1 OR bChgModeBit2 OR bChgModeBit3;
+   bChgModeBit0 := FALSE;
+   bChgModeBit1 := FALSE;
+   bChgModeBit2 := FALSE;
+   bChgModeBit3 := FALSE;
+   yMainModes[0]   := FALSE;
+   yMainModes[1]   := FALSE;
+   yMainModes[2]   := FALSE;
+   yMainModes[3]   := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Observe the byte including the error-state
+//------------------------------------------------------------------------
+ROUTINE ObserveErrors() PRIVATE
+ VAR
+   bChgErr1 : BOOL;
+   bChgErr3 : BOOL;
+   bChgErr4 : BOOL;
+   bChgErr5 : BOOL;
+   bChgErr8 : BOOL;
+   i        : SINT;
+ END_VAR 
+ 
+   START ObserveErrorQuit();
+   bChgErr1 := IS_CHANGED(InSignals.bErrCommPbIsra.svBool);
+   bChgErr3 := IS_CHANGED(InSignals.bErrorCommRobIsra.svBool);
+   bChgErr4 := IS_CHANGED(InSignals.bErrSignIsra.svBool);
+   bChgErr5 := IS_CHANGED(InSignals.bErrWrongTypColor.svBool);
+   bChgErr8 := IS_CHANGED(InSignals.bErrCalcIsra.svBool);
+//   bChgError := IS_CHANGED(yInData[cInErrorByte]);
+   WHILE TRUE DO
+//     IF (yInData[cInErrorByte] AND 16#FF) = 0 THEN
+     IF NOT(InSignals.bErrCommPbIsra.svBool OR InSignals.bErrorCommRobIsra.svBool OR
+            InSignals.bErrSignIsra.svBool OR InSignals.bErrWrongTypColor.svBool OR
+            InSignals.bErrCalcIsra.svBool) THEN
+        bErrorPending := FALSE;
+        bFatalError   := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "No Error");
+        FOR i:=0 TO 7 DO
+            yErrorStates[i] := FALSE;
+        END_FOR;
+     ELSE
+        //Bit 0
+//        IF (yInData[cInErrorByte] AND 16#01) <> 0 THEN
+        IF InSignals.bErrCommPbIsra.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           //RcuSetError(0, eRcuErrorCommPbIsra);
+           RcuSetMessageOnce(TRcuVision_ErrCommPbVision, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Kommunikationsfehler PB");
+           yErrorStates[0] := TRUE;
+        END_IF;
+        // Bit 2
+//        IF (yInData[cInErrorByte] AND 16#04) <> 0 THEN
+        IF InSignals.bErrorCommRobIsra.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           //RcuSetError(0, eRcuErrorCommRobIsra);
+           RcuSetMessageOnce(TRcuVision_ErrCommRobVision, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Kommunikationsfehler Roboter");
+           yErrorStates[2] := TRUE;
+        END_IF;
+        //Bit 3
+//        IF (yInData[cInErrorByte] AND 16#08) <> 0 THEN
+        IF InSignals.bErrSignIsra.svBool THEN
+           bErrorPending := TRUE;
+           ////RcuSetError(0, eRcuErrorSignIsra); Darf kein Fehler sein, da damit die Auswertung Fehler u. Lage IO
+           //RcuSetMessageOnce(TRcuVision_ErrSignVision, myRobot.kinListInx, 
+           //            1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Merkmal-Fehler");  //das Ergebnis Spalt nio gebildet werden muss. Aussage ISRA
+           yErrorStates[3] := TRUE;
+        END_IF;
+        //BIT 4
+//        IF (yInData[cInErrorByte] AND 16#10) <> 0 THEN
+        IF InSignals.bErrWrongTypColor.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           //RcuSetError(0, eRcuErrorWrongTypColor);
+           RcuSetMessageOnce(TRcuVision_ErrWrongTypColor, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Falscher Typ");
+           yErrorStates[4] := TRUE;
+        END_IF;
+        //Bit 7
+//        IF (yInData[cInErrorByte] AND 16#80) <> 0 THEN
+        IF InSignals.bErrCalcIsra.svBool THEN
+           bErrorPending := TRUE;
+           ////RcuSetError(0, eRcuErrorCalcIsra); Darf kein Fehler sein, sonst wird der restliche Ablauf gestoppt
+           //RcuSetMessageOnce(TRcuVision_ErrCalcVision, myRobot.kinListInx, 
+           //            1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler bei der Merkmalerkennung"); //einlesen Werte usw.
+           yErrorStates[7] := TRUE;
+        END_IF;
+      END_IF;    
+      WAIT bChgErr1 OR bChgErr3 OR bChgErr4 OR bChgErr5 OR bChgErr8 OR bCheckNewErrors;
+      bChgErr1 := FALSE;
+      bChgErr3 := FALSE;
+      bChgErr4 := FALSE;
+      bChgErr5 := FALSE;
+      bChgErr8 := FALSE;
+      bCheckNewErrors := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Quit errors from RGS-Sensor
+//------------------------------------------------------------------------
+ROUTINE ObserveErrorQuit() PRIVATE
+ VAR
+   bChgInternalQuit : BOOL;
+   bChgErrPending   : BOOL;
+   bTimeOut         : BOOL;
+ END_VAR
+
+  bChgInternalQuit := IS_CHANGED(bErrorQuit);           //internal
+  bChgErrPending   := IS_CHANGED(myRobot.bRcuAnyErrorPending); //Alarmsystem
+  WHILE TRUE DO
+     WAIT bChgInternalQuit OR bChgErrPending;
+     IF ((bChgErrPending AND NOT myRobot.bRcuAnyErrorPending) OR bErrorQuit) THEN
+//        yOutData[cOutStateByte] := (yOutData[cOutStateByte] OR 16#40); //Errorquit to RGS
+        OutSignals.bErrorQuit.svBool := TRUE;
+        PRINT("Quit Errors to RGS");
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Quit Errors to RGS");
+        bTimeOut := FALSE;
+        SysTimerSet(cSequenceTime, bTimeOut);
+        WAIT (NOT bErrorPending OR bTimeOut);
+        bCheckNewErrors := TRUE;
+//        yOutData[cOutStateByte] := (yOutData[cOutStateByte] AND NOT 16#40); //Reset errorquit to RGS
+        OutSignals.bErrorQuit.svBool := FALSE;
+     END_IF;
+     bErrorQuit := FALSE;
+     bChgErrPending   := FALSE;
+     bChgInternalQuit := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait for Signal System ready
+//------------------------------------------------------------------------
+ROUTINE WaitSystemReady(positiv : BOOL) : BOOL PRIVATE
+  VAR
+    bChgReady   : BOOL;
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+//  bChgByte := IS_CHANGED(yInData[cInStateByte2]);
+  bChgReady := IS_CHANGED(InSignals.bReady.svBool);
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cSequenceTime, bTimeOut); 
+  WHILE TRUE DO 
+    IF NOT bTimeOut THEN
+       IF positiv THEN
+          IF InSignals.bReady.svBool THEN
+              RETURN TRUE;
+          END_IF;
+       ELSE
+          IF NOT InSignals.bReady.svBool THEN
+              RETURN TRUE;
+          END_IF;
+       END_IF;   
+    ELSE
+       RETURN FALSE;
+    END_IF;
+    WAIT bChgReady OR bTimeOut;
+    bChgReady := FALSE;
+  END_WHILE;
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait for ACK Program-Number or Timeout
+//------------------------------------------------------------------------
+ROUTINE GetAckProg() : BOOL PRIVATE
+  VAR
+    bChgAck    : BOOL;
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+//  bChgByte := IS_CHANGED(yInData[cInStateByte]);
+  bChgAck := IS_CHANGED(InSignals.bAckData.svBool);
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cFeedbackTime, bTimeOut); 
+  WHILE TRUE DO 
+    IF bFatalError THEN
+       RETURN FALSE;
+    END_IF;
+    IF NOT bTimeOut THEN
+       IF InSignals.bAckData.svBool THEN
+           RETURN TRUE;
+       END_IF;
+    ELSE
+       PRINT("Zeitüberschreitung quit Programmnummer");
+       RETURN FALSE;
+    END_IF;
+    WAIT bChgAck OR bTimeOut OR bFatalError;
+    bChgAck := FALSE;
+  END_WHILE;
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until RGS has startet the measuring
+//------------------------------------------------------------------------
+ROUTINE GetReadyForMeasuring() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cSequenceTime, bTimeOut); 
+  //WAIT (bInPicRecording AND bInMeasuring AND bInSendingData) OR bTimeOut OR bErrorPending;
+  WAIT (bInPicRecording AND bInMeasuring) OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until RGS has startet the measuring
+//------------------------------------------------------------------------
+ROUTINE GetMeasureRunning() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cSequenceTime, bTimeOut);
+  WAIT bInMeasuring OR bInPicRecording OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until picture is ready
+//------------------------------------------------------------------------
+ROUTINE GetPictureReady() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cPictureTime, bTimeOut); 
+  WAIT NOT bInPicRecording OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until measuring is finished
+//------------------------------------------------------------------------
+ROUTINE GetMeasureFinished() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cPictureTime, bTimeOut); 
+  WAIT (NOT bInPicRecording AND NOT bInMeasuring) OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until RGS has sent the data
+//------------------------------------------------------------------------
+ROUTINE WaitFormDispValues() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cDispValueTime, bTimeOut); 
+  WAIT NOT bInSendingData OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// get values of the slots
+// Erste Messtelle ist die Lage, muss so sein sonst geht hier alles schief !!!
+// Es liegt beim normal Übertragen der Messwerte auch immer die erste Messung 
+// auf dem Bus, ist ein Spalt die erste Messung bekommen wir nur die Werte des
+// Spalts anstatt der Lage.                                                   
+//------------------------------------------------------------------------
+ROUTINE GetSlotValues() PRIVATE
+ VAR
+  i      : SINT;
+  iSubID : SINT := 2;
+ END_VAR              
+                           
+  REPEAT 
+    IF ySlotOK[i] THEN
+      //Prog-Nr to RGS
+      ySlots[i].rSlotVal            := 0.0;
+      ySlots[i].rConcision          := 0.0;
+//      yOutData[cOutTypeByte]      := iProgNrToRgs;
+      OutSignals.byteType.svByte    := iProgNrToRgs;
+//      yOutData[cOutSubTypeByte]   := iSubID + i;
+      OutSignals.byteSubType.svByte := iSubID + i;
+      //Get values
+//      yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#20;
+      OutSignals.bReqData.svBool := TRUE;
+      Sleep(200);
+//      ySlots[i].rSlotVal      := Bytes2Int(yInData[cInValueX], yInData[cInValueX + 1]) * tVisionAbsolute.rScaling_X; // SlotValue
+      ySlots[i].rSlotVal      := TurnByte(InSignals.wInValueX.svWord) * myVision.tVisionAbsolute.rScaling_X; // SlotValue
+//      ySlots[i].rConcision    := Bytes2Int(yInData[cInValueY], yInData[cInValueY + 1]) * tVisionAbsolute.rScaling_Y; // Concision
+      ySlots[i].rConcision    := TurnByte(InSignals.wInValueY.svWord) * myVision.tVisionAbsolute.rScaling_Y; // Concision
+//      yOutData[cOutStateByte] := yOutData[cOutStateByte] AND NOT 16#20;
+      OutSignals.bReqData.svBool := FALSE;
+      //Reset Prog-Nr to RGS
+//      yOutData[cOutTypeByte]      := 0;
+      OutSignals.byteType.svByte    := 0;
+//      yOutData[cOutSubTypeByte]   := 0;
+      OutSignals.byteSubType.svByte := 0;
+      Sleep(100);
+    ELSE
+      ySlots[i].rSlotVal      := 0.0;
+      ySlots[i].rConcision    := 0.0;
+    END_IF;
+    i := i + 1;
+  UNTIL (i >= iCntTriggers) OR (i >= 8);    
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// decode the RGS state into 4 bits
+//------------------------------------------------------------------------
+ROUTINE BuildStateInfo() PRIVATE
+  
+   bInPicRecording := UPDATE(InSignals.bPicRecording.svBool);
+   bInMeasuring    := UPDATE(InSignals.bMeasuring.svBool);
+   bInSendingData  := UPDATE(InSignals.bSendingData.svBool);
+   bInAckProgNr    := UPDATE(InSignals.bAckData.svBool);
+  
+END_ROUTINE
+
+
+(******************************************************************************
+                              Debug-Functions
+******************************************************************************)
+ROUTINE SendProgNr() PRIVATE
+ VAR
+   bChgProgNr : BOOL;
+ END_VAR
+ 
+  bChgProgNr := IS_CHANGED(iDebugProgNr);
+  WHILE TRUE DO
+    WAIT bChgProgNr;
+    bChgProgNr := FALSE;
+    IF bFatalError THEN
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "Kann Programmnummer nicht setzen, da Fehler von RGS ansteht");
+    ELSE
+      IF iDebugProgNr > 0 THEN
+         OutSignals.byteType.svByte := iProgNrToRgs;                        //Prog-Nr to RGS
+         OutSignals.byteSubType.svByte := 0;
+         OutSignals.bDataStrobe.svBool := TRUE;      //set strobe
+        //Prog-Nr to RGS
+//        yOutData[cOutTypeByte]     := iDebugProgNr;
+        OutSignals.byteType.svByte    := iDebugProgNr;
+//        yOutData[cOutSubTypeByte]  := 0;
+        OutSignals.byteSubType.svByte := 0;
+        //set strobe
+//        yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#80;
+        OutSignals.bDataStrobe.svBool := TRUE;      //set strobe
+        //wait for feedback or timeout
+        IF GetAckProg() THEN
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "ACK Programmnummer von RGS ");
+        ELSE
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "Kein ACK Programmnummer von RGS");
+        END_IF;
+        //lower strobe
+//        yOutData[cOutStateByte] := yOutData[cOutStateByte] AND NOT 16#80;
+        OutSignals.bDataStrobe.svBool := FALSE;      //set strobe
+      END_IF;
+    END_IF;
+    //Reset Prog-Nr to RGS
+    OutSignals.byteType.svByte    := 0;
+    OutSignals.byteSubType.svByte := 0;
+    bChgProgNr                 := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+
+ROUTINE DebugSlotValues() PRIVATE
+ VAR
+   bChgProgNr : BOOL;
+ END_VAR
+ 
+ bChgProgNr := IS_CHANGED(iDebugSlotProgNr);
+ WHILE TRUE DO
+    WAIT bChgProgNr;
+    bChgProgNr := FALSE;
+    IF bFatalError THEN
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "Kann ID u. SubID nicht setzen, da Fehler von RGS ansteht");
+    ELSE
+      IF iDebugSlotProgNr > 0 THEN
+        rDebugSlotVal   := 0.0;
+        rDebugConcision := 0.0;
+        //Prog-Nr to RGS
+//        yOutData[cOutTypeByte]     := iDebugSlotProgNr;
+        OutSignals.byteType.svByte    := iDebugSlotProgNr;
+//        yOutData[cOutSubTypeByte]  := iDebugSlotSubID;
+        OutSignals.byteSubType.svByte := iDebugSlotSubID;
+        //Get values
+//        yOutData[cOutStateByte] := yOutData[cOutStateByte] OR 16#20;
+        OutSignals.bReqData.svBool := TRUE;
+        Sleep(100);
+//        rDebugSlotVal   := Bytes2Int(yInData[cInValueX], yInData[cInValueX + 1]) * tVisionAbsolute.rScaling_X; // SlotValue
+        rDebugSlotVal   := TurnByte(InSignals.wInValueX.svWord) * myVision.tVisionAbsolute.rScaling_X; // SlotValue
+//        rDebugConcision := Bytes2Int(yInData[cInValueY], yInData[cInValueY + 1]) * tVisionAbsolute.rScaling_Y; // Concision
+        rDebugConcision := TurnByte(InSignals.wInValueY.svWord) * myVision.tVisionAbsolute.rScaling_Y; // Concision
+//        yOutData[cOutStateByte] := yOutData[cOutStateByte] AND NOT 16#20;
+        OutSignals.bReqData.svBool := FALSE;
+      END_IF;
+    END_IF;
+    //Reset Prog-Nr to RGS
+//    yOutData[cOutTypeByte]     := 0;
+    OutSignals.byteType.svByte    := 0;
+//    yOutData[cOutSubTypeByte]  := 0;
+    OutSignals.byteSubType.svByte := 0;
+    bChgProgNr                 := FALSE;  
+ END_WHILE;
+END_ROUTINE
+
+
+
+
+CONSTANT PRIVATE
+//---------------------------------------------------------------------------------------------------
+//-----------------  Hardware-Endpoint to Fieldbus-Master ISRA-System ------------------------------
+//---------------------------------------------------------------------------------------------------
+   
+//--------------------------------------------------------------------------   
+//                 Inputs
+//--------------------------------------------------------------------------   
+   cHW_SLI_mModeBit0          : STRING := "HWI_mModeBit0";
+   cHW_SLI_mModeBit1          : STRING := "HWI_mModeBit1";
+   cHW_SLI_mModeBit2          : STRING := "HWI_mModeBit2";
+   cHW_SLI_mModeBit3          : STRING := "HWI_mModeBit3";
+   cHW_SLI_mPicRecording      : STRING := "HWI_mPicRecording";
+   cHW_SLI_mMeasuring         : STRING := "HWI_mMeasuring";
+   cHW_SLI_mSendingData       : STRING := "HWI_mSendingData";
+   cHW_SLI_mAckData           : STRING := "HWI_mAckData";
+   cHW_SLI_mReady             : STRING := "HWI_mReady";
+   cHW_SLI_mErrCommPbIsra     : STRING := "HWI_mErrCommPbIsra";
+   cHW_SLI_mErrorCommRobIsra  : STRING := "HWI_mErrorCommRobIsra";
+   cHW_SLI_mErrSignIsra       : STRING := "HWI_mErrSignIsra";
+   cHW_SLI_mErrWrongTypColor  : STRING := "HWI_mErrWrongTypColor";
+   cHW_SLI_mErrCalcIsra       : STRING := "HWI_mErrCalcIsra";
+   cHW_SLI_mWarnManual        : STRING := "HWI_mWarnManual";
+   cHW_SLI_mWarnUncertainty   : STRING := "HWI_mWarnUncertainty";
+   cHW_SLI_mWarnCam1          : STRING := "HWI_mWarnCam1";
+   cHW_SLI_mWarnCam2          : STRING := "HWI_mWarnCam2";
+   cHW_SLI_mWarnCam3          : STRING := "HWI_mWarnCam3";
+   cHW_SLI_mWarnCam4          : STRING := "HWI_mWarnCam4";
+   cHW_SLI_mWarnCam5          : STRING := "HWI_mWarnCam5";
+   cHW_SLI_wInValueX          : STRING := "HWI_wInValueX";
+   cHW_SLI_wInValueY          : STRING := "HWI_wInValueY";
+   cHW_SLI_wInValueZ          : STRING := "HWI_wInValueZ";
+   cHW_SLI_wInValueA          : STRING := "HWI_wInValueA";
+   cHW_SLI_wInValueB          : STRING := "HWI_wInValueB";
+   cHW_SLI_wInValueC          : STRING := "HWI_wInValueC";
+   cHW_SLI_mStatePos          : STRING := "HWI_mStatePos";
+   cHW_SLI_mStateSlot1        : STRING := "HWI_mStateSlot1";
+   cHW_SLI_mStateSlot2        : STRING := "HWI_mStateSlot2";
+   cHW_SLI_mStateSlot3        : STRING := "HWI_mStateSlot3";
+   cHW_SLI_mStateSlot4        : STRING := "HWI_mStateSlot4";
+   cHW_SLI_mStateSlot5        : STRING := "HWI_mStateSlot5";
+   cHW_SLI_mStateSlot6        : STRING := "HWI_mStateSlot6";
+   cHW_SLI_mStateSlot7        : STRING := "HWI_mStateSlot7";
+
+//--------------------------------------------------------------------------   
+//                 Outputs
+//--------------------------------------------------------------------------   
+     
+   cHW_SLO_mReqModeBit0       : STRING := "HWO_mReqModeBit0";
+   cHW_SLO_mReqModeBit1       : STRING := "HWO_mReqModeBit1";
+   cHW_SLO_mReqModeBit2       : STRING := "HWO_mReqModeBit2";
+   cHW_SLO_mReqModeBit3       : STRING := "HWO_mReqModeBit3";
+   cHW_SLO_mStartMeasure      : STRING := "HWO_mStrtMeasure";
+   cHW_SLO_mReqData           : STRING := "HWO_mReqData";
+   cHW_SLO_mErrorQuit         : STRING := "HWO_mErrorQuit";
+   cHW_SLO_mDataStrobe        : STRING := "HWO_mDataStrobe";
+   cHW_SLO_bType              : STRING := "HWO_bType";
+   cHW_SLO_bSubType           : STRING := "HWO_bSubType";
+   cHW_SLO_bColor             : STRING := "HWO_bColor";
+   
+END_CONSTANT
+
+TYPE PRIVATE
+   tsRgsInputs : STRUCT
+      bModeBit0         : TInOutBool;          // Betriebsart Bit 0
+      bModeBit1         : TInOutBool;          // Betriebsart Bit 1
+      bModeBit2         : TInOutBool;          // Betriebsart Bit 2
+      bModeBit3         : TInOutBool;          // Betriebsart Bit 3
+      bPicRecording     : TInOutBool;          // Bildaufnahme läuft
+      bMeasuring        : TInOutBool;          // Messung läuft
+      bSendingData      : TInOutBool;          // Ergebnisübertragung läuft
+      bAckData          : TInOutBool;          // Typ-/ Farb-ID OK
+      bReady            : TInOutBool;          // Bereit für Messung
+      bErrCommPbIsra    : TInOutBool;          // Fehler SPS-Komm. o. keine Nullmessdaten vorh.
+      bErrorCommRobIsra : TInOutBool;          // Fehler Rob-Kommunikation
+      bErrSignIsra      : TInOutBool;          // Fehler bei der Erkennung
+      bErrWrongTypColor : TInOutBool;          // Falsche/ deaktivierte Typ/ Farbe
+      bErrCalcIsra      : TInOutBool;          // Messwerte o. Verlässlichkeit außer Toleranz
+      bWarnManual       : TInOutBool;          // Warnung Handmessung
+      bWarnUncertainty  : TInOutBool;          // Warnung Unsicherheit
+      bWarnCam1         : TInOutBool;          // Warnung Kamera 1
+      bWarnCam2         : TInOutBool;          // Warnung Kamera 2
+      bWarnCam3         : TInOutBool;          // Warnung Kamera 3
+      bWarnCam4         : TInOutBool;          // Warnung Kamera 4
+      bWarnCam5         : TInOutBool;          // Warnung Kamera 5
+      wInValueX         : TInOutWord;          // Mess-Ergebnis X
+      wInValueY         : TInOutWord;          // Mess-Ergebnis Y
+      wInValueZ         : TInOutWord;          // Mess-Ergebnis Z
+      wInValueA         : TInOutWord;          // Mess-Ergebnis A (RX)
+      wInValueB         : TInOutWord;          // Mess-Ergebnis B (RY)
+      wInValueC         : TInOutWord;          // Mess-Ergebnis C (RZ)
+      bStatePos         : TInOutBool;          // IO-Status Lagebestimmung
+      bStateSlot1       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 1
+      bStateSlot2       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 2
+      bStateSlot3       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 3
+      bStateSlot4       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 4
+      bStateSlot5       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 5
+      bStateSlot6       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 6
+      bStateSlot7       : TInOutBool;          // IO-Status Spalt/ Bündigkeit 7
+   END_STRUCT;
+   
+   tsRgsOutputs : STRUCT
+      bReqModeBit0      : TInOutBool;          // Betriebsart Bit 0
+      bReqModeBit1      : TInOutBool;          // Betriebsart Bit 1
+      bReqModeBit2      : TInOutBool;          // Betriebsart Bit 2
+      bReqModeBit3      : TInOutBool;          // Betriebsart Bit 3
+      bStartMeasure     : TInOutBool;          // Start Messung
+      bReqData          : TInOutBool;          // Ergebnisanfrage
+      bErrorQuit        : TInOutBool;          // Fehler Quittung
+      bDataStrobe       : TInOutBool;          // Typ-/ Farb-ID gültig
+      byteType          : TInOutByte;          // TypID
+      byteSubType       : TInOutByte;          // SubtypID
+      byteColor         : TInOutByte;          // FarbID
+   END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   InSignals  : tsRgsInputs;
+   OutSignals : tsRgsOutputs; 
+   bMappingOk : BOOL;
+END_VAR
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to RGS
+//----------------------------------------------------------------------------------------
+ROUTINE MapRgsSignals(CONST iRobot : DINT) PRIVATE
+ VAR
+  sNameSvVar         : STRING;
+  i                  : INT;
+ END_VAR
+ 
+   bMappingOk := TRUE;
+   
+  
+(*****************************************************************************************
+***********   Inputs   *******************************************************************
+******************************************************************************************)
+
+    MapAndCheckBoolIn(iRobot, InSignals.bModeBit0, cHW_SLI_mModeBit0, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bModeBit1, cHW_SLI_mModeBit1, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bModeBit2, cHW_SLI_mModeBit2, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bModeBit3, cHW_SLI_mModeBit3, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bPicRecording, cHW_SLI_mPicRecording, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bMeasuring, cHW_SLI_mMeasuring, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bSendingData, cHW_SLI_mSendingData, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bAckData, cHW_SLI_mAckData, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bReady, cHW_SLI_mReady, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bErrCommPbIsra, cHW_SLI_mErrCommPbIsra, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bErrorCommRobIsra, cHW_SLI_mErrorCommRobIsra, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bErrSignIsra, cHW_SLI_mErrSignIsra, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bErrWrongTypColor, cHW_SLI_mErrWrongTypColor, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bErrCalcIsra, cHW_SLI_mErrCalcIsra, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnManual, cHW_SLI_mWarnManual, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnUncertainty, cHW_SLI_mWarnUncertainty, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnCam1, cHW_SLI_mWarnCam1, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnCam2, cHW_SLI_mWarnCam2, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnCam3, cHW_SLI_mWarnCam3, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnCam4, cHW_SLI_mWarnCam4, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bWarnCam5, cHW_SLI_mWarnCam5, bMappingOk);
+    MapAndCheckWordIn(iRobot, InSignals.wInValueX , cHW_SLI_wInValueX, bMappingOk);    
+    MapAndCheckWordIn(iRobot, InSignals.wInValueY , cHW_SLI_wInValueY, bMappingOk);    
+    MapAndCheckWordIn(iRobot, InSignals.wInValueZ , cHW_SLI_wInValueZ, bMappingOk);    
+    MapAndCheckWordIn(iRobot, InSignals.wInValueA , cHW_SLI_wInValueA, bMappingOk);    
+    MapAndCheckWordIn(iRobot, InSignals.wInValueB , cHW_SLI_wInValueB, bMappingOk);    
+    MapAndCheckWordIn(iRobot, InSignals.wInValueC , cHW_SLI_wInValueC, bMappingOk);        
+    MapAndCheckBoolIn(iRobot, InSignals.bStatePos, cHW_SLI_mStatePos, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot1, cHW_SLI_mStateSlot1, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot2, cHW_SLI_mStateSlot2, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot3, cHW_SLI_mStateSlot3, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot4, cHW_SLI_mStateSlot4, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot5, cHW_SLI_mStateSlot5, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot6, cHW_SLI_mStateSlot6, bMappingOk);
+    MapAndCheckBoolIn(iRobot, InSignals.bStateSlot7, cHW_SLI_mStateSlot7, bMappingOk);
+
+(*****************************************************************************************
+***********   Outputs   ******************************************************************
+******************************************************************************************)   
+   MapAndCheckBoolOut(iRobot, OutSignals.bReqModeBit0, cHW_SLO_mReqModeBit0, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bReqModeBit1, cHW_SLO_mReqModeBit1, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bReqModeBit2, cHW_SLO_mReqModeBit2, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bReqModeBit3, cHW_SLO_mReqModeBit3, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bStartMeasure, cHW_SLO_mStartMeasure, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bReqData, cHW_SLO_mReqData, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bErrorQuit, cHW_SLO_mErrorQuit, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bDataStrobe, cHW_SLO_mDataStrobe, bMappingOk);
+   
+   MapAndCheckByteOut(iRobot, OutSignals.byteType, cHW_SLO_bType, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteSubType, cHW_SLO_bSubType, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteColor, cHW_SLO_bColor, bMappingOk);
+
+    IF NOT bMappingOk THEN
+       gbBootupError := TRUE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, PaintRobot[iRobot].kinListInx, 1, 0, "TRcuRgsSensor.MapFieldbusSlave");
+    END_IF;   
+//    PaintRobot[iRobot].bFieldbusSlaveReady := bMappingOk;
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE RELEASE()
+   
+   IF IS_MAPPED(myRobot) THEN
+      IF myRobot.mainModeMgr.externControl AND NOT myRobot.bReleaseBlockedByHandler THEN
+         IF IS_MAPPED(bOutPicTrigger) THEN
+            bOutPicTrigger := FALSE;
+         END_IF;
+      ELSIF NOT myRobot.mainModeMgr.externControl THEN
+         IF IS_MAPPED(bOutPicTrigger) THEN
+            bOutPicTrigger := FALSE;
+         END_IF;
+      ELSE
+         DebugPrint(eTraceCommon, "TRcuVisionPLC.RELEASE: FORCE TRACKING");
+      END_IF;
+   END_IF;
+END_ROUTINE

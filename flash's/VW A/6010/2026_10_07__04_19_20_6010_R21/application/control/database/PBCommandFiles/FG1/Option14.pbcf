@@ -1,0 +1,962 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14 (This File was BusMaster.Pbcf before and renamed to Option14.pbcf with appropriate changes)
+//  v2_01.02.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.03.00  | 12.09.2014  | KLCH   | Add: Call CommonTempCtrl_MatHeater
+//  v2_01.04.00  | 21.11.2016  | KLCH   | Change: new options OptionGun, OptionShotMeter
+//  v2_01.05.00  | 21.08.2017  | KLCH   | Change: rename *.SCI file to general name Sercos3_Simulation.SCI
+//  v2_01.06.00  | 28.09.2017  | KLCH   | Add: CPX devices; Gun_MD_El
+//  v2_01.07.00  | 21.08.2018  | KLCH   | Change: rename subroutines
+
+Imports Option3 Option4 Option5 Option26 Option27 Common CommonTempControl OptionGun OptionShotMeter TempHE TempHE_2 EcoTempAxis1 EcoTempAxis3 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9
+
+Parameter Option1 Option12 Option14 OptionGun OptionShotMeter EcoTempAxis1 EcoTempAxis3 ElectricalVersion
+
+Call Main_Option14
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option14
+	
+	Call Option14_AddDeviceToAirSupply_BLV1
+	
+	Call AddDeviceToMaterial1_BAP1T
+	
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL
+			
+			Call AddDeviceToMaterial1_BMV2
+			Call AddDeviceToMaterial1_BMV2F
+			Call AddDeviceToMaterial1_BMV2PA
+			
+			Call Main_Option3
+			Call Main_Option4
+			Call Main_Option5
+			
+		Case EcoDose_PCL_PCL
+			
+			Call AddDeviceToMaterial2_BAP2T
+			Call AddDeviceToMaterial1_BMV2_1
+			Call AddDeviceToMaterial2_BMV2_2
+			Call AddDeviceToMaterial1_BMV2F_1
+			Call AddDeviceToMaterial2_BMV2F_2
+			Call AddDeviceToMaterial1_BMV2PA_1
+			Call AddDeviceToMaterial2_BMV2PA_2
+			
+			Call Main_Option3
+			Call Main_Option4
+			Call Main_Option5
+			Call Main_TempHE_2
+			
+		Case EcoDose_SM
+			
+			Call AddDeviceToShotMeter1Sub_BDP92PA
+			
+			Call Main_TempHeatZone3
+			Call Main_TempHeatZone9
+			
+		Case EcoDose_SM_PCL
+			
+			Call AddDeviceToMaterial2_BAP2T
+			Call AddDeviceToShotMeter1Sub_BDP92PA_1
+			Call AddDeviceToMaterial2_BMV2_2
+			Call AddDeviceToMaterial2_BMV2F_2
+			Call AddDeviceToMaterial2_BMV2PA_2
+			
+			Call Main_Option3
+			Call Main_Option4
+			Call Main_Option5
+			Call Main_TempHE_2
+			Call Main_TempHeatZone3
+			Call Main_TempHeatZone9
+			
+		Case EcoDose_SM_SM
+			
+			Call AddDeviceToMaterial2_BAP2T
+			Call AddDeviceToShotMeter1Sub_BDP92PA_1
+			Call AddDeviceToShotMeter2Sub_BDP92PA_2
+			
+			Call Main_TempHE_2
+			Call Main_TempHeatZone3
+			Call Main_TempHeatZone9
+			
+		CaseElse
+			Message No script or wrong process type (Main_Option14)!!
+	EndSelect
+	
+	Call Option14_ManagerProject
+	
+	Call Main_Option26
+	Call Main_Option27
+	Call Main_OptionGun
+	Call Main_TempHE
+	Call CommonTempCtrl_TempCtrlSupply
+	Call Main_EcoTempAxis1
+	Call Main_EcoTempAxis3
+	Call CommonTempCtrl_MatHeater
+	Call Main_TempHeatZone1
+	Call Main_TempHeatZone2
+	Call Main_TempHeatZone5
+	Call Main_TempHeatZone6
+	Call Main_TempHeatZone7
+	Call Main_TempHeatZone8
+	
+	Call ExportSlaveInterface
+	Call ConfigureSystemCfg
+	Call ConfigurePCU1Cfg
+Return
+
+SubRoutine ConfigureSystemCfg
+	SelectNode RPC1.System
+	// Select tab cfg parameter
+	SelectTab [CfgParameter]
+	SelectCfg System.RCMP.CheckCoolingDevice
+	Value 1
+	SelectCfg System.RCMP.CheckUPS
+	Value 1
+	SelectCfg System.RCMP.EnableCoolingDeviceError
+	Value 1
+
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectCfg System.S3
+			OptionalUsed 1
+		Case Profibus
+			SelectCfg System.S3
+			OptionalUsed 0
+		CaseElse
+			Message Wrong bus master (Option14)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine ConfigurePCU1Cfg
+	SelectNode RPC1.R11.PCU1
+	// Select tab cfg parameter
+	SelectTab [CfgParameter]
+	SelectCfg PCU1.Trigger_Brush.Global.BusRunTime
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			Value 0d0h0m0s4ms
+		Case Profibus
+			Value 0d0h0m0s16ms
+		CaseElse
+			Message Wrong bus master (Option14)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine Option14_AddDeviceToAirSupply_BLV1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.BLV1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.BLV1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+	Call Common_AddInitiator_LV1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.BLV1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.BLV1
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBLV1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    5 //Analog pressure input - ???
+						SelectTab [CfgParameter]
+						SelectCfg BLV1.Comparator
+						Value 0
+						SelectCfg BLV1.Hys
+						Value 0.5
+						SelectCfg BLV1.Mode
+						Value 0
+						SelectCfg BLV1.SP1
+						Value 5.5
+					CaseElse
+						Message ElectricalVersion not supported !! (Option14_AddDeviceToAirSupply_BLV1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (Option14_AddDeviceToAirSupply_BLV1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BMV2PA
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BMV2PA
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2PA
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PA
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PA
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2PA)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2PA)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BMV2PA_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA_1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BMV2PA_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2PA_1
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2PA_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PA_1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PA_1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2PA_1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2PA_1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial2_BMV2PA_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PA_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PA_2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	Call Common_AddDevice_BMV2PA_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PA_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2PA_2
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2PA_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PA_2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2PA_2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2PA_2)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2PA_2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BAP1T
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1T
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1T
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BAP1T
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1T
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BAP1T
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBAP1T
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP1T
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP1T
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    9 //CPX Analog input temperature - CPX-4AI-T
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BAP1T)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BAP1T)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial2_BAP2T
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2T
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2T
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	Call Common_AddDevice_BAP2T
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2T
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BAP2T
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBAP2T
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7134-4NB50-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP2T
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBAP2T
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    9 //CPX Analog input temperature - CPX-4AI-T
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial2_BAP2T)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial2_BAP2T)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BMV2F
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BMV2F
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F
+		SelectCase Option14 // Variant of bus master 
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_lBMV2F
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    4 //Counter card 24V/100kHz - 6ES7138-4DA04-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_dBMV2F
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    5 //Counter card counter - IB IL CNT-PAC/CN
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_dBMV2F
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    7 //CPX Counter - CPX-2ZE2DA
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2F)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2F)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BMV2F_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F_1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BMV2F_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F_1
+		SelectCase Option14 // Variant of bus master 
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_lBMV2F_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    4 //Counter card 24V/100kHz - 6ES7138-4DA04-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_dBMV2F_1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    5 //Counter card counter - IB IL CNT-PAC/CN
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_dBMV2F_1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    7 //CPX Counter - CPX-2ZE2DA
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2F_1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2F_1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial2_BMV2F_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2F_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2F_2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	Call Common_AddDevice_BMV2F_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2F_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2F_2
+		SelectCase Option14 // Variant of bus master 
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_lBMV2F_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    4 //Counter card 24V/100kHz - 6ES7138-4DA04-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_dBMV2F_2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    5 //Counter card counter - IB IL CNT-PAC/CN
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_dBMV2F_2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    7 //CPX Counter - CPX-2ZE2DA
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial2_BMV2F_2)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial2_BMV2F_2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BMV2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BMV2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+				SelectHWSignal HWO_wBMV2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog output current - 6ES7135-4GB01-0AB0
+	  			SelectHWSignal HWI_bBMV2_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_bBMV2_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_wBMV2_PD
+	  			Export 0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+						SelectHWSignal HWO_wBMV2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog output current - 28 61 31 5
+						SelectHWSignal HWI_bBMV2_HSK
+						Export 0
+						SelectHWSignal HWO_bBMV2_HSK
+						Export 0
+						SelectHWSignal HWO_wBMV2_PD
+						Export 0
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+						SelectHWSignal HWO_wBMV2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    4 //CPX Analog Output U/I VZ+12bit - CPX-2AA-U-I
+						SelectHWSignal HWI_bBMV2_HSK
+						Export 0
+						SelectHWSignal HWO_bBMV2_HSK
+						Export 0
+						SelectHWSignal HWO_wBMV2_PD
+						Export 0
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial1_BMV2_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2_1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_BMV2_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2_1
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+				SelectHWSignal HWO_wBMV2_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog output current - 6ES7135-4GB01-0AB0
+	  			SelectHWSignal HWI_bBMV2_1_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_bBMV2_1_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_wBMV2_1_PD
+	  			Export 0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2_1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+						SelectHWSignal HWO_wBMV2_1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog output current - 28 61 31 5
+						SelectHWSignal HWI_bBMV2_1_HSK
+						Export 0
+						SelectHWSignal HWO_bBMV2_1_HSK
+						Export 0
+						SelectHWSignal HWO_wBMV2_1_PD
+						Export 0
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2_1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+						SelectHWSignal HWO_wBMV2_1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    4 //CPX Analog Output U/I VZ+12bit - CPX-2AA-U-I
+						SelectHWSignal HWI_bBMV2_1_HSK
+						Export 0
+						SelectHWSignal HWO_bBMV2_1_HSK
+						Export 0
+						SelectHWSignal HWO_wBMV2_1_PD
+						Export 0
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial1_BMV2_1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial1_BMV2_1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToMaterial2_BMV2_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2_2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	Call Common_AddDevice_BMV2_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2_2
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+				SelectHWSignal HWO_wBMV2_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog output current - 6ES7135-4GB01-0AB0
+	  			SelectHWSignal HWI_bBMV2_2_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_bBMV2_2_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_wBMV2_2_PD
+	  			Export 0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2_2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+						SelectHWSignal HWO_wBMV2_2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog output current - 28 61 31 5
+						SelectHWSignal HWI_bBMV2_2_HSK
+						Export 0
+						SelectHWSignal HWO_bBMV2_2_HSK
+						Export 0
+						SelectHWSignal HWO_wBMV2_2_PD
+						Export 0
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2_2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+						SelectHWSignal HWO_wBMV2_2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    4 //CPX Analog Output U/I VZ+12bit - CPX-2AA-U-I
+						SelectHWSignal HWI_bBMV2_2_HSK
+						Export 0
+						SelectHWSignal HWO_bBMV2_2_HSK
+						Export 0
+						SelectHWSignal HWO_wBMV2_2_PD
+						Export 0
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToMaterial2_BMV2_2)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToMaterial2_BMV2_2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToShotMeter1Sub_BDP92PA
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PAa
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PAa
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+	Call Common_AddDevice_BDP92PA
+	Call OptionShotMeter_ConfigureDevice_BDP92PA
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PAa
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PAa
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBDP92PAa
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PAa
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PAa
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToShotMeter1Sub_BDP92PA; a)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToShotMeter1Sub_BDP92PA; a)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PAb
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PAb
+		VisuInterface 1 9
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PAb
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBDP92PAb
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PAb
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PAb
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToShotMeter1Sub_BDP92PA; b)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToShotMeter1Sub_BDP92PA; b)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToShotMeter1Sub_BDP92PA_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PA_1a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PA_1a
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+	Call Common_AddDevice_BDP92PA_1	
+	Call OptionShotMeter_ConfigureDevice_BDP92PA_1
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PA_1a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PA_1a
+		SelectCase Option14 // Variant of bus master 
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBDP92PA_1a
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_1a
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_1a
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToShotMeter1Sub_BDP92PA_1; a)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToShotMeter1Sub_BDP92PA_1; a)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PA_1b
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PA_1b
+		VisuInterface 1 9
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PA_1b
+		SelectCase Option14 // Variant of bus master 
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBDP92PA_1b
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_1b
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_1b
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToShotMeter1Sub_BDP92PA_1; b)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToShotMeter1Sub_BDP92PA_1; b)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine AddDeviceToShotMeter2Sub_BDP92PA_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92PA_2a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92PA_2a
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+	Call Common_AddDevice_BDP92PA_2
+	Call OptionShotMeter_ConfigureDevice_BDP92PA_2
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92PA_2a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92PA_2a
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBDP92PA_2a
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_2a
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_2a
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToShotMeter2Sub_BDP92PA_2; a)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToShotMeter2Sub_BDP92PA_2; a)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.BDP92PA_2b
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.BDP92PA_2b
+		VisuInterface 1 29
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.BDP92PA_2b
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBDP92PA_2b
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_2b
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBDP92PA_2b
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    6 //CPX Analog input U/I VZ+15bit - CPX-4AE-U-I
+					CaseElse
+						Message ElectricalVersion not supported !! (AddDeviceToShotMeter2Sub_BDP92PA_2; b)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (AddDeviceToShotMeter2Sub_BDP92PA_2; b)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option14_ManagerProject
+	//copy config-files to config folder
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			
+			FSDeleteFile ..\..\..\..\..\application\control\config\profibusmaster.cfgr
+			FSDeleteFile ..\..\..\..\..\application\control\config\EcoRpc_0.dbm
+			FSDeleteFile ..\..\..\..\..\application\control\config\sercos2.cfgr
+			
+			FSCopy ..\..\..\..\ManagerProject\Sercos3\config\Sercos3_Simulation.SCI ..\..\..\..\..\application\control\config
+			FSCopy ..\..\..\..\ManagerProject\Sercos3\config\Sercos3.cfgr ..\..\..\..\..\application\control\config
+			
+		Case Profibus
+			
+			FSDeleteFile ..\..\..\..\..\application\control\config\Sercos3_Simulation.SCI
+			FSDeleteFile ..\..\..\..\..\application\control\config\Sercos3.cfgr
+			
+			FSCopy ..\..\..\..\ManagerProject\PB\config\profibusmaster.cfgr ..\..\..\..\..\application\control\config
+			FSCopy ..\..\..\..\ManagerProject\PB\config\EcoRpc_0.dbm ..\..\..\..\..\application\control\config
+			FSCopy ..\..\..\..\ManagerProject\PB\config\sercos2.cfgr ..\..\..\..\..\application\control\config
+			
+		CaseElse
+			Message Wrong bus master (Option14_ManagerProject)!! Only Profibus and Sercos III supported
+	EndSelect
+Return
+
+SubRoutine ExportSlaveInterface
+	//copy config-files to config folder
+	SelectCase Option14 // Variant of bus master
+		Case SercosIII
+			SelectNode RPC1
+			ExportSlave Profinet
+	EndSelect
+Return

@@ -1,0 +1,127 @@
+(*------------------------------------------------------------------------------
+*                             (c) 2004 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*-------------------------------------------------------------------------------
+*  Component    : RC
+*  Modul        : RcUserDialog.ttp
+*  First Author : nmr
+*  Date         : 15.03.2005
+*-------------------------------------------------------------------------------
+*  Description:
+*
+*  Interface for TeachView user dialogues
+*-------------------------------------------------------------------------------
+*)
+
+
+(*------------------------------------------------------------------------------
+* globals
+*)
+
+ROUTINE SetDialog(textNr : DINT; text : STRING) : BOOL GLOBAL      
+VAR      
+   progName : STRING;      
+   lineNr   : DINT;      
+   progHdl  : DINT;       
+END_VAR      
+      
+   CommonStart(textNr, text); 
+   gRcDataDialog.varName := "";     
+   CommonEnd();
+   RETURN gRcDataDialog.viewRetVal > 0;      
+END_ROUTINE      
+      
+      
+ROUTINE ReadInteger(textNr : DINT; text : STRING; var : STRING; minVal : DINT; maxVal : DINT) : BOOL GLOBAL     
+      
+   CommonStart(textNr, text); 
+   gRcDataDialog.varName := var;      
+   gRcDataDialog.limitDINT[0] := minVal;      
+   gRcDataDialog.limitDINT[1] := maxVal;      
+   CommonEnd();
+   RETURN gRcDataDialog.viewRetVal > 0;      
+END_ROUTINE      
+      
+      
+ROUTINE ReadReal(textNr : DINT; text : STRING; var : STRING; minVal : REAL; maxVal : REAL) : BOOL GLOBAL    
+      
+   CommonStart(textNr, text); 
+   gRcDataDialog.varName := var;      
+   gRcDataDialog.limitREAL[0] := minVal;      
+   gRcDataDialog.limitREAL[1] := maxVal;      
+   CommonEnd();
+   RETURN gRcDataDialog.viewRetVal > 0;      
+END_ROUTINE     
+   
+   
+ROUTINE ReadBool(textNr : DINT; text : STRING; var : STRING) : BOOL GLOBAL 
+      
+   CommonStart(textNr, text); 
+   gRcDataDialog.varName := var; 
+   CommonEnd();
+   RETURN gRcDataDialog.viewRetVal > 0;      
+END_ROUTINE      
+  
+
+ROUTINE ReadEnum(textNr : DINT; text : STRING; var : STRING) : BOOL GLOBAL   
+      
+   CommonStart(textNr, text); 
+   gRcDataDialog.varName := var; 
+   CommonEnd();
+   RETURN gRcDataDialog.viewRetVal > 0;      
+END_ROUTINE      
+  
+
+ROUTINE ReadString(textNr : DINT; text : STRING; var : STRING) : BOOL GLOBAL    
+      
+   CommonStart(textNr, text); 
+   gRcDataDialog.varName := var; 
+   CommonEnd();
+   RETURN gRcDataDialog.viewRetVal > 0;      
+END_ROUTINE      
+  
+
+(*--------------------------------------------------------------------------------
+* private members
+*)
+
+ROUTINE CommonStart(textNr : DINT; text : STRING) PRIVATE
+VAR      
+   progName : STRING;      
+   lineNr   : DINT;      
+   progHdl  : DINT;       
+END_VAR      
+
+   WAIT NOT gRcDataDialog.ctrlRequest;
+   gRcDataDialog.viewResponse := FALSE; 
+   gRcDataDialog.viewRetVal := 0; 
+   
+   gRcDataDialog.projectName := ProjectName;      
+   IF GetUserProgInfo(progName, lineNr, progHdl) THEN      
+      gRcDataDialog.programName := progName;      
+      gRcDataDialog.lineNr := lineNr;      
+   ELSE      
+      gRcDataDialog.programName := "";      
+      gRcDataDialog.lineNr := -1;      
+   END_IF;    
+   IF textNr <> 0 THEN 
+      gRcDataDialog.textNr := textNr;  
+   ELSE 
+      gRcDataDialog.textNr := 0;  
+      gRcDataDialog.text := text;      
+   END_IF; 
+END_ROUTINE
+
+
+ROUTINE CommonEnd() PRIVATE
+
+   gRcDataDialog.ctrlRequest := TRUE;        
+   WAIT gRcDataDialog.viewResponse;  
+   IF gRcDataDialog.viewRetVal < 0 THEN
+      RcuSetMessageOnce(RcUserDialog_WarVarNotFound, -1, 1, 0, "RcUserDialog.CommonEnd");
+   ELSIF gRcDataDialog.viewRetVal = 0 THEN
+      DebugPrint(eTraceRcuConfig, "Cancel pressed");
+   END_IF;
+   gRcDataDialog.ctrlRequest := FALSE;        
+END_ROUTINE

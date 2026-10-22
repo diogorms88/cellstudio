@@ -1,0 +1,1488 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bauder                                                       *
+*   E-Mail:      Manfred.Bauder@durr.com                                      *
+*                                                                             *
+*   Modul:       TRcuVisionSmartRay.tts                                       *
+*   Description: Interface to SmartRay-System                                 *
+*-----------------------------------------------------------------------------*
+*  
+
+
+
+
+Schnittstelle zu SmartRay-PC:
+
+Eingaenge:
+
+0  0  WORD  16 RCU1.HWI_wDisPos                 Abweichung Lage in Tool-Y-Richtung
+2  0  WORD  16 RCU1.HWI_wDisHeight              Abweichung Abstand (in Tool-Z-Richtung)
+4  0  WORD  16 RCU1.HWI_wRoll                   Kippwinkel quer zur Bewegungsrichtung
+6  0  WORD  16 RCU1.HWI_wPitch                  Kippwinkel in Bewegungsrichtung
+8  0  BOOL  1  RCU1.HWI_mStrobe                 Strobe Daten gueltig
+   1  BOOL  1  RCU1.HWI_mRunning                Sensor runnung (Messung laeuft)
+   2  BOOL  1  RCU1.HWI_mOnTrack                OnTrack (Kontur im Sichtbereich)
+   3  BOOL  1  RCU1.HWI_mError                  allg. Fehler
+	4	BOOL	1	--	Reserve
+	5	BOOL	1	--	Reserve
+	6	BOOL	1	--	Reserve
+	7	BOOL	1	--	Reserve
+9	0	BYTE	8	--	Reserve
+
+Ausgaenge:
+
+0	0	BOOL	1	RCU1.HWO_mRobotReady             Roboter bereit
+	1	BOOL	1	RCU1.HWO_mFindContour            Suchfahrt
+	2	BOOL	1	RCU1.HWO_mTracking               Bahnfuehrung
+	3	BOOL	1	--	Reserve
+	4	BOOL	1	--	Reserve
+	5	BOOL	1	--	Reserve
+	6	BOOL	1	--	Reserve
+	7	BOOL	1	--	Reserve
+1	0	BYTE	8	--	Reserve
+2  0  WORD  16 RCU1.HWO_wError                  Fehler Roboter
+
+Schhnittstelle zum Sensor
+
+Ausgaenge:
+      BOOL  1  RCU1.HWO_mStart                  Startsignal vom Roboter, schaltet Laser ein
+                                                und startet Bildaufnahme
+      BOOL  1  RCU1.HWO_mPosition               Positionssignal vom Roboter (optional)
+      BOOL  1  RCU1.HWO_mLuft1                  Ansteuerung Blasluft (Vorwärtsfahrt)
+      BOOL  1  RCU1.HWO_mLuft2                  Ansteuerung Blasluft (Rückwärtsfahrt)
+      
+Eingaenge:
+      BOOL  1  RCU1.HWI_mLaser                  Rueckmeldung Laser ein
+           
+*)
+(************************************************************************
+* Variables
+*)
+
+TYPE
+   TRcuPID : STRUCT
+      Enable         : BOOL;
+      Kp             : REAL; // Proportionalbeiwert
+      Ki             : REAL; // Integrierbeiwert
+      Kd             : REAL; // Differenzierbeiwert
+      Ta             : REAL; // Abtastzeit
+      q0             : REAL; // Kp+Ki*Ta+Kd/Ta
+      q1             : REAL; // -Kp-2*Kd/Ta
+      q2             : REAL; // Kd/Ta
+      ek             : REAL; // Regelabweichung Abtastung k
+      ek_1           : REAL; // Regelabweichung Abtastung k-1
+      ek_2           : REAL; // Regelabweichung Abtastung k-2
+      Yk             : REAL; // Sollwert Abtastung k
+      Yk_1           : REAL; // Sollwert Abtastung k-1
+   END_STRUCT;
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+
+VAR
+   iLoggerNumber         : INT;
+   bCfgDataRead          : BOOL;
+END_VAR
+
+
+
+//------------------------------------------------------------------------
+// Read configuration and map PB
+//------------------------------------------------------------------------
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+   
+ VAR
+   bError          : BOOL;
+   iCatalogHdl     : DINT;    // handle of the Configuration directory
+   iTemp           : DINT;
+   rTemp           : REAL;
+   s               : STRING;
+ END_VAR
+    
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcSmartRay_ErrMappKin, myRobot.kinListInx, 1, instId, "TRcuVisionSmartRay.ReadConfig");
+      RETURN FALSE;
+   END_IF; 
+   //read robotcontrol.cfg
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "SmartRay", iCatalogHdl) THEN
+      IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+         IF (iTemp <> 1) THEN
+            PRINT("---------------------------------------");
+            PRINT("------- SmartRay deactivated ----------");  
+            PRINT("---------------------------------------");
+            bCfgDataRead := FALSE;
+            RETURN FALSE;
+         ELSE
+            iLoggerNumber := myRobot.logger.ActivateLogger("SmartRay-Logger", myRobot);
+            IF (iLoggerNumber = 0) THEN
+              PRINT("LOG Kein Token fuer Logger erhalten");
+            END_IF; 
+            IF CatalogReadReal(iCatalogHdl, "MaxCorrVal", rTemp, TRUE) THEN
+               MaxKorr.mValues[0] := rTemp;
+               MaxKorr.mValues[1] := rTemp;
+               MaxKorr.mValues[2] := rTemp;
+            ELSE
+               MaxKorr.mValues[0] := 10.0;
+               MaxKorr.mValues[1] := 10.0;
+               MaxKorr.mValues[2] := 10.0;
+            END_IF;
+            IF CatalogReadReal(iCatalogHdl, "MaxDeltaCorr", rTemp, TRUE) THEN
+               rMaxDeltaCorr := rTemp;
+            ELSE
+               rMaxDeltaCorr := 0.5;
+            END_IF;
+            IF CatalogReadIntRange(iCatalogHdl, "SignDisPos", iTemp, -1, 1, TRUE) THEN
+               rSignDisPos := iTemp;
+            ELSE
+               rSignDisPos := 1.0;
+            END_IF;
+            IF CatalogReadIntRange(iCatalogHdl, "CriterionSeamEnd", iTemp, 0, 10, TRUE) THEN
+               iCritSeamEnd := iTemp;
+            ELSE
+               iCritSeamEnd := 1;
+            END_IF;
+            
+            CatalogReadRealRange(iCatalogHdl, "ScalFactorPos",   rScalPos , 0.0, 1000.0, FALSE);
+            CatalogReadRealRange(iCatalogHdl, "ScalFactorOri",   rScalOri , 0.0, 1000.0, FALSE);
+
+            IF CatalogGetHandleRelative(myRobot.rcCatHdl, "SmartRay.HeightControl", iCatalogHdl) THEN
+               IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+                  IF (iTemp <> 1) THEN
+                     DisHeightControl.Enable := FALSE;
+                  ELSE
+                     DisHeightControl.Enable := TRUE;
+                     CatalogReadRealRange(iCatalogHdl, "Kp", DisHeightControl.Kp , 0.0, 1.0, FALSE);
+                     CatalogReadRealRange(iCatalogHdl, "Ki", DisHeightControl.Ki , 0.0, 1.0, FALSE);
+                     CatalogReadRealRange(iCatalogHdl, "Kd", DisHeightControl.Kd , 0.0, 1.0, FALSE);
+                  END_IF;
+               ELSE
+                  DisHeightControl.Enable := FALSE;
+               END_IF;
+            ELSE
+               DisHeightControl.Enable := FALSE;
+            END_IF;
+            
+            IF CatalogGetHandleRelative(myRobot.rcCatHdl, "SmartRay.PosControl", iCatalogHdl) THEN
+               IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+                  IF (iTemp <> 1) THEN
+                     DisPosControl.Enable := FALSE;
+                  ELSE
+                     DisHeightControl.Enable := TRUE;
+                     CatalogReadRealRange(iCatalogHdl, "Kp", DisPosControl.Kp , 0.0, 1.0, FALSE);
+                     CatalogReadRealRange(iCatalogHdl, "Ki", DisPosControl.Ki , 0.0, 1.0, FALSE);
+                     CatalogReadRealRange(iCatalogHdl, "Kd", DisPosControl.Kd , 0.0, 1.0, FALSE);
+                  END_IF;
+               ELSE
+                  DisPosControl.Enable := FALSE;
+               END_IF;
+            ELSE
+               DisPosControl.Enable := FALSE;
+            END_IF;
+            
+            //Map In-/Out-Signals from PB-Master
+            MapSmartRaySignals();
+         END_IF;
+      ELSE  
+         bError := TRUE;
+         myRobot.DebugPrint(eTraceVision, "SmartRay not enabled");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      bError := TRUE;
+      myRobot.DebugPrint(eTraceVision, "No configuration for SmartRay found");
+      RETURN FALSE;
+   END_IF;
+   
+   IF bError THEN 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler beim Lesen der Konfiguration SmartRay");// Fehlermeldung ersetzen!!!!
+      RcuSetMessageOnce(TRcSmartRay_ErrCfg, myRobot.kinListInx, 1, instId, "TRcuVisionSmartRay.ReadConfig");
+      PRINT("----------------------------------");
+      PRINT("----  Boot-up SmartRay failed ----");
+      PRINT("----------------------------------");
+      RETURN FALSE;
+   ELSE
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Lesen der Katalog-Daten SmartRay erfolgreich beendet");
+      bCfgDataRead := TRUE;
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+ 
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE InitSmartRay()
+
+   IF NOT bCfgDataRead THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler beim Initialisieren Smartray");// Fehlermeldung ersetzen!!!!
+      RcuSetMessageOnce(TRcSmartRay_ErrCfg, myRobot.kinListInx, 2, instId, "TRcuVisionSmartRay.InitSmartRay");
+      RETURN;
+   END_IF;
+   
+   WAIT myRobot.initKinComplete;
+   
+   myRobot.bOnlineCorr := TRUE;
+
+   // Kemroskop test
+   SwoAddRealVariable(rDisPos,    "SmartRay.DIS_POS");
+   SwoAddRealVariable(rDisHeight, "SmartRay.DIS_HEIGHT");
+   SwoAddRealVariable(rRoll,      "SmartRay.ROLL");
+   SwoAddRealVariable(rPitch,     "SmartRay.PITCH");
+   SwoAddRealVariable(deltaFrame.mPos.mValues[1], "SmartRay.Regler-Y-Korr"); 
+   SwoAddRealVariable(deltaFrame.mPos.mValues[2], "SmartRay.Regler-Z-Korr"); 
+   SwoAddRealVariable(KorrVector.mValues[0],      "SmartRay.KorrVector-X");
+   SwoAddRealVariable(KorrVector.mValues[1],      "SmartRay.KorrVector-Y");
+   SwoAddRealVariable(KorrVector.mValues[2],      "SmartRay.KorrVector-Z");
+   SwoAddRealVariable(rDisHeightMin,              "SmartRay.DIS_HEIGHT_MIN");
+   SwoAddBoolVariable(InSignals.bOnTrack.svBool,  "SmartRay.bOnTrack");
+   SwoAddBoolVariable(bCorrActive,                "SmartRay.bCorrActive");
+   SwoAddBoolVariable(OutSignals.bStart.svBool,   "SmartRay.bStart");
+   SwoAddBoolVariable(OutSignals.bFindContour.svBool,  "SmartRay.bFindContour");
+   SwoAddBoolVariable(OutSignals.bTracking.svBool,"SmartRay.bTracking");
+
+   START ObserveCorrActive();
+   START ObserveSearchFlag();
+   START ObserveErrorsFromSmartRay();
+   START TestCorrValues();
+   
+   OutSignals.bRobotReady.svBool := UPDATE(NOT(myRobot.bRcuAnyErrorPending OR bErrorPending));
+
+//   START ObserveContinue(); // nicht fuer Smartray! Test neue Funktionen zum Suchen
+   
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Boot-up SmartRay finished");
+   PRINT("------------------------------------");
+   PRINT("----  Boot-up SmartRay finished ----");
+   PRINT("------------------------------------");
+   
+   RETURN;
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Setzen von Signalen zum Sensor bzw. Sensor-PC
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetSignal(CONST Signal : SR_SIGNAL; CONST State : IOTYPE)
+VAR
+   bIn : BOOL;
+END_VAR
+
+   MAINRUN();
+   CASE State OF
+      High : bIn := TRUE;
+      Low  : bIn := FALSE;
+   ELSE
+      RcuSetMessageOnce(TRcSmartRay_ErrWrongState, myRobot.kinListInx, 1, instId, "TRcuVisionSmartRay.MacroSetSignal", "SR_SETSIGNAL");
+      myRobot.ErrorReaction(TRUE);
+   END_CASE;
+   CASE Signal OF
+      SR_START       : OutSignals.bStart.svBool := bIn;
+                       OutSignals.bPosition.svBool := bIn;
+      SR_FINDCONTOUR : OutSignals.bFindContour.svBool := bIn;
+      SR_TRACK       : OutSignals.bTracking.svBool := bIn;
+      SR_AIR1        : OutSignals.bLuft1.svBool := bIn;
+      SR_AIR2        : OutSignals.bLuft2.svBool := bIn;
+   ELSE
+      RcuSetMessageOnce(TRcSmartRay_ErrWrongSignal, myRobot.kinListInx, 1, instId, "TRcuVisionSmartRay.MacroSetSignal", "SR_SETSIGNAL");
+      myRobot.ErrorReaction(TRUE);
+   END_CASE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Aktivierung/Deaktivierung der Bahnkorrektur
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOnlineCorr(CONST  State : IOTYPE)
+VAR
+   corrFrame : TMcuFrame;
+END_VAR
+
+   CASE State OF
+      High : 
+         START SetCorrActiveInMR(); // Einschalten ohne Halt
+      Low  : 
+         IF bCorrActive THEN
+            MAINRUN(); // Ausschalten mit Halt wegen Rücksetzen Trackingframe
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "SmartRay Online-Korrektur beendet");
+            myRobot.DebugPrint(eTraceVision, "SmartRay Online-Korrektur beendet");
+            bCorrActive := FALSE;
+            // Weltpunkt anfahren. Trackingframe nullen
+            myRobot.WaitMcMainCycles(5);
+            MoveToWorldPos(myRobot);
+            myRobot.DebugPrint(eTraceVision, "SmartRay Warten auf StoppedJoints");
+            WAIT myRobot.actExecData.mIsStoppedJoints;
+            myRobot.DebugPrint(eTraceVision, "SmartRay 5 Zyklen warten");
+            myRobot.WaitMcMainCycles(5);
+            myRobot.DebugPrint(eTraceVision, "SmartRay Trackingframe auf NULL setzen");
+            gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := 0.0;
+            gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := 0.0;
+            gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := 0.0;
+            KorrVector.mValues[0] := 0.0;
+            KorrVector.mValues[1] := 0.0;
+            KorrVector.mValues[2] := 0.0;
+            myRobot.DebugPrint(eTraceVision, "SmartRay 5 Zyklen warten");
+            myRobot.WaitMcMainCycles(5);
+            CalcActualObject(corrFrame);
+         END_IF;
+   ELSE
+      RcuSetMessageOnce(TRcSmartRay_ErrWrongState, myRobot.kinListInx, 2, instId, "TRcuVisionSmartRay.MacroSetSignal", "SR_CONTROL");
+      myRobot.ErrorReaction(TRUE);
+   END_CASE;
+END_ROUTINE
+
+ROUTINE SetCorrActiveInMR() PRIVATE
+   MAINRUN();
+    myRobot.logger.SetLoggerStep(iLoggerNumber, "SmartRay Online-Korrektur aktiviert");
+   bCorrActive := TRUE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Start der Suchfahrt
+//  ab jetzt werden die Sensorwerte ausgewertet. Die Position mit der kleinsten
+//  Abweichung wird gespeichert
+//-----------------------------------------------------------------------------
+ROUTINE MacroStartSearch(sm : SMODE)
+VAR
+   corrFrame : TMcuFrame;
+END_VAR
+
+   MAINRUN();
+   IF (sm = SR_DISTANCE) OR (sm = SR_POS) THEN
+      // Regelung ausschalten
+      IF bCorrActive THEN
+         myRobot.DebugPrint(eTraceVision, "SmartRay Suchfahrt Regelung wird ausgeschaltet");
+         bCorrActive := FALSE;
+         // Weltpunkt anfahren. Trackingframe nullen
+         MoveToWorldPos(myRobot);
+         myRobot.DebugPrint(eTraceVision, "SmartRay Warten auf StoppedJoints");
+         WAIT myRobot.actExecData.mIsStoppedJoints;
+         myRobot.DebugPrint(eTraceVision, "SmartRay 5 Zyklen warten");
+         myRobot.WaitMcMainCycles(5);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "SmartRay Trackingframe auf NULL setzen");
+         gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := 0.0;
+         gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := 0.0;
+         gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := 0.0;
+         KorrVector.mValues[0] := 0.0;
+         KorrVector.mValues[1] := 0.0;
+         KorrVector.mValues[2] := 0.0;
+         myRobot.DebugPrint(eTraceVision, "SmartRay 5 Zyklen warten");
+         myRobot.WaitMcMainCycles(5);
+         CalcActualObject(corrFrame);
+      END_IF;
+   END_IF;
+   SearchMode :=  sm;
+   bSearchDistSucc := FALSE;
+   bSearchBeginSucc := FALSE;
+   bSearchPosSucc := FALSE;
+   bSearchFlag := TRUE;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt gestartet");
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Ende der Suchfahrt
+//-----------------------------------------------------------------------------
+ROUTINE MacroGetSearchResult(P: POINT) : BOOL
+VAR
+   str        : STRING;
+   b          : BOOL;
+   sLogText   : STRING;
+   HelpFrame  : TMcuFrame;
+   DeltaFrame : TMcuFrame;
+END_VAR
+
+   STOPPOINT();
+   bSearchFlag := FALSE;
+   IF SearchMode = SR_DISTANCE THEN
+      b := bSearchDistSucc;
+      IF b THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt ABSTAND erfolgreich");
+         sLogText := "Vor Korrektur mit rActDisPos = " + STR(rActDisPos);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         sLogText := " X = " + STR(ActObjectFrame.mPos.mValues[0]) + ", Y = " + STR(ActObjectFrame.mPos.mValues[1]) + ", Z = " + STR(ActObjectFrame.mPos.mValues[2]);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         DeltaFrame.mPos.mValues[0] := 0.0;
+         DeltaFrame.mPos.mValues[1] := rActDisPos;
+         DeltaFrame.mPos.mValues[2] := 0.0;
+         DeltaFrame.mFrameTyp := eMcuFrameKardan;
+         HelpFrame := ActObjectFrame;
+         HelpFrame.mPos.mValues[0] := 0.0;
+         HelpFrame.mPos.mValues[1] := 0.0;
+         HelpFrame.mPos.mValues[2] := 0.0;
+         McuMultiplyFrames(HelpFrame, HelpFrame, DeltaFrame);
+         ActObjectFrame.mPos.mValues[0] := ActObjectFrame.mPos.mValues[0] + HelpFrame.mPos.mValues[0];
+         ActObjectFrame.mPos.mValues[1] := ActObjectFrame.mPos.mValues[1] + HelpFrame.mPos.mValues[1];
+         ActObjectFrame.mPos.mValues[2] := ActObjectFrame.mPos.mValues[2] + HelpFrame.mPos.mValues[2];
+      ELSE   
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt ABSTAND fehlgeschlagen");
+      END_IF;
+   ELSIF  SearchMode = SR_POS THEN
+      b := bSearchPosSucc;
+      IF b THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt POSITION erfolgreich");
+         (* testen!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         sLogText := "Vor Korrektur mit rActDisHeight = " + STR(rActDisHeight);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         sLogText := " X = " + STR(ActObjectFrame.mPos.mValues[0]) + ", Y = " + STR(ActObjectFrame.mPos.mValues[1]) + ", Z = " + STR(ActObjectFrame.mPos.mValues[2]);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         DeltaFrame.mPos.mValues[0] := 0.0;
+         DeltaFrame.mPos.mValues[1] := 0.0;
+         DeltaFrame.mPos.mValues[2] := rActDisHeight;
+         DeltaFrame.mFrameTyp := eMcuFrameKardan;
+         HelpFrame := ActObjectFrame;
+         HelpFrame.mPos.mValues[0] := 0.0;
+         HelpFrame.mPos.mValues[1] := 0.0;
+         HelpFrame.mPos.mValues[2] := 0.0;
+         McuMultiplyFrames(HelpFrame, HelpFrame, DeltaFrame);
+         ActObjectFrame.mPos.mValues[0] := ActObjectFrame.mPos.mValues[0] + HelpFrame.mPos.mValues[0];
+         ActObjectFrame.mPos.mValues[1] := ActObjectFrame.mPos.mValues[1] + HelpFrame.mPos.mValues[1];
+         ActObjectFrame.mPos.mValues[2] := ActObjectFrame.mPos.mValues[2] + HelpFrame.mPos.mValues[2];
+         *)
+      ELSE   
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt POSITION fehlgeschlagen");
+      END_IF;
+   ELSE
+      b := bSearchBeginSucc;
+      IF b THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt NAHTANFANG erfolgreich");
+      ELSE   
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray Suchfahrt NAHTANFANG fehlgeschlagen");
+      END_IF;
+   END_IF;
+   IF b THEN
+      P.A := ActObjectFrame.mPos.mValues[0];
+      P.B := ActObjectFrame.mPos.mValues[1];
+      P.C := ActObjectFrame.mPos.mValues[2];
+      P.D := ActObjectFrame.mOri.mValues[0];
+      P.E := ActObjectFrame.mOri.mValues[1];
+      P.F := ActObjectFrame.mOri.mValues[2];
+      P.Coord := Object;
+      P.Aux1 := ActAuxJoints.mValues[0];
+      P.Aux2 := ActAuxJoints.mValues[1];
+      P.Aux3 := ActAuxJoints.mValues[2];
+      str := P.GetInstancePathName();
+      b := WriteInitValues(str);
+      sLogText := " X = " + STR(P.A) + ", Y = " + STR(P.B) + ", Z = " + STR(P.C);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+TYPE PRIVATE
+   tsSmartRayInputs : STRUCT
+      bStrobe           : TInOutBool;          // Strobe Daten gueltig
+      bRunning          : TInOutBool;          // Sensor runnung (Messung laeuft)
+      bOnTrack          : TInOutBool;          // OnTrack (Kontur im Sichtbereich)
+      bError            : TInOutBool;          // allg. Fehler
+      wDisPos           : TInOutWord;          // Abweichung Lage in Tool-Y-Richtung
+      wDisHeight        : TInOutWord;          // Abweichung Abstand (in Tool-Z-Richtung)
+      wRoll             : TInOutWord;          // Kippwinkel quer zur Bewegungsrichtung
+      wPitch            : TInOutWord;          // Kippwinkel in Bewegungsrichtung
+      
+      bLaser            : TInOutBool;          // Rueckmeldung Laser ein     
+   END_STRUCT;
+   
+   tsSmartRayOutputs : STRUCT
+      bRobotReady       : TInOutBool;          // Roboter bereit
+      bFindContour      : TInOutBool;          // Suchfahrt
+      bTracking         : TInOutBool;          // Bahnfuehrung
+      wError            : TInOutWord;          // Fehler Roboter
+      
+      bStart            : TInOutBool;          // Startsignal vom Roboter, schaltet Laser ein
+                                               // und startet Bildaufnahme
+      bPosition         : TInOutBool;          // Positionssignal vom Roboter (optional)
+      bLuft1            : TInOutBool;          // Ansteuerung Blasluft (Vorwärtsfahrt)
+      bLuft2            : TInOutBool;          // Ansteuerung Blasluft (Rückwärtsfahrt)
+      
+   END_STRUCT;
+  
+END_TYPE
+
+(************************************************************************
+* Variables
+*)
+VAR PRIVATE
+
+   myRobot           : MAPTO TRcuRobot;
+   instId            : DINT;    // instance identification number
+   bTurnBytes        : BOOL := FALSE;
+
+   rMaxDeltaCorr     : REAL := 0.5;     // mm
+   rScalPos          : REAL := 0.01;
+   rScalOri          : REAL := 0.1;
+
+   bErrorPending     : BOOL;
+
+   bCorrActive       : BOOL;
+   MaxKorr           : TMcuVector3;  // Begrenzung der Korrektur
+    
+   rDisPos           : REAL;
+   rDisHeight        : REAL;
+   rRoll             : REAL;
+   rPitch            : REAL;
+   deltaFrame        : TMcuFrame;
+   
+   rTvDisPos         : REAL;
+   rTvDisHeight      : REAL;
+   
+   DisHeightControl  : TRcuPID;
+   DisPosControl     : TRcuPID;
+   
+   ActObjectFrame    : TMcuFrame;
+   ActObjectFrame1   : TMcuFrame;
+   ActObjectFrame2   : TMcuFrame;
+   ActObjectFrame3   : TMcuFrame;
+   ActAuxJoints      : TMcuVector;
+   rActDisPos        : REAL;
+   rActDisHeight     : REAL;
+   rDisHeightMin     : REAL;
+   rDisPosMin        : REAL;
+   
+   rSignDisPos       : REAL;
+   iCritSeamEnd      : INT;  // Nahtanfang gefunden, wenn das Signal bOnTrack mehr als
+                             // iCritSeamEnd Takte lang 0 ist
+   SearchMode        : SMODE;
+   
+   bSearchDistSucc   : BOOL; // bei SearchDistance wurde die Naht gefunden
+   bSearchPosSucc    : BOOL; // bei SearchPos wurde die Naht gefunden
+   bSearchBeginSucc  : BOOL; // bei SearchBegin wurde der Nahtabriss gefunden
+   KorrVector        : TMcuVector3;   
+   tObjectData       : OBJECT;
+   trackOffPos       : TRcuPositionCart;
+
+   InSignals         : tsSmartRayInputs;
+   OutSignals        : tsSmartRayOutputs;
+   bMappingOk        : BOOL;
+   bSearchFlag       : BOOL;
+   bAnyError         : BOOL;
+   
+   Sym_SR_InDisPos         : STRING;
+   Sym_SR_InDisHeight      : STRING;
+   Sym_SR_InRoll           : STRING;
+   Sym_SR_InPitch          : STRING;
+   Sym_SR_InStrobe         : STRING;
+   Sym_SR_InRunning        : STRING;
+   Sym_SR_InOnTrack        : STRING;
+   Sym_SR_InError          : STRING;
+   Sym_SR_InLaser          : STRING;
+   Sym_SR_OutRobotReady    : STRING;
+   Sym_SR_OutFindContour   : STRING;
+   Sym_SR_OutTracking      : STRING;
+   Sym_SR_OutError         : STRING;
+   Sym_SR_OutStart         : STRING;
+   Sym_SR_OutPosition      : STRING;
+   Sym_SR_OutLuft1         : STRING;
+   Sym_SR_OutLuft2         : STRING;
+   
+END_VAR
+
+
+
+//------------------------------------------------------------------------
+// Observe the error bit from SmartRay
+//------------------------------------------------------------------------
+ROUTINE ObserveErrorsFromSmartRay() PRIVATE
+ VAR
+   bChgErr1 : BOOL;
+   i        : SINT;
+ END_VAR 
+ 
+   bChgErr1 := IS_CHANGED(InSignals.bError.svBool);
+   WHILE TRUE DO
+     IF NOT(InSignals.bError.svBool) THEN
+        bErrorPending := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: No Error");
+     ELSE
+        IF InSignals.bError.svBool THEN
+           bErrorPending := TRUE;
+//           RcuSetMessageOnce(TRcSmartRay_ErrSmartRayPC, myRobot.kinListInx, 
+//                       1, instId, "TRcuVisionSmartRay.ObserveErrors"); 
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Fehler Intern");
+        END_IF;
+      END_IF;    
+      WAIT bChgErr1;
+      bChgErr1 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE PIDInit(CtrlStruct : TRcuPID) PRIVATE
+   // Regler initialisieren
+   CtrlStruct.q0 := CtrlStruct.Kp + CtrlStruct.Ki*CtrlStruct.Ta +
+                        CtrlStruct.Kd/CtrlStruct.Ta;
+   CtrlStruct.q1 := -CtrlStruct.Kp - 2.0*CtrlStruct.Kd/CtrlStruct.Ta;
+   CtrlStruct.q2 := CtrlStruct.Kd/CtrlStruct.Ta;
+   CtrlStruct.ek_1 := 0.0;
+   CtrlStruct.ek_2 := 0.0;
+   CtrlStruct.Yk_1 := 0.0;
+END_ROUTINE
+
+ROUTINE PIDControl(CtrlStruct : TRcuPID; VAR_IN x : REAL) PRIVATE
+   // Regelalgorithmus
+   CtrlStruct.ek := 0.0 - x; // Regelabweichung
+   CtrlStruct.Yk := CtrlStruct.Yk_1 + CtrlStruct.q0*CtrlStruct.ek +
+                        CtrlStruct.q1*CtrlStruct.ek_1 +
+                        CtrlStruct.q2*CtrlStruct.ek_2;
+   CtrlStruct.ek_2 := CtrlStruct.ek_1;
+   CtrlStruct.ek_1 := CtrlStruct.ek;
+   CtrlStruct.Yk_1 := CtrlStruct.Yk;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Ueberwachung von bCorrActive. Entkopplung vom Hauptlauf (Teachprogramm)
+//------------------------------------------------------------------------
+ROUTINE ObserveCorrActive() PRIVATE
+  
+  DisHeightControl.Ta := grCycleTime;
+  DisPosControl.Ta    := grCycleTime;
+  
+   WHILE NOT (IS_MAPPED(gyRcuTrackingFrame[myRobot.RcuRefSystemSensor])) DO
+      Sleep(100); 
+   END_WHILE;
+  
+  WHILE TRUE DO
+    IF NOT bCorrActive THEN
+       WAIT bCorrActive;
+//       IF InSignals.bOnTrack.svBool AND NOT bSearchFlag THEN
+          // Fehler Naht schon im Sichtbarkeitsbereich beim Start der Prüfung
+//          RcuSetMessageOnce(TRcSmartRay_ErrStartTooLate, myRobot.kinListInx, 1, instId, "TRcuVisionSmartRay.ObserveCorrActive");
+//       ELSE
+          // Roboter hat Position in Achsen oder in Welt angefahren 
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := 0.0;
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := 0.0;
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := 0.0;
+          START UpdateCorrValues();
+//       END_IF;
+    ELSE // bCorrActive
+       WAIT NOT bCorrActive;
+//       IF InSignals.bOnTrack.svBool AND NOT bSearchFlag THEN
+          // Fehler Naht noch im Sichtbarkeitsbereich beim Ende der Prüfung
+          // Abbruch, Umteachen!
+//          RcuSetMessageOnce(TRcSmartRay_ErrStopTooEarly, myRobot.kinListInx, 1, instId, "TRcuVisionSmartRay.ObserveCorrActive");
+//       END_IF;
+       STOP UpdateCorrValues;
+    END_IF;  
+  END_WHILE;
+  
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Solange InSignals.bOnTrack.svBool TRUE ist, werden Korrekturwerte vom
+// Smartray-Sensor gelesen zund zur Bahnregelung verwendet
+//------------------------------------------------------------------------
+ROUTINE UpdateCorrValues() PRIVATE
+VAR
+   rTmp           : REAL;
+   iTmp           : INT;
+   bChgCnt        : BOOL;
+   ActWorldFrame  : TMcuFrame;
+   HelpFrame      : TMcuFrame;
+   i              : INT;
+   rDisHeightOld  : REAL;
+   rDisPosOld     : REAL;
+END_VAR
+  
+   bChgCnt := IS_CHANGED(myRobot.actDrives.mUpdateCounterDrives);
+   DisHeightControl.Ta := grCycleTime;
+   DisPosControl.Ta    := grCycleTime;
+  
+   WHILE NOT (IS_MAPPED(gyRcuTrackingFrame[myRobot.RcuRefSystemSensor])) DO
+      Sleep(100); 
+   END_WHILE;
+  
+   WAIT InSignals.bOnTrack.svBool; // Warten bis Naht sichtbar
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "SmartRay Naht erkannt");
+   IF InSignals.bOnTrack.svBool THEN
+      ReadSensorValues(); // wegen Ueberwachung rMaxDeltaCorr
+   ELSE
+      rDisPos    := 0.0; 
+      rDisHeight := 0.0; 
+      rRoll      := 0.0; 
+      rPitch     := 0.0; 
+   END_IF;
+   rDisHeightOld := rDisHeight;
+   rDisPosOld    := rDisPos;
+   // Regler initialisieren
+   PIDInit(DisHeightControl);
+   // Regler initialisieren
+   PIDInit(DisPosControl);
+   WAIT bChgCnt;
+   bChgCnt := FALSE;    
+   
+//   WHILE InSignals.bOnTrack.svBool DO
+   START ObserveAnyError();
+   WHILE bCorrActive DO
+
+      IF InSignals.bOnTrack.svBool AND NOT bAnyError THEN
+         ReadSensorValues(); // wegen Ueberwachung rMaxDeltaCorr
+      ELSE
+         rDisPos    := 0.0; 
+         rDisHeight := 0.0; 
+         rRoll      := 0.0; 
+         rPitch     := 0.0; 
+      END_IF;
+      IF (rAbs(rDisHeightOld - rDisHeight) > rMaxDeltaCorr) THEN
+         // Fehler Differenz pro Zyklus zu grossrMaxDeltaCorr
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Sprung bei DisHeight");
+         RcuSetMessageOnce(TRcSmartRay_ErrSensorVal, myRobot.kinListInx, 
+                       1, instId, "TRcuVisionSmartRay.UpdateCorrValues", "DisHeight", STR(rDisHeightOld - rDisHeight));
+      ELSIF (rAbs(rDisPosOld - rDisPos) > rMaxDeltaCorr) THEN
+         // Fehler Differenz pro Zyklus zu gross
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Sprung bei DisPos");
+         RcuSetMessageOnce(TRcSmartRay_ErrSensorVal, myRobot.kinListInx, 
+                       2, instId, "TRcuVisionSmartRay.UpdateCorrValues", "DisPos", STR(rDisPosOld - rDisPos));
+      ELSE
+
+         // rDisPos ist die Regeldifferenz in Tool Y-Richtung
+         // rDisHeight ist die Regeldifferenz in Tool Z-Richtung
+
+         // Regelalgorithmus
+         PIDControl(DisHeightControl, rDisHeight);
+         // Regelalgorithmus
+         PIDControl(DisPosControl, rDisPos*rSignDisPos);
+
+         deltaFrame.mPos.mValues[1] := -DisPosControl.Yk;    // Korrekturwert in Tool-Y-Richtung
+         deltaFrame.mPos.mValues[2] := -DisHeightControl.Yk; // Korrekturwert in Tool-Z-Richtung 
+
+         deltaFrame.mFrameTyp := eMcuFrameKardan;
+
+         // von Tool in Objekt umrechnen
+         HelpFrame := myRobot.readBackObjectPos;
+         HelpFrame.mPos.mValues[0] := 0.0;
+         HelpFrame.mPos.mValues[1] := 0.0;
+         HelpFrame.mPos.mValues[2] := 0.0;
+
+         // Korrekturwert in Objektkoordinaten
+         McuMultiplyFrames(HelpFrame, HelpFrame, deltaFrame);
+
+         // absolute Abweichungen von der programmierten Bahn begrenzen
+         KorrVector.mValues[0] := gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] + HelpFrame.mPos.mValues[0];
+         KorrVector.mValues[1] := gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] + HelpFrame.mPos.mValues[1];
+         KorrVector.mValues[2] := gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] + HelpFrame.mPos.mValues[2];
+
+         IF (rAbs(KorrVector.mValues[0]) > MaxKorr.mValues[0]) OR
+            (rAbs(KorrVector.mValues[1]) > MaxKorr.mValues[1]) OR
+            (rAbs(KorrVector.mValues[2]) > MaxKorr.mValues[2]) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Maximale Positionsabweichung zu gross");
+            RcuSetMessageOnce(TRcSmartRay_ErrMaxPosDev, myRobot.kinListInx, 
+                          1, instId, "TRcuVisionSmartRay.UpdateCorrValues");
+         ELSE
+            gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := KorrVector.mValues[0];
+            gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := KorrVector.mValues[1];
+            gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := KorrVector.mValues[2];
+            CalcActualObject(HelpFrame);
+         END_IF;    
+      END_IF;
+      WAIT bChgCnt;
+      bChgCnt := FALSE;    
+   END_WHILE;
+   STOP ObserveAnyError;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "SmartRay bCorrActive = FALSE");
+  
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+// 
+//------------------------------------------------------------------------
+ROUTINE TestCorrValues() PRIVATE
+VAR
+   bChgCnt        : BOOL;
+END_VAR
+  
+   bChgCnt := IS_CHANGED(myRobot.actDrives.mUpdateCounterDrives);
+   WHILE TRUE DO 
+      IF NOT InSignals.bOnTrack.svBool THEN
+         ReadSensorValues();
+         rTvDisPos := rDisPos;
+         rTvDisHeight := rDisHeight;
+      ELSE
+         IF bTurnBytes THEN
+            rTvDisPos    := TurnByte(InSignals.wDisPos.svWord ) * rScalPos; 
+            rTvDisHeight := TurnByte(InSignals.wDisHeight.svWord ) * rScalPos; 
+         ELSE  
+            rTvDisPos    := (InSignals.wDisPos.svWord ) * rScalPos; 
+            rTvDisHeight := (InSignals.wDisHeight.svWord ) * rScalPos; 
+         END_IF;
+      END_IF;
+      WAIT bChgCnt;
+      bChgCnt := FALSE;    
+   END_WHILE;
+  
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Die aktuelle Position wird in Weltkoordinaten umgerechnet und diese
+// Position angefahren. Dadurch wird das Tracking beendet
+//------------------------------------------------------------------------
+ROUTINE MoveToWorldPos(kin : TRcuKinematic) PRIVATE
+VAR
+   i : INT;
+END_VAR;
+
+   kin.DebugPrint(eTraceVision, "MoveToWorldPos");
+   
+   // read actual values and transform to the specified reference system
+   IF NOT RcuReadTransformedActPos(kin, eRcuRefSystemWorld, trackOffPos.frame) THEN
+      RcuSetMessageOnce(RcuTracking_ErrTrafoNoSucc, kin.kinListInx, 1, 0, "RcuTracking.MoveToWorldPos", kin.robotName);
+      RETURN;
+   END_IF;
+   
+   kin.DebugPrint(eTraceVision, "X = " + STR(trackOffPos.frame.mPos.mValues[0]) +
+                                "Y = " + STR(trackOffPos.frame.mPos.mValues[1]) +
+                                "Z = " + STR(trackOffPos.frame.mPos.mValues[2]));
+   kin.DebugPrint(eTraceVision, "A = " + STR(trackOffPos.frame.mOri.mValues[0]) +
+                                "B = " + STR(trackOffPos.frame.mOri.mValues[1]) +
+                                "C = " + STR(trackOffPos.frame.mOri.mValues[2]));
+   trackOffPos.refSys := eRcuRefSystemWorld;
+   
+   IF IsPaintArm7VWrist(kin) THEN
+      GetActAdditionalPos(trackOffPos.add, kin);
+   END_IF;
+   
+   trackOffPos.nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO trackOffPos.nrAuxJoints - 1 DO
+      trackOffPos.auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   kin.progPath.Lin(trackOffPos);
+
+END_ROUTINE
+
+
+
+//------------------------------------------------------------------------
+// Ueberwachung von bSearchFlag. Entkopplung vom Hauptlauf (Teachprogramm)
+//------------------------------------------------------------------------
+ROUTINE ObserveSearchFlag() PRIVATE
+  
+   WHILE TRUE DO
+      WAIT bSearchFlag;
+      IF SearchMode = SR_DISTANCE THEN
+         START SearchPointDistance();
+         WAIT NOT bSearchFlag;
+         STOP SearchPointDistance;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtabstand ENDE");
+      ELSIF SearchMode = SR_POS THEN
+         START SearchPointPos();
+         WAIT NOT bSearchFlag;
+         STOP SearchPointPos;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtposition ENDE");
+      ELSE 
+         START SearchPointBegin();
+         WAIT NOT bSearchFlag;
+         STOP SearchPointBegin;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtanfang ENDE");
+      END_IF;
+   END_WHILE;
+  
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Suchfunktion: es wird die Position in Objektkoordinaten gespeichert, bei
+//               der der Betrag von rDisHeight sein Minimum (ideal 0) hat 
+//------------------------------------------------------------------------
+ROUTINE SearchPointDistance() PRIVATE
+VAR
+   bChgCnt        : BOOL;
+END_VAR
+  
+   bChgCnt := IS_CHANGED(myRobot.actDrives.mUpdateCounterDrives);
+  
+   // Warten bis Daten vom Sensor gueltig sind
+   bSearchDistSucc := FALSE;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtabstand Warten auf 'Naht gefunden'");
+   WAIT InSignals.bOnTrack.svBool;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtabstand START");
+   ReadSensorValues();
+   rDisHeightMin := 100.0;
+   ActObjectFrame  := myRobot.readBackObjectPos;
+   bSearchDistSucc := TRUE;
+   
+   WHILE TRUE DO
+      WAIT bChgCnt;
+      bChgCnt := FALSE;
+      IF myRobot.bRcuAnyErrorPending OR bErrorPending THEN // Fehler bei Suchfahrt
+         bSearchDistSucc := FALSE;
+      END_IF;
+      ReadSensorValues();
+      IF InSignals.bOnTrack.svBool THEN
+         IF (rAbs(rDisHeight) <= rAbs(rDisHeightMin)) THEN
+            ActObjectFrame := myRobot.readBackObjectPos;
+            ActAuxJoints := myRobot.readBackVals.mJoints.mAuxJoints;
+            rActDisPos := rDisPos*rSignDisPos;
+            rDisHeightMin := rDisHeight;
+         END_IF;
+//      ELSE
+//         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtabstand 'Naht verloren'");
+//         RcuSetMessageOnce(TRcSmartRay_ErrOnTrack, myRobot.kinListInx, 
+//                       1, instId, "TRcuVisionSmartRay.SearchPointDistance");
+      END_IF;
+   END_WHILE;
+  
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Suchfunktion: es wird die Position in Objektkoordinaten gespeichert, bei
+//               der der Betrag von rDisPos sein Minimum (ideal 0) hat 
+//------------------------------------------------------------------------
+ROUTINE SearchPointPos() PRIVATE
+VAR
+   bChgCnt        : BOOL;
+END_VAR
+  
+   bChgCnt := IS_CHANGED(myRobot.actDrives.mUpdateCounterDrives);
+  
+   // Warten bis Daten vom Sensor gueltig sind
+   bSearchPosSucc := FALSE;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtposition Warten auf 'Naht gefunden'");
+   WAIT InSignals.bOnTrack.svBool;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtposition START");
+   ReadSensorValues();
+   rDisPosMin := 100.0;
+   ActObjectFrame := myRobot.readBackObjectPos;
+   bSearchPosSucc := TRUE;
+   
+   WHILE TRUE DO
+      WAIT bChgCnt;
+      bChgCnt := FALSE;
+      IF myRobot.bRcuAnyErrorPending OR bErrorPending THEN // Fehler bei Suchfahrt
+         bSearchPosSucc := FALSE;
+      END_IF;
+      ReadSensorValues();
+      IF InSignals.bOnTrack.svBool THEN
+         IF (rAbs(rDisPos) <= rAbs(rDisPosMin)) THEN
+            ActObjectFrame := myRobot.readBackObjectPos;
+            ActAuxJoints := myRobot.readBackVals.mJoints.mAuxJoints;
+            rActDisHeight := rDisHeight;
+            rDisPosMin := rDisPos*rSignDisPos;
+         END_IF;
+//      ELSE
+//         myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtabstand 'Naht verloren'");
+//         RcuSetMessageOnce(TRcSmartRay_ErrOnTrack, myRobot.kinListInx, 
+//                       1, instId, "TRcuVisionSmartRay.SearchPointDistance");
+      END_IF;
+   END_WHILE;
+  
+END_ROUTINE
+
+
+ROUTINE ObserveAnyError()
+   bAnyError := FALSE;
+   WAIT myRobot.bRcuAnyErrorPending OR bErrorPending;
+   bAnyError := TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Suchfunktion: es wird die Position in Objektkoordinaten gespeichert, bei
+//               der das Signal ONTRACK von 1 auf 0 wechselt (Nahtanfang) 
+//------------------------------------------------------------------------
+ROUTINE SearchPointBegin() PRIVATE
+VAR
+   bFound : BOOL;
+   iAnz   : INT;
+END_VAR
+
+   // Warten bis Daten vom Sensor gueltig sind
+   START ObserveAnyError();
+   bSearchBeginSucc := FALSE;
+   WAIT InSignals.bOnTrack.svBool;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Suchfahrt Nahtanfang START");
+   IF (iCritSeamEnd <= 1) THEN
+      WAIT NOT InSignals.bOnTrack.svBool; //Nahtabriss
+      ActPosInVisionRelCoord(ActObjectFrame);
+      ActAuxJoints := myRobot.readBackVals.mJoints.mAuxJoints;
+   ELSE
+      bFound := FALSE;
+      WHILE NOT bFound DO
+         WAIT NOT InSignals.bOnTrack.svBool;
+         ActPosInVisionRelCoord(ActObjectFrame);
+         ActAuxJoints := myRobot.readBackVals.mJoints.mAuxJoints;
+         iAnz := 0;
+         WHILE NOT InSignals.bOnTrack.svBool AND (iAnz <= iCritSeamEnd) DO
+            iAnz := iAnz + 1;
+            myRobot.WaitMcMainCycles(1);
+         END_WHILE;
+         IF iAnz > iCritSeamEnd THEN
+            bFound := TRUE; // Nahtabriss
+         END_IF;
+      END_WHILE;
+   END_IF;
+   STOP ObserveAnyError;
+   IF bAnyError THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Fehler waehrend Suchfahrt");
+   ELSE   
+      bSearchBeginSucc := TRUE;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Smartray: Nahtanfang gefunden");
+   END_IF;
+  
+END_ROUTINE
+
+ROUTINE StorePositions()
+VAR
+   bChgCnt        : BOOL;
+END_VAR
+  
+   bChgCnt := IS_CHANGED(myRobot.actDrives.mUpdateCounterDrives);
+  
+   WHILE TRUE DO
+      ActObjectFrame1 := ActObjectFrame2;
+      ActObjectFrame2 := ActObjectFrame3;
+      ActPosInVisionRelCoord(ActObjectFrame3);
+      WAIT bChgCnt;
+      bChgCnt := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+
+ROUTINE ActPosInVisionRelCoord(tcp : TMcuFrame)
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := myRobot.readBackVals.mCartPos;
+   actPos.mFrame.mOri := myRobot.readBackVals.mCartOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(myRobot.kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(myRobot.RcuRefSystemVisionRel, refSysId) THEN
+      PRINT("ActPosInVisionRelCoord RcuRefSystemVisionRel = "+STR(myRobot.RcuRefSystemVisionRel)+" refSysId = "+STR(refSysId));
+      // ERROR
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         PRINT("Fehler bei McuTransformPosCart in TRcuVisionSmartRay");
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         //ERROR
+      END_IF;
+      tcp := calcPos.mFrame;
+   ELSE
+      tcp := actPos.mFrame;
+   END_IF;
+END_ROUTINE
+
+
+
+ROUTINE ReadSensorValues() PRIVATE
+   //SmartRay-Values lesen
+   IF bTurnBytes THEN
+      rDisPos    := TurnByte(InSignals.wDisPos.svWord ) * rScalPos; 
+      rDisHeight := TurnByte(InSignals.wDisHeight.svWord ) * rScalPos; 
+      rRoll      := TurnByte(InSignals.wRoll.svWord ) * rScalOri;
+      rPitch     := TurnByte(InSignals.wPitch.svWord ) * rScalOri;
+   ELSE  
+      rDisPos    := (InSignals.wDisPos.svWord ) * rScalPos; 
+      rDisHeight := (InSignals.wDisHeight.svWord ) * rScalPos; 
+      rRoll      := (InSignals.wRoll.svWord ) * rScalOri;
+      rPitch     := (InSignals.wPitch.svWord ) * rScalOri;
+   END_IF;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------------------
+// calculate object and correction values for teachview
+//----------------------------------------------------------------------------------------
+ROUTINE CalcActualObject(corrFrame : TMcuFrame) PRIVATE
+
+VAR
+   mRefSysId  : TMcuDbObjID;
+   tSrObject  : TMcuTransformation;
+   tObject    : TMcuTransformation;
+   lCorrFrame : TMcuFrame;
+END_VAR
+
+   lCorrFrame := corrFrame;
+   RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, tSrObject.mRefSysID);
+   McuCreateTrsf(mRefSysId, tSrObject);
+   IF McuReadTrsfInWorld(mRefSysId, tObject) THEN
+      tObjectData.X_mm  := tObject.mFrame.mPos.mValues[0];
+      tObjectData.Y_mm  := tObject.mFrame.mPos.mValues[1];
+      tObjectData.Z_mm  := tObject.mFrame.mPos.mValues[2];
+      tObjectData.A_deg := tObject.mFrame.mOri.mValues[0];
+      tObjectData.B_deg := tObject.mFrame.mOri.mValues[1];
+      tObjectData.C_deg := tObject.mFrame.mOri.mValues[2];
+   END_IF;
+
+   McuReleaseDbObj(mRefSysId);
+
+END_ROUTINE 
+
+
+      
+ROUTINE RcuReadSymbols() : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      name : STRING;
+      i      : SINT;
+   END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionSmartRay.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      // SmartRay PC
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InDisPos", Sym_SR_InDisPos, TRUE) THEN
+         Sym_SR_InDisPos := "HWI_wDisPos";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InDisHeight", Sym_SR_InDisHeight, TRUE) THEN
+         Sym_SR_InDisHeight := "HWI_wDisHeight";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InRoll", Sym_SR_InRoll, TRUE) THEN
+         Sym_SR_InRoll := "HWI_wRoll";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InPitch", Sym_SR_InPitch, TRUE) THEN
+         Sym_SR_InPitch := "HWI_wPitch";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InStrobe", Sym_SR_InStrobe, TRUE) THEN
+         Sym_SR_InStrobe := "HWI_mStrobe";
+      END_IF;      
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InRunning", Sym_SR_InRunning, TRUE) THEN
+         Sym_SR_InRunning := "HWI_mRunning";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InOnTrack", Sym_SR_InOnTrack, TRUE) THEN
+         Sym_SR_InOnTrack := "HWI_mOnTrack";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InError", Sym_SR_InError, TRUE) THEN
+         Sym_SR_InError := "HWI_mError";
+      END_IF;
+
+      // SmartRay Sensor
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_InLaser", Sym_SR_InLaser, TRUE) THEN
+         Sym_SR_InLaser := "HWI_mLaser";
+      END_IF;
+  
+      // SmartRay PC
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutRobotReady", Sym_SR_OutRobotReady, TRUE) THEN
+         Sym_SR_OutRobotReady := "HWO_mRobotReady";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutFindContour", Sym_SR_OutFindContour, TRUE) THEN
+         Sym_SR_OutFindContour := "HWO_mFindContour";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutTracking", Sym_SR_OutTracking, TRUE) THEN
+         Sym_SR_OutTracking := "HWO_mTracking";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutError", Sym_SR_OutError, TRUE) THEN
+         Sym_SR_OutError := "HWO_wError";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutStart", Sym_SR_OutStart, TRUE) THEN
+         Sym_SR_OutStart := "HWO_mStart";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutPosition", Sym_SR_OutPosition, TRUE) THEN
+         Sym_SR_OutPosition := "HWO_mPosition";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutLuft1", Sym_SR_OutLuft1, TRUE) THEN
+         Sym_SR_OutLuft1 := "HWO_mLuft1";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SR_OutLuft2", Sym_SR_OutLuft2, TRUE) THEN
+         Sym_SR_OutLuft2 := "HWO_mLuft2";
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionSmartRay.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+RETURN TRUE;
+
+END_ROUTINE
+
+
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to Smartray
+//----------------------------------------------------------------------------------------
+ROUTINE MapSmartRaySignals() PRIVATE
+VAR
+   sNameSvVar         : STRING;
+   i                  : INT;
+   iRobot             : DINT;
+END_VAR
+ 
+   bMappingOk := TRUE;
+   iRobot     := myRobot.kinListInx;
+   
+   RcuReadSymbols();   
+  
+(*****************************************************************************************
+***********   Inputs   *******************************************************************
+******************************************************************************************)
+
+   MapAndCheckBoolIn(iRobot, InSignals.bStrobe,    Sym_SR_InStrobe,    bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bRunning,   Sym_SR_InRunning,   bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bOnTrack,   Sym_SR_InOnTrack,   bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bError,     Sym_SR_InError,     bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bLaser,     Sym_SR_InLaser,     bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wDisPos,    Sym_SR_InDisPos,    bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wDisHeight, Sym_SR_InDisHeight, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wRoll,      Sym_SR_InRoll,      bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wPitch,     Sym_SR_InPitch,     bMappingOk);
+
+(*****************************************************************************************
+***********   Outputs   ******************************************************************
+******************************************************************************************)   
+		   
+   MapAndCheckBoolOut(iRobot, OutSignals.bRobotReady,  Sym_SR_OutRobotReady,  bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bFindContour, Sym_SR_OutFindContour, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bTracking,    Sym_SR_OutTracking,    bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bStart,       Sym_SR_OutStart,       bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bPosition,    Sym_SR_OutPosition,    bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bLuft1,       Sym_SR_OutLuft1,       bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bLuft2,       Sym_SR_OutLuft2,       bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wError,       Sym_SR_OutError,       bMappingOk);
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, 0, "TRcuVisionSmartRay.MapSmartRaySignals");
+   END_IF;   
+END_ROUTINE
+
+(******************************************************************************
+* systemroutine - kinematic is released by RDESELECT
+******************************************************************************)
+
+ROUTINE RELEASE()
+VAR
+   corrFrame : TMcuFrame;
+END_VAR
+
+   IF NOT bMappingOk THEN
+      RETURN;
+   END_IF;
+   IF myRobot.bReleaseBlockedByHandler THEN   
+      myRobot.DebugPrint(eTraceAutoControl, "TRcuVisionSmartRay.RELEASE: not executed - releaseBlockedByHandler");
+   ELSE
+      bCorrActive                    := FALSE;
+      bSearchFlag                    := FALSE;
+      OutSignals.bStart.svBool       := FALSE;
+      OutSignals.bPosition.svBool    := FALSE;
+      OutSignals.bTracking.svBool    := FALSE;
+      OutSignals.bLuft1.svBool       := FALSE;
+      OutSignals.bLuft2.svBool       := FALSE;
+      OutSignals.bFindContour.svBool := FALSE;
+      CalcActualObject(corrFrame);
+   END_IF;
+END_ROUTINE
+
+
+
+
+
+
+(*
+//=============================================================================
+// nicht Smartray
+// Test-Prototyp neue Funktionen zum Suchen 
+
+In TRcuProgPath in der Routine  Move nach:
+
+   // Uphold the routine until motion is finished
+   START WaitFinished(finished, delete);
+
+folgendes Einfügen:
+
+   IF myRobot.vision.VisionSmartRay.bNextMoveWithStop THEN
+      //myRobot.vision.VisionSmartRay.bNextMoveWithStop := FALSE;
+      STOP myRobot.vision.VisionSmartRay.ObserveStopSignal;
+      myRobot.vision.VisionSmartRay.bStopFlag := TRUE;
+      START myRobot.vision.VisionSmartRay.ObserveStopSignal(finished, delete);
+   END_IF;
+
+
+
+VAR
+   signal1           : BOOL; // zum Test statt HW-Eingang
+   signal2           : BOOL; // zum Test statt HW-Eingang
+   bStopFlag         : BOOL;
+   bNextMoveWithStop : BOOL;
+   bContinueFlag     : BOOL;
+   bFound            : BOOL;
+   bFinished         : BOOL;
+END_VAR
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Start der Suchfahrt
+//-----------------------------------------------------------------------------
+ROUTINE MacroStartSearchWithStop()
+
+   bNextMoveWithStop := TRUE;
+   bFound := FALSE;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Start der Suchfahrt
+//-----------------------------------------------------------------------------
+ROUTINE MacroStartSearchSlow(v : REAL)
+VAR
+   newOvr : REAL;
+END_VAR
+
+   MAINRUN();
+   bFinished := FALSE;
+   WAIT signal1 OR bFinished;
+   IF signal1 THEN
+      myRobot.rSearchSlowOverride := v/myRobot.rActProgVelocity;
+      newOvr := myRobot.override/1000.0 * myRobot.rSearchSlowOverride;
+      McuSetTimeOverride(myRobot.kinematicMcuId, newOvr);
+      PRINT("MacroStartSearchSlow Geschwindigkeit reduziert");
+   END_IF;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Ende der Suchfahrt mit Stop Rueckgabe Punkt
+//-----------------------------------------------------------------------------
+ROUTINE MacroEndSearchWithStop(P : POINT) : BOOL
+VAR
+   str : STRING;
+   b   : BOOL;
+END_VAR
+
+   bNextMoveWithStop := FALSE;
+   MAINRUN();
+   bFinished := TRUE;
+   myRobot.rSearchSlowOverride := 1.0;
+   McuSetTimeOverride(myRobot.kinematicMcuId, myRobot.override/1000.0);
+   IF bFound THEN
+      P.A := ActObjectFrame.mPos.mValues[0];
+      P.B := ActObjectFrame.mPos.mValues[1];
+      P.C := ActObjectFrame.mPos.mValues[2];
+      P.D := ActObjectFrame.mOri.mValues[0];
+      P.E := ActObjectFrame.mOri.mValues[1];
+      P.F := ActObjectFrame.mOri.mValues[2];
+      P.Coord := Object;
+      P.Aux1 := ActAuxJoints.mValues[0];
+      P.Aux2 := ActAuxJoints.mValues[1];
+      P.Aux3 := ActAuxJoints.mValues[2];
+      str := P.GetInstancePathName();
+      b := WriteInitValues(str);
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - Ende der Suchfahrt mit Stop. Rückgabe neues Objekt
+//-----------------------------------------------------------------------------
+ROUTINE MacroEndSearchWithStopObj(Pref : POINT; OrgObj : OBJECT; NewObj : OBJECT) : BOOL
+VAR
+   str : STRING;
+   b   : BOOL;
+   PrefFrame    : TMcuFrame;
+   PrefInvFrame : TMcuFrame;
+   OrgObjFrame  : TMcuFrame;
+   NewObjFrame  : TMcuFrame;
+END_VAR
+
+   bNextMoveWithStop := FALSE;
+   MAINRUN();
+   bFinished := TRUE;
+   myRobot.rSearchSlowOverride := 1.0;
+   McuSetTimeOverride(myRobot.kinematicMcuId, myRobot.override/1000.0);
+   IF bFound THEN
+      
+      PrefFrame.mFrameTyp := eMcuFrameKardan;
+      PrefFrame.mPos.mValues[0] := Pref.A;
+      PrefFrame.mPos.mValues[1] := Pref.B;
+      PrefFrame.mPos.mValues[2] := Pref.C;
+      PrefFrame.mOri.mValues[0] := Pref.D;
+      PrefFrame.mOri.mValues[1] := Pref.E;
+      PrefFrame.mOri.mValues[2] := Pref.F;
+      
+      McuInvertFrame(PrefInvFrame, PrefFrame);
+      
+      OrgObjFrame.mFrameTyp := eMcuFrameKardan;
+      OrgObjFrame.mPos.mValues[0] := OrgObj.X_mm;
+      OrgObjFrame.mPos.mValues[1] := OrgObj.Y_mm;
+      OrgObjFrame.mPos.mValues[2] := OrgObj.Z_mm;
+      OrgObjFrame.mOri.mValues[0] := OrgObj.A_deg;
+      OrgObjFrame.mOri.mValues[1] := OrgObj.B_deg;
+      OrgObjFrame.mOri.mValues[2] := OrgObj.C_deg;
+      
+      McuMultiplyFrames(NewObjFrame, OrgObjFrame, ActObjectFrame);
+      McuMultiplyFrames(NewObjFrame, NewObjFrame, PrefInvFrame);
+      
+      NewObj.X_mm := NewObjFrame.mPos.mValues[0];
+      NewObj.Y_mm := NewObjFrame.mPos.mValues[1];
+      NewObj.Z_mm := NewObjFrame.mPos.mValues[2];
+      NewObj.A_deg := NewObjFrame.mOri.mValues[0];
+      NewObj.B_deg := NewObjFrame.mOri.mValues[1];
+      NewObj.C_deg := NewObjFrame.mOri.mValues[2];
+
+      str := NewObj.GetInstancePathName();
+      b := WriteInitValues(str);
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE  ObserveStopSignal(finished: BOOL; delete : BOOL)
+   
+   PRINT("ObserveStopSignal gestartet");
+   WAIT signal2 OR finished; // finished vom Fahrbefehl
+   bFinished := TRUE; // Search_with_slow beenden
+   IF signal2 THEN
+      myRobot.ActPosInObjectCoord(ActObjectFrame);
+      ActAuxJoints := myRobot.readBackVals.mJoints.mAuxJoints;
+      bFound := TRUE;
+//      McuSetTimeOverrideFactor(myRobot.kinematicMcuId,0.1);
+      PRINT("ObserveStopSignal beendet mit Sensorsignal");
+      McuStopMove(myRobot.kinematicMcuId);
+      WAIT myRobot.isNotMovingOnPath;
+      bContinueFlag := TRUE;
+   ELSE
+      PRINT("ObserveStopSignal beendet ohne Sensorsignal");
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE ObserveContinue()
+   WHILE TRUE DO
+      WAIT bContinueFlag;
+      bContinueFlag := FALSE;
+//      deleteMove := TRUE;
+//      myRobot.SetMotionMode(eRcuMMgrModeStopJoints); 
+//      WAIT myRobot.isStopped; // @? if stop then keep in mind stoppedOnPath 
+      PRINT("ObserveContinue vor Clear");
+      myRobot.Clear();
+//      myRobot.SetMotionMode(eRcuMMgrModeAuto);
+      ContinueProg(myRobot.selectingFlow.flowId);
+      PRINT("ObserveContinue nach ContinueProg");
+   END_WHILE;
+END_ROUTINE
+
+// Ende neue Funktionen
+//==============================================================================
+*)
+
+
+
+
+

@@ -1,0 +1,1435 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Carl-Benz-Str. 34                                                         *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bauder                                                       *
+*   E-Mail:      Manfred.Bauder@durr.com                                      *
+*                                                                             *
+*   Modul:       TRcuVisionTool.tts                                           *
+*   Description: Interface to VMT-Vision-System and handling of data          *
+*                Measure and correction of tool                               *
+*-----------------------------------------------------------------------------*
+*  
+
+
+
+   direkte Schnittstelle zu VMT (ohne SPS) 
+
+
+
+Schnittstelle zu VMT-Vision:
+
+Eingaenge vom VMT-PC:
+____________________________________________________________________________________________________________________
+Byte	   Bit Nr.	   Wert / Bedeutung
+____________________________________________________________________________________________________________________
+0	      0	         1: Handeingabe (Option; kann auch zusätzlich zu Bit Automatikbetrieb gesetzt werden)
+0	      1	         1: Automatikbetrieb
+0	      2	         1: Simulation (nur bei 3D; zusätzlich zu Bit Automatikbetrieb)
+0        3           1: Bereit (0: System kann keine weiteren Kommandos bearbeiten !)
+0        4           1: Bildaufnahme beendet
+0        5           1: Messung beendet
+0        6           1: Prüfung laeuft
+0        7           1: Typ gueltig
+
+1        0           1: allgemeiner Fehler / Sammelfehler
+1        1           1: Fehler Kommunikation (z.B. Timeout bei Datenübertragung)
+1        2           1: Messwerte außer Toleranz (nur bei 3D oder DK)
+1        3           1: Fehler bei Messung (z.B.: Verspannung außer Toleranz) (nur bei 3D oder DK)
+1        4           1: Falscher oder deaktivierter Typ/Farbe angewählt oder Parityfehler (nur bei 3D oder DK)
+1        5           Reserve
+1        6           1: NIO Düsenkontrolle (nur bei DK !)
+1        7           1: Messung ungenau (nur Hinweis, kein Fehler !  muss nicht quittiert werden)]
+
+2        0           Reserve
+2        1           1: Allgemeiner Fehler (nur bei BK !)
+2        2           1: Erkennung fehlgeschlagen (nur bei BK !)
+2        3           1: Grenzwertüberschreitung (nur bei BK !)
+2        4           1: Kollisionswarnung (nur bei BK !)
+2        5           1: nicht berechnet (nur bei BK !)
+2        6           1: Sensorfehler (nur bei BK !)
+2        7           Reserve (z.B. für zusätzliche Fehlerausgänge)
+
+3        0           1: 3D/DK: Auslesen Schnittstelle (HS zu „3D/DK: Senden übernommen“)
+3        0 – 5       Reserve (z.B. für zusätzliche Ausgänge)
+3        6           1: Schutzklappen auf
+3        7           1: Lampen an
+
+4        0 – 3       Nummer des aktuell angelegten Korrekturvektors (bei 3D oder Düsenkorrektur)
+4        4 – 7       Gesamtanzahl der anzulegenden Korrekturvektoren (bei 3D oder Düsenkorrektur)
+
+5        0 – 7       Reserve
+6        0 – 7       Status für aktuellen Vektor: 0=IO,1=NIO
+7        0 – 3       Wertebereich Rotation (0=Wert x 1°, 1= Wert x 1/10°, 2= Wert x 1/100° ,3= Wert x 1/1000°)
+7        4 – 7       Wertebereich Translation (0=Wert x 1mm, 1= Wert x 1/10mm, ... )
+8        0 – 7       Verschiebung X (LSB)
+9        0 – 7       Verschiebung X (MSB)
+10       0 – 7       Verschiebung Y (LSB)
+11       0 – 7       Verschiebung Y (MSB)
+12       0 – 7       Verschiebung Z (LSB)
+13       0 – 7       Verschiebung Z (MSB)
+14       0 – 7       Verdrehung X (LSB)
+15       0 – 7       Verdrehung X (MSB)
+16       0 – 7       Verdrehung Y (LSB)
+17       0 – 7       Verdrehung Y (MSB)
+18       0 – 7       Verdrehung Z (LSB)
+19       0 – 7       Verdrehung Z (MSB)
+
+Ausgaenge zum VMT-PC:
+____________________________________________________________________________________________________________________
+Byte	   Bit Nr.	   Wert / Bedeutung
+____________________________________________________________________________________________________________________
+0        0           Reserve
+0        1           1: Automatikbetrieb
+0        2           1: Simulation (zusätzlich zu Bit Automatikbetrieb)
+0        3           Reserve
+0        4           1: Start Messung
+0        5           1: Messung abbrechen
+0        6           1: Störungsquittierung
+0        7           1: Typübernahme (HS zu „Typ gültig“)
+
+1        0-7         1-255: Typ (Prüfplanauswahl :Karossentyp, Düsentyp, BK-Vorwahl, …)
+
+2        0           1: Roboterposition 1 (bei DK)
+2        1           1: Roboterposition 2 (bei DK)
+2        2           Reserve
+2        3           Reserve
+2        4           Reserve
+2        5           Reserve
+2        6           Reserve
+2        7           Reserve
+3        0           1: 3D/DK: Senden übernommen (HS zu „3D/DK: Auslesen Schnittstelle“)
+
+3        1-7         Reserve
+-------------------------------------------------------------------------------------
+
+
+                      
+-------------------------------------------------------------------------------------
+*)
+
+CONSTANT
+END_CONSTANT
+
+
+TYPE   
+END_TYPE    
+
+
+
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+
+VAR
+   bEnabled                 : BOOL;
+   bCfgDataRead             : BOOL;
+   bBootUpOk                : BOOL;
+   bSimulate                : BOOL;
+
+   rLinLimit               : REAL;
+   rRotLimit               : REAL;
+   iScaleFact_T            : INT := 10000;
+   iScaleFact_R            : INT := 10000;
+   rKorr_X                 : REAL := 0.0;
+   rKorr_Y                 : REAL := 0.0;
+   rKorr_Z                 : REAL := 0.0;
+   rKorr_RX                : REAL := 0.0;
+   rKorr_RY                : REAL := 0.0;
+   rKorr_RZ                : REAL := 0.0;
+   
+   CorrFrame          : TMcuFrame;
+   TVRefTool          : TOOL;
+   TVCorrTool         : TOOL;
+   TVRefToolName      : STRING;
+   TVCorrToolName     : STRING;
+   TVToolNr           : INT;
+   bUserPageVisible   : BOOL;
+   
+END_VAR   
+
+
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+VAR
+   bError : BOOL;
+   iTemp       : DINT;
+   iCatalogHdl : DINT;
+END_VAR
+
+   bError := FALSE;
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcVisionTool_ErrMappKin, myRobot.kinListInx, 2, instId, "TRcuVisionTool.ReadConfig");
+      RETURN FALSE;
+   END_IF; 
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "VMT_TC", iCatalogHdl) THEN
+      IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+         IF (iTemp <> 1) THEN
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            myRobot.DebugPrint(eTraceVision, "---------- TC deactivated -------------");  
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            bCfgDataRead := TRUE;
+            RETURN FALSE;
+         ELSE
+            IF NOT CatalogReadRealRange(iCatalogHdl, "LinearLimit", rLinLimit , 0.0, 50.0, FALSE) THEN
+               rLinLimit := 5.0;
+            END_IF;
+            IF NOT CatalogReadRealRange(iCatalogHdl, "RotationLimit", rRotLimit , 0.0, 5.0, FALSE) THEN
+               rRotLimit := 0.5;
+            END_IF;
+
+            IF CatalogReadIntRange(iCatalogHdl, "SimulateTC", iTemp, 0, 1, TRUE) THEN
+               bSimulate := iTemp = 1;
+            ELSE
+               bSimulate := FALSE;
+            END_IF;
+         END_IF;
+      ELSE  
+         bError := TRUE;
+         myRobot.DebugPrint(eTraceVision, "TC not enabled");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      bError := TRUE;
+      myRobot.DebugPrint(eTraceVision, "No configuration for TC found");
+      RETURN FALSE;
+   END_IF;
+
+   IF NOT bError THEN
+      MapBkSignals();
+   END_IF;
+   
+   IF bMappingOk AND NOT bError THEN
+      bCfgDataRead := TRUE;
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(TRcVisionTool_ErrInit, myRobot.kinListInx, 1, instId, "TRcuVisionTool.ReadConfig");
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      myRobot.DebugPrint(eTraceVision, "-------- Boot-Up TC failed ------------");  
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      bCfgDataRead := FALSE;
+      RETURN FALSE;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE Init()
+VAR
+   s : STRING;
+END_VAR
+
+   IF NOT bCfgDataRead THEN
+      RcuSetMessageOnce(TRcVisionTool_ErrInit, myRobot.kinListInx, 2, instId, "TRcuVisionTool.Init");
+      RETURN;
+   END_IF;
+   
+   WAIT myRobot.initKinComplete;
+   WAIT myRobot.fixPosReady;
+   IF myRobot.vision.iLoggerNumber <> 0 THEN
+      iLoggerNumber := myRobot.vision.iLoggerNumber;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT TC initialized");
+   END_IF;
+   bBkError := UPDATE(InSignals.bVmt_BK_ErrDetection.svBool OR InSignals.bVmt_BK_ErrSensor.svBool OR InSignals.bVmt_BK_ErrOverflow.svBool
+                   OR InSignals.bVmt_BK_ErrComputation.svBool OR InSignals.bVmt_BK_ErrGeneral.svBool OR InSignals.bVmt_BK_ErrCollision.svBool);
+   bTcError := UPDATE(InSignals.bVmt_ErrGeneral.svBool OR InSignals.bVmt_ErrType.svBool OR InSignals.bVmt_ErrOverflow.svBool
+                   OR InSignals.bVmt_ToolNotOk.svBool OR InSignals.bVmt_ErrMeasure.svBool);
+   myRobot.fieldbusOut.bLightOn.svBool := UPDATE(InSignals.bVmt_SwitchOnLight.svBool);
+   myRobot.fieldbusOut.bOpenCover.svBool := UPDATE(InSignals.bVmt_OpenCamCover.svBool);
+   START ObserveErrorBits();
+   START ObserveErrorQuit();
+   START ObserveWarPrecision();
+   myRobot.DebugPrint(eTraceVision, "--------------------------------");
+   myRobot.DebugPrint(eTraceVision, "---  Boot-up VMT_TC finished ---");
+   myRobot.DebugPrint(eTraceVision, "--------------------------------");
+   bBootUpOk := TRUE;
+   myRobot.vision.bTCBootUpOk := TRUE;
+   bUserPageVisible := TRUE;
+   RETURN;
+END_ROUTINE
+
+
+ROUTINE TC_Start(ToolNr : DINT) : BOOL
+VAR
+   timeOut : BOOL;
+END_VAR
+
+   IF (ToolNr < 0) OR (ToolNr > 255) THEN
+      RcuSetMessageOnce(TRcVisionTool_ErrInvalidTool, myRobot.kinListInx, 1, instId, "TRcuVisionTool.TC_Start", myRobot.progPath.GetSource());
+      myRobot.ErrorReaction(TRUE);
+   END_IF;
+   bTCActive := TRUE;
+
+   OutSignals.bVmt_NewType.svBool := FALSE;
+   OutSignals.bVmt_StartMeasure.svBool := FALSE;
+   OutSignals.byteVmt_Type.svByte := 0;
+   OutSignals.bVmt_Position1.svBool := FALSE;
+   OutSignals.bVmt_Position2.svBool := FALSE;
+   OutSignals.bVmt_NewData.svBool := FALSE;
+
+   // check errors
+   IF bTcError THEN
+      OutSignals.bVmt_AckError.svBool := TRUE;
+   END_IF;
+   myRobot.WaitMcMainCycles(10);
+   OutSignals.bVmt_AckError.svBool := FALSE;
+   
+   timeOut := FALSE;
+   SysTimerSet(5000, timeOut);
+   WAIT InSignals.bVmt_Ready.svBool OR timeOut OR bSimulate;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TC_Start while waiting for bVmt_Ready");
+      RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 1, instId, "TRcuVisionTool.TC_Start", "Vmt_Ready");
+      myRobot.ErrorReaction(TRUE);
+   END_IF;
+   
+   
+   iToolNr := ToolNr;
+   OutSignals.bVmt_Automatic.svBool := TRUE;
+   timeOut := FALSE;
+   SysTimerSet(5000, timeOut);
+   WAIT InSignals.bVmt_Automatic.svBool OR timeOut OR bSimulate;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TC_Start while waiting for bVmt_Automatic");
+      RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 2, instId, "TRcuVisionTool.TC_Start", "Vmt_Automatic");
+      myRobot.ErrorReaction(TRUE);
+   END_IF;
+   OutSignals.byteVmt_Type.svByte := ToolNr;
+   
+   myRobot.WaitMcMainCycles(6); // wait because of problems with VMT communication
+   
+   OutSignals.bVmt_NewType.svBool := TRUE;
+   SysTimerClear(timeOut);
+   timeOut := FALSE;
+   SysTimerSet(5000, timeOut);
+   WAIT InSignals.bVmt_TypeAck.svBool OR InSignals.bVmt_ErrType.svBool OR timeOut OR bSimulate;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TC_Start while waiting for bVmt_TypeAck OR bVmt_ErrType");
+      RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 3, instId, "TRcuVisionTool.TC_Start", "Vmt_TypeAck");
+      myRobot.ErrorReaction(TRUE);
+      RETURN(FALSE);
+   ELSIF InSignals.bVmt_ErrType.svBool THEN
+      OutSignals.byteVmt_Type.svByte := 0;
+      OutSignals.bVmt_NewType.svBool := FALSE;
+      OutSignals.bVmt_AckError.svBool := TRUE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT NOT InSignals.bVmt_ErrType.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 4, instId, "TRcuVisionTool.TC_Start", "NOT Vmt_ErrType");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      OutSignals.bVmt_AckError.svBool := FALSE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_Ready.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 5, instId, "TRcuVisionTool.TC_Start", "Vmt_Ready");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      RcuSetMessageOnce(TRcVisionTool_ErrInvalidTool, myRobot.kinListInx, 2, instId, "TRcuVisionTool.TC_Start", myRobot.progPath.GetSource());
+      myRobot.ErrorReaction(TRUE);
+      RETURN FALSE;
+   ELSE
+      OutSignals.byteVmt_Type.svByte := 0;
+      OutSignals.bVmt_NewType.svBool := FALSE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT NOT InSignals.bVmt_TypeAck.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 6, instId, "TRcuVisionTool.TC_Start", "NOT Vmt_TypeAck");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      myRobot.DebugPrint(eTraceVision, "TC_Start Type " + STR(ToolNr) + " send to VMT");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT TC_Start Type " + STR(ToolNr) + " send to VMT");
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE TC_SetPos(PosNr : DINT)
+VAR
+   timeOut : BOOL;
+END_VAR
+   
+   IF (PosNr < 1) OR (PosNr > 2) THEN
+      RcuSetMessageOnce(TRcVisionTool_ErrInvalidPos, myRobot.kinListInx, 1, instId, "TRcuVisionTool.TC_SetPos", myRobot.progPath.GetSource());
+      myRobot.ErrorReaction(TRUE);
+   END_IF;
+   IF (PosNr = 1) THEN
+      myRobot.DebugPrint(eTraceVision, "VMT TC_SetPos position 1");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT TC_SetPos position 1");
+      OutSignals.bVmt_Automatic.svBool := TRUE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_Automatic.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 7, instId, "TRcuVisionTool.TC_SetPos", "Vmt_Automatic");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      OutSignals.bVmt_StartMeasure.svBool := TRUE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT NOT InSignals.bVmt_Ready.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 8, instId, "TRcuVisionTool.TC_SetPos", "NOT Vmt_Ready");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      OutSignals.bVmt_Position1.svBool := TRUE;
+      ActCartInObjectCoord(P1);
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_PictureFinished.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 9, instId, "TRcuVisionTool.TC_SetPos", "Vmt_PictureFinished");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      OutSignals.bVmt_Position1.svBool := FALSE;
+      myRobot.DebugPrint(eTraceVision, "TC_SetPos picture finished for position 1");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT TC_SetPos picture finished for position 1");
+      RETURN;
+   ELSE
+      myRobot.DebugPrint(eTraceVision, "VMT TC_SetPos position 2");
+      OutSignals.bVmt_Position2.svBool := TRUE;
+      ActCartInObjectCoord(P2);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT TC_SetPos position 2");
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE TC_ReceiveTool(refTool : TOOL; corrTool : TOOL) : BOOL
+VAR
+   invCorrFrame : TMcuFrame;
+   invP1Ori     : TMcuFrame;
+   P1Ori        : TMcuFrame;
+   helpFrame    : TMcuFrame;
+   CorrToolTrans: TMcuFrame;
+END_VAR   
+
+   IF RecShiftData() THEN
+      
+      IF NOT CheckTeachPoints() THEN
+         bTCActive := FALSE;
+         RcuSetMessageOnce(TRcVisionTool_ErrWrongPos, myRobot.kinListInx, 1, instId, "TRcuVisionTool.TC_ReceiveTool" );        
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      
+      // corrTool := RefTool + correction
+      CorrFrame.mFrameTyp := eMcuFrameKardan; // Korrekturwerte von VMT
+      CorrFrame.mPos.mValues[0] := rKorr_X;
+      CorrFrame.mPos.mValues[1] := rKorr_Y;
+      CorrFrame.mPos.mValues[2] := rKorr_Z;
+      CorrFrame.mOri.mValues[0] := rKorr_RX;
+      CorrFrame.mOri.mValues[1] := rKorr_RY;
+      CorrFrame.mOri.mValues[2] := rKorr_RZ;
+      
+      P1Ori.mFrameTyp := eMcuFrameKardan;
+      P1Ori.mOri.mValues[0] := P1.mOri.mValues[0];
+      P1Ori.mOri.mValues[1] := P1.mOri.mValues[1];
+      P1Ori.mOri.mValues[2] := P1.mOri.mValues[2];
+      
+      McuInvertFrame(invCorrFrame, CorrFrame);
+      McuInvertFrame(invP1Ori, P1Ori);
+      McuMultiplyFrames(helpFrame,invP1Ori, invCorrFrame);
+      McuMultiplyFrames(CorrToolTrans, helpFrame, P1Ori);
+(*      
+      myRobot.DebugPrint(eTraceVision, "TC_ReceiveTool: First point:");
+      myRobot.DebugPrint(eTraceVision, "P1.A = " + STR(P1.mOri.mValues[0]));
+      myRobot.DebugPrint(eTraceVision, "P1.B = " + STR(P1.mOri.mValues[1]));
+      myRobot.DebugPrint(eTraceVision, "P1.C = " + STR(P1.mOri.mValues[2]));
+*)      
+      myRobot.DebugPrint(eTraceVision, "TC_ReceiveTool: Transformed correction for tool:");
+      myRobot.DebugPrint(eTraceVision, "CorrToolTrans.X = " + STR(CorrToolTrans.mPos.mValues[0]));
+      myRobot.DebugPrint(eTraceVision, "CorrToolTrans.Y = " + STR(CorrToolTrans.mPos.mValues[1]));
+      myRobot.DebugPrint(eTraceVision, "CorrToolTrans.Z = " + STR(CorrToolTrans.mPos.mValues[2]));
+      myRobot.DebugPrint(eTraceVision, "CorrToolTrans.A = " + STR(CorrToolTrans.mOri.mValues[0]));
+      myRobot.DebugPrint(eTraceVision, "CorrToolTrans.B = " + STR(CorrToolTrans.mOri.mValues[1]));
+      myRobot.DebugPrint(eTraceVision, "CorrToolTrans.C = " + STR(CorrToolTrans.mOri.mValues[2]));
+      
+      RcuCalcTool(myRobot, refTool, CorrToolTrans, corrTool);
+      
+      // Userpage
+      TVRefTool      := refTool;
+      TVCorrTool     := corrTool;
+      TVRefToolName  := refTool.GetName();
+      TVCorrToolName := corrTool.GetName();
+      TVToolNr       := iToolNr;
+      
+      
+      bTCActive := FALSE;
+      RETURN TRUE;
+   ELSE
+      bTCActive := FALSE;
+      RcuResetMessage(TRcVisionTool_WarToolCorr, myRobot.kinListInx, 1, instId, "TRcuVisionTool.TC_ReceiveTool" );
+      RETURN FALSE;
+   END_IF; 
+   bTCActive := FALSE;
+END_ROUTINE
+
+
+TYPE PRIVATE
+   tsVmtInputs : STRUCT
+      bVmt_Manual           : TInOutBool; // 1: Handeingabe
+      bVmt_Automatic        : TInOutBool; // 1: Automatikbetrieb
+      bVmt_Simulation       : TInOutBool; // 1: Simulation (nur bei 3D; zusätzlich zu Bit Automatikbetrieb)
+      bVmt_Ready            : TInOutBool; // 1: Bereit (0: System kann keine weiteren Kommandos bearbeiten !)
+      bVmt_PictureFinished  : TInOutBool; // 1: Bildaufnahme beendet
+      bVmt_MeasureFinished  : TInOutBool; // 1: Bildaufnahme beendet
+      bVmt_TypeAck          : TInOutBool; // 1: Typ übernommen ( HS zu „Typübernahme“)
+//      bVmt_ExtLight         : TInOutBool; // 1: Beleuchtung schalten von extern (Optional)
+      bVmt_ErrGeneral       : TInOutBool; // 1: allgemeiner Fehler / Sammelfehler
+      bVmt_ErrOverflow      : TInOutBool; // 1: Messwerte außer Toleranz (nur bei 3D oder DK)
+      bVmt_ErrMeasure       : TInOutBool; // 1: Fehler bei Messung (z.B.: Verspannung außer Toleranz) (nur bei 3D oder DK)
+      bVmt_ErrType          : TInOutBool; // 1: Falscher oder deaktivierter Typ/Farbe angewählt oder Parityfehler (nur bei 3D oder DK)
+      bVmt_ToolNotOk        : TInOutBool; // 1: NIO Düsenkontrolle (nur bei DK !)
+      bVmt_WarPrecision     : TInOutBool; // 1: Messung ungenau (nur Hinweis, kein Fehler !  muss nicht quittiert werden)]
+      bVmt_BK_ErrGeneral    : TInOutBool; // 1: Allgemeiner Fehler (nur bei BK !)
+      bVmt_BK_ErrDetection  : TInOutBool; // 1: Erkennung fehlgeschlagen (nur bei BK !)
+      bVmt_BK_ErrOverflow   : TInOutBool; // 1: Grenzwertüberschreitung (nur bei BK !)
+      bVmt_BK_ErrCollision  : TInOutBool; // 1: Kollisionswarnung (nur bei BK !)
+      bVmt_BK_ErrComputation: TInOutBool; // 1: nicht berechnet (nur bei BK !)
+      bVmt_BK_ErrSensor     : TInOutBool; // 1: Sensorfehler (nur bei BK !)
+      bVmt_DataReady        : TInOutBool; // 1: Korrekturwerte stehen an (HS zu Werte gelesen)
+      bVmt_OpenCamCover     : TInOutBool; // 1: Schutzklappen auf
+      bVmt_SwitchOnLight    : TInOutBool; // 1: Lampen an
+      byteVmt_NrOfVector    : TInOutByte; // Nummer des aktuell angelegten Korrekturvektors (bei 3D oder Düsenkorrektur)
+                                          // Gesamtanzahl der anzulegenden Korrekturvektoren (bei 3D oder Düsenkorrektur)
+      byteVmt_VectorState   : TInOutByte; // Status für aktuellen Vektor: 0=IO,1=NIO
+      byteVmt_Factor        : TInOutByte; // Wertebereich Rotation (0=Wert x 1°, 1= Wert x 1/10°, 2= Wert x 1/100° ,3= Wert x 1/1000°)
+                                          // Wertebereich Translation (0=Wert x 1mm, 1= Wert x 1/10mm, ... )
+      iVmt_X                : TInOutWord; // Verschiebung X
+      iVmt_Y                : TInOutWord; // Verschiebung Y 
+      iVmt_Z                : TInOutWord; // Verschiebung Z
+      iVmt_RX               : TInOutWord; // Verdrehung X
+      iVmt_RY               : TInOutWord; // Verdrehung Y
+      iVmt_RZ               : TInOutWord; // Verdrehung Z
+   END_STRUCT;
+   
+   tsVmtOutputs : STRUCT
+      bVmt_Automatic        : TInOutBool; // 1: Automatikbetrieb
+      bVmt_Simulation       : TInOutBool; // 1: Simulation (zusätzlich zu Bit Automatikbetrieb)
+      bVmt_StartMeasure     : TInOutBool; // 1: Start Messung
+      bVmt_AbortMeasure     : TInOutBool; // 1: Abbruch Messung
+      bVmt_NewType          : TInOutBool; // 1: Typübernahme (HS zu „Typ übernommen“)
+      bVmt_AckError         : TInOutBool; // 1: Störungsquittierung
+      byteVmt_Type          : TInOutByte; // 1-255: Typ (Prüfplanauswahl :Karossentyp, Düsentyp, BK-Vorwahl, …)
+   
+      bVmt_Position1        : TInOutBool; // 1: Roboterposition 1 (bei DK)
+      bVmt_Position2        : TInOutBool; // 1: Roboterposition 2 (bei DK)
+      bVmt_NewData          : TInOutBool; // 1: Werte gelesen (HS zu „Korrekturwerte stehen an“)
+   END_STRUCT;
+  
+END_TYPE
+
+VAR PRIVATE
+   myRobot        : MAPTO TRcuRobot;
+   iLoggerNumber  : INT;
+   instId         : DINT;    // instance identification number
+   InSignals      : tsVmtInputs;
+   OutSignals     : tsVmtOutputs;
+   bMappingOk     : BOOL;
+   iToolNr        : INT;
+
+   bSystemFault       : BOOL;   //System is in state error
+   bInAutoMode        : BOOL;   //System is in automtic mode
+   bInAdjustMode      : BOOL;   //System is in adjust mode
+   bSystemReady       : BOOL;
+   
+   bBkError           : BOOL;
+   bTcError           : BOOL;
+   
+   bTCActive          : BOOL;
+   
+   P1                 : TMcuFrame;
+   P2                 : TMcuFrame;
+   
+//---------------------------------------------------------------------------------------------------
+//-----------------  Hardware-Endpoint to Fieldbus-Master VMT-DK-System --------------------------
+//---------------------------------------------------------------------------------------------------
+   
+//--------------------------------------------------------------------------   
+//                 Inputs
+//--------------------------------------------------------------------------   
+
+// Byte 0
+   Sym_TC_In_Manual           : STRING := "HWI_mTC_Manual";          // Bit 0
+   Sym_TC_In_Automatic        : STRING := "HWI_mTC_Automatic";       // Bit 1
+   Sym_TC_In_Simulation       : STRING := "HWI_mTC_Simulation";      // Bit 2
+   Sym_TC_In_Ready            : STRING := "HWI_mTC_Ready";           // Bit 3
+   Sym_TC_In_PictureFinished  : STRING := "HWI_mTC_PictureFinished"; // Bit 4
+   Sym_TC_In_MeasureFinished  : STRING := "HWI_mTC_MeasureFinished"; // Bit 5
+   // Pruefung laeuft                                                  // Bit 6
+   Sym_TC_In_TypeAck          : STRING := "HWI_mTC_TypeAck";         // Bit 7
+//   cHW_SLI_mTC_ExtLight         : STRING := "HWI_mTC_ExtLight";        // Bit 7
+// Byte 1   
+   Sym_TC_In_ErrGeneral       : STRING := "HWI_mTC_ErrGeneral";      // Bit 0
+   Sym_TC_In_ErrCommunication : STRING := "HWI_mTC_ErrCommunication";// Bit 1
+   Sym_TC_In_ErrOverflow      : STRING := "HWI_mTC_ErrOverflow";     // Bit 2
+   Sym_TC_In_ErrMeasure       : STRING := "HWI_mTC_ErrMeasure";      // Bit 3
+   Sym_TC_In_ErrType          : STRING := "HWI_mTC_ErrType";         // Bit 4
+                                                                         // Bit 5
+   Sym_TC_In_ToolNotOk        : STRING := "HWI_mTC_ToolNotOk";       // Bit 6
+   Sym_TC_In_WarPrecision     : STRING := "HWI_mTC_WarPrecision";    // Bit 7
+// Byte 2
+   Sym_BK_In_ErrGeneral       : STRING := "HWI_mBK_ErrGeneral";      // Bit 1
+   Sym_BK_In_ErrDetection     : STRING := "HWI_mBK_ErrDetection";    // Bit 2
+   Sym_BK_In_ErrOverflow      : STRING := "HWI_mBK_ErrOverflow";     // Bit 3
+   Sym_BK_In_ErrCollision     : STRING := "HWI_mBK_ErrCollision";    // Bit 4
+   Sym_BK_In_ErrComputation   : STRING := "HWI_mBK_ErrComputation";  // Bit 5
+   Sym_BK_In_ErrSensor        : STRING := "HWI_mBK_ErrSensor";       // Bit 6
+// Byte 3   
+   Sym_TC_In_DataReady        : STRING := "HWI_mTC_DataReady";       // Bit 0
+   Sym_TC_In_OpenCamCover     : STRING := "HWI_mTC_OpenCamCover";    // Bit 6
+   Sym_TC_In_SwitchOnLight    : STRING := "HWI_mTC_SwitchOnLight";   // Bit 7
+// Byte 4   
+   Sym_TC_In_NrOfVector       : STRING := "HWI_bTC_NrOfVector";
+// Byte 6
+   Sym_TC_In_VectorState      : STRING := "HWI_bTC_VectorState";
+// Byte 7
+   Sym_TC_In_Factor           : STRING := "HWI_bTC_Factor";
+    
+// Byte 8-9   
+   Sym_TC_In_X                : STRING := "HWI_wTC_X";
+// Byte 10-11   
+   Sym_TC_In_Y                : STRING := "HWI_wTC_Y";
+// Byte 12-13   
+   Sym_TC_In_Z                : STRING := "HWI_wTC_Z";
+// Byte 14-15   
+   Sym_TC_In_RX               : STRING := "HWI_wTC_RX";
+// Byte 16-17  
+   Sym_TC_In_RY               : STRING := "HWI_wTC_RY";
+// Byte 18-19   
+   Sym_TC_In_RZ               : STRING := "HWI_wTC_RZ";
+   
+//--------------------------------------------------------------------------   
+//                 Outputs
+//--------------------------------------------------------------------------   
+
+// Byte 0
+   Sym_TC_Out_Automatic        : STRING := "HWO_mTC_Automatic";       // Bit 1
+   Sym_TC_Out_Simulation       : STRING := "HWO_mTC_Simulation";      // Bit 2
+   Sym_TC_Out_StartMeasure     : STRING := "HWO_mTC_StartMeasure";    // Bit 4
+   Sym_TC_Out_AbortMeasure     : STRING := "HWO_mTC_AbortMeasure";    // Bit 5
+   Sym_TC_Out_AckError         : STRING := "HWO_mTC_AckError";        // Bit 6
+   Sym_TC_Out_NewType          : STRING := "HWO_mTC_NewType";         // Bit 7
+// Byte 1
+   Sym_TC_Out_Type             : STRING := "HWO_bTC_Type";
+   
+// Byte 2
+   Sym_TC_Out_Position1        : STRING := "HWO_mTC_Position1";       // Bit 0
+   Sym_TC_Out_Position2        : STRING := "HWO_mTC_Position2";       // Bit 1
+// Byte 3
+   Sym_TC_Out_NewData          : STRING := "HWO_mTC_NewData";         // Bit 0
+END_VAR
+
+
+// Punkte (Frames P1 und P2) ueberpruefen: 
+// 1) Z-Richtungsvektoren müssen gleich sein
+// 2) Winkel zwischen X-Richtungsvektoren von P1 und P2 muss 90 Grad sein
+ROUTINE CheckTeachPoints() : BOOL PRIVATE
+VAR
+   P1Ori        : TMcuFrame; // Orientierung in P1
+   P2Ori        : TMcuFrame; // Orientierung in P2
+   OriMatP1     : TMcuMatrix3;  // Orientierung in P1 als Drehmatrix
+   PosVecP1     : TMcuVector3;
+   OriMatP2     : TMcuMatrix3;  // Orientierung in P2 als Drehmatrix
+   PosVecP2     : TMcuVector3;
+   XVect1       : TMcuVector3;  // X-Vektor der Drehmatrix von P1
+   XVect2       : TMcuVector3;  // X-Vektor der Drehmatrix von P2
+   ZVect        : TMcuVector3;  // Z-Vektor der Drehmatrix von P1 und P2 (muss gleich sein)
+   angle        : REAL;         // Winkel zwischen XVect1 und XVect2 ( = +90 Grad)
+   trsf         : TMcuTransformation;
+   tool         : TMcuFrame;
+   invTool      : TMcuFrame;
+   P1Flange     : TMcuFrame;    // P1 ohne Tool
+   P2Flange     : TMcuFrame;    // P2 ohne Tool
+   P1OriFl      : TMcuFrame;  // 
+   P2OriFl      : TMcuFrame;  // 
+END_VAR   
+
+   P1Ori.mFrameTyp := eMcuFrameKardan;
+   P1Ori.mOri.mValues[0] := P1.mOri.mValues[0];
+   P1Ori.mOri.mValues[1] := P1.mOri.mValues[1];
+   P1Ori.mOri.mValues[2] := P1.mOri.mValues[2];
+
+   P2Ori.mFrameTyp := eMcuFrameKardan;
+   P2Ori.mOri.mValues[0] := P2.mOri.mValues[0];
+   P2Ori.mOri.mValues[1] := P2.mOri.mValues[1];
+   P2Ori.mOri.mValues[2] := P2.mOri.mValues[2];
+
+   // auf Flansch umrechnen
+   McuReadTrsf(myRobot.kinToolMcuId, trsf);
+   tool := trsf.mFrame;
+   McuInvertFrame(invTool, tool);
+   McuMultiplyFrames(P1Flange, P1, invTool);
+   McuMultiplyFrames(P2Flange, P2, invTool);
+
+   P1OriFl.mFrameTyp := eMcuFrameKardan;
+   P1OriFl.mOri.mValues[0] := P1Flange.mOri.mValues[0];
+   P1OriFl.mOri.mValues[1] := P1Flange.mOri.mValues[1];
+   P1OriFl.mOri.mValues[2] := P1Flange.mOri.mValues[2];
+
+   P2OriFl.mFrameTyp := eMcuFrameKardan;
+   P2OriFl.mOri.mValues[0] := P2Flange.mOri.mValues[0];
+   P2OriFl.mOri.mValues[1] := P2Flange.mOri.mValues[1];
+   P2OriFl.mOri.mValues[2] := P2Flange.mOri.mValues[2];
+
+   Compute_kardan_tcp(OriMatP1, PosVecP1, P1OriFl);
+   Compute_kardan_tcp(OriMatP2, PosVecP2, P2OriFl);
+   
+   IF (rAbs(OriMatP1.mValues[2][0] - OriMatP2.mValues[2][0]) > 0.05) OR
+      (rAbs(OriMatP1.mValues[2][1] - OriMatP2.mValues[2][1]) > 0.05) OR
+      (rAbs(OriMatP1.mValues[2][2] - OriMatP2.mValues[2][2]) > 0.05) THEN
+      
+      myRobot.DebugPrint(eTraceVision," Orientierung P1");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P1Ori.mOri.mValues[0])+"  "+STR(P1Ori.mOri.mValues[1])+"  "+STR(P1Ori.mOri.mValues[2]));
+
+      myRobot.DebugPrint(eTraceVision," Orientierung P2");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P2Ori.mOri.mValues[0])+"  "+STR(P2Ori.mOri.mValues[1])+"  "+STR(P2Ori.mOri.mValues[2]));
+
+      DebugPrint(eTraceVision, "TOOL ID = " + STR(myRobot.kinToolMcuId) + " name = " + trsf.mName);
+
+      myRobot.DebugPrint(eTraceVision," Orientierung P1Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P1OriFl.mOri.mValues[0])+"  "+STR(P1OriFl.mOri.mValues[1])+"  "+STR(P1OriFl.mOri.mValues[2]));
+
+      myRobot.DebugPrint(eTraceVision," Orientierung P2Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P2OriFl.mOri.mValues[0])+"  "+STR(P2OriFl.mOri.mValues[1])+"  "+STR(P2OriFl.mOri.mValues[2]));
+
+      myRobot.DebugPrint(eTraceVision," Drehmatrix P1Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP1.mValues[0][0])+"  "+STR(OriMatP1.mValues[1][0])+"  "+STR(OriMatP1.mValues[2][0]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP1.mValues[0][1])+"  "+STR(OriMatP1.mValues[1][1])+"  "+STR(OriMatP1.mValues[2][1]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP1.mValues[0][2])+"  "+STR(OriMatP1.mValues[1][2])+"  "+STR(OriMatP1.mValues[2][2]));
+      myRobot.DebugPrint(eTraceVision," Drehmatrix P2Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP2.mValues[0][0])+"  "+STR(OriMatP2.mValues[1][0])+"  "+STR(OriMatP2.mValues[2][0]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP2.mValues[0][1])+"  "+STR(OriMatP2.mValues[1][1])+"  "+STR(OriMatP2.mValues[2][1]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP2.mValues[0][2])+"  "+STR(OriMatP2.mValues[1][2])+"  "+STR(OriMatP2.mValues[2][2]));
+            
+      myRobot.DebugPrint(eTraceVision, "CheckTeachPoints: Flanschachsen nicht gleich!");
+      myRobot.DebugPrint(eTraceVision, " P1[2][0] = "+STR(OriMatP1.mValues[2][0])+" P2[2][0] = "+STR(OriMatP2.mValues[2][0]));
+      myRobot.DebugPrint(eTraceVision, " P1[2][1] = "+STR(OriMatP1.mValues[2][1])+" P2[2][1] = "+STR(OriMatP2.mValues[2][1]));
+      myRobot.DebugPrint(eTraceVision, " P1[2][2] = "+STR(OriMatP1.mValues[2][2])+" P2[2][2] = "+STR(OriMatP2.mValues[2][2]));
+      RcuSetMessageOnce(TRcVisionTool_WarAxisNotEqual, myRobot.kinListInx, 1, instId, "TRcuVisionTool.CheckTeachPoints");        
+      RETURN FALSE;
+   END_IF;
+
+   XVect1.mValues[0] := OriMatP1.mValues[0][0];
+   XVect1.mValues[1] := OriMatP1.mValues[0][1];
+   XVect1.mValues[2] := OriMatP1.mValues[0][2];
+
+   XVect2.mValues[0] := OriMatP2.mValues[0][0];
+   XVect2.mValues[1] := OriMatP2.mValues[0][1];
+   XVect2.mValues[2] := OriMatP2.mValues[0][2];
+
+   ZVect.mValues[0] := OriMatP1.mValues[2][0];
+   ZVect.mValues[1] := OriMatP1.mValues[2][1];
+   ZVect.mValues[2] := OriMatP1.mValues[2][2];
+   AngleVector3(angle, XVect1, XVect2, ZVect);
+   angle := angle * 180.0/gcPi;
+   IF (rAbs(angle - 90.0) > 2.0) THEN
+      myRobot.DebugPrint(eTraceVision," Orientierung P1");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P1Ori.mOri.mValues[0])+"  "+STR(P1Ori.mOri.mValues[1])+"  "+STR(P1Ori.mOri.mValues[2]));
+
+      myRobot.DebugPrint(eTraceVision," Orientierung P2");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P2Ori.mOri.mValues[0])+"  "+STR(P2Ori.mOri.mValues[1])+"  "+STR(P2Ori.mOri.mValues[2]));
+
+      DebugPrint(eTraceVision, "TOOL ID = " + STR(myRobot.kinToolMcuId) + " name = " + trsf.mName);
+
+      myRobot.DebugPrint(eTraceVision," Orientierung P1Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P1OriFl.mOri.mValues[0])+"  "+STR(P1OriFl.mOri.mValues[1])+"  "+STR(P1OriFl.mOri.mValues[2]));
+
+      myRobot.DebugPrint(eTraceVision," Orientierung P2Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(P2OriFl.mOri.mValues[0])+"  "+STR(P2OriFl.mOri.mValues[1])+"  "+STR(P2OriFl.mOri.mValues[2]));
+
+      myRobot.DebugPrint(eTraceVision," Drehmatrix P1Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP1.mValues[0][0])+"  "+STR(OriMatP1.mValues[1][0])+"  "+STR(OriMatP1.mValues[2][0]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP1.mValues[0][1])+"  "+STR(OriMatP1.mValues[1][1])+"  "+STR(OriMatP1.mValues[2][1]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP1.mValues[0][2])+"  "+STR(OriMatP1.mValues[1][2])+"  "+STR(OriMatP1.mValues[2][2]));
+      myRobot.DebugPrint(eTraceVision," Drehmatrix P2Flange");
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP2.mValues[0][0])+"  "+STR(OriMatP2.mValues[1][0])+"  "+STR(OriMatP2.mValues[2][0]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP2.mValues[0][1])+"  "+STR(OriMatP2.mValues[1][1])+"  "+STR(OriMatP2.mValues[2][1]));
+      myRobot.DebugPrint(eTraceVision,"               "+STR(OriMatP2.mValues[0][2])+"  "+STR(OriMatP2.mValues[1][2])+"  "+STR(OriMatP2.mValues[2][2]));
+      myRobot.DebugPrint(eTraceVision, "Winkel ungleich +90Grad **** Winkel = "+ STR(angle));
+      RcuSetMessageOnce(TRcVisionTool_WarNo90Degree, myRobot.kinListInx, 1, instId, "TRcuVisionTool.CheckTeachPoints", STR(angle) );        
+      RETURN FALSE;
+   END_IF;
+   myRobot.DebugPrint(eTraceVision, "CheckTeachPoints: Winkel = "+ STR(angle));
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE ActCartInObjectCoord(tcp : TMcuFrame) PRIVATE
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := myRobot.actCartVals.mPos;
+   actPos.mFrame.mOri := myRobot.actCartVals.mOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(myRobot.kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, refSysId) THEN
+      myRobot.DebugPrint(eTraceVision, "ActPosInObjectCoord RcuRefSystemObject = "+STR(myRobot.RcuRefSystemObject)+" refSysId = "+STR(refSysId));
+      // ERROR
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         myRobot.DebugPrint(eTraceVision, "error in McuTransformPosCart in TRcuRobot");
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         //ERROR
+      END_IF;
+      tcp := calcPos.mFrame;
+   ELSE
+      tcp := actPos.mFrame;
+   END_IF;
+END_ROUTINE
+
+
+(*
+/*=============================================================================
+*   
+*   Compute_kardan_tcp
+*   
+*   Funktion:     Kardanwinkel auf TCP
+*   
+*   
+*============================================================================*/
+*)
+ROUTINE Compute_kardan_tcp(Ori : TMcuMatrix3; Pos : TMcuVector3; kard : TMcuFrame) PRIVATE
+VAR
+   si_a : REAL; co_a : REAL;
+   si_b : REAL; co_b : REAL;
+   si_c : REAL; co_c : REAL;
+END_VAR
+
+   si_a := Sinus(kard.mOri.mValues[0] * gcPi/180);
+   co_a := Cosinus(kard.mOri.mValues[0] * gcPi/180);
+   si_b := Sinus(kard.mOri.mValues[1] * gcPi/180);
+   co_b := Cosinus(kard.mOri.mValues[1] * gcPi/180);
+   si_c := Sinus(kard.mOri.mValues[2] * gcPi/180);
+   co_c := Cosinus(kard.mOri.mValues[2] * gcPi/180);
+  
+   Ori.mValues[0][0] :=  co_b * co_c;
+   Ori.mValues[0][1] := -co_a * si_c + si_a * si_b * co_c;
+   Ori.mValues[0][2] :=  si_a * si_c + co_a * si_b * co_c;
+
+   Ori.mValues[1][0] :=  co_b * si_c;
+   Ori.mValues[1][1] :=  co_a * co_c + si_a * si_b * si_c;
+   Ori.mValues[1][2] := -si_a * co_c + co_a * si_b * si_c;
+
+   Ori.mValues[2][0] :=  -si_b;
+   Ori.mValues[2][1] :=  si_a * co_b;
+   Ori.mValues[2][2] :=  co_a * co_b;
+
+   Pos.mValues[0] := kard.mPos.mValues[0];
+   Pos.mValues[1] := kard.mPos.mValues[1];
+   Pos.mValues[2] := kard.mPos.mValues[2];
+END_ROUTINE
+
+// Winkel der Drehung um U zwischen N1r und N1m mit Vorzeichen berechnen
+ROUTINE AngleVector3(x : REAL; N1r : TMcuVector3; N1m : TMcuVector3; U : TMcuVector3) PRIVATE
+VAR
+   N1rNorm    : TMcuVector3;
+   N1mNorm    : TMcuVector3;
+   UNorm      : TMcuVector3;
+   O1rNorm    : TMcuVector3;
+   O1mNorm    : TMcuVector3;
+   HomMatr    : HomogenMatrix;
+   InvHomMatr : HomogenMatrix;
+   HomMatm    : HomogenMatrix;
+   HomMatx    : HomogenMatrix;
+   i          : INT;
+   j          : INT;
+END_VAR
+
+   McuUnifyVec3(N1rNorm, N1r);
+   McuUnifyVec3(N1mNorm, N1m);
+   McuUnifyVec3(UNorm, U);
+   McuCrossProductVec3(O1rNorm, N1rNorm, UNorm);
+   McuCrossProductVec3(O1mNorm, N1mNorm, UNorm);
+   
+   FOR i := 0 TO 2 DO
+      HomMatr[i][0] := O1rNorm.mValues[i];
+      HomMatr[i][1] := N1rNorm.mValues[i];
+      HomMatr[i][2] := UNorm.mValues[i];
+      HomMatm[i][0] := O1mNorm.mValues[i];
+      HomMatm[i][1] := N1mNorm.mValues[i];
+      HomMatm[i][2] := UNorm.mValues[i];
+   END_FOR;
+   HomMatr[3][3] := 1.0;
+   HomMatm[3][3] := 1.0;
+   
+   InvertHomMat(InvHomMatr, HomMatr);
+   
+   MultiplyHomMat(HomMatx, InvHomMatr, HomMatm);
+   
+   x := ArcTan2(HomMatx[1][0], HomMatx[0][0]);
+      
+END_ROUTINE
+
+
+ROUTINE ObserveErrorBits() PRIVATE
+VAR
+   bChg1 : BOOL;
+   bChg2 : BOOL;
+   bChg3 : BOOL;
+   bChg4 : BOOL;
+   bChg5 : BOOL;
+   bChg6 : BOOL;
+END_VAR   
+
+   bChg1 := IS_CHANGED(InSignals.bVmt_BK_ErrGeneral.svBool);
+   bChg2 := IS_CHANGED(InSignals.bVmt_BK_ErrDetection.svBool);
+   bChg3 := IS_CHANGED(InSignals.bVmt_BK_ErrOverflow.svBool);
+   bChg4 := IS_CHANGED(InSignals.bVmt_BK_ErrCollision.svBool);
+   bChg5 := IS_CHANGED(InSignals.bVmt_BK_ErrComputation.svBool);
+   bChg6 := IS_CHANGED(InSignals.bVmt_BK_ErrSensor.svBool);
+   WHILE TRUE DO
+      IF InSignals.bVmt_BK_ErrGeneral.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarBkErr, myRobot.kinListInx, 1, instId, "TRcuVisionTool.ObserveErrorBits", "General");        
+      END_IF;
+      IF InSignals.bVmt_BK_ErrDetection.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarBkErr, myRobot.kinListInx, 2, instId, "TRcuVisionTool.ObserveErrorBits", "Detection");         
+      END_IF;
+      IF InSignals.bVmt_BK_ErrOverflow.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarBkErr, myRobot.kinListInx, 3, instId, "TRcuVisionTool.ObserveErrorBits", "Overflow");        
+      END_IF;
+      IF InSignals.bVmt_BK_ErrCollision.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarBkErr, myRobot.kinListInx, 4, instId, "TRcuVisionTool.ObserveErrorBits", "Collision");        
+      END_IF;
+      IF InSignals.bVmt_BK_ErrComputation.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarBkErr, myRobot.kinListInx, 5, instId, "TRcuVisionTool.ObserveErrorBits", "Computation");        
+      END_IF;
+      IF InSignals.bVmt_BK_ErrSensor.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarBkErr, myRobot.kinListInx, 6, instId, "TRcuVisionTool.ObserveErrorBits", "Sensor");         
+      END_IF;
+      IF bBkError THEN
+         START AckError();
+      END_IF;
+      bChg1 := FALSE;
+      bChg2 := FALSE;
+      bChg3 := FALSE;
+      bChg4 := FALSE;
+      bChg5 := FALSE;
+      bChg6 := FALSE;
+      WAIT bChg1 OR bChg2 OR bChg3 OR bChg4 OR bChg5 OR bChg6;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE AckError() PRIVATE
+   OutSignals.bVmt_AckError.svBool := TRUE;
+   WAIT NOT bBkError;
+   OutSignals.bVmt_AckError.svBool := FALSE;   
+END_ROUTINE
+
+// Quit errors
+ROUTINE ObserveErrorQuit() PRIVATE
+VAR
+   bChg : BOOL;
+END_VAR   
+   
+   bChg := IS_CHANGED(myRobot.bRcuAnyErrorPending);
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF NOT myRobot.bRcuAnyErrorPending THEN
+         OutSignals.bVmt_AckError.svBool := TRUE;
+         myRobot.WaitMcMainCycles(5);
+         OutSignals.bVmt_AckError.svBool := FALSE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveWarPrecision() PRIVATE
+VAR
+   bChg : BOOL;
+END_VAR   
+   
+   bChg := IS_CHANGED(InSignals.bVmt_WarPrecision.svBool);
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF InSignals.bVmt_WarPrecision.svBool THEN
+         RcuSetMessageOnce(TRcVisionTool_WarPrecision, myRobot.kinListInx, 1, instId, "TRcuVisionTool.ObserveWarPrecision");
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Empfangen der Verschiebedaten 
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE RecShiftData( ) : BOOL PRIVATE
+VAR
+   iFactorRot : INT;
+   iFactorTrl : INT;
+   timeOut    : BOOL;
+   d          : DINT;
+   i          : INT;
+   bRangeOK   : BOOL := FALSE;
+   sLogText   : STRING;
+END_VAR
+
+
+   timeOut := FALSE;
+   SysTimerSet(5000, timeOut);
+   WAIT InSignals.bVmt_MeasureFinished.svBool OR bTcError OR timeOut OR bSimulate;
+   IF timeOut THEN
+      RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 10, instId, "TRcuVisionTool.RecShiftData", "Vmt_MeasureFinished");
+      myRobot.ErrorReaction(TRUE);
+   ELSIF InSignals.bVmt_MeasureFinished.svBool AND NOT bTcError THEN
+
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT Measure finished");
+      myRobot.DebugPrint(eTraceVision, "RecShiftData VMT Measure finished");
+      
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_DataReady.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 11, instId, "TRcuVisionTool.RecShiftData", "Vmt_DataReady");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;      
+      
+      // Zuordnung der Verschiebewerte
+      (*
+      rKorr_X  := TurnByte(InSignals.iVmt_X.svWord );
+      rKorr_Y  := TurnByte(InSignals.iVmt_Y.svWord );
+      rKorr_Z  := TurnByte(InSignals.iVmt_Z.svWord );
+      rKorr_RX := TurnByte(InSignals.iVmt_RX.svWord );
+      rKorr_RY := TurnByte(InSignals.iVmt_RY.svWord );
+      rKorr_RZ := TurnByte(InSignals.iVmt_RZ.svWord );
+*)
+      rKorr_X  := (InSignals.iVmt_X.svWord );
+      rKorr_Y  := (InSignals.iVmt_Y.svWord );
+      rKorr_Z  := (InSignals.iVmt_Z.svWord );
+      rKorr_RX := (InSignals.iVmt_RX.svWord );
+      rKorr_RY := (InSignals.iVmt_RY.svWord );
+      rKorr_RZ := (InSignals.iVmt_RZ.svWord );
+
+      // Skalierung / Vorzeichenkontrolle
+
+      iScaleFact_R := 1;
+      iFactorRot := InSignals.byteVmt_Factor.svByte AND 16#0F;
+
+      CASE iFactorRot OF
+        0:
+          iScaleFact_R := 1;
+        1:
+          iScaleFact_R := 10;
+        2:
+          iScaleFact_R := 100;
+        4:
+          iScaleFact_R := 1000;
+        8:
+          iScaleFact_R := 10000;
+      END_CASE;
+
+      iScaleFact_T := 1;
+      iFactorTrl := SHR(InSignals.byteVmt_Factor.svByte AND 16#F0, 4);
+
+      CASE iFactorTrl OF
+        0:
+          iScaleFact_T := 1;
+        1:
+          iScaleFact_T := 10;
+        2:
+          iScaleFact_T := 100;
+        4:
+          iScaleFact_T := 1000;
+        8:
+          iScaleFact_T := 10000;
+      END_CASE;
+
+      rKorr_X  := rKorr_X / iScaleFact_T;
+      rKorr_Y  := rKorr_Y / iScaleFact_T;
+      rKorr_Z  := rKorr_Z / iScaleFact_T;
+      rKorr_RX := rKorr_RX / iScaleFact_R;
+      rKorr_RY := rKorr_RY / iScaleFact_R;
+      rKorr_RZ := rKorr_RZ / iScaleFact_R;
+
+      sLogText := " X = " + STR(rKorr_X) + ", Y = " + STR(rKorr_Y) + ", Z = " + STR(rKorr_Z);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      myRobot.DebugPrint(eTraceVision, sLogText);
+      sLogText := " Rx = " + STR(rKorr_RX) + ", Ry = " + STR(rKorr_RY) + ", Rz = " + STR(rKorr_RZ);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      myRobot.DebugPrint(eTraceVision, sLogText);
+      IF (rAbs(rKorr_X) > rLinLimit) OR
+         (rAbs(rKorr_Y) > rLinLimit) OR
+         (rAbs(rKorr_Z) > rLinLimit) OR
+         (rAbs(rKorr_RX) > rRotLimit) OR
+         (rAbs(rKorr_RY) > rRotLimit) OR
+         (rAbs(rKorr_RZ) > rRotLimit) THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "correction values out off limits");
+         rKorr_X  := 0.0;
+         rKorr_Y  := 0.0;
+         rKorr_Z  := 0.0;
+         rKorr_RX := 0.0;
+         rKorr_RY := 0.0;
+         rKorr_RZ := 0.0;
+         bRangeOK := FALSE;
+      ELSE
+         bRangeOK := TRUE;
+      END_IF;
+      
+      OutSignals.bVmt_NewData.svBool := TRUE;
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT NOT InSignals.bVmt_DataReady.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 12, instId, "TRcuVisionTool.RecShiftData", "NOT Vmt_DataReady");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      
+      OutSignals.bVmt_NewData.svBool := FALSE;
+      OutSignals.bVmt_Position2.svBool := FALSE;
+      OutSignals.bVmt_StartMeasure.svBool := FALSE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_Ready.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 13, instId, "TRcuVisionTool.RecShiftData", "Vmt_Ready");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      IF NOT bRangeOK THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrValOutOfRange, myRobot.kinListInx, 1, instId, "TRcuVisionTool.RecShiftData");
+      END_IF;
+      RETURN bRangeOK;
+   ELSIF bTcError THEN
+      OutSignals.bVmt_AckError.svBool := TRUE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT NOT bTcError OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 14, instId, "TRcuVisionTool.RecShiftData", "NOT TcError");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      
+      (*
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_MeasureFinished.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 15, instId, "TRcuVisionTool.RecShiftData", "bVmt_MeasureFinished");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      *)
+      OutSignals.bVmt_Position2.svBool := FALSE;
+      OutSignals.bVmt_StartMeasure.svBool := FALSE;
+      
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT NOT InSignals.bVmt_PictureFinished.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 16, instId, "TRcuVisionTool.RecShiftData", "NOT Vmt_PictureFinished");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      OutSignals.bVmt_AckError.svBool := FALSE;
+      SysTimerClear(timeOut);
+      timeOut := FALSE;
+      SysTimerSet(5000, timeOut);
+      WAIT InSignals.bVmt_Ready.svBool OR timeOut OR bSimulate;
+      IF timeOut THEN
+         RcuSetMessageOnce(TRcVisionTool_ErrTimeOutSignal, myRobot.kinListInx, 17, instId, "TRcuVisionTool.RecShiftData", "Vmt_Ready");
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+      RETURN FALSE;
+   ELSE
+      RETURN TRUE; // bSimulate 
+   END_IF;
+   RETURN bRangeOK;
+END_ROUTINE
+
+ROUTINE RcuReadSymbols() : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      name : STRING;
+      i      : SINT;
+   END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionTool.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      // VMT TC PC
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Manual", Sym_TC_In_Manual, TRUE) THEN
+         Sym_TC_In_Manual := "HWI_mTC_Manual";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Automatic", Sym_TC_In_Automatic, TRUE) THEN
+         Sym_TC_In_Automatic := "HWI_mTC_Automatic";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Simulation", Sym_TC_In_Simulation, TRUE) THEN
+         Sym_TC_In_Simulation := "HWI_mTC_Simulation";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Ready", Sym_TC_In_Ready, TRUE) THEN
+         Sym_TC_In_Ready := "HWI_mTC_Ready";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_PictureFinished", Sym_TC_In_PictureFinished, TRUE) THEN
+         Sym_TC_In_PictureFinished := "HWI_mTC_PictureFinished";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_MeasureFinished", Sym_TC_In_MeasureFinished, TRUE) THEN
+         Sym_TC_In_MeasureFinished := "HWI_mTC_MeasureFinished";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_TypeAck", Sym_TC_In_TypeAck, TRUE) THEN
+         Sym_TC_In_TypeAck := "HWI_mTC_TypeAck";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_ErrGeneral", Sym_TC_In_ErrGeneral, TRUE) THEN
+         Sym_TC_In_ErrGeneral := "HWI_mTC_ErrGeneral";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_ErrCommunication", Sym_TC_In_ErrCommunication, TRUE) THEN
+         Sym_TC_In_ErrCommunication := "HWI_mTC_ErrCommunication";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_ErrOverflow", Sym_TC_In_ErrOverflow, TRUE) THEN
+         Sym_TC_In_ErrOverflow := "HWI_mTC_ErrOverflow";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_ErrMeasure", Sym_TC_In_ErrMeasure, TRUE) THEN
+         Sym_TC_In_ErrMeasure := "HWI_mTC_ErrMeasure";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_ErrType", Sym_TC_In_ErrType, TRUE) THEN
+         Sym_TC_In_ErrType := "HWI_mTC_ErrType";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_ToolNotOk", Sym_TC_In_ToolNotOk, TRUE) THEN
+         Sym_TC_In_ToolNotOk := "HWI_mTC_ToolNotOk";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_WarPrecision", Sym_TC_In_WarPrecision, TRUE) THEN
+         Sym_TC_In_WarPrecision := "HWI_mTC_WarPrecision";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_ErrGeneral", Sym_BK_In_ErrGeneral, TRUE) THEN
+         Sym_BK_In_ErrGeneral := "HWI_mBK_ErrGeneral";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_ErrDetection", Sym_BK_In_ErrDetection, TRUE) THEN
+         Sym_BK_In_ErrDetection := "HWI_mBK_ErrDetection";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_ErrOverflow", Sym_BK_In_ErrOverflow, TRUE) THEN
+         Sym_BK_In_ErrOverflow := "HWI_mBK_ErrOverflow";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_ErrCollision", Sym_BK_In_ErrCollision, TRUE) THEN
+         Sym_BK_In_ErrCollision := "HWI_mBK_ErrCollision";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_ErrComputation", Sym_BK_In_ErrComputation, TRUE) THEN
+         Sym_BK_In_ErrComputation := "HWI_mBK_ErrComputation";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_ErrSensor", Sym_BK_In_ErrSensor, TRUE) THEN
+         Sym_BK_In_ErrSensor := "HWI_mBK_ErrSensor";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_DataReady", Sym_TC_In_DataReady, TRUE) THEN
+         Sym_TC_In_DataReady := "HWI_mTC_DataReady";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_OpenCamCover", Sym_TC_In_OpenCamCover, TRUE) THEN
+         Sym_TC_In_OpenCamCover := "HWI_mTC_OpenCamCover";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_SwitchOnLight", Sym_TC_In_SwitchOnLight, TRUE) THEN
+         Sym_TC_In_SwitchOnLight := "HWI_mTC_SwitchOnLight";
+      END_IF;     
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_NrOfVector", Sym_TC_In_NrOfVector, TRUE) THEN
+         Sym_TC_In_NrOfVector := "HWI_bTC_NrOfVector";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_VectorState", Sym_TC_In_VectorState, TRUE) THEN
+         Sym_TC_In_VectorState := "HWI_bTC_VectorState";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Factor", Sym_TC_In_Factor, TRUE) THEN
+         Sym_TC_In_Factor := "HWI_bTC_Factor";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_X", Sym_TC_In_X, TRUE) THEN
+         Sym_TC_In_X := "HWI_wTC_X";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Y", Sym_TC_In_Y, TRUE) THEN
+         Sym_TC_In_Y := "HWI_wTC_Y";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_Z", Sym_TC_In_Z, TRUE) THEN
+         Sym_TC_In_Z := "HWI_wTC_Z";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_RX", Sym_TC_In_RX, TRUE) THEN
+         Sym_TC_In_RX := "HWI_wTC_RX";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_RY", Sym_TC_In_RY, TRUE) THEN
+         Sym_TC_In_RY := "HWI_wTC_RY";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_In_RZ", Sym_TC_In_RZ, TRUE) THEN
+         Sym_TC_In_RZ := "HWI_wTC_RZ";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_Automatic", Sym_TC_Out_Automatic, TRUE) THEN
+         Sym_TC_Out_Automatic := "HWO_mTC_Automatic";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_Simulation", Sym_TC_Out_Simulation, TRUE) THEN
+         Sym_TC_Out_Simulation := "HWO_mTC_Simulation";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_StartMeasure", Sym_TC_Out_StartMeasure, TRUE) THEN
+         Sym_TC_Out_StartMeasure := "HWO_mTC_StartMeasure";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_AbortMeasure", Sym_TC_Out_AbortMeasure, TRUE) THEN
+         Sym_TC_Out_AbortMeasure := "HWO_mTC_AbortMeasure";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_AckError", Sym_TC_Out_AckError, TRUE) THEN
+         Sym_TC_Out_AckError := "HWO_mTC_AckError";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_NewType", Sym_TC_Out_NewType, TRUE) THEN
+         Sym_TC_Out_NewType := "HWO_mTC_NewType";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_Type", Sym_TC_Out_Type, TRUE) THEN
+         Sym_TC_Out_Type := "HWO_bTC_Type";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_Position1", Sym_TC_Out_Position1, TRUE) THEN
+         Sym_TC_Out_Position1 := "HWO_mTC_Position1";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_Position2", Sym_TC_Out_Position2, TRUE) THEN
+         Sym_TC_Out_Position2 := "HWO_mTC_Position2";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_TC_Out_NewData", Sym_TC_Out_NewData, TRUE) THEN
+         Sym_TC_Out_NewData := "HWO_mTC_NewData";
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionTool.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+RETURN TRUE;
+
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to VMT BK
+//----------------------------------------------------------------------------------------
+ROUTINE MapBkSignals() PRIVATE
+VAR
+   sNameSvVar         : STRING;
+   i                  : INT;
+   iRobot             : DINT;
+END_VAR
+ 
+   bMappingOk := TRUE;
+   iRobot     := myRobot.kinListInx;
+   
+  
+(*****************************************************************************************
+***********   Inputs   *******************************************************************
+******************************************************************************************)
+    
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_Manual,           Sym_TC_In_Manual, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_Automatic,        Sym_TC_In_Automatic, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_Simulation,       Sym_TC_In_Simulation, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_Ready,            Sym_TC_In_Ready, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_PictureFinished,  Sym_TC_In_PictureFinished, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_MeasureFinished,  Sym_TC_In_MeasureFinished, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_TypeAck,          Sym_TC_In_TypeAck, bMappingOk);
+//   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_ExtLight,         Sym_TC_In_ExtLight, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_ErrGeneral,       Sym_TC_In_ErrGeneral, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_ErrOverflow,      Sym_TC_In_ErrOverflow, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_ErrMeasure,       Sym_TC_In_ErrMeasure, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_ErrType,          Sym_TC_In_ErrType, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_ToolNotOk,        Sym_TC_In_ToolNotOk, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_WarPrecision,     Sym_TC_In_WarPrecision, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_BK_ErrGeneral,    Sym_BK_In_ErrGeneral, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_BK_ErrDetection,  Sym_BK_In_ErrDetection, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_BK_ErrOverflow,   Sym_BK_In_ErrOverflow, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_BK_ErrCollision,  Sym_BK_In_ErrCollision, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_BK_ErrComputation,Sym_BK_In_ErrComputation, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_BK_ErrSensor,     Sym_BK_In_ErrSensor, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_DataReady,        Sym_TC_In_DataReady, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_OpenCamCover,     Sym_TC_In_OpenCamCover, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bVmt_SwitchOnLight,    Sym_TC_In_SwitchOnLight, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteVmt_NrOfVector,    Sym_TC_In_NrOfVector, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteVmt_VectorState,   Sym_TC_In_VectorState, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteVmt_Factor,        Sym_TC_In_Factor, bMappingOk);
+   MapAndCheckWordIn (iRobot, InSignals.iVmt_X,                 Sym_TC_In_X, bMappingOk);
+   MapAndCheckWordIn (iRobot, InSignals.iVmt_Y,                 Sym_TC_In_Y, bMappingOk);
+   MapAndCheckWordIn (iRobot, InSignals.iVmt_Z,                 Sym_TC_In_Z, bMappingOk);
+   MapAndCheckWordIn (iRobot, InSignals.iVmt_RX,                Sym_TC_In_RX, bMappingOk);
+   MapAndCheckWordIn (iRobot, InSignals.iVmt_RY,                Sym_TC_In_RY, bMappingOk);
+   MapAndCheckWordIn (iRobot, InSignals.iVmt_RZ,                Sym_TC_In_RZ, bMappingOk);
+
+(*****************************************************************************************
+***********   Outputs   ******************************************************************
+******************************************************************************************)   
+		      
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_Automatic,        Sym_TC_Out_Automatic, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_Simulation,       Sym_TC_Out_Simulation, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_StartMeasure,     Sym_TC_Out_StartMeasure, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_AbortMeasure,     Sym_TC_Out_AbortMeasure, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_NewType,          Sym_TC_Out_NewType, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_AckError,         Sym_TC_Out_AckError, bMappingOk);
+   MapAndCheckByteOut (iRobot, OutSignals.byteVmt_Type,          Sym_TC_Out_Type, bMappingOk);
+   
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_Position1,        Sym_TC_Out_Position1, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_Position2,        Sym_TC_Out_Position2, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bVmt_NewData,          Sym_TC_Out_NewData, bMappingOk);
+      
+   
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, instId, "TRcuVisionBk.MapFieldbusSlave");
+   END_IF;   
+END_ROUTINE
+
+
+ROUTINE NEW()
+
+   instId := RcuGetInstanceId(); // instance identification number (for alarms)
+
+END_ROUTINE
+
+(******************************************************************************
+* systemroutine - kinematic is released by RDESELECT
+******************************************************************************)
+ROUTINE RELEASE()
+VAR
+   corrFrame : TMcuFrame;
+END_VAR
+
+   IF NOT bMappingOk THEN
+      RETURN;
+   END_IF;
+   IF myRobot.bReleaseBlockedByHandler THEN   
+      myRobot.DebugPrint(eTraceAutoControl, "TRcuVisionTool.RELEASE: not executed - releaseBlockedByHandler");
+   ELSE
+      IF bTCActive THEN         
+         OutSignals.bVmt_Automatic.svBool := FALSE;
+         OutSignals.bVmt_NewType.svBool := FALSE;
+         OutSignals.bVmt_StartMeasure.svBool := FALSE;
+         OutSignals.byteVmt_Type.svByte := 0;
+         OutSignals.bVmt_AckError.svBool := FALSE;
+         OutSignals.bVmt_Position1.svBool := FALSE;
+         OutSignals.bVmt_Position2.svBool := FALSE;
+         OutSignals.bVmt_NewData.svBool := FALSE;
+         OutSignals.bVmt_AbortMeasure.svBool := TRUE;
+         bTCActive := FALSE;
+         myRobot.WaitMcMainCycles(10);
+         IF bTcError THEN;
+            OutSignals.bVmt_AckError.svBool := TRUE;
+         END_IF;
+         OutSignals.bVmt_AbortMeasure.svBool := FALSE;
+         myRobot.WaitMcMainCycles(10);
+         OutSignals.bVmt_AckError.svBool := FALSE;
+      END_IF;
+   END_IF;
+END_ROUTINE

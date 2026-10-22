@@ -1,0 +1,375 @@
+(*
+Version     | ReleaseDate  | Respon | Changes
+----------- ------------------------------------------------
+V2_01.00.00 | 04.11.2010   |  PZB   | First release
+V2_01.01.00 | 25.01.2012   |  STL   | If a nozzle exchanger is used the valve YLV1 is replaced by YLV2
+V2_01.02.00 | 23.10.2015   |  RHI   | Change: Changed LV1/2 from AB_Valve_T001 to AB_MainValve_T001
+V2_01.03.00 | 08.12.2016   |  KLCH  | Change: BLV1 from AB_Initiator_T001 to AB_Initiator_T007
+
+
+<Functional description>
+Switch on air supply (YLV1) with ...Internal.PreReleaseSetValueAirSupply
+before all other process devices (LL1,LL2,turbine speed e.g) 
+will be switched on.
+After pressure initiator BLV1 gets 'TRUE' (FB_Interlocks) give the
+release for all other process devices (AB_Releases).
+<End functional description> 
+
+*)
+
+IMPORT_OVER_LISTFILE
+ Nobody
+, nReleasesOut
+, tsGenSysCfg
+, tsReleases
+, AB_Channels
+, FB_SetProtocolAdv
+, AB_MainValve_T001
+, AB_Initiator_T007
+
+END_IMPORT
+
+FUNCTION_BLOCK FB_UseReleasesYHV #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ SV_sGeneralSystemCfg : tsGenSysCfg;
+END_VAR
+
+VAR_EXTERNAL
+ GV_mInitDone : BOOL;
+ GV_sReleases : tsReleases;
+ abChannels : AB_Channels;
+ fbSetProtocol : FB_SetProtocolAdv;
+ abYLV1 : AB_MainValve_T001;
+ // abYLV2 : AB_MainValve_T001;
+ abBLV1 : AB_Initiator_T007;
+END_VAR
+
+VAR
+ iChannel : INT;
+ mFirst : BOOL;
+ mYLV1_Set : BOOL;
+ mYLV1_Set_old : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF GV_mInitDone THEN
+
+  IF (NOT mFirst) THEN
+    mFirst := TRUE;
+    // get iChannel only once
+    iChannel :=  abYLV1.fGet_ChannelNr();
+    // if a nozzle exchanger is used
+    // iChannel :=  abYLV2.fGet_ChannelNr();
+  END_IF;
+  
+  IF GV_sReleases.sReleases.Internal.PreReleaseSetValueAirSupply
+     AND 
+     (NOT abChannels.fGetChannelAnyError(i_iChannelIdx:=iChannel))
+     AND
+     abChannels.fGetChannelEnabled(i_iChannelIdx:=iChannel)
+     AND
+     (abChannels.fGetChannelReservedBy(iChannel) = Nobody)
+     AND NOT abYLV1.fGet_Interlock()
+     // if a nozzle exchanger is used
+     // AND NOT abYLV2.fGet_Interlock()
+  THEN
+    // If no release and no error flag is on the channel write InterlocksOut to ReleasesOut 
+     abYLV1.aSetDev_Set(i_mValue      := TRUE,
+                        i_nSignalNode := nReleasesOut);
+     // if a nozzle exchanger is used
+     //abYLV2.aSetDev_Set(i_mValue      := TRUE,
+     //                   i_nSignalNode := nReleasesOut);
+  END_IF;
+ 
+  mYLV1_Set := abYLV1.fGetDevSet_Set(i_nSignalNode:= nReleasesOut);
+ // if a nozzle exchanger is used
+ //mYLV1_Set := abYLV2.fGetDevSet_Set(i_nSignalNode:= nReleasesOut);
+
+  //***** set feedback air supply in simulation and set protocol entries when device is switched ******* 
+  IF SV_sGeneralSystemCfg.mSimulateProcess THEN
+
+    IF mYLV1_Set AND NOT mYLV1_Set_old THEN
+    
+      abBLV1.aSet_SimValue(i_mValue:=TRUE); 
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Set feedback air supply in simulation');
+     
+    ELSIF mYLV1_Set_old AND NOT mYLV1_Set THEN
+       
+      abBLV1.aSet_SimValue(i_mValue:=FALSE); 
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Reset feedback air supply in simulation');
+    END_IF;
+    
+  ELSE  // set protocol entries in real mode when valve is switched
+   
+    IF mYLV1_Set AND NOT mYLV1_Set_old THEN
+     
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Rising edge of switch on YLV1');
+     
+    ELSIF mYLV1_Set_old AND NOT mYLV1_Set THEN
+     
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Falling edge of switch on YLV1');
+     
+    END_IF;
+      
+  END_IF;
+  
+  mYLV1_Set_old := mYLV1_Set;
+
+END_IF; // GV_mInitDone
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 118 @Pou 25 
+@@@BEG_Comment@@@
+Version     | ReleaseDate  | Respon | Changes
+----------- ------------------------------------------------
+V2_01.00.00 | 04.11.2010   |  PZB   | First release
+V2_01.01.00 | 25.01.2012   |  STL   | If a nozzle exchanger is used the valve YLV1 is replaced by YLV2
+V2_01.02.00 | 23.10.2015   |  RHI   | Change: Changed LV1/2 from AB_Valve_T001 to AB_MainValve_T001
+V2_01.03.00 | 08.12.2016   |  KLCH  | Change: BLV1 from AB_Initiator_T001 to AB_Initiator_T007
+
+
+<Functional description>
+Switch on air supply (YLV1) with ...Internal.PreReleaseSetValueAirSupply
+before all other process devices (LL1,LL2,turbine speed e.g) 
+will be switched on.
+After pressure initiator BLV1 gets 'TRUE' (FB_Interlocks) give the
+release for all other process devices (AB_Releases).
+<End functional description> 
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(6)Nobody @RT(0) @T @T @DERIVED 0 @F @RT(19)tnChannelReservedBy @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nReleasesOut @RT(0) @T @T @DERIVED 0 @F @RT(11)eSignalNode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(17)FB_UseReleasesYHV @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(20)SV_sGeneralSystemCfg @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsGenSysCfg @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)GV_mInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)GV_sReleases @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsReleases @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(10)abChannels @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)AB_Channels @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(13)fbSetProtocol @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FB_SetProtocolAdv @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abYLV1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_MainValve_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abYLV2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_MainValve_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @T 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abBLV1 @RT(0) @T @T @DERIVED 0 @F @RT(17)AB_Initiator_T007 @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(8)iChannel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mFirst @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mYLV1_Set @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mYLV1_Set_old @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(77)
+IF GV_mInitDone THEN
+
+  IF (NOT mFirst) THEN
+    mFirst := TRUE;
+    // get iChannel only once
+    iChannel :=  abYLV1.fGet_ChannelNr();
+    // if a nozzle exchanger is used
+    // iChannel :=  abYLV2.fGet_ChannelNr();
+  END_IF;
+  
+  IF GV_sReleases.sReleases.Internal.PreReleaseSetValueAirSupply
+     AND 
+     (NOT abChannels.fGetChannelAnyError(i_iChannelIdx:=iChannel))
+     AND
+     abChannels.fGetChannelEnabled(i_iChannelIdx:=iChannel)
+     AND
+     (abChannels.fGetChannelReservedBy(iChannel) = Nobody)
+     AND NOT abYLV1.fGet_Interlock()
+     // if a nozzle exchanger is used
+     // AND NOT abYLV2.fGet_Interlock()
+  THEN
+    // If no release and no error flag is on the channel write InterlocksOut to ReleasesOut 
+     abYLV1.aSetDev_Set(i_mValue      := TRUE,
+                        i_nSignalNode := nReleasesOut);
+     // if a nozzle exchanger is used
+     //abYLV2.aSetDev_Set(i_mValue      := TRUE,
+     //                   i_nSignalNode := nReleasesOut);
+  END_IF;
+ 
+  mYLV1_Set := abYLV1.fGetDevSet_Set(i_nSignalNode:= nReleasesOut);
+ // if a nozzle exchanger is used
+ //mYLV1_Set := abYLV2.fGetDevSet_Set(i_nSignalNode:= nReleasesOut);
+
+  //***** set feedback air supply in simulation and set protocol entries when device is switched ******* 
+  IF SV_sGeneralSystemCfg.mSimulateProcess THEN
+
+    IF mYLV1_Set AND NOT mYLV1_Set_old THEN
+    
+      abBLV1.aSet_SimValue(i_mValue:=TRUE); 
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Set feedback air supply in simulation');
+     
+    ELSIF mYLV1_Set_old AND NOT mYLV1_Set THEN
+       
+      abBLV1.aSet_SimValue(i_mValue:=FALSE); 
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Reset feedback air supply in simulation');
+    END_IF;
+    
+  ELSE  // set protocol entries in real mode when valve is switched
+   
+    IF mYLV1_Set AND NOT mYLV1_Set_old THEN
+     
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Rising edge of switch on YLV1');
+     
+    ELSIF mYLV1_Set_old AND NOT mYLV1_Set THEN
+     
+      fbSetProtocol(Ident    := 1,
+                    BodyID   := 0,
+                    Location := 'FB_UseReleasesYHV',
+                    Message  := 'Falling edge of switch on YLV1');
+     
+    END_IF;
+      
+  END_IF;
+  
+  mYLV1_Set_old := mYLV1_Set;
+
+END_IF; // GV_mInitDone
+
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,270 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 15.12.2013  | STL    | First release
+//  v2_01.01.00  | 17.05.2017  | KLCH   | AddOn: parameter Option14
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion
+
+Call Main_NozzleExchanger
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_NozzleExchanger
+	SelectNode RPC1.R11.PCU1
+	
+	// delete Channel
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+		Delete
+	Endif
+	
+	SelectCase NozzleExchanger
+		Case 0
+			SelectCase MaterialValve1
+				Case 0
+					FSCopy ..\SpecialOptions\MaterialValve1\No\NozzleExchanger\No\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				Case 1
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\NozzleExchanger\No\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+			
+			SelectNode RPC1.R11.BCU1
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCfg BCU1.ProgramStart.StartProgBodyIn
+			OptionalUsed 1
+			Value 0
+			
+		CaseElse
+			SelectNode RPC1.R11.BCU1
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCfg BCU1.ProgramStart.StartProgBodyIn
+			OptionalUsed 1
+			Value 1
+			
+			// add channel
+			SelectNode RPC1.R11.PCU1
+			Call Common_AddChannel_Exchanger
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.YLV5
+					//
+				Else
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+					Call Common_AddDevice_YLV5
+				Endif
+			Else
+				SelectNode RPC1.R11.PCU1
+				Call Common_AddChannel_AirSupply
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply.YLV5
+					//
+				Else
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+					Call Common_AddDevice_YLV5
+				Endif
+			Endif
+			
+			SelectCase MaterialValve1
+				Case 0
+					FSCopy ..\SpecialOptions\MaterialValve1\No\NozzleExchanger\Yes\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				Case 1
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\NozzleExchanger\Yes\AB_GeneralSetValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+			EndSelect
+			
+			SelectCase NozzleExchanger
+	         	Case 3
+					// add devices
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_ARZY_3Places
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger.ARZY
+					SelectTab [CfgParameter]
+					SelectCfg ARZY.InitiatorBoltOpen
+					OptionalUsed 1
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY1
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY2
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY3
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY1aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY1bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY2aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY2bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY3aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY3bER
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS1
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS2
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS3
+					
+				Case 6
+					// add devices
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_ARZY_6Places
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger.ARZY
+					SelectTab [CfgParameter]
+					SelectCfg ARZY.InitiatorBoltOpen
+					OptionalUsed 1
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY1
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY2
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY3
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY4
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY5
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY6
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY1aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY1bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY2aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY2bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY3aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY3bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY4aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY4bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY5aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY5bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY6aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY6bER
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS1
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS2
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS3
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS4
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS5
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS6
+					
+				Case 10
+					// add devices
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_ARZY_10Places
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger.ARZY
+					SelectTab [CfgParameter]
+					SelectCfg ARZY.InitiatorBoltOpen
+					OptionalUsed 1
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY1
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY2
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY3
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY4
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY5
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY6
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY7
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY8
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY9
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_YARZY10
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY1aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY1bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY2aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY2bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY3aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY3bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY4aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY4bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY5aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY5bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY6aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY6bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY7aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY7bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY8aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY8bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY9aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY9bER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY10aER
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BARZY10bER
+					
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS1
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS2
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS3
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS4
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS5
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS6
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS7
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS8
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS9
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Exchanger
+					Call Common_AddDevice_BWS10
+					
+				CaseElse
+					Message wrong nozzle exchanger type !!
+			EndSelect
+	EndSelect
+Return

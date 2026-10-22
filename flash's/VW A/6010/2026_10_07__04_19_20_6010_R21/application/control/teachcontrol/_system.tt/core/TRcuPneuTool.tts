@@ -1,0 +1,1371 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2016 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuPneuTool.tts                                             *
+*   Description: Functions of pneumatic handler tool                          *
+*-----------------------------------------------------------------------------*
+* 
+*)
+TYPE GLOBAL
+   enToolPos : (nToolUndef, nToolUp, nToolDown, nToolCentre);
+END_TYPE
+
+VAR
+  sName     : STRING;
+  iUnitNr   : SINT := -1;
+  sPartCtrl : tsPartControl;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//   read values from catalog
+//------------------------------------------------------------------------------------------------------
+ROUTINE init(kin : TRcuRobot; catHdl : DINT) : BOOL
+ VAR
+  tmp : DINT;
+  s   : STRING; 
+ END_VAR
+ 
+  myKin := MAP(kin);
+  IF NOT CatalogReadString(catHdl, "Name", sName, FALSE) THEN
+     sName := "PneuTool " + STR(myKin.handler.tool.yUnit[iUnitNr].iCountPneuTool);
+  END_IF;  
+  //map hardware signals signal
+  sHW_IO.bHWInBoltIn := MAPX(cHW_InBoltIn[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.bHWInBoltIn) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 1, instId, "TRcuPneuTool.init", cHW_InBoltIn[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bInBoltIn_stat := MAPX(cHW_InBoltIn[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bInBoltIn_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 2, instId, "TRcuPneuTool.init", cHW_InBoltIn[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;
+  sHW_IO.bHWInBoltOut := MAPX(cHW_InBoltOut[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.bHWInBoltOut) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 3, instId, "TRcuPneuTool.init", cHW_InBoltOut[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bInBoltOut_stat := MAPX(cHW_InBoltOut[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bInBoltOut_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 4, instId, "TRcuPneuTool.init", cHW_InBoltOut[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;  
+  sHW_IO.bHWOutMoveBoltIn := MAPX(cHW_OutMoveBoltIn[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.bHWOutMoveBoltIn) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 5, instId, "TRcuPneuTool.init", cHW_OutMoveBoltIn[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bOutMoveBoltIn_stat := MAPX(cHW_OutMoveBoltIn[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bOutMoveBoltIn_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 6, instId, "TRcuPneuTool.init", cHW_OutMoveBoltIn[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;  
+  sHW_IO.bHWOutMoveBoltOut := MAPX(cHW_OutMoveBoltOut[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.bHWOutMoveBoltOut) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 7, instId, "TRcuPneuTool.init", cHW_OutMoveBoltOut[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bOutMoveBoltOut_stat := MAPX(cHW_OutMoveBoltOut[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bOutMoveBoltOut_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 8, instId, "TRcuPneuTool.init", cHW_OutMoveBoltOut[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;
+  sHW_IO.wHWInToolAngleRaw := MAPX(cHW_InToolAngleRaw[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.wHWInToolAngleRaw) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 9, instId, "TRcuPneuTool.init", cHW_InToolAngleRaw[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bInToolAngleRaw_stat := MAPX(cHW_InToolAngleRaw[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bInToolAngleRaw_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 10, instId, "TRcuPneuTool.init", cHW_InToolAngleRaw[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;
+  sHW_IO.bHWOutToolUp := MAPX(cHW_OutToolUp[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.bHWOutToolUp) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 15, instId, "TRcuPneuTool.init", cHW_OutToolUp[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bOutToolUp_stat := MAPX(cHW_OutToolUp[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bOutToolUp_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 16, instId, "TRcuPneuTool.init", cHW_OutToolUp[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;
+  sHW_IO.bHWOutToolDown := MAPX(cHW_OutToolDown[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHW_IO.bHWOutToolDown) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 17, instId, "TRcuPneuTool.init", cHW_OutToolDown[myKin.kinListInx]);
+     RETURN FALSE;
+  ELSE
+     sHW_IO.bOutToolDown_stat := MAPX(cHW_OutToolDown[myKin.kinListInx] + "_stat");
+     IF NOT IS_MAPPED(sHW_IO.bOutToolDown_stat) THEN
+        RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 18, instId, "TRcuPneuTool.init", cHW_OutToolDown[myKin.kinListInx] + "_stat");
+        RETURN FALSE;
+     END_IF;
+  END_IF;
+  
+  IF (gbSimulationOS OR gbFBSSActive) THEN
+     START SimulateToolPos();
+     sHW_IO.bInBoltIn     := UPDATE(sHW_IO.bOutMoveBoltIn  AND NOT bHwFault);
+     sHW_IO.bInBoltOut    := UPDATE(sHW_IO.bOutMoveBoltOut AND NOT bHwFault);
+  ELSE
+     IF sHW_IO.bInvertBoltIn THEN
+        sHW_IO.bInBoltIn     := UPDATE(NOT(sHW_IO.bHWInBoltIn) AND NOT bHwFault);
+     ELSE
+        sHW_IO.bInBoltIn     := UPDATE(sHW_IO.bHWInBoltIn  AND NOT bHwFault);
+     END_IF;
+     IF sHW_IO.bInvertBoltOut THEN
+        sHW_IO.bInBoltOut    := UPDATE(NOT(sHW_IO.bHWInBoltOut) AND NOT bHwFault);
+     ELSE   
+        sHW_IO.bInBoltOut    := UPDATE(sHW_IO.bHWInBoltOut AND NOT bHwFault);
+     END_IF;
+  END_IF;
+  sHW_IO.bHWOutMoveBoltIn   := UPDATE(sHW_IO.bOutMoveBoltIn AND bMovementRelease);
+  sHW_IO.bHWOutMoveBoltOut  := UPDATE(sHW_IO.bOutMoveBoltOut AND bMovementRelease);
+  sHW_IO.bHWOutToolUp       := UPDATE(sHW_IO.bOutToolUp AND bMovementRelease);     
+  sHW_IO.bHWOutToolDown     := UPDATE(sHW_IO.bOutToolDown AND bMovementRelease);   
+  
+  //config parameters
+  IF NOT CatalogReadIntRange(catHdl, "TimeOutMovingBolt", diTimeOutMovingBolt, 0, cTimeOutLimit, FALSE) THEN
+    diTimeOutMovingBolt   := 500;
+  END_IF;
+  IF NOT CatalogReadIntRange(catHdl, "TimeOutMovingTool", diTimeOutMovingTool, 0, cTimeOutLimit, FALSE) THEN
+     diTimeOutMovingTool  := 2000;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Bustype", tmp, eRcuProfibus, eRcuSercosIII, TRUE) THEN
+     sHW_IO.BusType := TRcuBusType(tmp);
+  ELSE
+     sHW_IO.BusType := eRcuSercosIII;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Cardvendor", tmp, eRcuSiemens, eRcuTurck, TRUE) THEN
+     sHW_IO.CardVendor := TRcuVendor(tmp);
+  ELSE
+     sHW_IO.CardVendor := eRcuPhoenix;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "Cardtype", tmp, eRcuET200sGB61, eRcuSNNE_40A_000x, TRUE) THEN
+     sHW_IO.CardType := TRcuCardType(tmp);
+  ELSE
+     sHW_IO.CardType := eRcuPhoenixCurrent;
+  END_IF;
+  START GetAngleAnalogCard();
+  IF CatalogReadIntRange(catHdl, "MoveToolHomeAtProgStart", tmp, 0, 2, TRUE) THEN 
+     eHomePosProgStart := enHomePosProgStart(tmp);
+  ELSE
+     eHomePosProgStart := nNoAction;
+  END_IF;
+  //assign softlog signals
+  s := myKin.kinematic.mName + ".handler.HW_InBoltIn";
+  SwoAddBoolVariable(sHW_IO.bInBoltIn, s);
+  s := myKin.kinematic.mName + ".handler.HW_InBoltOut";
+  SwoAddBoolVariable(sHW_IO.bInBoltOut, s);
+  s := myKin.kinematic.mName + ".handler.HW_OutMoveBoltIn";
+  SwoAddBoolVariable(sHW_IO.bHWOutMoveBoltIn, s);  
+  s := myKin.kinematic.mName + ".handler.HW_OutMoveBoltOut";
+  SwoAddBoolVariable(sHW_IO.bHWOutMoveBoltOut, s);
+  s := myKin.kinematic.mName + ".handler.HW_InToolAngleRaw";
+  SwoAddWordVariable(sHW_IO.wHWInToolAngleRaw, s);
+  s := myKin.kinematic.mName + ".handler.HW_OutToolUp";
+  SwoAddBoolVariable(sHW_IO.bHWOutToolUp, s);
+  s := myKin.kinematic.mName + ".handler.HW_OutToolDown";
+  SwoAddBoolVariable(sHW_IO.bHWOutToolDown, s);
+  s := myKin.kinematic.mName + ".handler.AngleToolDeg";
+  SwoAddDIntVariable(sHW_IO.diAngleTool, s);  
+  s := myKin.kinematic.mName + ".handler.PartDetected_PinDown";
+  SwoAddBoolVariable(sPartCtrl.bDetected_PinDown, s);  
+  s := myKin.kinematic.mName + ".handler.PartOverload_PinDown";
+  SwoAddBoolVariable(sPartCtrl.bOverload_PinDown, s);  
+  s := myKin.kinematic.mName + ".handler.PartDetected_PinUp";
+  SwoAddBoolVariable(sPartCtrl.bDetected_PinUp, s);  
+  s := myKin.kinematic.mName + ".handler.PartOverload_PinUp";
+  SwoAddBoolVariable(sPartCtrl.bOverload_PinUp, s);
+  s := myKin.kinematic.mName + ".handler.ToolOrder";
+  SwoAddDIntVariable(eToolOrder, s);
+  s := myKin.kinematic.mName + ".handler.ToolPos";
+  SwoAddDIntVariable(eToolPos, s);  
+  s := myKin.kinematic.mName + ".handler.CylinderOrder";
+  SwoAddDIntVariable(eCylinderOrder, s);  
+  s := myKin.kinematic.mName + ".handler.CylinderPos";
+  SwoAddDIntVariable(eCylinderPos, s);
+  
+  //IDs for messages
+  idWarnMsgCleanPos    := RcuConvertMessageClass(TRcuPneuTool_ErrSwivelCleanPos, cgiMsgClassWarning);
+  idWarnMsgCylinderPos := RcuConvertMessageClass(TRcuPneuTool_ErrNoFeedbackCyl, cgiMsgClassWarning);
+  
+  //HMI data
+  sHmiInterfce := MAPX(cSV_sHandlerToolHmi[myKin.kinListInx]);
+  IF NOT IS_MAPPED(sHmiInterfce) THEN
+     RcuSetMessageOnce(TRcVisionBk_ErrMapEpsVar, myKin.kinListInx, 1, instId, "TRcuPneuTool.init", cSV_sHandlerToolHmi[myKin.kinListInx]);
+     RETURN FALSE;
+  END_IF;
+  //update local data
+  bHwFault           := UPDATE(sHW_IO.bInBoltIn_stat OR sHW_IO.bInBoltOut_stat OR sHW_IO.bOutMoveBoltIn_stat OR sHW_IO.bOutMoveBoltOut_stat OR 
+                               sHW_IO.bInToolAngleRaw_stat OR sHW_IO.bOutToolUp_stat OR sHW_IO.bOutToolDown_stat);
+  bMovementRelease   := UPDATE(myKin.svMotionAllowed AND myKin.fieldbusIn.ReleaseRobot.svBool AND myKin.handler.toolCleaner.bAirSupplyOk AND NOT bHwFault AND NOT bChgMainMode);
+  bTeachModeRelease  := UPDATE(bMovementRelease AND ((myKin.mainModeMgr.mode = ciT1) OR (myKin.mainModeMgr.mode = ciT2)));
+  bHMIRelease        := UPDATE(bMovementRelease AND (myKin.RcuInterfaceToBCU.nStationMode = eHand));
+  
+  START MacroMoveTool();
+  START GenerateCylinderPos();
+  START MoveCylinder();
+  START GenerateToolPos();
+  START MoveSwivelDrive();
+  START TeachViewInterface();
+  START HmiInterface();
+  START ObserveIdlePos();
+  START ObserveMainMode();
+  START RestoreValveOutputs();
+  
+  bInitDone := TRUE;
+  RETURN bInitDone; 
+     
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   oders from teach macro - sequence for several movements of the tool
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroSetToolOrder(inOrder : enToolPos)
+ VAR
+   myOrder : enToolPos;  
+ END_VAR   
+ 
+  myOrder := inOrder;
+  WAIT MAIN_RUN;
+  eOrderEcoTalk := myOrder;
+  IF (eOrderEcoTalk = nToolDown) THEN
+     myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order from EcoTalk to move TOOL to cleaning position");
+  ELSIF (eOrderEcoTalk = nToolCentre) THEN
+     myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order from EcoTalk to move TOOL to home position - Pin down");
+  ELSIF (eOrderEcoTalk = nToolUp) THEN
+     myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order from EcoTalk to move TOOL to home position - Pin up");
+  END_IF;    
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   oders from teach macro - sequence for several movements of the tool
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroMoveTool()
+ 
+  WHILE TRUE DO
+     WAIT (eOrderEcoTalk <> nToolUndef);
+     
+     //order to move tool down - needed to move into cleaner
+     IF (eOrderEcoTalk = nToolDown) THEN       
+        //target position not reached yet
+        WHILE (eToolPos <> nToolDown) AND (eOrderEcoTalk = nToolDown) DO
+           //first the swivel has to be moved up then the bolt can be moved in
+           WHILE (eToolPos <> nToolUp) AND (eOrderEcoTalk = nToolDown) DO
+              eToolOrder := nToolUp;
+              WAIT (eToolOrder = nToolUndef) OR (eOrderEcoTalk <> nToolCentre);  //wait until job is done or cancelled
+              myKin.WaitMcMicroCycles(1);
+           END_WHILE;
+           //now move the swivel drive to down position
+           WHILE (eToolPos <> nToolDown) AND (eOrderEcoTalk = nToolDown) DO
+              eToolOrder := nToolDown;        //order to move down the swivel drive
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Move TOOL to cleaning position");
+              WAIT (eToolOrder = nToolUndef) OR (eOrderEcoTalk <> nToolDown);  //wait until job is done or cancelled
+              myKin.WaitMcMicroCycles(1);
+           END_WHILE;
+        END_WHILE;
+        //order pending and target position reached --> reset order
+        IF (eOrderEcoTalk = nToolDown) AND (eToolPos = nToolDown) THEN
+           eOrderEcoTalk := nToolUndef;
+        //order cancelled from external --> reset internal order
+        ELSIF (eOrderEcoTalk <> nToolDown) THEN
+           eToolOrder := nToolUndef;
+        END_IF;
+        
+     //order to move tool centre - needed for handling when pin is downwards
+     ELSIF (eOrderEcoTalk = nToolCentre) THEN
+        //target position not reached yet
+        WHILE (eToolPos <> nToolCentre) AND (eOrderEcoTalk = nToolCentre) DO
+           //first the swivel has to be moved up then the bolt can be moved in
+           WHILE (eToolPos <> nToolUp) AND (eOrderEcoTalk = nToolCentre) DO
+              eToolOrder := nToolUp;
+              WAIT (eToolOrder = nToolUndef) OR (eOrderEcoTalk <> nToolCentre);  //wait until job is done or cancelled
+              myKin.WaitMcMicroCycles(1);
+           END_WHILE;
+           //now move the swivel drive to centre position
+           WHILE (eToolPos <> nToolCentre) AND (eOrderEcoTalk = nToolCentre) DO
+              eToolOrder := nToolCentre;
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Move TOOL to home position");
+              WAIT (eToolOrder = nToolUndef) OR (eOrderEcoTalk <> nToolCentre);  //wait until job is done or cancelled
+              myKin.WaitMcMicroCycles(1);           
+           END_WHILE;
+        END_WHILE;
+        //order pending and target position reached --> reset order
+        IF (eOrderEcoTalk = nToolCentre) AND (eToolPos = nToolCentre) THEN
+           eOrderEcoTalk := nToolUndef;
+        //order cancelled from external --> reset internal order
+        ELSIF (eOrderEcoTalk <> nToolCentre) THEN
+           eToolOrder := nToolUndef;
+        END_IF;
+        
+     //order to move tool up - needed for handling when pin is upwards
+     ELSIF (eOrderEcoTalk = nToolUp) THEN   
+        //target position not reached yet --> move tool up
+        WHILE (eToolPos <> nToolUp) AND (eOrderEcoTalk = nToolUp) DO
+           eToolOrder := nToolUp;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Move TOOL to upper position");
+           WAIT (eToolOrder = nToolUndef) OR (eOrderEcoTalk <> nToolUp);  //wait until job is done or cancelled
+           myKin.WaitMcMicroCycles(1);
+        END_WHILE;
+        //order pending and target position reached --> reset order
+        IF (eOrderEcoTalk = nToolUp) AND (eToolPos = nToolUp) THEN
+           eOrderEcoTalk := nToolUndef;
+        //order cancelled from external --> reset internal order
+        ELSIF (eOrderEcoTalk <> nToolUp) THEN
+           eToolOrder := nToolUndef;
+        END_IF;
+        
+     END_IF;
+     myKin.WaitMcMicroCycles(1);
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  oders from teach macro
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroReceivePos(inPos : PNEUORDER) : BOOL
+  IF bInitDone THEN
+  
+     IF (inPos = HomePosPinDown) THEN
+        // A P P E N D  L A T E --> needNextSegPreDelay activate then check if tool has already reached target position, otherwise try again in mainrun
+        //IF myKin.progPath.bAppendLate AND (eToolPos = nToolCentre) THEN
+        //   myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - HomePosPinDown - A P P E N D  L A T E");
+        //   RETURN TRUE;
+        //END_IF;
+        // M A I N R U N   
+     MAINRUN();
+        WAIT (eToolPos = nToolCentre);
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - HomePosPinDown - M A I N R U N");
+        RETURN TRUE;
+     ELSIF (inPos = HomePosPinUp) THEN
+        // A P P E N D  L A T E --> needNextSegPreDelay activate then check if tool has already reached target position, otherwise try again in mainrun
+        //IF myKin.progPath.bAppendLate AND (eToolPos = nToolUp) THEN
+        //   myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - HomePosPinUp - A P P E N D  L A T E");
+        //   RETURN TRUE;
+        //END_IF;
+        // M A I N R U N   
+        MAINRUN();
+        WAIT (eToolPos = nToolUp);          
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - HomePosPinUp - M A I N R U N");
+        RETURN TRUE;         
+     ELSIF (inPos = CleaningPos) THEN
+        // A P P E N D  L A T E --> needNextSegPreDelay activate then check if tool has already reached target position, otherwise try again in mainrun
+        //IF myKin.progPath.bAppendLate AND (eToolPos = nToolDown) THEN
+        //   myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - CleaningPos - A P P E N D  L A T E");
+        //   RETURN TRUE;
+        //END_IF;
+        // M A I N R U N   
+        MAINRUN();
+        WAIT (eToolPos = nToolDown);
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - CleaningPos - M A I N R U N");
+        RETURN TRUE;
+     ELSE
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: MacroReceivePos - Invalid tool position=" + STR(inPos) + " requested from EcoTalk");
+        myKin.ErrorReaction(TRUE);
+     END_IF;  
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//******************************************************************************
+// private
+CONSTANT PRIVATE
+  //hardware definitions
+  cTimeOutLimit     : DINT :=  5000;  //Maximum time for timeout moving hardware
+  cMinAngleTool     : DINT :=   -40;   //Angle of the tool in cleaning position
+  cMaxAngleTool     : DINT :=    34;   //Angle of the tool in upper end position
+  cRawMinAngleTool  : DINT :=  6369;   //Raw value of the tool in cleaning position
+  cRawMaxAngleTool  : DINT := 21126;   //Raw value of the tool in upper end position
+  //Tool angles
+  cErrAngle            : DINT := 999;   //Magic number for error reading angle
+  //Tool angle between (min and max) --> tool is in cleaning position
+  cAngleCleanPosMin    : DINT := -40;   
+  cAngleCleanPosMax    : DINT := -35;
+  //Tool angle between (min and max) --> tool is arround position 20 degrees
+  cAngle20DegPosMin    : DINT :=  18;   
+  cAngle20DegPosMax    : DINT :=  21;
+  //Tool angle between (min and max) --> part found for pin in upper direction
+  cAnglePartPinUpMin   : DINT :=  23;   
+  cAnglePartPinUpMax   : DINT :=  26;
+  //Tool angle between (min and max) --> part found for pin in lower direction
+  cAnglePartPinDownMin : DINT :=  23;   
+  cAnglePartPinDownMax : DINT :=  26;
+  //Tool angle between (min and max) --> tool is arround position 34 degrees
+  cAngle34DegPosMin    : DINT :=  34;   
+  cAngle34DegPosMax    : DINT :=  39; 
+END_CONSTANT
+
+TYPE PRIVATE
+  enHomePosProgStart : (nNoAction, nCentre, nUpperPos);
+  tsCylinderPos : STRUCT  //signals for TeachView
+    bIn    : BOOL;
+    bOut   : BOOL;
+    bUndef : BOOL;
+  END_STRUCT;
+  enCylinderPos : (nPosUndef, nPosIn, nPosOut);
+  tsHW_Signals : STRUCT
+    BusType               : TRcuBusType;
+    CardVendor            : TRcuVendor;
+    CardType              : TRcuCardType;
+    diValueCableBroken    : DINT := 32768;    // default Siemens ET200s
+    diMaxValueCard        : DINT := 27648;    // default Siemens ET200s
+    diPosUnitsToInc       : DINT := 100;      // factor to convert raw value from analog card to angle
+    diAngleTool           : DINT;             // position of the tool
+    iValueUpdate          : INT;             //  update counter for reading angle 
+    //hardware signals
+    bHWInBoltIn           : MAPTO BOOL;
+    bHWInBoltOut          : MAPTO BOOL;
+    bInBoltIn             : BOOL;
+    bInBoltOut            : BOOL;
+    wHWInToolAngleRawSim  : WORD;
+    wHWInToolAngleRaw     : MAPTO WORD;
+    bHWOutMoveBoltIn      : MAPTO BOOL;
+    bHWOutMoveBoltOut     : MAPTO BOOL;
+    bHWOutToolUp          : MAPTO BOOL;
+    bHWOutToolDown        : MAPTO BOOL; 
+    bOutMoveBoltIn        : BOOL;
+    bOutMoveBoltOut       : BOOL;
+    bOutToolUp            : BOOL;
+    bOutToolDown          : BOOL;
+    //stat information of the hardware
+    bInBoltIn_stat        : MAPTO BOOL;
+    bInBoltOut_stat       : MAPTO BOOL;
+    bOutMoveBoltIn_stat   : MAPTO BOOL;
+    bOutMoveBoltOut_stat  : MAPTO BOOL;
+    bInToolAngleRaw_stat  : MAPTO BOOL;
+    bOutToolUp_stat       : MAPTO BOOL;
+    bOutToolDown_stat     : MAPTO BOOL;
+    //invert HW inputs if necessary
+    bInvertBoltIn         : BOOL := FALSE;
+    bInvertBoltOut        : BOOL := FALSE;
+  END_STRUCT;
+  tsTeachView : STRUCT
+    bToolIsUp       : BOOL;
+    bToolIsInCentre : BOOL;
+    bToolIsDown     : BOOL;
+    bToolIsUndef    : BOOL;
+    bMoveToolUp     : BOOL;
+    bRelMoveUp      : BOOL;
+    bMoveToolCentre : BOOL;
+    bRelMoveCentre  : BOOL;
+    bMoveToolDown   : BOOL;
+    bRelMoveDown    : BOOL;
+    bBoltIsIn       : BOOL;
+    bBoltIsOut      : BOOL;
+    bBoltIsUndef    : BOOL;
+    bMoveBoltIn     : BOOL;
+    bRelMoveBoltIn  : BOOL;
+    bMoveBoltOut    : BOOL;
+    bRelMoveBoltOut : BOOL;
+    iAngleTool      : INT;
+    bShowReleases   : BOOL;
+    bShowIcons      : BOOL;
+    bEStopOK        : BOOL;
+    bEStopNOK       : BOOL;
+    bAirOk          : BOOL;
+    bAirNOk         : BOOL;
+    bRobSelOk       : BOOL;
+    bRobSelNOk      : BOOL;
+    bErrorOk        : BOOL;
+    bErrorNOk       : BOOL;
+  END_STRUCT;
+  tsHmiPneuToolIn : STRUCT 
+    bMoveBoltIn       : BOOL;
+    bMoveBoltOut      : BOOL;
+    bMoveToolUp       : BOOL;
+    bMoveToolToCentre : BOOL;
+    bMoveToolDown     : BOOL;
+  END_STRUCT;
+  tsHmiPneuToolOut : STRUCT 
+    bRelMoveUp      : BOOL;
+    bRelMoveCentre  : BOOL;
+    bRelMoveDown    : BOOL;
+    bRelMoveBoltIn  : BOOL;
+    bRelMoveBoltOut : BOOL;
+    bBoltIsIn       : BOOL;
+    bBoltIsOut      : BOOL;
+    bToolIsUp       : BOOL;
+    bToolIsInCentre : BOOL;
+    bToolIsDown     : BOOL;
+    iAngleTool      : INT;
+  END_STRUCT;
+  tsHmiPneuTool : STRUCT 
+    sIn : tsHmiPneuToolIn;
+    sOut : tsHmiPneuToolOut;
+  END_STRUCT;
+  tsPartControl : STRUCT
+    bDetected_PinDown : BOOL;
+    bOverload_PinDown : BOOL;
+    bDetected_PinUp   : BOOL;
+    bOverload_PinUp   : BOOL;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  bInitDone                  : BOOL;
+  instId                     : DINT;               // instance identification number
+  myKin                      : MAPTO TRcuRobot;    
+  sHW_IO                     : tsHW_Signals;       //hardware signals
+  diTimeOutMovingBolt        : DINT;               //config parameter
+  diTimeOutMovingTool        : DINT;               //config parameter
+  eHomePosProgStart          : enHomePosProgStart; //config parameter
+  bReadAnalogValue           : BOOL;               //read analog value and convert to angle
+  bMovementRelease           : BOOL;
+  bTeachModeRelease          : BOOL;
+  bHMIRelease                : BOOL;
+  bHwFault                   : BOOL;
+  sTeachView                 : tsTeachView;
+  sHmiInterfce               : MAPTO tsHmiPneuTool;
+  eCylinderPos               : enCylinderPos;
+  eCylinderOrder             : enCylinderPos;
+  eToolPos                   : enToolPos;
+  eToolOrder                 : enToolPos;
+  eOrderEcoTalk              : enToolPos;
+  sLogText                   : STRING;
+  bDoIdleCheck               : BOOL;
+  bChgMainMode               : BOOL;
+  idWarnMsgCleanPos          : DINT;
+  idWarnMsgCylinderPos       : DINT;
+END_VAR
+
+
+//------------------------------------------------------------------------------------------------------
+//  init the analog card for meassuring to angle of the tool
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetAngleAnalogCard() PRIVATE
+ VAR
+  iRawValue : DINT;
+ END_VAR
+       
+       
+   // Specific limits of analag card
+   //-------------------------------------------------------------------------------------------    
+   CASE sHW_IO.BusType OF
+    eRcuProfibus: 
+    
+      CASE sHW_IO.CardVendor OF
+       eRcuSiemens:
+           CASE sHW_IO.CardType OF
+            eRcuET200sGB61:   sHW_IO.diValueCableBroken := cET200sCableBroken;
+                              sHW_IO.diMaxValueCard     := cET200sMaxValue;
+           ELSE
+             myKin.DebugPrint(eTraceRcuHandler, "PneuTool: Wrong CardType = " + STR(sHW_IO.CardType) + " from CardVendor = "+ STR(sHW_IO.CardVendor));
+           END_CASE;
+               
+       eRcuTurck:
+           CASE sHW_IO.CardType OF
+            eRcuSNNE_40A_000x : sHW_IO.diValueCableBroken := cSNNE_40A_CableBroken;
+                                sHW_IO.diMaxValueCard     := cSNNE_40A_MaxValue;
+           ELSE
+             myKin.DebugPrint(eTraceRcuHandler, "PneuTool: Wrong CardType = " + STR(sHW_IO.CardType) + " from CardVendor = "+ STR(sHW_IO.CardVendor));
+           END_CASE;
+      ELSE
+        myKin.DebugPrint(eTraceRcuHandler, "PneuTool: Wrong CardVendor = "+ STR(sHW_IO.CardVendor) + " for BusType = " + STR(sHW_IO.BusType));
+      END_CASE; //CASE CardVendor OF
+      
+    eRcuSercosIII:
+      
+      CASE sHW_IO.CardVendor OF
+       eRcuPhoenix:
+           CASE sHW_IO.CardType OF
+            eRcuPhoenixCurrent:   sHW_IO.diValueCableBroken := cPhoenixCableBroken;
+                                  sHW_IO.diMaxValueCard     := cPhoenixMaxValue;
+           ELSE
+             myKin.DebugPrint(eTraceRcuHandler, "PneuTool: Wrong CardType = " + STR(sHW_IO.CardType) + " from CardVendor = "+ STR(sHW_IO.CardVendor));
+           END_CASE;
+      ELSE
+        myKin.DebugPrint(eTraceRcuHandler, "PneuTool: Wrong CardVendor = "+ STR(sHW_IO.CardVendor) + " for BusType = " + STR(sHW_IO.BusType));
+      END_CASE; //CASE CardVendor OF
+      
+   END_CASE; //CASE BusType OF
+   
+   // calcualte encoder resolution 
+   //----------------------------------------------------------------------------------------------------
+   sHW_IO.diPosUnitsToInc := (cRawMaxAngleTool - cRawMinAngleTool) / (cMaxAngleTool - cMinAngleTool);
+        
+   bReadAnalogValue := TRUE;
+   WHILE TRUE DO 
+      WAIT bReadAnalogValue;
+         WHILE bReadAnalogValue DO
+            IF (gbSimulationOS OR gbFBSSActive) THEN
+               iRawValue  := sHW_IO.wHWInToolAngleRawSim;
+            ELSE
+               iRawValue  := sHW_IO.wHWInToolAngleRaw;
+            END_IF;
+            IF (iRawValue = sHW_IO.diValueCableBroken) THEN
+               sHW_IO.diAngleTool := cErrAngle;
+               RcuSetMessageOnce(TRcuSensor_ErrSensCableBrk, myKin.kinListInx, 1, instId, "TRcuPneuTool.GetAngleAnalogCard", sName);
+            ELSIF (iRawValue = sHW_IO.diMaxValueCard) THEN
+               sHW_IO.diAngleTool := cErrAngle;
+               RcuSetMessageOnce(TRcuSensor_ErrSensValueExcd, myKin.kinListInx, 1, instId, "TRcuPneuTool.GetAngleAnalogCard", sName, STR(sHW_IO.diMaxValueCard));
+            ELSE
+               //define zero point at negative limit (-40°)
+               iRawValue := iRawValue - cRawMinAngleTool;
+               //shift zero point upwards to zero point of tool (40°)
+               sHW_IO.diAngleTool := (iRawValue / sHW_IO.diPosUnitsToInc) + cMinAngleTool;
+            END_IF;
+            
+            IF sHW_IO.iValueUpdate > 10000 THEN
+               sHW_IO.iValueUpdate := 0;
+            ELSE
+               sHW_IO.iValueUpdate := sHW_IO.iValueUpdate + 1;
+            END_IF;
+            sHmiInterfce.sOut.iAngleTool := sHW_IO.diAngleTool;
+            sTeachView.iAngleTool        := sHW_IO.diAngleTool;
+            myKin.WaitMcMicroCycles(1);        
+         END_WHILE;
+         sHW_IO.diAngleTool := cErrAngle;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  simulate the angle of the tool according the valve outputs (only for simulation)
+//------------------------------------------------------------------------------------------------------
+ROUTINE SimulateToolPos() PRIVATE
+ VAR
+  bChgValue : BOOL;
+ END_VAR
+
+  bChgValue  := IS_CHANGED(sHW_IO.iValueUpdate);
+  WHILE TRUE DO
+     IF sHW_IO.bOutToolUp THEN 
+        sHW_IO.wHWInToolAngleRawSim := (((cAngle34DegPosMin + (cAngle34DegPosMax - cAngle34DegPosMin) / 2) - cMinAngleTool) * sHW_IO.diPosUnitsToInc) + cRawMinAngleTool;
+     ELSIF sHW_IO.bOutToolDown AND sHW_IO.bOutMoveBoltOut THEN
+        sHW_IO.wHWInToolAngleRawSim := (((cAngle20DegPosMin + (cAngle20DegPosMax - cAngle20DegPosMin) / 2) - cMinAngleTool) * sHW_IO.diPosUnitsToInc) + cRawMinAngleTool;
+     ELSIF sHW_IO.bOutToolDown THEN
+        sHW_IO.wHWInToolAngleRawSim := (((cAngleCleanPosMin + (cAngleCleanPosMax - cAngleCleanPosMin) / 2) - cMinAngleTool) * sHW_IO.diPosUnitsToInc) + cRawMinAngleTool;
+     END_IF;
+     WAIT bChgValue;
+     bChgValue := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Generate position of fixation cylinder
+//------------------------------------------------------------------------------------------------------
+ROUTINE GenerateCylinderPos() PRIVATE
+ VAR
+  bChgIn    : BOOL;
+  bChgOut   : BOOL;
+  bChgHwErr : BOOL;
+  ident     : DINT;
+ END_VAR
+  
+   bChgIn    := IS_CHANGED(sHW_IO.bInBoltIn);
+   bChgOut   := IS_CHANGED(sHW_IO.bInBoltOut); 
+   bChgHwErr := IS_CHANGED(bHwFault);
+   WHILE TRUE DO
+     IF bHwFault THEN
+        eCylinderPos := nPosUndef;
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: HW-Fault detected --> Set cylinder position to undefined");
+     ELSIF (sHW_IO.bInBoltIn AND sHW_IO.bInBoltOut) THEN
+        eCylinderPos := nPosUndef;
+        IF (myKin.mainModeMgr.mode = ciAuto) AND myKin.fieldbusIn.ReleaseRobot.svBool THEN
+           RcuSetMessageOnce(TRcuPneuTool_ErrBothInputs, myKin.kinListInx, 1, instId, "TRcuPneuTool.GenerateCylinderPos");
+           WAIT NOT myKin.svMotionAllowed;
+           WAIT myKin.svMotionAllowed;
+           bChgHwErr := TRUE;
+        ELSE
+           ident := RcuConvertMessageClass(TRcuPneuTool_ErrBothInputs, cgiMsgClassWarning);
+           RcuSetMessageOnce(ident, myKin.kinListInx, 2, instId, "TRcuPneuTool.GenerateCylinderPos");
+        END_IF;
+     ELSIF sHW_IO.bInBoltIn THEN
+        eCylinderPos := nPosIn;
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Fixation cylinder is now in position IN");
+     ELSIF sHW_IO.bInBoltOut THEN
+        eCylinderPos := nPosOut;
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Fixation cylinder is now in position OUT");
+     ELSE
+        eCylinderPos := nPosUndef;
+     END_IF; 
+     sTeachView.bBoltIsIn         := (eCylinderPos = nPosIn);
+     sTeachView.bBoltIsOut        := (eCylinderPos = nPosOut);
+     sTeachView.bBoltIsUndef      := (eCylinderPos = nPosUndef);
+     sHmiInterfce.sOut.bBoltIsIn  := (eCylinderPos = nPosIn);
+     sHmiInterfce.sOut.bBoltIsOut := (eCylinderPos = nPosOut); 
+     WAIT bChgIn OR bChgOut OR bChgHwErr;
+     bChgIn    := FALSE;
+     bChgOut   := FALSE;
+     bChgHwErr := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Treatment of orders for fixation cylinder
+//------------------------------------------------------------------------------------------------------
+ROUTINE MoveCylinder() PRIVATE
+ VAR
+  bTimeOut  : BOOL;
+  ident     : DINT;
+ END_VAR
+
+  WHILE TRUE DO
+     WAIT ((eCylinderOrder = nPosIn) OR (eCylinderOrder = nPosOut)) AND bMovementRelease;
+     STOP ObserveCylinderPos;
+     
+     //moving IN the cylinder is always allowed --> no danger to destory hardware
+     //------------------------------------------------------------------------------------------------------------------
+     IF (eCylinderOrder = nPosIn) THEN
+        sHW_IO.bOutMoveBoltIn  := TRUE;                              //set valve outputs
+        sHW_IO.bOutMoveBoltOut := FALSE;
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order for cylinder to move IN");
+        bTimeOut := FALSE;                          
+        SysTimerSet(diTimeOutMovingBolt, bTimeOut);              //start timeout
+        
+        //order no longer pending          target position reached      timeout         robot deselected/bus fault
+        WAIT (eCylinderOrder <> nPosIn) OR (eCylinderPos = nPosIn) OR bTimeOut OR NOT bMovementRelease;
+        
+        IF (eCylinderPos = nPosIn) THEN                        //target position reached
+           eCylinderOrder := nPosUndef;
+           START ObserveCylinderPos();
+        ELSIF NOT bMovementRelease THEN
+           eCylinderOrder := nPosUndef;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Fixation cylinder couldn't move no movement release");
+        ELSIF bTimeOut THEN
+           eCylinderOrder := nPosUndef;
+           RcuSetMessageOnce(TRcuPneuTool_ErrCylinderTarPos, myKin.kinListInx, 1, instId, "TRcuPneuTool.MoveCylinder");
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Fixation cylinder should move IN but did not reach target position");
+        END_IF;
+        
+     //moving OUT the cylinder is only allowed when the swivel drive is UP otherwise danger to destory hardware
+     //------------------------------------------------------------------------------------------------------------------
+     ELSIF (eCylinderOrder = nPosOut) THEN
+        sHW_IO.bOutMoveBoltIn  := FALSE;                              //set valve outputs
+        sHW_IO.bOutMoveBoltOut := TRUE;
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order for cylinder to move OUT");
+        bTimeOut := FALSE;                          
+        SysTimerSet(diTimeOutMovingBolt, bTimeOut);               //start timeout
+        
+        //order no longer pending            target position reached      timeout         robot deselected/bus fault
+        WAIT (eCylinderOrder <> nPosOut) OR (eCylinderPos = nPosOut) OR bTimeOut OR NOT bMovementRelease;
+
+        IF (eCylinderPos = nPosOut) THEN                        //target position reached
+           eCylinderOrder := nPosUndef;
+           START ObserveCylinderPos();
+        ELSIF NOT bMovementRelease THEN
+           eCylinderOrder := nPosUndef;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Fixation cylinder couldn't move no movement release");
+        ELSIF bTimeOut THEN
+           eCylinderOrder := nPosUndef;
+           RcuSetMessageOnce(TRcuPneuTool_ErrCylinderTarPos, myKin.kinListInx, 1, instId, "TRcuPneuTool.MoveCylinder");
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Fixation cylinder should move OUT but did not reach target position");
+        END_IF;
+     END_IF;
+     SysTimerClear(bTimeOut);
+     bTimeOut := FALSE;
+  END_WHILE; 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Observe initiators if cylinder stays in its position
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveCylinderPos() PRIVATE
+ VAR
+  bChkPosIn  : BOOL;
+  bChkPosOut : BOOL;
+ END_VAR 
+
+  bChkPosIn  := (eCylinderPos = nPosIn);
+  bChkPosOut := (eCylinderPos = nPosOut);
+  
+  WHILE TRUE DO
+     IF bChkPosIn THEN
+        WAIT (eCylinderPos <> nPosIn);  
+     ELSIF bChkPosOut THEN
+        WAIT (eCylinderPos <> nPosOut);
+     END_IF;   
+     IF (myKin.mainModeMgr.mode = ciAuto) AND myKin.fieldbusIn.ReleaseRobot.svBool THEN
+        RcuSetMessageOnce(TRcuPneuTool_ErrNoFeedbackCyl, myKin.kinListInx, 1, instId, "TRcuPneuTool.ObserveCylinderPos");
+        WAIT NOT myKin.svMotionAllowed;
+        WAIT myKin.svMotionAllowed;  
+     ELSE
+        RcuSetMessageOnce(idWarnMsgCylinderPos, myKin.kinListInx, 2, instId, "TRcuPneuTool.ObserveCylinderPos");
+        myKin.WaitMcMicroCycles(2);
+     END_IF;
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Generate states of swivel drive
+//------------------------------------------------------------------------------------------------------
+ROUTINE GenerateToolPos() PRIVATE
+ VAR
+  bChgValue  : BOOL;
+  bChgHwErr  : BOOL;
+  ident      : DINT;
+ END_VAR
+ 
+   bChgValue  := IS_CHANGED(sHW_IO.iValueUpdate);
+   bChgHwErr  := IS_CHANGED(bHwFault);
+   WHILE TRUE DO
+     //------------------------------- tool positons -------------------------------------------------------------------------------------------------
+     //sercos device signals hardware error
+     IF bHwFault THEN
+        IF (eToolPos <> nToolUndef) THEN
+           eToolPos := nToolUndef;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: HW-Fault detected --> Set Tool position to undefined");
+        END_IF;
+     //cable broken or value out of range (analog card)
+     ELSIF (sHW_IO.diAngleTool = cErrAngle) THEN
+        IF (eToolPos <> nToolUndef) THEN
+           eToolPos := nToolUndef;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: HW-Fault value invalid --> Set Tool position to undefined");
+        END_IF;
+     //tool is fixed by bolt (cylinder for bolt is moved out) --> home position   
+     ELSIF (sHW_IO.diAngleTool >= cAngle20DegPosMin) AND (sHW_IO.diAngleTool <= cAngle20DegPosMax) AND (eCylinderPos = nPosOut) THEN
+        IF (eToolPos <> nToolCentre) THEN    
+           eToolPos := nToolCentre;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive is now in position CENTRE");
+        END_IF;
+     //tool is at upper end position --> position in which the fixation bolt can move
+     ELSIF (sHW_IO.diAngleTool >= cAngle34DegPosMin) AND (sHW_IO.diAngleTool <= cAngle34DegPosMax) AND (eCylinderPos = nPosIn) THEN   
+        IF (eToolPos <> nToolUp) THEN
+           eToolPos := nToolUp;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive is now in position UP");
+        END_IF;
+     //tool is at lower end position --> position in which the tool can move into cleaner
+     ELSIF (sHW_IO.diAngleTool >= cAngleCleanPosMin) AND (sHW_IO.diAngleTool <= cAngleCleanPosMax) AND (eCylinderPos = nPosIn) THEN   
+        IF (eToolPos <> nToolDown) THEN
+           eToolPos := nToolDown;
+           STOP ObserveCleaningPos;
+           START ObserveCleaningPos();
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive is now in position DOWN");
+        END_IF;
+     ELSE
+        IF (eToolPos <> nToolUndef) THEN
+           eToolPos := nToolUndef;
+        END_IF;
+     END_IF;
+     //------------------------------- part positons -------------------------------------------------------------------------------------------------
+     //sercos device signals hardware error
+     IF bHwFault THEN
+        sPartCtrl.bDetected_PinDown := FALSE;
+        sPartCtrl.bOverload_PinDown := FALSE;
+        sPartCtrl.bDetected_PinUp   := FALSE;
+        sPartCtrl.bOverload_PinUp   := FALSE;
+     //cable broken or value out of range (analog card)
+     ELSIF (sHW_IO.diAngleTool = cErrAngle) THEN 
+        sPartCtrl.bDetected_PinDown := FALSE;
+        sPartCtrl.bOverload_PinDown := FALSE;
+        sPartCtrl.bDetected_PinUp   := FALSE;
+        sPartCtrl.bOverload_PinUp   := FALSE;
+     ELSE   
+        //Pin downwards - tool is a little bit higher than home position --> part detected
+        IF (sHW_IO.diAngleTool >= cAnglePartPinDownMin) AND (sHW_IO.diAngleTool <= cAnglePartPinDownMax) THEN
+           sPartCtrl.bDetected_PinDown := TRUE;
+        ELSE   
+           sPartCtrl.bDetected_PinDown := FALSE;
+        END_IF;  
+        //Pin upwards - tool is a little bit higher than end position --> part detected
+        IF (sHW_IO.diAngleTool >= cAnglePartPinUpMin) AND (sHW_IO.diAngleTool <= cAnglePartPinUpMax) THEN
+           sPartCtrl.bDetected_PinUp := TRUE;
+        ELSE
+           sPartCtrl.bDetected_PinUp := FALSE;
+        END_IF;
+        
+        //Pin downwards - tool is at upper end position --> overload / collision detected
+        IF (sHW_IO.diAngleTool >= cAngle34DegPosMin) THEN
+           sPartCtrl.bOverload_PinDown := TRUE;
+        ELSE
+           sPartCtrl.bOverload_PinDown := FALSE;
+        END_IF;
+        //Pin upwards - tool is below centre position --> overload / collision detected
+        IF (sHW_IO.diAngleTool <= cAngle20DegPosMin) THEN   
+           sPartCtrl.bOverload_PinUp := TRUE;
+        ELSE
+           sPartCtrl.bOverload_PinUp := FALSE;
+        END_IF;
+     END_IF;
+      
+     sTeachView.bToolIsUp              := (eToolPos = nToolUp);
+     sTeachView.bToolIsInCentre        := (eToolPos = nToolCentre);
+     sTeachView.bToolIsDown            := (eToolPos = nToolDown);
+     sTeachView.bToolIsUndef           := (eToolPos = nToolUndef);
+     sHmiInterfce.sOut.bToolIsUp       := (eToolPos = nToolUp);
+     sHmiInterfce.sOut.bToolIsInCentre := (eToolPos = nToolCentre);
+     sHmiInterfce.sOut.bToolIsDown     := (eToolPos = nToolDown);
+     WAIT bChgValue OR bChgHwErr;
+     bChgValue  := FALSE;
+     bChgHwErr  := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Observe if swivel drive stays in cleaning position
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveCleaningPos() PRIVATE
+  WHILE TRUE DO
+     WAIT (eToolPos <> nToolDown) AND NOT (bHwFault OR (sHW_IO.diAngleTool = cErrAngle));  
+     IF (myKin.mainModeMgr.mode = ciAuto) AND myKin.fieldbusIn.ReleaseRobot.svBool THEN
+        RcuSetMessageOnce(TRcuPneuTool_ErrSwivelCleanPos, myKin.kinListInx, 1, instId, "TRcuPneuTool.ObserveCleaningPos");
+        WAIT NOT myKin.svMotionAllowed;
+        WAIT myKin.svMotionAllowed;  
+     ELSE
+        RcuSetMessageOnce(idWarnMsgCleanPos, myKin.kinListInx, 2, instId, "TRcuPneuTool.ObserveCleaningPos");
+        myKin.WaitMcMicroCycles(2);
+     END_IF;
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Treatment of orders for swivel drive
+//------------------------------------------------------------------------------------------------------
+ROUTINE MoveSwivelDrive() PRIVATE
+ VAR
+  bTimeOut  : BOOL;
+ END_VAR
+
+  WHILE TRUE DO
+     WAIT ((eToolOrder = nToolUp) OR (eToolOrder = nToolCentre) OR (eToolOrder = nToolDown)) AND bMovementRelease;
+     STOP ObserveCleaningPos;
+     
+     //Move the swivel drive to position UP
+     //------------------------------------------------------------------------------------------------------------------
+     IF (eToolOrder = nToolUp) THEN
+     
+        //Angle of swivel drive below 20° --> move in cylinder to be sure it doesn't block the swivel drive 
+        IF (eCylinderPos <> nPosIn) AND (sHW_IO.diAngleTool < cAngle20DegPosMin) THEN
+           eCylinderOrder := nPosIn;
+           //target position reached      or  order cancelled
+           WAIT (eCylinderPos = nPosIn) OR (eCylinderOrder = nPosUndef); 
+           //faults or cancelled order --> reset tool order as well
+           IF (eCylinderOrder = nPosUndef) THEN
+              eToolOrder := nToolUndef;
+           END_IF;
+        END_IF;        
+               
+        //Angle of swivel drive bigger or equal 20° OR cylinder is in --> it's allowed to move swivel drive upwards
+        IF bMovementRelease AND ((eCylinderPos = nPosIn) OR (sHW_IO.diAngleTool >= cAngle20DegPosMin)) THEN 
+           sHW_IO.bOutToolUp   := TRUE;  //set valve outputs
+           sHW_IO.bOutToolDown := FALSE;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order for swivel drive to move UP");
+           bTimeOut := FALSE;                          
+           SysTimerSet(diTimeOutMovingTool, bTimeOut);  //start timeout
+           
+           //order no longer pending       target position reached   timeout         robot deselected/bus fault
+           WAIT (eToolOrder <> nToolUp) OR (sHW_IO.diAngleTool >= cAngle34DegPosMin) OR bTimeOut OR NOT bMovementRelease; 
+                   
+           
+           IF (sHW_IO.diAngleTool >= cAngle34DegPosMin) THEN   //target position reached
+              //move in cylinder when swivel drive is in upper position
+              IF (eCylinderPos <> nPosIn) THEN
+                 eCylinderOrder := nPosIn;
+                 //target position reached      or  order cancelled
+                 WAIT (eCylinderPos = nPosIn) OR (eCylinderOrder = nPosUndef);  
+              END_IF;
+              eToolOrder := nToolUndef;
+           ELSIF NOT bMovementRelease THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              eToolOrder := nToolUndef;
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive couldn't move no movement release");
+           ELSIF bTimeOut THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              eToolOrder := nToolUndef;
+              RcuSetMessageOnce(TRcuPneuTool_ErrSwivelTargetPos, myKin.kinListInx, 1, instId, "TRcuPneuTool.MoveSwivelDrive");
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive should move UP but did not reach target position");
+           ELSIF (eToolOrder <> nToolUp) THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive - Order to move up was cancelled");
+           END_IF;
+        END_IF; 
+        
+     //Move the swivel drive to position CENTRE (Home)
+     //------------------------------------------------------------------------------------------------------------------
+     ELSIF (eToolOrder = nToolCentre) THEN
+     
+        //Target position not reached yet
+        IF (eToolPos <> nToolCentre) THEN
+           //Up --> Centre => Cylinder must be moved out to have a limit stop
+           IF (eCylinderPos <> nPosOut) THEN
+              eCylinderOrder := nPosOut;
+              //target position reached     or  order cancelled
+              WAIT (eCylinderPos = nPosOut) OR (eCylinderOrder = nPosUndef);
+              //faults or cancelled order --> reset tool order as well
+              IF (eCylinderOrder = nPosUndef) THEN
+                 eToolOrder := nToolUndef;
+              END_IF;
+           END_IF;
+        END_IF;
+        
+        IF (eToolOrder = nToolCentre) AND (eCylinderPos = nPosOut) AND bMovementRelease THEN
+           sHW_IO.bOutToolUp   := FALSE;  //set valve outputs
+           sHW_IO.bOutToolDown := TRUE;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order for swivel drive to move CENTRE");
+           bTimeOut := FALSE;                          
+           SysTimerSet(diTimeOutMovingTool, bTimeOut);              //start timeout
+           
+           //order no longer pending           target position reached       timeout         robot deselected/bus fault
+           WAIT (eToolOrder <> nToolCentre) OR (eToolPos = nToolCentre) OR bTimeOut OR NOT bMovementRelease;
+           
+           IF (eToolPos = nToolCentre) THEN                        //target position reached
+              eToolOrder := nToolUndef;
+           ELSIF NOT bMovementRelease THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              eToolOrder := nToolUndef;
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive couldn't move no movement release");
+           ELSIF bTimeOut THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              eToolOrder := nToolUndef;
+              RcuSetMessageOnce(TRcuPneuTool_ErrSwivelTargetPos, myKin.kinListInx, 2, instId, "TRcuPneuTool.MoveSwivelDrive");
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive should move to CENTRE but did not reach target position");
+           ELSIF (eToolOrder <> nToolCentre) THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive - Order to move centre pos was cancelled");
+           END_IF;
+        END_IF;   
+       
+     ELSIF (eToolOrder = nToolDown) THEN
+     
+        //Target position not reached yet
+        IF (eToolPos <> nToolDown) THEN
+           IF (eCylinderPos <> nPosIn) THEN
+              eCylinderOrder := nPosIn;
+              //target position reached      or  order cancelled
+              WAIT (eCylinderPos = nPosIn) OR (eCylinderOrder = nPosUndef);
+              //faults or cancelled order --> reset tool order as well
+              IF (eCylinderOrder = nPosUndef) THEN
+                 eToolOrder := nToolUndef;
+              END_IF;
+           END_IF;
+        END_IF;
+        
+        IF (eCylinderPos = nPosIn) AND bMovementRelease THEN
+           sHW_IO.bOutToolUp   := FALSE;  //set valve outputs
+           sHW_IO.bOutToolDown := TRUE;   
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Order for swivel drive to move DOWN");
+           bTimeOut := FALSE;                          
+           SysTimerSet(diTimeOutMovingTool, bTimeOut);              //start timeout
+                     
+           //order no longer pending           target position reached       timeout         robot deselected/bus fault
+           WAIT (eToolOrder <> nToolDown) OR (eToolPos = nToolDown) OR bTimeOut OR NOT bMovementRelease;
+           
+           IF (eToolPos = nToolDown) THEN  //target position reached
+              eToolOrder := nToolUndef;
+           ELSIF NOT bMovementRelease THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              eToolOrder := nToolUndef;
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive couldn't move no movement release");
+           ELSIF bTimeOut THEN
+              sHW_IO.bOutToolUp   := FALSE; //reset valve outputs
+              sHW_IO.bOutToolDown := FALSE;
+              eToolOrder := nToolUndef;
+              RcuSetMessageOnce(TRcuPneuTool_ErrSwivelTargetPos, myKin.kinListInx, 1, instId, "TRcuPneuTool.MoveSwivelDrive");
+              myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Swivel drive should move DOWN but did not reach target position");
+           END_IF;
+        END_IF;  
+     END_IF;
+     SysTimerClear(bTimeOut); 
+     bTimeOut := FALSE;
+  END_WHILE; 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Interface to TeachView
+//------------------------------------------------------------------------------------------------------
+ROUTINE TeachViewInterface() PRIVATE
+ VAR
+  bChgUp     : BOOL;
+  bChgCentre : BOOL;
+  bChgDown   : BOOL;
+  bChgIn     : BOOL;
+  bChgOut    : BOOL;
+  bChgRel    : BOOL;
+ END_VAR
+ 
+  //show different pictures according these bits
+  sTeachView.bShowReleases   := UPDATE(((myKin.mainModeMgr.mode = ciT1) OR (myKin.mainModeMgr.mode = ciT2)) AND NOT bTeachModeRelease);
+  
+  sTeachView.bEStopOK        := UPDATE(myKin.RcuEmergencyStop.stop AND myKin.RcuEmergencyStop.firealarm);
+  sTeachView.bEStopNOK       := UPDATE(sTeachView.bShowIcons AND NOT (myKin.RcuEmergencyStop.stop AND myKin.RcuEmergencyStop.firealarm));
+  
+  sTeachView.bRobSelOk       := UPDATE(sTeachView.bEStopOK AND myKin.fieldbusIn.ReleaseRobot.svBool);
+  sTeachView.bRobSelNOk      := UPDATE(sTeachView.bEStopOK AND sTeachView.bShowIcons AND NOT myKin.fieldbusIn.ReleaseRobot.svBool);
+  
+  sTeachView.bAirOk          := UPDATE(sTeachView.bRobSelOk AND myKin.handler.toolCleaner.bAirSupplyOk);
+  sTeachView.bAirNOk         := UPDATE(sTeachView.bRobSelOk AND sTeachView.bShowIcons AND NOT myKin.handler.toolCleaner.bAirSupplyOk);
+  
+  sTeachView.bErrorOk        := UPDATE(sTeachView.bAirOk AND myKin.svMotionAllowed);
+  sTeachView.bErrorNOk       := UPDATE(sTeachView.bAirOk AND sTeachView.bShowIcons AND NOT myKin.svMotionAllowed);
+  START ToggleIconsTV();
+  
+  //releases for the push buttons
+  sTeachView.bRelMoveUp      := UPDATE(bTeachModeRelease);
+  sTeachView.bRelMoveCentre  := UPDATE(bTeachModeRelease AND (eToolPos = nToolUp));
+  sTeachView.bRelMoveDown    := UPDATE(bTeachModeRelease AND (eToolPos = nToolUp));
+  sTeachView.bRelMoveBoltIn  := UPDATE(bTeachModeRelease AND ((eCylinderPos = nToolUndef) OR (sHW_IO.diAngleTool >= cAngle34DegPosMin)));
+  sTeachView.bRelMoveBoltOut := UPDATE(bTeachModeRelease AND (sHW_IO.diAngleTool >= cAngle34DegPosMin));
+  
+  //any push buttons is pressed
+  bChgUp      := IS_CHANGED(sTeachView.bMoveToolUp);
+  bChgCentre  := IS_CHANGED(sTeachView.bMoveToolCentre);
+  bChgDown    := IS_CHANGED(sTeachView.bMoveToolDown);
+  bChgIn      := IS_CHANGED(sTeachView.bMoveBoltIn);
+  bChgOut     := IS_CHANGED(sTeachView.bMoveBoltOut);
+  bChgRel     := IS_CHANGED(bTeachModeRelease);
+  
+  WHILE TRUE DO 
+     bChgUp     := FALSE;
+     bChgCentre := FALSE;
+     bChgDown   := FALSE;
+     bChgIn     := FALSE;
+     bChgOut    := FALSE;
+     bChgRel    := FALSE;
+     WAIT bChgUp OR bChgCentre OR bChgDown OR bChgIn OR bChgOut OR bChgRel;
+     IF bTeachModeRelease THEN
+        IF bChgUp AND sTeachView.bMoveToolUp THEN
+           eToolOrder := nToolUp;
+        ELSIF bChgCentre AND sTeachView.bMoveToolCentre THEN
+           eToolOrder := nToolCentre;
+        ELSIF bChgDown AND sTeachView.bMoveToolDown THEN
+           eToolOrder := nToolDown;
+        ELSIF bChgIn AND sTeachView.bMoveBoltIn THEN
+           eCylinderOrder := nPosIn;
+        ELSIF bChgOut AND sTeachView.bMoveBoltOut THEN
+           eCylinderOrder := nPosOut;
+        END_IF;
+     END_IF;
+     sTeachView.bMoveToolUp     := FALSE;
+     sTeachView.bMoveToolCentre := FALSE;
+     sTeachView.bMoveToolDown   := FALSE;
+     sTeachView.bMoveBoltIn     := FALSE;
+     sTeachView.bMoveBoltOut    := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+//toggle icons for releases on teachview
+//---------------------------------------------------------------------------------
+ROUTINE ToggleIconsTV() PRIVATE
+ VAR
+   timeout : BOOL;
+ END_VAR
+ 
+   WHILE TRUE DO
+      WAIT sTeachView.bShowReleases;
+      WHILE sTeachView.bShowReleases DO
+         IF sTeachView.bShowIcons THEN
+            SysTimerSet(2000, timeout);
+         ELSE
+            SysTimerSet(1000, timeout);
+         END_IF;
+         WAIT timeout OR NOT sTeachView.bShowReleases;
+         SysTimerClear(timeout);
+         timeout := FALSE;
+         sTeachView.bShowIcons := NOT sTeachView.bShowIcons;
+      END_WHILE;
+   END_WHILE;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Interface to EcoScreen
+//------------------------------------------------------------------------------------------------------
+ROUTINE HmiInterface() PRIVATE
+ VAR
+  bChgUp     : BOOL;
+  bChgCentre : BOOL;
+  bChgDown   : BOOL;
+  bChgIn     : BOOL;
+  bChgOut    : BOOL;
+  bChgRel    : BOOL;
+ END_VAR
+
+  sHmiInterfce.sOut.bRelMoveUp      := UPDATE(bHMIRelease);
+  sHmiInterfce.sOut.bRelMoveCentre  := UPDATE(bHMIRelease AND (eToolPos = nToolUp));
+  sHmiInterfce.sOut.bRelMoveDown    := UPDATE(bHMIRelease AND (eToolPos = nToolUp));
+  sHmiInterfce.sOut.bRelMoveBoltIn  := UPDATE(bHMIRelease AND ((eCylinderPos = nToolUndef) OR (sHW_IO.diAngleTool >= cAngle34DegPosMin)));
+  sHmiInterfce.sOut.bRelMoveBoltOut := UPDATE(bHMIRelease AND (sHW_IO.diAngleTool >= cAngle34DegPosMin));
+  
+  bChgIn     := IS_CHANGED(sHmiInterfce.sIn.bMoveBoltIn);
+  bChgOut    := IS_CHANGED(sHmiInterfce.sIn.bMoveBoltOut);
+  bChgUp     := IS_CHANGED(sHmiInterfce.sIn.bMoveToolUp);
+  bChgCentre := IS_CHANGED(sHmiInterfce.sIn.bMoveToolToCentre);
+  bChgDown   := IS_CHANGED(sHmiInterfce.sIn.bMoveToolDown);
+  bChgRel    := IS_CHANGED(bHMIRelease);
+  
+  WHILE TRUE DO 
+     bChgUp     := FALSE;
+     bChgCentre := FALSE;
+     bChgDown   := FALSE;
+     bChgIn     := FALSE;
+     bChgOut    := FALSE;
+     bChgRel    := FALSE;
+     WAIT bChgUp OR bChgCentre OR bChgDown OR bChgIn OR bChgOut OR bChgRel;
+     IF bHMIRelease THEN
+        IF bChgUp AND sHmiInterfce.sIn.bMoveToolUp THEN
+           eToolOrder := nToolUp;
+        ELSIF bChgCentre AND sHmiInterfce.sIn.bMoveToolToCentre THEN
+           eToolOrder := nToolCentre;
+        ELSIF bChgDown AND sHmiInterfce.sIn.bMoveToolDown THEN
+           eToolOrder := nToolDown;
+        ELSIF bChgIn AND sHmiInterfce.sIn.bMoveBoltIn THEN
+           eCylinderOrder := nPosIn;
+        ELSIF bChgOut AND sHmiInterfce.sIn.bMoveBoltOut THEN
+           eCylinderOrder := nPosOut;
+        END_IF;
+     END_IF;
+     sHmiInterfce.sIn.bMoveToolUp       := FALSE;
+     sHmiInterfce.sIn.bMoveToolToCentre := FALSE;
+     sHmiInterfce.sIn.bMoveToolDown     := FALSE;
+     sHmiInterfce.sIn.bMoveBoltIn       := FALSE;
+     sHmiInterfce.sIn.bMoveBoltOut      := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   generate signal when main mode changes - used to lower movement release and cancel pending orders 
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveMainMode() PRIVATE
+   bChgMainMode := IS_CHANGED(myKin.mainModeMgr.mode);
+   WHILE TRUE DO
+      WAIT bChgMainMode;
+      myKin.WaitMcMicroCycles(1);
+      bChgMainMode := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+//   movement release comes back again --> if swivel drive and cylinder are still in position, set values outputs again to keep position
+//------------------------------------------------------------------------------------------------------------------------------------------
+ROUTINE RestoreValveOutputs() PRIVATE
+ VAR
+  chg : BOOL;
+ END_VAR
+ 
+   chg := IS_CHANGED(bMovementRelease);
+   WHILE TRUE DO
+      WAIT chg;
+      chg := FALSE;
+      //movement release comes back
+      IF bMovementRelease AND (myKin.mainModeMgr.mode = ciAuto) THEN
+         //no orders and no values output for cylinder set
+         IF (eCylinderOrder = nPosUndef) AND (eToolOrder = nToolUndef) AND NOT (sHW_IO.bOutMoveBoltIn OR sHW_IO.bOutMoveBoltOut) THEN
+            //cylinder is still in position in --> restore/open valve to move cylinder in
+            IF (eCylinderPos = nPosIn) THEN
+               sHW_IO.bOutMoveBoltIn  := TRUE;
+               sHW_IO.bOutMoveBoltOut := FALSE;
+               myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: RESTORED value outputs for cylinder position IN");
+            //cylinder is still in position out --> restore/open valve to move cylinder out   
+            ELSIF (eCylinderPos = nPosOut) THEN
+               sHW_IO.bOutMoveBoltIn  := FALSE;
+               sHW_IO.bOutMoveBoltOut := TRUE;
+               myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: RESTORED value outputs for cylinder position OUT");
+            END_IF;
+         END_IF;
+         //no orders and no values output for swivel drive set
+         IF (eCylinderOrder = nPosUndef) AND (eToolOrder = nToolUndef) AND NOT (sHW_IO.bOutToolUp OR sHW_IO.bOutToolDown) THEN
+            //swivel drive is still in position up --> restore/open valve to move swivel drive up
+            IF (eToolPos = nToolUp) THEN
+               sHW_IO.bOutToolUp   := TRUE; 
+               sHW_IO.bOutToolDown := FALSE;
+               myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: RESTORED value outputs for swivel drive position UP");
+            //swivel drive is still in position centre or down --> restore/open valve to move swivel drive down
+            ELSIF (eToolPos = nToolCentre) OR (eToolPos = nToolDown) THEN
+               sHW_IO.bOutToolUp   := FALSE;
+               sHW_IO.bOutToolDown := TRUE; 
+               myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: RESTORED value outputs for swivel drive position DOWN");
+            END_IF;
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   check if fixation cylinder is moved out and if swivel drive is in centre postion at program start 
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveIdlePos() PRIVATE 
+ VAR
+  idleChkLastCyc : BOOL;
+ END_VAR
+ 
+   WHILE TRUE DO 
+     IF bDoIdleCheck THEN
+        myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: Started IdleCheck=" + STR(bDoIdleCheck) + " ToolPos=" +STR(eToolPos) + " CylinderPos=" + STR(eCylinderPos));
+     END_IF;
+      //run idle check only in automatic
+     IF (NOT myKin.mainModeMgr.externControl) AND bDoIdleCheck THEN   
+          bDoIdleCheck := FALSE;
+          myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: IdleCheck stopped for pneu tool cause main mode not automatic");
+      //fixation is out and swivel drive in centre, stop idle check, all o.k.
+      ELSIF (eToolPos = nToolCentre) AND (eCylinderPos = nPosOut) AND bDoIdleCheck THEN    
+          bDoIdleCheck := FALSE;      
+          myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: IdleCheck stopped on pneu tool cause State OK");   
+      //idle check active and feedback from switch --> error wrong state of switched    
+      ELSIF bDoIdleCheck THEN
+         IF NOT idleChkLastCyc THEN 
+            WAIT NOT myKin.isNotMovingOnPath;
+         END_IF;
+         RcuSetMessageOnce(TRcuPneuTool_ErrNotInWorkpos, myKin.kinListInx, 1, instId, "TRcuPneuTool.ObserveIdlePos");
+         WAIT NOT myKin.svMotionAllowed;
+         WAIT myKin.svMotionAllowed;
+      END_IF;
+      idleChkLastCyc := bDoIdleCheck;
+      //wait until idle check is started by RESERVE from TeachControl
+      WAIT bDoIdleCheck;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   systemroutine - controller bootup
+//------------------------------------------------------------------------------
+ROUTINE NEW()
+  instId        := RcuGetInstanceId();
+END_ROUTINE  
+
+//------------------------------------------------------------------------------
+//   systemroutine - teachprogramm is started now
+//------------------------------------------------------------------------------
+ROUTINE RESERVE()
+  IF IS_MAPPED(myKin) THEN
+     IF myKin.mainModeMgr.externControl AND NOT (myKin.RcuInterfaceToBCU.bFixposActive OR myKin.bReleaseBlockedByHandler OR myKin.homing.bHomingRun) THEN
+        eOrderEcoTalk := nToolUndef;
+        IF (eHomePosProgStart = nCentre) AND myKin.fixpos.RcuInHome AND ((eToolPos <> nToolCentre) OR (eCylinderPos <> nPosOut)) THEN
+           eOrderEcoTalk := nToolCentre;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: RESERVE - Move TOOL to CentrePos");
+        ELSIF (eHomePosProgStart = nUpperPos) AND myKin.fixpos.RcuInHome AND ((eToolPos <> nToolUp) OR (eCylinderPos <> nPosIn)) THEN
+           eOrderEcoTalk := nToolUp;
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PneuTool: RESERVE - Move TOOL to UpperPos");  
+        ELSE
+           bDoIdleCheck := TRUE;
+        END_IF;
+     END_IF;
+  END_IF;  
+END_ROUTINE      
+
+//------------------------------------------------------------------------------
+//   systemroutine - teachprogramm is finished now
+//------------------------------------------------------------------------------
+ROUTINE RELEASE()
+  IF IS_MAPPED(myKin) THEN
+     bDoIdleCheck   := FALSE;
+     eOrderEcoTalk  := nToolUndef;
+     eToolOrder     := nToolUndef;
+     eCylinderOrder := nPosUndef;
+  END_IF;
+END_ROUTINE

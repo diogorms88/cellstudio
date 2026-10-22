@@ -1,0 +1,239 @@
+;===========================================================
+; DDB File for  Protool/Pro PC
+; SYNC/FREEZE and Auto_Baud not supported, 12Mbit/s
+; MLFB  : 6AV6 584-1Ax05-0AX0 (ProTool/Pro RT)
+; Copyright (C) Siemens AG 1998  All Rights Reserved. Confidential
+;
+; Date  : 08.02.99
+; File  : VMT_BK.GSD
+;===========================================================
+#Profibus_DP
+
+; Unit-Definition-List:
+GSD_Revision=1
+Vendor_Name="SIEMENS AG/VMT"
+Model_Name="CP5611 Slave"
+Revision="2.0"
+Ident_Number=0x9001
+Protocol_Ident=0
+Station_Type=0
+Hardware_Release="V1.0"
+Software_Release="2.0"
+Info_Text= "Anbindung an VMT CP5611"
+;
+93.75_supp=1
+187.5_supp=1
+500_supp=1
+1.5M_supp=1
+3M_supp=1
+6M_supp=1
+12M_supp=1
+MaxTsdr_93.75=60
+MaxTsdr_187.5=60
+MaxTsdr_500=100
+MaxTsdr_1.5M=150
+MaxTsdr_3M=250
+MaxTsdr_6M=450
+MaxTsdr_12M=800
+Implementation_Type="ASPC2"
+;Bitmap_Device=" "
+;Bitmap_SF="BEBO567S"
+;
+; Slave-Specification:
+OrderNumber="6GK1 561-1AA00"
+;Periphery="SIMATIC HMI TD/OP"
+;OffsetFirstMPDBlock=0
+;ETERDelay=0
+;MaxResponseDelay=0
+Auto_Baud_supp=0
+Sync_Mode_supp=0
+Freeze_Mode_supp=0
+Min_Slave_Intervall=20
+Max_Diag_Data_Len=10
+Modul_Offset=1
+Slave_Family=6
+
+;Max_Module = maximale Anzahl von konfigurierbaren Modulen
+Max_Module=16
+
+;Modular_Station=1 erlaubt hinzufügen von Universalmodulen oder speziellen Modulen
+;Modular_Station=0 erlaubt kein dynamisches Konfigurieren
+Modular_Station=1 
+
+;Max_Input_Len= maximale Anzahl von Eingangsbytes
+Max_Input_Len = 244
+
+;Max_Output_Len= maximale Anzahl von Ausgangsbytes
+Max_Output_Len = 244
+
+;Max_Data_Len=Maximale Anzahl bits
+Max_Data_Len = 488
+;
+User_Prm_Data_Len=0
+;
+; Module-Definitions:
+;
+; für Module <= 16 Byte:
+; bit 7 = konsistent
+; bit 6 = ?
+; bit 5 = Ausgang
+; bit 4 = Eingang
+; bit 3-0 = Anzahl Bytes + 1  F=16
+;
+; für Module > 16 Byte:
+; zwei hex-Zahlen
+; bit 11 = Ausgang
+; bit 10 = Eingang
+; bit 9  = ?
+; bit 8  = ?
+; bit 7  = konsistent
+; bit 6-0 = Anzahl Bytes + 1 
+;
+; Beispiele:
+;
+;Module = "4 Bytes Eingang" 0x13
+;Module = "4 Bytes Eingang konsistent" 0x93
+;Module = "32 Bytes Eingang" 0x40,0x1F
+;Module = "32 Bytes Eingänge konsistent" 0x40,0x9F
+;Module = "4 Bytes Ausgang" 0x23
+;Module = "4 Bytes Ausgang konsistent" 0xA3
+;Module = "32 Bytes Ausgang" 0x80,0x1F
+;Module = "32 Bytes Ausgang konsistent" 0x80,0x9F
+
+; 4Byte Ein/Aus konsistent + 32Byte Ein/Aus konsistent
+;MODULE = "BK" 0xB3, 0x40,0x9F, 0x80,0x9F      
+;ENDMODULE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; <Module-Definition-List>
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+Module = "1 Byte Eingang" 0x10
+1
+EndModule
+;
+Module = "2 Bytes Eingang" 0x11
+2
+EndModule
+;
+Module = "4 Bytes Eingang" 0x13
+3
+EndModule
+;
+Module = "8 Bytes Eingang" 0x17
+4
+EndModule
+;
+Module = "16 Bytes Eingang" 0x1F
+5
+EndModule
+;
+Module = "32 Bytes Eingang" 0x40,0x1F
+6
+EndModule
+;
+Module = "64 Bytes Eingang" 0x40,0x3F
+7
+EndModule
+;
+Module = "64 Worte Eingang" 0x40,0x7F
+8
+EndModule
+;
+Module = "1 Byte Ausgang" 0x20
+10
+EndModule
+;
+Module = "2 Bytes Ausgang" 0x21
+11
+EndModule
+;
+Module = "4 Bytes Ausgang" 0x23
+12
+EndModule
+;
+Module = "8 Bytes Ausgang " 0x27
+13
+EndModule
+;
+Module = "16 Bytes Ausgang" 0x2F
+14
+EndModule
+;
+Module = "32 Bytes Ausgang" 0x80,0x1F
+15
+EndModule
+;
+Module = "64 Bytes Ausgang" 0x80,0x3F
+16
+EndModule
+;
+Module = "64 Worte Ausgang" 0x80,0x7F
+17
+EndModule
+;
+Module = "1 Byte Eingang konsistent" 0x90
+19
+EndModule
+;
+Module = "2 Bytes Eingang konsistent" 0x91
+20
+EndModule
+;
+Module = "4 Bytes Eingang konsistent" 0x93
+21
+EndModule
+;
+Module = "8 Bytes Eingang konsistent" 0x97
+22
+EndModule
+;
+Module = "16 Bytes Eingang konsistent" 0x9F
+23
+EndModule
+;
+Module = "32 Bytes Eingang konsistent" 0x40,0x9F
+24
+EndModule
+;
+Module = "64 Bytes Eingang konsistent" 0x40,0xBF
+25
+EndModule
+;
+Module = "64 Worte Eingang konsistent" 0x40,0xFF
+26
+EndModule
+;
+Module = "1 Byte Ausgang konsistent" 0xA0
+28
+EndModule
+;
+Module = "2 Bytes Ausgang konsistent" 0xA1
+29
+EndModule
+;
+Module = "4 Bytes Ausgang konsistent" 0xA3
+30
+EndModule
+;
+Module = "8 Bytes Ausgang konsistent" 0xA7
+31
+EndModule
+;
+Module = "16 Bytes Ausgang konsistent" 0xAF
+32
+EndModule
+;
+Module = "32 Bytes Ausgang konsistent" 0x80,0x9F
+33
+EndModule
+;
+Module = "64 Bytes Ausgang konsistent" 0x80,0xBF
+34
+EndModule
+;
+Module = "64 Worte Ausgang konsistent" 0x80,0xFF
+35
+EndModule
+;
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

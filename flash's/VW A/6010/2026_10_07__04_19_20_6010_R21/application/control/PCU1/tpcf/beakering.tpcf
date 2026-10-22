@@ -1,0 +1,122 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH      | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option1 OptionGun MaterialValve1 HelpGun1
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties CurrentGroup "Beakering" "" 24 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "MainChannel.AFIXPOS.GoHome"
+	Add_TPSignal "MainChannel.AFIXPOS.AtHome"
+	Add_TPSignal "MainChannel.AFIXPOS.GoPurgeHN1"
+	Add_TPSignal "MainChannel.AFIXPOS.AtPurgeHN1"
+	Add_TPSignal "MainChannel.YHN1.Set"
+	Add_TPSignal "Material1.AMV2FC.ControlType"
+	Add_TPSignal "Material1.AMV2FC.SetFlow"
+	Add_TPSignal "Material1.AMV2FC.SetNextNozzle"
+	Add_TPSignal "Material1.AMV2FC.OrderSet"
+	SelectCase MaterialValve1
+		Case 1
+			Add_TPSignal "MaterialSupply1.AYMV1.Set"
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Add_TPSignal "Material1.YHG1.Set"
+	EndSelect
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Add_TPSignal "MainChannel.YLA1.Set"
+			Add_TPSignal "MainChannel.BBL1.Set"
+		Case Gun_MD_El
+			Add_TPSignal "MainChannel.AMD99.OrderRun"
+			Add_TPSignal "MainChannel.AMD99.SetVelocity"
+			Add_TPSignal "MainChannel.BBL1.Set"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepEvent "GoPurgePosHN1" False 20 False 0 True True ChannelError 105 And False 0 "" ""
+	Add_TPStepTime "Beakering" 10 True ""
+	Add_TPStepTime "Wait" 3 True ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "GoPurgePosHN1"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoHome" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtHome" False False
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN1" True
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN1" True True
+	Set_TPSignalBool "MainChannel.YHN1.Set" False
+	Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 0
+	Set_TPSignalAnalog "Material1.AMV2FC.SetFlow" 0
+	Set_TPSignalAnalog "Material1.AMV2FC.SetNextNozzle" 1
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+	SelectCase MaterialValve1
+		Case 1
+			Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" True
+	EndSelect
+	SelectCase OptionGun
+		Case Gun_MD_Air
+			Set_TPSignalBool "MainChannel.YLA1.Set" True
+			Set_TPSignalAnalog "MainChannel.BBL1.Set" 1.5
+		Case Gun_MD_El
+			Set_TPSignalBool "MainChannel.AMD99.OrderRun" True
+			Set_TPSignalAnalog "MainChannel.AMD99.SetVelocity" 60
+			Set_TPSignalAnalog "MainChannel.BBL1.Set" 1.5
+	EndSelect
+
+	// Step 2
+	Select_TPStep "Beakering"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.AFIXPOS.GoPurgeHN1" False
+	Act_TPSignalBool "MainChannel.AFIXPOS.AtPurgeHN1" False False
+	Set_TPSignalBool "MainChannel.YHN1.Set" True
+
+	// Step 3
+	Select_TPStep "Wait"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "MainChannel.YHN1.Set" False
+	Set_TPSignalAnalog "Material1.AMV2FC.SetNextNozzle" 0
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "beakering" True
+Return

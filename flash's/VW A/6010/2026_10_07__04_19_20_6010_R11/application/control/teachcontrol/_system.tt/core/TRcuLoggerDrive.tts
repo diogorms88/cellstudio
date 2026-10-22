@@ -1,0 +1,119 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuLoggerDrive.tts                                          *
+*   Description: Send logger enties per EVENT to IEC which writes them        *
+*                to driveLog.txt                                              * 
+*-----------------------------------------------------------------------------*
+*   09.08.18 BIT: 
+*)
+//------------------------------------------------------------------------------------------------------
+//  Constant
+//------------------------------------------------------------------------------------------------------
+
+
+//------------------------------------------------------------------------------------------------------
+//  Types  
+//------------------------------------------------------------------------------------------------------
+TYPE GLOBAL
+ TInfoElement : (eBrakeTestDone:=1, eGrindinDone:=2, eStoLowered:=3);
+END_TYPE
+
+TYPE PRIVATE
+   tsProtocolElement : STRUCT
+     sLocation         : STRING[32];
+     iDevIdx           : INT;
+     sMessage          : STRING[255];
+   END_STRUCT;
+   
+   tsInfoElement : STRUCT
+     iDevIdx    : INT;
+     nElement   : TInfoElement;
+   END_STRUCT;
+   
+END_TYPE
+
+//------------------------------------------------------------------------------------------------------
+//  Variables
+//------------------------------------------------------------------------------------------------------
+VAR PRIVATE
+  myRobot           : MAPTO TRcuRobot;
+  eventProtocol     : MAPTO tsProtocolElement;
+  eventInfoUpdate   : MAPTO tsInfoElement;
+  bInitDone         : BOOL;
+END_VAR
+
+
+//------------------------------------------------------------------------------------------------------
+// print text direct to driveLog.txt
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetProtocol(CONST sLocation : STRING; CONST iDevIdx : INT; CONST sText : STRING)
+ VAR
+  data : tsProtocolElement;
+ END_VAR
+ 
+  IF NOT bInitDone THEN
+     PRINT("TRcuLoggerDrive.SetProtocol ---- Init not done, unable to SetProtocol !!!");
+  ELSE
+     data.sLocation := sLocation;
+     data.iDevIdx   := iDevIdx;
+     data.sMessage  := sText;
+     SET_EVENT(eventProtocol, data);
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Modify entry in info_Devicename.txt
+//------------------------------------------------------------------------------------------------------
+ROUTINE UpdateInfo(CONST iDevIdx : INT; CONST nElement : TInfoElement)
+ VAR
+  data : tsInfoElement;
+ END_VAR
+ 
+  IF NOT bInitDone THEN
+     PRINT("TRcuLoggerDrive.UpdateInfo ---- Init not done, unable to update info file !!!");
+  ELSE
+     data.iDevIdx   := iDevIdx;
+     data.nElement  := nElement;
+     SET_EVENT(eventInfoUpdate, data);
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Map kinematic and IEC events
+//------------------------------------------------------------------------------------------------------
+ROUTINE Init(CONST iRobot : DINT)
+
+  myRobot := MAP(PaintRobot[iRobot]);
+  IF NOT IS_MAPPED(myRobot) THEN
+     RcuSetMessageOnce(TRcuBrakeCheck_ErrMappingKin, -1, 1, 0, "TRcuLoggerDrive.Init");
+     RETURN;
+  END_IF;
+  
+  eventProtocol := MAPX(cSV_EventDriveProtocol);
+  IF NOT IS_MAPPED(eventProtocol) THEN
+     RcuSetMessageOnce(RcuTypeList_FaErrNotMapped, -1, 1, 0, "TRcuLoggerDrive.Init", "EVENT - " + cSV_EventDriveProtocol);
+     RETURN;
+  END_IF;
+
+  eventInfoUpdate := MAPX(cSV_EventDriveInfoUpdate);
+  IF NOT IS_MAPPED(eventInfoUpdate) THEN
+     RcuSetMessageOnce(RcuTypeList_FaErrNotMapped, -1, 2, 0, "TRcuLoggerDrive.Init", "EVENT - " + cSV_EventDriveInfoUpdate);
+     RETURN;
+  END_IF;
+  
+  bInitDone := TRUE;
+END_ROUTINE
+
+

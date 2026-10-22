@@ -1,0 +1,568 @@
+;*************************************************************************
+;* FILE          : BHT_0586.GSD
+;* VERSION       : 2.8
+;* DATE          : 20 january 2009
+;* BY            : Rob Hagelstein / Bronkhorst High-Tech B.V.
+;* DESCRIPTION   : Profibus DP GSD-file for Bronkhorst meter/controller
+;*************************************************************************
+;
+#Profibus_DP
+GSD_Revision        = 2
+;
+;*************************************************************************
+;* General info
+;*************************************************************************
+;
+Model_Name          = "Bronkhorst meter/controller"      
+Vendor_Name         = "Bronkhorst High-Tech B.V."
+Ident_Number        = 0x0586
+Bitmap_Device       = "0586_dev"
+Bitmap_Diag         = "0586_dia"
+Bitmap_SF           = "0586_spf"
+Protocol_Ident      = 0
+Station_Type        = 0
+Revision            = "V2.8"                             
+Hardware_Release    = "B"                             	 
+Software_Release    = "V8.08"                             
+;
+;*************************************************************************
+;* Supported baudrates / timing
+;*************************************************************************
+;
+9.6_supp            = 1
+19.2_supp           = 1
+45.45_supp          = 1
+93.75_supp          = 1
+187.5_supp          = 1
+500_supp            = 1
+1.5M_supp           = 1
+3M_supp             = 1
+6M_supp             = 1
+12M_supp            = 1
+;
+MaxTsdr_9.6         = 60
+MaxTsdr_19.2        = 60
+MaxTsdr_45.45       = 60
+MaxTsdr_93.75       = 60
+MaxTsdr_187.5       = 60
+MaxTsdr_500         = 100
+MaxTsdr_1.5M        = 150
+MaxTsdr_3M          = 250
+MaxTsdr_6M          = 450
+MaxTsdr_12M         = 800
+;
+Min_Slave_Intervall = 6
+;
+;*************************************************************************
+;* Hardware characteristics
+;*************************************************************************
+;
+Redundancy          = 0
+Repeater_Ctrl_Sig   = 2
+Implementation_Type = "SPC3"
+;
+;*************************************************************************
+;* Software characteristics
+;*************************************************************************
+;
+Freeze_Mode_supp    = 1                        
+Sync_Mode_supp      = 1                       
+Auto_Baud_supp      = 1
+Set_Slave_Add_supp  = 1
+Modular_Station     = 1
+Max_Module          = 50
+Modul_Offset        = 0
+Fail_Safe           = 0
+Slave_Family        = 0
+;
+;*************************************************************************
+;* Max. bus data lengths
+;*************************************************************************
+;
+Max_Input_Len       = 224 
+Max_Output_Len      = 224
+Max_Data_Len        = 224
+Max_Diag_Data_Len   = 6
+;
+;*************************************************************************
+;* Parameter dialog boxes
+;*************************************************************************
+;
+PrmText = 1
+Text(0) = "No"
+Text(1) = "Yes"
+EndPrmText
+;
+;************************ Setpoint control *******************************
+;
+PrmText = 2
+Text(0)  = "Digital"
+Text(1)  = "Analog"
+Text(3)  = "Close valve"
+Text(8)  = "Purge valve"
+Text(4)  = "Setpoint idle"
+Text(12) = "Setpoint=0%"
+Text(7)  = "Setpoint=100%"
+EndPrmText
+;
+ExtUserPrmData =  1 "Setpoint control mode"      
+Unsigned8 0 0-12
+Prm_Text_Ref = 2
+EndExtUserPrmData
+;
+ExtUserPrmData =  2 "Setpoint slope      (0-30000)"      
+Unsigned16 0 0-30000
+EndExtUserPrmData
+;
+;************* Calibration (curve selection for fluids) ******************
+;
+PrmText = 3
+Text(0) = "Fluid 1"
+Text(1) = "Fluid 2"
+Text(2) = "Fluid 3"
+Text(3) = "Fluid 4"
+Text(4) = "Fluid 5"
+Text(5) = "Fluid 6"
+Text(6) = "Fluid 7"
+Text(7) = "Fluid 8"
+EndPrmText
+;
+ExtUserPrmData =  3 "Fluid number"      
+Unsigned8 0 0-7
+Prm_Text_Ref = 3
+EndExtUserPrmData
+;
+;***************************** Alarm *************************************
+;
+PrmText = 4
+Text(0) = "Alarm off"
+Text(1) = "Alarm on min/max limits"
+Text(2) = "Alarm on response time"
+Text(3) = "Alarm at power-up"
+EndPrmText
+;
+ExtUserPrmData =  4 "Alarm mode"      
+Unsigned8 0 0-3  
+Prm_Text_Ref = 4
+EndExtUserPrmData
+;
+ExtUserPrmData =  5 "Alarm maximum limit (0-32767)"      
+Unsigned16 0 0-32767
+EndExtUserPrmData
+;
+ExtUserPrmData =  6 "Alarm minimum limit (0-32767)"      
+Unsigned16 0 0-32767
+EndExtUserPrmData
+;
+PrmText = 5
+Text(0) = "No setpoint change"
+Text(1) = "Go to alarm setpoint"
+EndPrmText
+;
+ExtUserPrmData =  7 "Alarm action"      
+Unsigned8 0 0-1  
+Prm_Text_Ref = 5
+EndExtUserPrmData
+;
+ExtUserPrmData =  8 "Alarm setpoint      (0-32767)"      
+Unsigned16 0 0-32767  
+EndExtUserPrmData
+;
+ExtUserPrmData =  9 "Alarm delay        (0-255sec)"      
+Unsigned8 3 0-255  
+EndExtUserPrmData
+;
+ExtUserPrmData = 10 "Reset alarm by button"      
+Bit(0) 1 0-1  
+Prm_Text_Ref = 1
+EndExtUserPrmData
+;
+ExtUserPrmData = 11 "Reset alarm by bus"      
+Bit(2) 1 0-1  
+Prm_Text_Ref = 1
+EndExtUserPrmData
+;
+ExtUserPrmData = 12 "Reset alarm automaticaly"
+Bit(3) 1 0-1  
+Prm_Text_Ref = 1
+EndExtUserPrmData
+;
+;**************************** Counter ************************************
+;
+PrmText = 6
+Text(0) = "Counter off"
+Text(1) = "Counting upwards"
+Text(2) = "Counting up to limit"
+EndPrmText
+;
+ExtUserPrmData = 13 "Counter mode"      
+Unsigned8 0 0-2  
+Prm_Text_Ref = 6
+EndExtUserPrmData
+;
+PrmText = 7
+Text(0)  = "ln  (gas) / l  (liq.) / g (mass)"
+Text(1)  = "mm3n(gas) / mm3(liq.) / mg(mass)"
+Text(2)  = "mln (gas) / ml (liq.) / ug(mass)"
+Text(3)  = "cm3n(gas) / cm3(liq.) / kg(mass)"
+Text(4)  = "uln (gas) / ul (liq.)"
+Text(5)  = "dm3n(gas) / m3 (liq.)"
+Text(6)  = "m3n (gas)"
+Text(7)  = "uls (gas)"
+Text(8)  = "mm3s(gas)"
+Text(9)  = "mls (gas)"
+Text(10) = "cm3s(gas)"
+Text(11) = "ls  (gas)"
+Text(12) = "dm3s(gas)"
+Text(13) = "m3s (gas)"
+EndPrmText
+;
+ExtUserPrmData = 14 "Counter unit"      
+Unsigned8 0 0-13
+Prm_Text_Ref = 7
+EndExtUserPrmData
+;
+ExtUserPrmData = 15 "Counter limit     (0-9999999)"      
+Unsigned32 0 0-9999999
+EndExtUserPrmData
+;
+PrmText = 8
+Text(0) = "No setpoint change"
+Text(1) = "Go to counter setpoint"
+EndPrmText
+;
+ExtUserPrmData = 16 "Counter action"      
+Unsigned8 0 0-1  
+Prm_Text_Ref = 8
+EndExtUserPrmData
+;                                                
+ExtUserPrmData = 17 "Counter setpoint    (0-32767)"      
+Unsigned16 0 0-32767  
+EndExtUserPrmData
+;
+ExtUserPrmData = 18 "Reset counter by button"      
+Bit(0) 1 0-1  
+Prm_Text_Ref = 1
+EndExtUserPrmData
+;
+ExtUserPrmData = 19 "Reset counter by bus"      
+Bit(2) 1 0-1  
+Prm_Text_Ref = 1
+EndExtUserPrmData
+;
+ExtUserPrmData = 20 "Reset counter automaticaly"
+Bit(3) 0 0-1  
+Prm_Text_Ref = 1
+EndExtUserPrmData
+;
+;************************* Test ******************************************
+;
+PrmText = 9
+Text(255) = "No"
+Text(0)   = "Yes (Measure=Setpoint)"
+EndPrmText
+;
+ExtUserPrmData = 21 "Simulate flow"      
+Unsigned8 255 0-255
+Prm_Text_Ref = 9
+EndExtUserPrmData
+;
+;*************************************************************************
+;* Parameter data (Set Variables)
+;*************************************************************************
+;
+Max_User_Prm_Data_Len      = 85              ; Total length parameter data
+;
+Ext_User_Prm_Data_Const(0) = 0               ; SPC3 specific byte
+;
+Ext_User_Prm_Data_Const(1) = 0,10,0,64       ; InitReset = 64 (7)
+;
+Ext_User_Prm_Data_Const(5) = 1,4,0,0         ; CntrlMode (12)
+Ext_User_Prm_Data_Ref(8)   = 1    
+;
+Ext_User_Prm_Data_Const(9) = 1,2,1,0,0       ; SetpSlope (10)
+Ext_User_Prm_Data_Ref(12)  = 2
+;
+Ext_User_Prm_Data_Const(14) = 1,16,0,0       ; FluidNr (24)
+Ext_User_Prm_Data_Ref(17)   = 3
+;
+Ext_User_Prm_Data_Const(18) = 97,3,0,0       ; AlrmMode (118)
+Ext_User_Prm_Data_Ref(21)   = 4
+;
+Ext_User_Prm_Data_Const(22) = 97,1,1,0,0     ; AlrmMaxLim (116)
+Ext_User_Prm_Data_Ref(25)   = 5
+;
+Ext_User_Prm_Data_Const(27) = 97,2,1,0,0     ; AlrmMinLim (117)
+Ext_User_Prm_Data_Ref(30)   = 6         
+;
+Ext_User_Prm_Data_Const(32) = 97,5,0,0       ; AlrmStpMod (120)
+Ext_User_Prm_Data_Ref(35)   = 7         
+;
+Ext_User_Prm_Data_Const(36) = 97,6,1,0,0     ; AlrmNwSetp (121)
+Ext_User_Prm_Data_Ref(39)   = 8         
+;
+Ext_User_Prm_Data_Const(41) = 97,7,0,3       ; AlrmDelay (182)
+Ext_User_Prm_Data_Ref(44)   = 9     
+;
+Ext_User_Prm_Data_Const(45) = 97,9,0,15      ; RstAlarmEn (156)
+Ext_User_Prm_Data_Ref(48)   = 10    
+Ext_User_Prm_Data_Ref(48)   = 11  
+Ext_User_Prm_Data_Ref(48)   = 12  
+;
+Ext_User_Prm_Data_Const(49) = 104,8,0,0      ; CntrMode (130)
+Ext_User_Prm_Data_Ref(52)   = 13  
+;
+Ext_User_Prm_Data_Const(53) = 104,2,0,0      ; CntrUnit (123)
+Ext_User_Prm_Data_Ref(56)   = 14    
+;
+Ext_User_Prm_Data_Const(57) = 104,3,3,0,0,0,0 ;CntrLimit (124)
+Ext_User_Prm_Data_Ref(60)   = 15      
+;
+Ext_User_Prm_Data_Const(64) = 104,5,0,0      ; CntrStpMod (126)
+Ext_User_Prm_Data_Ref(67)   = 16
+;
+Ext_User_Prm_Data_Const(68) = 104,6,1,0,0    ; CntrNwSetp (127)
+Ext_User_Prm_Data_Ref(71)   = 17        
+;
+Ext_User_Prm_Data_Const(73) = 104,9,0,7      ; RstCountEn (157)
+Ext_User_Prm_Data_Ref(76)   = 18    
+Ext_User_Prm_Data_Ref(76)   = 19  
+Ext_User_Prm_Data_Ref(76)   = 20
+;
+Ext_User_Prm_Data_Const(77) = 115,2,0,255    ; Monitor (60)
+Ext_User_Prm_Data_Ref(80)   = 21    
+;
+Ext_User_Prm_Data_Const(81) = 0,10,0,0       ; InitReset = 0 (7)
+;
+;*************************************************************************
+;* Modules with FlowBusVariables
+;*************************************************************************
+;
+;************************ Readout/operate ********************************
+;
+Module = "Measure, integer (read)" 0x42,1,1,0
+EndModule
+;
+Module = "Measure, float (read)" 0x42,3,33,0
+EndModule
+;
+Module = "Setpoint, integer (read)" 0x42,1,1,1
+EndModule
+;
+Module = "Setpoint, integer (write)" 0x82,1,1,1
+EndModule
+;
+Module = "Setpoint, float (read)" 0x42,3,33,3
+EndModule
+;
+Module = "Setpoint, float (write)" 0x82,3,33,3
+EndModule
+;
+Module = "Analog input (read)" 0x42,1,1,3
+EndModule
+;
+Module = "Temperature (read)" 0x42,3,33,7
+EndModule
+;
+Module = "Density (read)" 0x42,3,116,15
+EndModule
+;
+;************************ Setpoint control *******************************
+;
+Module = "Control mode (read)" 0x42,0,1,4
+EndModule
+;
+Module = "Control mode (write)" 0x82,0,1,4
+EndModule
+;
+Module = "Setpoint slope (read)" 0x42,1,1,2
+EndModule
+;
+Module = "Setpoint slope (write)" 0x82,1,1,2
+EndModule
+;
+;************************ Controller/valve *******************************
+;
+Module = "Valve output (read)" 0x42,3,114,1
+EndModule
+;
+Module = "Valve output (write)" 0x82,3,114,1
+EndModule
+;
+;************* Calibration (curve selection for fluids) ******************
+;
+Module = "Fluid number (read)" 0x42,0,1,16
+EndModule
+;
+Module = "Fluid number (write)" 0x82,0,1,16
+EndModule
+;
+Module = "Fluid name (read)" 0x42,9,1,17
+EndModule
+;
+Module = "Capacity 100 % (read)" 0x42,3,1,13
+EndModule
+;
+Module = "Capacity 0 % (read)" 0x42,3,33,22
+EndModule
+;
+Module = "Capacity unit string (read)" 0x42,6,1,31
+EndModule
+;
+Module = "Calibration mode (read)" 0x42,0,115,1
+EndModule
+;
+Module = "Calibration mode (write)" 0x82,0,115,1
+EndModule
+;
+;**************** Identification Bronkhorst High-Tech *********************
+;
+Module = "Serial number (read)" 0x42,19,113,3
+EndModule
+;
+Module = "Model number (read)" 0x42,13,113,2
+EndModule
+;
+Module = "Firmware version (read)" 0x42,4,113,5
+EndModule
+;
+Module = "Identnumber (read)" 0x42,0,113,12
+EndModule
+;
+Module = "Device type (read)" 0x42,5,113,1
+EndModule
+;
+;*********************** Identification User *****************************
+;
+Module = "Usertag (read)" 0x42,9,113,6
+EndModule
+;
+Module = "Usertag (write)" 0x82,9,113,6
+EndModule
+;
+Module = "Manufacturer config (read)" 0x42,15,113,4
+EndModule
+;
+;***************************** Alarm *************************************
+;
+Module = "Alarm maximum limit (read)" 0x42,1,97,1
+EndModule
+;
+Module = "Alarm maximum limit (write)" 0x82,1,97,1
+EndModule
+;
+Module = "Alarm minimum limit (read)" 0x42,1,97,2
+EndModule
+;
+Module = "Alarm minimum limit (write)" 0x82,1,97,2
+EndModule
+;
+Module = "Alarm mode (read)" 0x42,0,97,3
+EndModule
+;
+Module = "Alarm mode (write)" 0x82,0,97,3
+EndModule
+;
+Module = "Alarm output mode (read)" 0x42,0,97,4
+EndModule
+;
+Module = "Alarm output mode (write)" 0x82,0,97,4
+EndModule
+;
+Module = "Alarm setpoint mode (read)" 0x42,0,97,5
+EndModule
+;
+Module = "Alarm setpoint mode (write)" 0x82,0,97,5
+EndModule
+;
+Module = "Alarm new setpoint (read)" 0x42,1,97,6
+EndModule
+;
+Module = "Alarm new setpoint (write)" 0x82,1,97,6
+EndModule
+;
+Module = "Alarm delay time (read)" 0x42,0,97,7
+EndModule
+;
+Module = "Alarm delay time (write)" 0x82,0,97,7
+EndModule
+;
+Module = "Reset alarm enable (read)" 0x42,0,97,9
+EndModule
+;
+Module = "Reset alarm enable (write)" 0x82,0,97,9
+EndModule
+;
+;**************************** Counter ************************************
+; 
+Module = "Counter value (read)" 0x42,3,104,1
+EndModule
+;
+Module = "Counter unit (read)" 0x42,0,104,2
+EndModule
+;
+Module = "Counter limit (read)" 0x42,3,104,3
+EndModule
+;
+Module = "Counter limit (write)" 0x82,3,104,3
+EndModule
+;
+Module = "Counter output mode (read)" 0x42,0,104,4
+EndModule
+;
+Module = "Counter output mode (write)" 0x82,0,104,4
+EndModule
+;
+Module = "Counter setpoint mode (read)" 0x42,0,104,5
+EndModule
+;
+Module = "Counter setpoint mode (write)" 0x82,0,104,5
+EndModule
+;
+Module = "Counter new setpoint (read)" 0x42,1,104,6
+EndModule
+;
+Module = "Counter new setpoint (write)" 0x82,1,104,6
+EndModule
+;
+Module = "Counter unit string (read)" 0x42,3,104,7
+EndModule
+;
+Module = "Counter mode (read)" 0x42,0,104,8
+EndModule
+;
+Module = "Counter mode (write)" 0x82,0,104,8
+EndModule
+;
+Module = "Reset counter enable (read)" 0x42,0,104,9
+EndModule
+;
+Module = "Reset counter enable (write)" 0x82,0,104,9
+EndModule
+;
+;************************* Test/diagnosis ********************************
+;
+Module = "Alarm enable (read)" 0x42,0,115,4
+EndModule
+;
+Module = "Alarm enable (write)" 0x82,0,115,4
+EndModule
+;
+Module = "Alarm info (read)" 0x42,0,1,20
+EndModule
+;
+;**************************** Special ************************************
+;
+Module = "Reset (write)" 0x82,0,115,8
+EndModule
+;
+Module = "Initreset (write)" 0x82,0,0,10
+EndModule
+;
+Module = "Status (read)" 0x42,0,115,20
+EndModule
+;
+Module = "Status out position (read)" 0x42,0,115,21
+EndModule
+;
+;*************************** THE END. ************************************

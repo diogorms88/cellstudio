@@ -1,0 +1,2638 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Carl-Benz-Str. 34                                                         *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2016 Dürr Systems AG APT                                    *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bauder                                                       *
+*   E-Mail:      Manfred.Bauder@durr.com                                      *
+*                                                                             *
+*   Modul:       TRcuVisionZeiss.tts                                          *
+*   Description: Interface to Zeiss-Vision-System and handling of data        *
+*-----------------------------------------------------------------------------*
+*)  
+
+
+
+(* Konfiguration in RobotControl.cfg:
+
+// ------------------------------------------------------------------------------------------------
+//E  configuration Zeiss vision system 
+
+[RC.KINEMATIC:0.ZEISS]
+Enable          = 1             //  0=no BK, 1=activate it
+LinearLimit     = 50.0          //  Limit in mm for accepted correction values from MR --> at overstepping an error will be set
+RotationLimit   =  5.0          //  Limit in deg for accepted correction values from MR --> at overstepping an error will be set
+IPAddress       = "192.168.1.198"   // IP-Address of ZEISS MR (if MR is server)
+Portnumber      = 6008          //  Port
+Simulate        = 0             //  1 to simulate the ZEISS-Macros
+ *)
+
+(*
+   direkte Schnittstelle zu ZEISS MR mit TCP/IP
+
+
+*)
+
+
+CONSTANT
+   TriggerTime : REAL := 0.048;
+   EPS : REAL := 0.01;
+END_CONSTANT
+
+
+TYPE
+   R16 : ARRAY[1..16] OF REAL;
+END_TYPE
+
+CONSTANT
+   MAX_AREA : INT := 2; // Anzahl der Flaechen
+   MAX_MP   : INT := 32; // Anzahl der Messpunkt pro Flaeche
+   MAX_BP   : INT := 8; // Anzahl der Messpunkt pro Rand
+END_CONSTANT
+
+TYPE GLOBAL USER
+   MP_TYPE : (MPUNDEF, MPLEFT, MPRIGHT, MPSTART, MPEND);  
+END_TYPE
+
+TYPE GLOBAL
+   KORREKTUR : STRUCT
+      DeltaX : REAL;
+      DeltaY : REAL;
+      DeltaZ : REAL;
+   END_STRUCT;
+   
+   VEKTOR : STRUCT
+      X : REAL;
+      Y : REAL;
+      Z : REAL;
+   END_STRUCT;
+   
+   MEASURE_DATASET : STRUCT
+      mp     : TMcuFrame; // Koordinaten des Messpunkts
+      mp_nr  : INT;
+      type   : MP_TYPE;
+      bX     : BOOL;
+      bY     : BOOL;
+      bZ     : BOOL;
+      mpCorr : TMcuFrame; // Korrektur des Messpunkts
+      deltaX : REAL; // X-Verschiebung aus Messung
+      deltaY : REAL; // Y-Verschiebung aus Messung
+      deltaZ : REAL; // Z-Verschiebung aus Messung
+   END_STRUCT;
+   
+   TEST_DATASET : STRUCT
+      mp_nr  : INT;
+      deltaX : REAL; // X-Verschiebung aus Messung
+      deltaY : REAL; // Y-Verschiebung aus Messung
+      deltaZ : REAL; // Z-Verschiebung aus Messung
+   END_STRUCT;
+   
+   // Informationen für jede Fläche
+   MEASURE_INFO : STRUCT
+      //Anzahl der Korrekturen fuer die einzelnen Flaechen
+      iMeasureValid           : INT;
+      //ID 
+      iMeasureAreaID          : INT;
+      // Anzahl Messpunkte
+      iNumberMeasure          : INT;
+      // Anzahl Messpunkte rechter Rand
+      iNumberRight            : INT;
+      // Anzahl Messpunkte linker Rand
+      iNumberLeft             : INT;
+      // Anzahl Messpunkte Startrand
+      iNumberStart            : INT;
+      // Anzahl Messpunkte Endrand
+      iNumberEnd              : INT;
+   END_STRUCT;
+ 
+   BORDER_DATASET : STRUCT
+      mp     : TMcuFrame; // Koordinaten des Messpunkts
+      mpCorr : TMcuFrame; // Korrektur des Messpunkts
+      mp_m1 : REAL;  // Geradengleichung y = f(x) = m1*x + b1
+      mp_b1 : REAL;
+      mp_m2 : REAL;  // Geradengleichung z = f(x) = m2*x + b2
+      mp_b2 : REAL;
+      mp_m3 : REAL;  // Geradengleichung x = f(y) = m3*y + b3
+      mp_b3 : REAL;
+      mp_m4 : REAL;  // Geradengleichung z = f(x) = m4*x + b4
+      mp_b4 : REAL;
+      mpCorr_m1 : REAL;  // Geradengleichung y = f(x) = m1*x + b1
+      mpCorr_b1 : REAL;
+      mpCorr_m2 : REAL;  // Geradengleichung z = f(x) = m2*x + b2
+      mpCorr_b2 : REAL;
+      mpCorr_m3 : REAL;  // Geradengleichung x = f(y) = m3*y + b3
+      mpCorr_b3 : REAL;
+      mpCorr_m4 : REAL;  // Geradengleichung z = f(x) = m4*x + b4
+      mpCorr_b4 : REAL;
+   END_STRUCT;
+   
+   BORDER_INFO : STRUCT
+      iNumber: INT;       // Anzahl Punkte
+   END_STRUCT;
+END_TYPE
+
+
+
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+
+VAR
+   bCfgDataRead            : BOOL;
+   rLinLimit               : REAL;
+   rRotLimit               : REAL;
+   rMinDeltaX              : REAL;
+   rMinDeltaY              : REAL;
+   sIPAddress              : STRING;
+   dPortNumber             : DINT;
+   bSimulate               : BOOL;
+   bZeissBootUpOk          : BOOL;
+   iZeissMode              : DINT;
+   iZeissType              : DINT;
+   bAckMR                  : BOOL;
+   bReleaseMR              : BOOL;
+   dStatusMR               : DINT;
+   bFrameReadMR            : BOOL;
+   corrFrameMR             : FRAME;
+   corrXYZMR               : FRAME;
+   bXYZReadMR              : BOOL;
+   corrMatrixMR            : HomogenMatrix;
+   bCorrMatrixReadMR       : BOOL;
+   bTriggerPending         : BOOL;
+   
+   // Werte der Messpunkte für die jeweilige Fläche
+   M_measureData           : ARRAY [1..MAX_AREA, 1..MAX_MP] OF MEASURE_DATASET;
+   M_TestData              : ARRAY [1..MAX_AREA, 1..MAX_MP] OF TEST_DATASET;
+   M_MeasureInfo           : ARRAY [1..MAX_AREA] OF MEASURE_INFO;
+   BorderDataLeft          : ARRAY [1..MAX_BP] OF BORDER_DATASET;
+   BorderDataRight         : ARRAY [1..MAX_BP] OF BORDER_DATASET;
+   BorderDataStart         : ARRAY [1..MAX_BP] OF BORDER_DATASET;
+   BorderDataEnd           : ARRAY [1..MAX_BP] OF BORDER_DATASET;
+   BorderInfoLeft          : BORDER_INFO;
+   BorderInfoRight         : BORDER_INFO;
+   BorderInfoStart         : BORDER_INFO;
+   BorderInfoEnd           : BORDER_INFO;
+   indexMeasureData        : DINT;
+   indexTestData           : DINT;
+   indexMeasureArea        : DINT := 1;
+   indexApplicationArea    : DINT := 1;
+   NullDataSet             : MEASURE_DATASET;
+   NullTestData            : TEST_DATASET;
+   bMeasure_Ok             : BOOL; // Kompletter Messzyklus ist fehlerfrei!
+                                   // wird in Z_StartCycle auf TRUE gesetzt und in Z_EndCycle abgefragt
+                                   // Bei Problemen in Z_TriggerPoint wird die Variable auf FALSE gesetzt
+   
+   bCorrActive             : BOOL; // Korrektur wird auf alle Punkte im Bewegungsprogramm angewendet
+   bGhostMode              : BOOL; 
+END_VAR   
+
+
+
+
+
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+VAR
+   bError : BOOL;
+   iTemp       : DINT;
+   iCatalogHdl : DINT;
+END_VAR
+
+   bError := FALSE;
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcVisionZeiss_ErrMappKin, myRobot.kinListInx, 2, instId, "TRcuVisionZeiss.ReadConfig");
+      RETURN FALSE;
+   END_IF; 
+             
+   iLoggerNumber  := myRobot.logger.ActivateLogger("TRcuVisionZeiss", myRobot);
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "ZEISS", iCatalogHdl) THEN
+      IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+         IF (iTemp <> 1) THEN
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            myRobot.DebugPrint(eTraceVision, "----------- ZEISS deactivated ---------");  
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            bCfgDataRead := TRUE;
+            RETURN FALSE;
+         ELSE
+            IF NOT CatalogReadRealRange(iCatalogHdl, "LinearLimit", rLinLimit , 0.0, 50.0, FALSE) THEN
+               rLinLimit := 50.0;
+            END_IF;
+            IF NOT CatalogReadRealRange(iCatalogHdl, "RotationLimit", rRotLimit , 0.0, 5.0, FALSE) THEN
+               rRotLimit := 5.0;
+            END_IF;
+            IF NOT CatalogReadString(iCatalogHdl,"IPAddress", sIPAddress, FALSE) THEN
+               bError := TRUE;
+            END_IF;
+            IF NOT CatalogReadInt(iCatalogHdl, "Portnumber", dPortNumber, FALSE) THEN
+               bError := TRUE;
+            END_IF;
+            IF NOT CatalogReadReal(iCatalogHdl, "MinDeltaX", rMinDeltaX, FALSE) THEN
+               bError := TRUE;
+            END_IF;
+            IF NOT CatalogReadReal(iCatalogHdl, "MinDeltaY", rMinDeltaY, FALSE) THEN
+               bError := TRUE;
+            END_IF;
+            IF CatalogReadIntRange(iCatalogHdl, "Simulate", iTemp, 0, 1, TRUE) THEN
+               bSimulate := iTemp = 1;
+            ELSE
+               bSimulate := FALSE;
+            END_IF;
+         END_IF;
+      ELSE  
+         bError := TRUE;
+         myRobot.DebugPrint(eTraceVision, "ZEISS not enabled");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      bError := TRUE;
+      myRobot.DebugPrint(eTraceVision, "No configuration for ZEISS found");
+      RETURN FALSE;
+   END_IF;
+
+   IF NOT bError THEN
+      MapSignals();
+   END_IF;
+   
+   IF bMappingOk AND NOT bError THEN
+      bCfgDataRead := TRUE;
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(TRcVisionZeiss_ErrZInit, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.ReadConfig");
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      myRobot.DebugPrint(eTraceVision, "--------- Boot-Up ZEISS failed --------");  
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      bCfgDataRead := FALSE;
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE Init()
+VAR
+   s : STRING;
+END_VAR
+
+   IF NOT bCfgDataRead THEN
+      RcuSetMessageOnce(TRcVisionZeiss_ErrZInit, myRobot.kinListInx, 5, instId, "TRcuVisionZeiss.Init");
+      RETURN;
+   END_IF;
+   
+   START ObserveActive();
+   START ObservePreTrigger();
+   
+   myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+   myRobot.DebugPrint(eTraceVision, "------  Boot-up ZEISS finished --------");
+   myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+   bZeissBootUpOk := TRUE;
+//   TestTelegram();
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.Init");
+   END_IF;   
+   bGhostMode := UPDATE(myRobot.fieldbusIn.GhostMode.svBool);   
+   
+   NullDataSet.mp.mPos.mValues[0] := 0.0;
+   NullDataSet.mp.mPos.mValues[1] := 0.0;
+   NullDataSet.mp.mPos.mValues[2] := 0.0;
+   NullDataSet.mp.mOri.mValues[0] := 0.0;
+   NullDataSet.mp.mOri.mValues[0] := 0.0;
+   NullDataSet.mp.mOri.mValues[0] := 0.0;
+   NullDataSet.mp.mFrameTyp := eMcuFrameKardan;
+   NullDataSet.bZ := FALSE;
+   NullDataSet.bY := FALSE;
+   NullDataSet.bZ := FALSE;
+   NullDataSet.mpCorr.mPos.mValues[0] := 0.0;
+   NullDataSet.mpCorr.mPos.mValues[1] := 0.0;
+   NullDataSet.mpCorr.mPos.mValues[2] := 0.0;
+   NullDataSet.mpCorr.mOri.mValues[0] := 0.0;
+   NullDataSet.mpCorr.mOri.mValues[0] := 0.0;
+   NullDataSet.mpCorr.mOri.mValues[0] := 0.0;
+   NullDataSet.mpCorr.mFrameTyp := eMcuFrameKardan;
+   NullDataSet.deltaX := 0.0;
+   NullDataSet.deltaY := 0.0;
+   NullDataSet.deltaZ := 0.0;
+   NullDataSet.type := MPUNDEF;
+   
+   NullTestData.mp_nr := 0;
+   NullTestData.deltaX := 0.0;
+   NullTestData.deltaY := 0.0;
+   NullTestData.deltaZ := 0.0;
+   
+   RETURN;
+END_ROUTINE
+
+
+
+// Start eines Messzyklus
+// Dies ist der übliche Fall bei einer Messung, Ausrichtung etc. Der Roboter muss
+// dazu nicht unbedingt stehen, er kann auch während des Verfahrens das Start-Kommando 
+// absetzen.
+// Quittierung des MR:
+// "ack\r\n"
+// Damit bestätigt der MR den Erhalt des Kommandos.
+// Release des MR:
+// "Release <Status>\r\n"
+// Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren, 
+// sofern er zuvor angehalten hatte. Ggf. wird ein numerischer Status zurückgeliefert 
+// (0: OK, 405: Fehler).
+ROUTINE Z_StartCycle(Mode : DINT; Type : DINT; area : DINT)
+VAR
+   i       : INT;
+   j       : INT;
+   sText   : STRING;
+   timeOut : BOOL;
+   sDir            : STRING;
+   sPath           : STRING;
+   sString         : STRING;
+   iLen            : DINT;
+   iLenValue       : DINT;
+   iListIndex      : INT;
+   str             : STRING;
+   iPosCounter     : DINT;
+   iTime           : LINT;
+   sChr            : STRING;
+   sMonth          : STRING[3];
+END_VAR
+
+   sText := "Z_StartCycle: Type = "+STR(Type)+" Mode = "+STR(Mode);
+   myRobot.DebugPrint(eTraceVision, sText);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sText);
+   
+   iZeissMode := Mode;
+   iZeissType := Type;
+   bMeasure_Ok := TRUE;
+   bCommError := FALSE;
+   IF NOT bSimulate THEN
+      IF client.tcpConnectionState <> stateSckConnected THEN
+         SysTimerSet(10000, timeOut);
+         bConnect                              := TRUE;
+         WAIT bActive OR timeOut OR bSimulate;
+         IF timeOut THEN
+            myRobot.DebugPrint(eTraceVision, "TimeOut in Z_StartCycle by waiting for bActive");
+            RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_StartCycle", "STARTCYCLE", "bActive");
+            bCommError := TRUE;
+            bConnect := FALSE;
+            RETURN;
+         END_IF;
+      END_IF;
+      IF client.tcpConnectionState <> stateSckConnected THEN
+         myRobot.DebugPrint(eTraceVision, "Z_StartCycle: Communication to Vision PC: ConnectionState <> stateSckConnected");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTcpIpConnect, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_StartCycle");
+         bCommError := TRUE;
+         RETURN;
+      END_IF;
+
+      // Startkommando des Roboters an MR:
+      // "Start,<Mode>,<Model>"
+      // <Mode> ist dabei der Messmodus, z.B. 3 für Messung, 2 für physikalische Ausrichtung. 
+      // <Model> ist die Nummer des zu messenden Modells bzw. Typs.
+      Send("Start,"+STR(iZeissMode)+","+STR(iZeissType));
+
+      // Warten auf Quittierung durch den Messrechner
+      // Quittierung des MR:
+      // "ack\r\n"
+      timeOut := FALSE;
+      SysTimerSet(10000, timeOut);
+      WAIT bAckMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_StartCycle by waiting for bAckMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_StartCycle", "STARTCYCLE", "bAckMR");
+         bConnect := FALSE;
+         RETURN;
+      END_IF;
+      bAckMR := FALSE;
+
+      // Release des MR:
+      // "Release <Status>\r\n"
+      // Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren, 
+      timeOut := FALSE;
+      SysTimerSet(10000, timeOut);
+      bReleaseMR := FALSE;
+      WAIT bReleaseMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_StartCycle by waiting for bReleaseMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_StartCycle", "STARTCYCLE", "bReleaseMR");
+         bConnect := FALSE;
+         RETURN;
+      ELSIF bReleaseMR THEN
+         IF dStatusMR = 0 THEN
+            myRobot.DebugPrint(eTraceVision, "Z_StartCycle Status = OK");
+         ELSIF dStatusMR = 405 THEN
+            myRobot.DebugPrint(eTraceVision, "Z_StartCycle Status = Fehler");
+            RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.Z_StartCycle", STR(dStatusMR));
+         ELSE    
+            myRobot.DebugPrint(eTraceVision, "Z_StartCycle Status = " + STR(dStatusMR));
+            RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 2, instId, "TRcuVisionZeiss.Z_StartCycle", STR(dStatusMR));
+         END_IF;
+      END_IF;
+      bReleaseMR := FALSE;
+   END_IF;
+
+   indexMeasureData  := 1;
+   indexMeasureArea  := indexMeasureArea+1;
+   IF indexMeasureArea > MAX_AREA THEN
+      indexMeasureArea := 1;
+   END_IF;
+   M_MeasureInfo[indexMeasureArea].iMeasureAreaID := area;
+   FOR i := 1 TO indexMeasureArea-1 DO
+      IF M_MeasureInfo[i].iMeasureAreaID = area THEN
+         M_MeasureInfo[i].iMeasureAreaID := 0;
+         M_MeasureInfo[i].iMeasureValid := 0;
+      END_IF;
+   END_FOR;
+   FOR i := indexMeasureArea+1 TO MAX_AREA DO
+      IF M_MeasureInfo[i].iMeasureAreaID = area THEN
+         M_MeasureInfo[i].iMeasureAreaID := 0;
+         M_MeasureInfo[i].iMeasureValid := 0;
+      END_IF;
+   END_FOR;
+   FOR i := 1 TO MAX_MP DO
+      M_measureData[indexMeasureArea][i] := NullDataSet;
+   END_FOR;
+   M_MeasureInfo[indexMeasureArea].iNumberLeft := 0;
+   M_MeasureInfo[indexMeasureArea].iNumberRight := 0;
+   M_MeasureInfo[indexMeasureArea].iNumberStart := 0;
+   M_MeasureInfo[indexMeasureArea].iNumberEnd := 0;
+
+   // File öffnen für Testausgaben
+   CatalogReadString(giSysBaseHdl, "applPath", sDir, TRUE);
+   sDir := sDir + "application/oflatest";
+   IF NOT MkDir(sDir) THEN                                 //create directory
+      RcuSetMessageOnce(TRcVisionZeiss_WarCreateFolder, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_StartCycle", sDir);
+   ELSE
+      sPath       := sDir + "/Korrektur.dat";
+      FileHandle := FileOpen(sPath, eFileModeReadWriteDelete); //create file
+      IF FileHandle = 0 THEN
+         RcuSetMessageOnce(TRcVisionZeiss_WarCreateFile, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_StartCycle", sPath);
+         myRobot.DebugPrint(eTraceVision, "Z_StartCycle FileOpen "+ sPath +" mit Fehler");
+      ELSE   
+         //write header
+         SysTimerGetUs(iTime);
+         SysTimerString(str, iTime); 
+         sChr := "";
+         iLen := StrLen(str); 
+         str := StrDelete(str, 4, 1);
+         //Day
+         sChr := sChr + StrMid(str, 2, 5) + ".";
+         //Month
+         sMonth := StrMid(str, 3, 1) + ".";
+         CASE sMonth OF
+          "Jan": sChr := sChr + "01.";
+          "Feb": sChr := sChr + "02.";
+          "Mar": sChr := sChr + "03.";
+          "Apr": sChr := sChr + "04.";
+          "May": sChr := sChr + "05.";
+          "Jun": sChr := sChr + "06.";
+          "Jul": sChr := sChr + "07.";
+          "Aug": sChr := sChr + "08.";
+          "Sep": sChr := sChr + "09.";
+          "Oct": sChr := sChr + "10.";
+          "Nov": sChr := sChr + "11.";
+          "Dec": sChr := sChr + "12.";
+         END_CASE;  
+         //Year
+         sChr := sChr + StrMid(str, 4, 17);
+         sChr := sChr + " ";
+         //hour:min:sec
+         sChr := sChr + StrMid(str, 8, 8);
+         str := ";    File generated by TRcuVisionZeiss:  " + sChr + CHR(13);
+         FileWriteLn(FileHandle, str);
+         FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+         FileWriteLn(FileHandle, ";Messpunkte                                                                                                " + CHR(13));
+         FileWriteLn(FileHandle, ";                                                                                                          " + CHR(13));
+         FileWriteLn(FileHandle, ";Name     X    Y    Z    DeltaX    DeltaY    DeltaZ                                                        " + CHR(13));
+         FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+      END_IF;   
+   END_IF;
+END_ROUTINE
+
+
+// Endkommando des Roboters an MR:
+// "End”
+// Quittierung des MR:
+// "ack\r\n"
+// Damit bestätigt der MR den Erhalt des Kommandos.
+// Release des MR:
+// "Release <Status>\r\n"
+// Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren, 
+// sofern er zuvor angehalten hatte. Ggf. wird ein numerischer Status 
+// zurückgeliefert (401: OK, 402: Fehler).
+ROUTINE Z_EndCycle() : VISION_STATE
+VAR
+   i            : INT;
+   j            : INT;
+   sText        : STRING;
+   timeOut      : BOOL;
+   iRetVal      : VISION_STATE;
+   bPlcFeedback : BOOL;
+   bOk          : BOOL := TRUE;
+END_VAR
+
+   sText := "Z_EndCycle";
+   myRobot.DebugPrint(eTraceVision, sText);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sText);
+   
+   IF NOT bSimulate THEN
+      IF client.tcpConnectionState <> stateSckConnected THEN
+         myRobot.DebugPrint(eTraceVision, "Z_EndCycle: Communication to Vision PC: ConnectionState <> stateSckConnected");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTcpIpConnect, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_EndCycle");
+         bCommError := TRUE;
+      ELSE
+
+         // Endkommando des Roboters an MR:
+         // "End”
+         Send("End");
+
+         // Warten auf Quittierung durch den Messrechner
+         // Quittierung des MR:
+         // "ack\r\n"
+         timeOut := FALSE;
+         SysTimerSet(10000, timeOut);
+         WAIT bAckMR OR timeOut OR bSimulate;
+         IF timeOut THEN
+            myRobot.DebugPrint(eTraceVision, "TimeOut in Z_EndCycle by waiting for bAckMR");
+            RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_EndCycle", "ENDCYCLE", "bAckMR");
+            bConnect := FALSE;
+            bOk := FALSE;
+         END_IF;
+         bAckMR := FALSE;
+
+         // Release des MR:
+         // "Release <Status>\r\n"
+         // Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren, 
+         timeOut := FALSE;
+         SysTimerSet(10000, timeOut);
+         bReleaseMR := FALSE;
+         WAIT bReleaseMR OR timeOut OR bSimulate;
+         IF timeOut THEN
+            myRobot.DebugPrint(eTraceVision, "TimeOut in Z_EndCycle by waiting for bReleaseMR");
+            RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_EndCycle", "ENDCYCLE", "bReleaseMR");
+            bConnect := FALSE;
+            bOk := FALSE;
+         ELSIF bReleaseMR THEN
+            IF dStatusMR = 0 THEN
+               myRobot.DebugPrint(eTraceVision, "Z_EndCycle Status = OK");
+            ELSIF dStatusMR = 402 THEN
+               myRobot.DebugPrint(eTraceVision, "Z_EndCycle Status = Fehler");
+               RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 3, instId, "TRcuVisionZeiss.Z_EndCycle", STR(dStatusMR));
+               bOk := FALSE;
+            ELSE    
+               myRobot.DebugPrint(eTraceVision, "Z_EndCycle Status = " + STR(dStatusMR));
+               RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 4, instId, "TRcuVisionZeiss.Z_EndCycle", STR(dStatusMR));
+               bOk := FALSE;
+            END_IF;
+         END_IF;
+         bReleaseMR := FALSE;
+      END_IF;
+   END_IF;
+   
+   bOk := bMeasure_Ok AND bOk AND NOT bCommError;
+   
+   IF bOk AND NOT bSyncRobots THEN
+      myRobot.fieldbusOut.VisionError.svBool   := FALSE;
+      myRobot.fieldbusOut.ReqSyncVision.svBool := FALSE;
+      iRetVal := DataOk;
+      M_MeasureInfo[indexMeasureArea].iNumberMeasure  := indexMeasureData - 1;
+      M_MeasureInfo[indexMeasureArea].iMeasureValid := 1;
+      RETURN iRetVal;
+   ELSIF bOk AND bSyncRobots THEN
+      myRobot.fieldbusOut.VisionError.svBool   := FALSE;
+      myRobot.fieldbusOut.ReqSyncVision.svBool := TRUE;
+      bPlcFeedback := UPDATE(myRobot.fieldbusIn.AckSyncVision.svBool OR myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "ENDCYCLE - Sync - waiting AckSyncVision or GoDirectHome or DoRemeasure or Continue");
+   ELSE 
+      myRobot.fieldbusOut.VisionError.svBool   := TRUE;
+      myRobot.fieldbusOut.ReqSyncVision.svBool := bSyncRobots;
+      IF bSyncRobots THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ENDCYCLE - Sync Error detected - waiting GoDirectHome or DoRemeasure or Continue");
+      ELSE
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ENDCYCLE - Error detected - waiting GoDirectHome or DoRemeasure or Continue");
+      END_IF;
+      bPlcFeedback := UPDATE(myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool);
+   END_IF;
+
+   WAIT bPlcFeedback;
+   myRobot.fieldbusOut.VisionError.svBool   := FALSE;
+   myRobot.fieldbusOut.ReqSyncVision.svBool := FALSE;
+   IF myRobot.fieldbusIn.DoRemeasure.svBool THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "ENDCYCLE- DoRemeasure received from PLC");
+      WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+      iRetVal := Remeasure;
+   ELSIF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "ENDCYCLE - GoDirectHome received from PLC");   
+      WAIT NOT myRobot.fieldbusIn.GoDirectHome.svBool;
+      iRetVal := GoHome;
+   ELSIF myRobot.fieldbusIn.Continue.svBool THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Continue received from PLC");
+      WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+      iRetVal := Continue;    
+   ELSIF myRobot.fieldbusIn.AckSyncVision.svBool THEN  
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "ENDCYCLE - Ack Sync received from PLC");
+      WAIT NOT myRobot.fieldbusIn.AckSyncVision.svBool;
+      iRetVal := DataOk;
+   END_IF;
+
+   RETURN iRetVal; 
+END_ROUTINE
+
+
+// Triggerkommando des Roboters an MR:
+// "Trigger,<MesspunktID>,<X>,<Y>,<Z>,<RotX>,<RotY>,<RotZ>"
+// <MesspunktID> ist dabei ein String, der den Messpunkt innerhalb des zuvor 
+// gestarteten Modells eindeutig identifiziert. <X/Y/Z/RotX/RotY/RotZ> ist die 
+// Pose des Robotertools in Bauteilkoordinaten an dieser Stelle.
+// Quittierung des MR:
+// "ack\r\n"
+// Damit bestätigt der MR den Erhalt des Kommandos.
+// Release des MR:
+// "Release <Status>\r\n"
+// Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren. 
+// Ggf. wird ein numerischer Status zurückgeliefert (408: OK, 409: Fehler).
+ROUTINE Z_TriggerPoint(p : POINT; PointID : INT; MpType : MP_TYPE)
+VAR
+   i       : INT;
+   j       : INT;
+   sText   : STRING;
+   timeOut : BOOL;
+   tcp     : TMcuFrame;
+END_VAR
+
+   sText := "Z_TriggerPoint: PointID = "+STR(PointID)+" ";
+   myRobot.DebugPrint(eTraceVision, sText);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sText);
+   
+   IF NOT bSimulate THEN
+      IF client.tcpConnectionState <> stateSckConnected THEN
+         myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint: Communication to Vision PC: ConnectionState <> stateSckConnected");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTcpIpConnect, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint");
+         bCommError := TRUE;
+         RETURN;
+      END_IF;
+
+      // "Trigger,<MesspunktID>,<X>,<Y>,<Z>,<RotX>,<RotY>,<RotZ>"
+      // <MesspunktID> ist dabei ein String, der den Messpunkt innerhalb des zuvor 
+      // gestarteten Modells eindeutig identifiziert. <X/Y/Z/RotX/RotY/RotZ> ist die 
+      // Pose des Robotertools in Bauteilkoordinaten an dieser Stelle.
+
+
+      //ReadBackInObjectCoord(tcp);  // ??????????????????????????????????????????????????????????????
+      //ActCartInObjectCoord(tcp);
+      //Send("TriggerWithResult,"+STR(PointID)+","+STR(tcp.mPos.mValues[0])+","+STR(tcp.mPos.mValues[1])+","+STR(tcp.mPos.mValues[2])+","
+      //     +STR(tcp.mOri.mValues[2])+","+STR(tcp.mOri.mValues[1])+","+STR(tcp.mOri.mValues[0])); // KUKA
+      Send("TriggerWithResult,"+STR(PointID)+","+STR(p.A)+","+STR(p.B)+","+STR(p.C)+","
+           +STR(p.D)+","+STR(p.E)+","+STR(p.F));
+
+      // Warten auf Quittierung durch den Messrechner
+      // Quittierung des MR:
+      // "ack\r\n"
+      timeOut := FALSE;
+      SysTimerSet(10000, timeOut);
+      WAIT bAckMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_TriggerPoint by waiting for bAckMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", "TRIGGERPOINT", "bAckMR");
+         bConnect := FALSE;
+         RETURN;
+      END_IF;
+      bAckMR := FALSE;
+
+      timeOut := FALSE;
+      SysTimerSet(10000, timeOut);
+      bReleaseMR := FALSE;
+      bXYZReadMR := FALSE;
+      WAIT bReleaseMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_TriggerPoint by waiting for bReleaseMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", "TRIGGERPOINT", "bReleaseMR");
+         bConnect := FALSE;
+         RETURN;
+      ELSIF bReleaseMR THEN
+         IF dStatusMR = 0 THEN
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint Status = OK");
+         ELSIF dStatusMR = 409 THEN
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint Status = Fehler");
+            RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 5, instId, "TRcuVisionZeiss.Z_EndCycle", STR(dStatusMR));
+            bReleaseMR := FALSE;
+            RETURN;
+         ELSE    
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint Status = " + STR(dStatusMR));
+            RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 6, instId, "TRcuVisionZeiss.Z_EndCycle", STR(dStatusMR));
+            bReleaseMR := FALSE;
+            RETURN;
+         END_IF;
+      END_IF;
+      bReleaseMR := FALSE;
+      WAIT bXYZReadMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_TriggerPoint by waiting for bXYZReadMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", "TRIGGERPOINT", "bXYZReadMR");
+         bConnect := FALSE;
+         RETURN;
+      ELSIF bXYZReadMR THEN
+         myRobot.DebugPrint(eTraceVision, "Korrekturwerte von Messrechner: X = "+STR(corrXYZMR.X)+" Y = "+STR(corrXYZMR.Y)+" Z = "+STR(corrXYZMR.Z));
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "X = "+STR(corrXYZMR.X)+" Y = "+STR(corrXYZMR.Y)+" Z = "+STR(corrXYZMR.Z));
+         
+         // Fehlerbehandlung Bereichsüberschreitung
+         IF (rAbs(corrXYZMR.X) > rLinLimit) OR
+            (rAbs(corrXYZMR.Y) > rLinLimit) OR
+            (rAbs(corrXYZMR.Z) > rLinLimit) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "correction values out off limits");
+            RcuSetMessageOnce(TRcVisionZeiss_WarnValOutOfRng, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", STR(PointID));
+            corrXYZMR.X := 0.0;
+            corrXYZMR.Y := 0.0;
+            corrXYZMR.Z := 0.0;
+            bMeasure_Ok := FALSE;
+         END_IF;
+         
+         IF MpType = MPUNDEF THEN
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint: MpType = MPUNDEF ");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Z_TriggerPoint: MpType = MPUNDEF ");
+         ELSE
+            IF indexMeasureData > MAX_MP THEN
+               RcuSetMessageOnce(TRcVisionZeiss_ErrTooManyMP, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", STR(indexMeasureData), STR(MAX_MP));
+               myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  point = " + STR(PointID) + " zu viele Messpunkte");
+               bMeasure_Ok := FALSE;
+            END_IF;
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  point = " + STR(PointID));
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0] := p.A;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1] := p.B;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] := p.C;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mOri.mValues[0] := p.D;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mOri.mValues[1] := p.E;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mOri.mValues[2] := p.F;
+            M_measureData[indexMeasureArea][indexMeasureData].type := MpType;
+            M_measureData[indexMeasureArea][indexMeasureData].mp_nr := PointID;
+            CASE MpType OF
+               MPLEFT : M_measureData[indexMeasureArea][indexMeasureData].bY := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberLeft := 
+                           M_MeasureInfo[indexMeasureArea].iNumberLeft + 1;
+
+               MPRIGHT: M_measureData[indexMeasureArea][indexMeasureData].bY := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberRight := 
+                           M_MeasureInfo[indexMeasureArea].iNumberRight + 1;
+
+               MPSTART: M_measureData[indexMeasureArea][indexMeasureData].bX := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberStart := 
+                           M_MeasureInfo[indexMeasureArea].iNumberStart + 1;
+
+               MPEND  : M_measureData[indexMeasureArea][indexMeasureData].bX := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberEnd := 
+                           M_MeasureInfo[indexMeasureArea].iNumberEnd + 1;
+            ELSE
+               myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  MpType = " + STR(MpType) + "ungueltig");
+            END_CASE;
+
+            //*****************************************************************//
+            //  Verarbeitung der Messdaten                                     //
+            //*****************************************************************//
+            M_measureData[indexMeasureArea][indexMeasureData].mpCorr := 
+               M_measureData[indexMeasureArea][indexMeasureData].mp;
+            CASE MpType OF
+               MPLEFT : M_measureData[indexMeasureArea][indexMeasureData].deltaY := corrXYZMR.Y;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[1] :=
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1] + corrXYZMR.Y;
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+
+               MPRIGHT : M_measureData[indexMeasureArea][indexMeasureData].deltaY := corrXYZMR.Y; 
+                         M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[1] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1] + corrXYZMR.Y; 
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+
+               MPSTART : M_measureData[indexMeasureArea][indexMeasureData].deltaX := corrXYZMR.X;
+                         M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[0] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0] + corrXYZMR.X;
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+
+               MPEND   : M_measureData[indexMeasureArea][indexMeasureData].deltaX:= corrXYZMR.X;
+                         M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[0] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0] + corrXYZMR.X;
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+            ELSE
+               myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  MpType = " + STR(MpType) + "ungueltig");
+               // Fehler im Teachprogramm 
+               RcuSetMessageOnce(TRcVisionZeiss_ErrInvalidMpType, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", STR(PointID));
+               bMeasure_Ok := FALSE;
+            END_CASE;
+
+            sText := sText + STR(M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0]) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1]) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2]) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].deltaX) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].deltaY) + " " +
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].deltaZ) + CHR(13);
+            FileWriteLn(FileHandle, sText);
+            indexMeasureData := indexMeasureData + 1;
+         END_IF;
+
+      END_IF;
+      bXYZReadMR := FALSE;
+   ELSE  // bSimulate
+         
+      j := 0;
+      FOR i := 1 TO indexTestData - 1 DO
+         IF PointID = M_TestData[indexMeasureArea][i].mp_nr THEN
+            j := i;
+         END_IF;
+      END_FOR;
+      
+      IF j <> 0 THEN
+         corrXYZMR.X := M_TestData[indexMeasureArea][j].deltaX;
+         corrXYZMR.Y := M_TestData[indexMeasureArea][j].deltaY;
+         corrXYZMR.Z := M_TestData[indexMeasureArea][j].deltaZ;
+         
+         myRobot.DebugPrint(eTraceVision, "Korrekturwerte aus Testdaten: X = "+STR(corrXYZMR.X)+" Y = "+STR(corrXYZMR.Y)+" Z = "+STR(corrXYZMR.Z));
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TEST  X = "+STR(corrXYZMR.X)+" Y = "+STR(corrXYZMR.Y)+" Z = "+STR(corrXYZMR.Z));
+         
+         // Fehlerbehandlung Bereichsüberschreitung
+         IF (rAbs(corrXYZMR.X) > rLinLimit) OR
+            (rAbs(corrXYZMR.Y) > rLinLimit) OR
+            (rAbs(corrXYZMR.Z) > rLinLimit) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "correction values out off limits");
+            RcuSetMessageOnce(TRcVisionZeiss_WarnValOutOfRng, myRobot.kinListInx, 2, 0, "TRcuVisionZeiss.Z_TriggerPoint", STR(PointID));
+            corrXYZMR.X := 0.0;
+            corrXYZMR.Y := 0.0;
+            corrXYZMR.Z := 0.0;
+            bMeasure_Ok := FALSE;
+         END_IF;
+         
+         IF MpType = MPUNDEF THEN
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint: MpType = MPUNDEF ");
+         ELSE
+            IF indexMeasureData > MAX_MP THEN
+               RcuSetMessageOnce(TRcVisionZeiss_ErrTooManyMP, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", STR(indexMeasureData), STR(MAX_MP));
+               myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  point = " + STR(PointID) + " zu viele Messpunkte");
+               bMeasure_Ok := FALSE;
+            END_IF;
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  point = " + STR(PointID));
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0] := p.A;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1] := p.B;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] := p.C;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mOri.mValues[0] := p.D;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mOri.mValues[1] := p.E;
+            M_measureData[indexMeasureArea][indexMeasureData].mp.mOri.mValues[2] := p.F;
+            M_measureData[indexMeasureArea][indexMeasureData].type := MpType;
+            M_measureData[indexMeasureArea][indexMeasureData].mp_nr := PointID;
+            sText := "";
+            CASE MpType OF
+               MPLEFT : M_measureData[indexMeasureArea][indexMeasureData].bY := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberLeft := 
+                           M_MeasureInfo[indexMeasureArea].iNumberLeft + 1;
+                          sText := "Messpunkt "+STR(PointID)+" LEFT ";
+
+               MPRIGHT: M_measureData[indexMeasureArea][indexMeasureData].bY := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberRight := 
+                           M_MeasureInfo[indexMeasureArea].iNumberRight + 1;
+                          sText := "Messpunkt "+STR(PointID)+" RIGHT ";
+
+               MPSTART: M_measureData[indexMeasureArea][indexMeasureData].bX := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberStart := 
+                           M_MeasureInfo[indexMeasureArea].iNumberStart + 1;
+                          sText := "Messpunkt "+STR(PointID)+" START ";
+
+               MPEND  : M_measureData[indexMeasureArea][indexMeasureData].bX := TRUE;
+                        M_measureData[indexMeasureArea][indexMeasureData].bZ := TRUE;
+                        M_MeasureInfo[indexMeasureArea].iNumberEnd := 
+                           M_MeasureInfo[indexMeasureArea].iNumberEnd + 1;
+                          sText := "Messpunkt "+STR(PointID)+" END ";
+            ELSE
+               myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  MpType = " + STR(MpType) + "ungueltig");
+               RcuSetMessageOnce(TRcVisionZeiss_ErrInvalidMpType, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerPoint", STR(PointID));
+            END_CASE;
+
+            //*****************************************************************//
+            //  Verarbeitung der TESTdaten                                     //
+            //*****************************************************************//
+      
+            M_measureData[indexMeasureArea][indexMeasureData].mpCorr := 
+               M_measureData[indexMeasureArea][indexMeasureData].mp;
+            CASE MpType OF
+               MPLEFT : M_measureData[indexMeasureArea][indexMeasureData].deltaY := corrXYZMR.Y;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[1] :=
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1] + corrXYZMR.Y;
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+
+               MPRIGHT : M_measureData[indexMeasureArea][indexMeasureData].deltaY := corrXYZMR.Y; 
+                         M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[1] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1] + corrXYZMR.Y; 
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+
+               MPSTART : M_measureData[indexMeasureArea][indexMeasureData].deltaX := corrXYZMR.X;
+                         M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[0] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0] + corrXYZMR.X;
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+
+               MPEND   : M_measureData[indexMeasureArea][indexMeasureData].deltaX:= corrXYZMR.X;
+                         M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[0] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0] + corrXYZMR.X;
+                        M_measureData[indexMeasureArea][indexMeasureData].deltaZ := corrXYZMR.Z;
+                        M_measureData[indexMeasureArea][indexMeasureData].mpCorr.mPos.mValues[2] := 
+                             M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2] + corrXYZMR.Z;
+            ELSE
+               myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint:  MpType = " + STR(MpType) + "ungueltig");
+               
+            END_CASE;
+            sText := sText + STR(M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[0]) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[1]) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].mp.mPos.mValues[2]) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].deltaX) + " " + 
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].deltaY) + " " +
+                             STR(M_measureData[indexMeasureArea][indexMeasureData].deltaZ) + CHR(13);
+            FileWriteLn(FileHandle, sText);
+            indexMeasureData := indexMeasureData + 1;
+         END_IF;
+      ELSE
+         myRobot.DebugPrint(eTraceVision, "Z_TriggerPoint: Keine Testdaten zu point = " + STR(PointID));
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// Triggerkommando des Roboters an MR:
+// "Trigger,<MesspunktID>,<X>,<Y>,<Z>,<RotX>,<RotY>,<RotZ>"
+// <MesspunktID> ist dabei ein String, der den Messpunkt innerhalb des zuvor 
+// gestarteten Modells eindeutig identifiziert. <X/Y/Z/RotX/RotY/RotZ> ist die 
+// Pose des Robotertools in Bauteilkoordinaten an dieser Stelle.
+// Quittierung des MR:
+// "ack\r\n"
+// Damit bestätigt der MR den Erhalt des Kommandos.
+// Release des MR:
+// "Release <Status>\r\n"
+// Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren. 
+// Ggf. wird ein numerischer Status zurückgeliefert (408: OK, 409: Fehler).
+ROUTINE Z_TriggerAlignment(p : POINT; PointID : DINT) : BOOL
+VAR
+   i          : INT;
+   j          : INT;
+   sText      : STRING;
+   timeOut    : BOOL;
+   tcp        : TMcuFrame;
+   Ori        : TMcuMatrix3;
+   Pos        : TMcuVector3;
+   kard       : OBJECT;
+   corrFrame  : TMcuFrame;
+   bRangeOK   : BOOL;
+END_VAR
+
+   sText := "Z_TriggerAlignment: PointID = "+STR(PointID);
+   myRobot.DebugPrint(eTraceVision, sText);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sText);
+   
+   IF NOT bSimulate THEN
+      IF client.tcpConnectionState <> stateSckConnected THEN
+         myRobot.DebugPrint(eTraceVision, "Z_TriggerAlignment: Communication to Vision PC: ConnectionState <> stateSckConnected");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTcpIpConnect, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerAlignment");
+         bCommError := TRUE;
+         RETURN FALSE;
+      END_IF;
+
+      // "Trigger,<MesspunktID>,<X>,<Y>,<Z>,<RotX>,<RotY>,<RotZ>"
+      // <MesspunktID> ist dabei ein String, der den Messpunkt innerhalb des zuvor 
+      // gestarteten Modells eindeutig identifiziert. <X/Y/Z/RotX/RotY/RotZ> ist die 
+      // Pose des Robotertools in Bauteilkoordinaten an dieser Stelle.
+
+
+      Send("TriggerAlignment,"+STR(PointID)+","+STR(p.A)+","+STR(p.B)+","+STR(p.C)+","
+           +STR(p.D)+","+STR(p.E)+","+STR(p.F)); // KUKA
+
+      // Warten auf Quittierung durch den Messrechner
+      // Quittierung des MR:
+      // "ack\r\n"
+      timeOut := FALSE;
+      SysTimerSet(10000, timeOut);
+      WAIT bAckMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_TriggerAlignment by waiting for bAckMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerAlignment", "TRIGGERPOINT", "bAckMR");
+         bConnect := FALSE;
+         RETURN FALSE;
+      END_IF;
+      bAckMR := FALSE;
+
+      // Release des MR:
+      // "Release <Status>\r\n"
+      // Damit beendet der MR die Kommunikation und der Roboter darf weiterfahren, 
+      timeOut := FALSE;
+      SysTimerSet(10000, timeOut);
+      bReleaseMR := FALSE;
+      bCorrMatrixReadMR := FALSE;
+      WAIT bReleaseMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_TriggerAlignment by waiting for bReleaseMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerAlignment", "TRIGGERPOINT", "bReleaseMR");
+         bConnect := FALSE;
+         RETURN FALSE;
+      ELSIF bReleaseMR THEN
+         IF dStatusMR = 0 THEN
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerAlignment Status = OK");
+         ELSIF dStatusMR = 409 THEN
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerAlignment Status = Fehler");
+            RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 7, instId, "TRcuVisionZeiss.Z_EndCycle", STR(dStatusMR));
+         ELSE    
+            myRobot.DebugPrint(eTraceVision, "Z_TriggerAlignment Status = " + STR(dStatusMR));
+            RcuSetMessageOnce(TRcVisionZeiss_ErrStateNotOk, myRobot.kinListInx, 8, instId, "TRcuVisionZeiss.Z_EndCycle", STR(dStatusMR));
+         END_IF;
+      END_IF;
+      bReleaseMR := FALSE;
+
+      WAIT bCorrMatrixReadMR OR timeOut OR bSimulate;
+      IF timeOut THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in Z_TriggerAlignment by waiting for bCorrMatrixReadMR");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTimeOut, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_TriggerAlignment", "TRIGGERPOINT", "bCorrMatrixReadMR");
+         bConnect := FALSE;
+         RETURN FALSE;
+      ELSIF bCorrMatrixReadMR THEN
+         myRobot.DebugPrint(eTraceVision, "Korrekturmatrix vom Messrechner:");
+         FOR i := 0 TO 3 DO
+            myRobot.DebugPrint(eTraceVision,STR(corrMatrixMR[i][0])+"  "+STR(corrMatrixMR[i][1])+"  "+STR(corrMatrixMR[i][2])+"  "+STR(corrMatrixMR[i][3]));
+         END_FOR;
+         CopyHomMat2Matrix3(Ori, corrMatrixMR);
+         CopyHomMat2Vector3(Pos, corrMatrixMR);
+         Compute_tcp_kardan(Ori, Pos, 0,  kard);
+
+         myRobot.DebugPrint(eTraceVision, "berechnete Koordinaten: X = "+STR(kard.X_mm)+" Y = "+STR(kard.Y_mm)+" Z = "+STR(kard.Z_mm));
+         myRobot.DebugPrint(eTraceVision, "                        A = "+STR(kard.A_deg)+" B ="+STR(kard.B_deg)+" C = "+STR(kard.C_deg));
+
+         corrFrame.mFrameTyp := eMcuFrameKardan;
+         corrFrame.mPos.mValues[0] := kard.X_mm;
+         corrFrame.mPos.mValues[1] := kard.Y_mm;
+         corrFrame.mPos.mValues[2] := kard.Z_mm;
+         corrFrame.mOri.mValues[0] := kard.A_deg;
+         corrFrame.mOri.mValues[1] := kard.B_deg;
+         corrFrame.mOri.mValues[2] := kard.C_deg;
+
+         IF (rAbs(kard.X_mm) > rLinLimit) OR
+            (rAbs(kard.Y_mm) > rLinLimit) OR
+            (rAbs(kard.Z_mm) > rLinLimit) OR
+            (rAbs(kard.A_deg) > rRotLimit) OR
+            (rAbs(kard.B_deg) > rRotLimit) OR
+            (rAbs(kard.C_deg) > rRotLimit) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "correction values out off limits");
+            corrFrame.mPos.mValues[0] := 0.0;
+            corrFrame.mPos.mValues[1] := 0.0;
+            corrFrame.mPos.mValues[2] := 0.0;
+            corrFrame.mOri.mValues[0] := 0.0;
+            corrFrame.mOri.mValues[1] := 0.0;
+            corrFrame.mOri.mValues[2] := 0.0;
+            bRangeOK := FALSE;
+         ELSE
+            bRangeOK := TRUE;
+         END_IF;
+         //Base Verschiebung
+         RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrame, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+         myRobot.homing.StoreRefSystemVision(FALSE, corrFrame);
+         CalcActualObject(corrFrame, FALSE);
+      END_IF;
+      bCorrMatrixReadMR := FALSE;
+   END_IF;
+   RETURN bRangeOK;
+END_ROUTINE
+
+
+ROUTINE Z_ReceiveCorr(p : POINT; pointID : DINT) : BOOL
+   RETURN Z_TriggerAlignment(p, pointID);
+END_ROUTINE
+
+
+// Aufbereiten der Messpunkte für die Berechnung der Korrekturen
+// Start der Korrektur für alle nachfolgenden Bahn- und Triggerpunkte bis zu Z_CORRFINISH
+ROUTINE Z_CorrStart(Area : DINT) : BOOL
+VAR
+   i : INT;
+   b : BOOL := FALSE;
+   iLeft  : INT := 0;
+   iRight : INT := 0;
+   iStart : INT := 0;
+   iEnd   : INT := 0;
+   p      : TMcuFrame;
+   sDir            : STRING;
+   sPath           : STRING;
+   sString         : STRING;
+   iLen            : DINT;
+   iLenValue       : DINT;
+   iListIndex      : INT;
+   str             : STRING;
+   iPosCounter     : DINT;
+   iTime           : LINT;
+   sChr            : STRING;
+   sMonth          : STRING[3];
+END_VAR   
+
+   FOR i := 1 TO MAX_AREA DO
+      IF (M_MeasureInfo[i].iMeasureAreaID = Area) THEN
+         indexApplicationArea := i;
+         b := TRUE;
+      END_IF;
+   END_FOR;
+   IF b THEN
+      IF (M_MeasureInfo[indexApplicationArea].iNumberMeasure > 8) AND
+         (M_MeasureInfo[indexApplicationArea].iNumberLeft >= 2) AND
+         (M_MeasureInfo[indexApplicationArea].iNumberRight >= 2) AND 
+         (M_MeasureInfo[indexApplicationArea].iNumberStart >= 2) AND 
+         (M_MeasureInfo[indexApplicationArea].iNumberEnd >= 2) THEN
+         
+         FOR i := 1 TO M_MeasureInfo[indexApplicationArea].iNumberMeasure DO
+            CASE M_measureData[indexApplicationArea][i].type OF
+               MPLEFT : iLeft := iLeft+1;
+                        BorderDataLeft[iLeft].mp := M_measureData[indexApplicationArea][i].mp;
+                        BorderDataLeft[iLeft].mpCorr := M_measureData[indexApplicationArea][i].mpCorr;
+               MPRIGHT : iRight := iRight+1;
+                        BorderDataRight[iRight].mp := M_measureData[indexApplicationArea][i].mp;
+                        BorderDataRight[iRight].mpCorr := M_measureData[indexApplicationArea][i].mpCorr;
+               MPSTART : iStart := iStart+1;
+                        BorderDataStart[iStart].mp := M_measureData[indexApplicationArea][i].mp;
+                        BorderDataStart[iStart].mpCorr := M_measureData[indexApplicationArea][i].mpCorr;
+               MPEND : iEnd := iEnd+1;
+                        BorderDataEnd[iEnd].mp := M_measureData[indexApplicationArea][i].mp;
+                        BorderDataEnd[iEnd].mpCorr := M_measureData[indexApplicationArea][i].mpCorr;
+               MPUNDEF: ;
+            END_CASE;
+         END_FOR;
+         BorderInfoLeft.iNumber := M_MeasureInfo[indexApplicationArea].iNumberLeft;
+         BorderInfoRight.iNumber := M_MeasureInfo[indexApplicationArea].iNumberRight;
+         BorderInfoStart.iNumber := M_MeasureInfo[indexApplicationArea].iNumberStart;
+         BorderInfoEnd.iNumber := M_MeasureInfo[indexApplicationArea].iNumberEnd;
+      ELSE
+         // Nicht genug Messpunkte für Area 
+         myRobot.DebugPrint(eTraceVision, "Z_CorrStart:  Area = " + STR(Area) + " zu wenig Messpunkte");
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTooFewMP, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.Z_CorrStart", STR(Area));
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      //  Area nicht gefunden
+      myRobot.DebugPrint(eTraceVision, "Z_CorrStart:  Area = " + STR(Area) + "ungueltig");
+      RcuSetMessageOnce(TRcVisionZeiss_ErrAreaNotValid, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.Z_CorrStart", STR(Area));
+      RETURN FALSE;
+   END_IF;
+   // Punkte nach steigenden X-Werten sortieren
+   IF (BorderDataLeft[2].mp.mPos.mValues[0] < BorderDataLeft[1].mp.mPos.mValues[0]) THEN
+      FOR i := 1 TO INT(BorderInfoLeft.iNumber/2) DO
+         p := BorderDataLeft[i].mp;
+         BorderDataLeft[i].mp := BorderDataLeft[BorderInfoLeft.iNumber+1-i].mp;
+         BorderDataLeft[BorderInfoLeft.iNumber+1-i].mp := p;
+         p := BorderDataLeft[i].mpCorr;
+         BorderDataLeft[i].mpCorr := BorderDataLeft[BorderInfoLeft.iNumber+1-i].mpCorr;
+         BorderDataLeft[BorderInfoLeft.iNumber+1-i].mpCorr := p;
+      END_FOR;
+   END_IF;
+   IF (BorderDataRight[2].mp.mPos.mValues[0] < BorderDataRight[1].mp.mPos.mValues[0]) THEN
+      FOR i := 1 TO INT(BorderInfoRight.iNumber/2) DO
+         p := BorderDataRight[i].mp;
+         BorderDataRight[i].mp := BorderDataRight[BorderInfoRight.iNumber+1-i].mp;
+         BorderDataRight[BorderInfoRight.iNumber+1-i].mp := p;
+         p := BorderDataRight[i].mpCorr;
+         BorderDataRight[i].mpCorr := BorderDataRight[BorderInfoRight.iNumber+1-i].mpCorr;
+         BorderDataRight[BorderInfoRight.iNumber+1-i].mpCorr := p;
+      END_FOR;
+   END_IF;
+   // linker und rechter Rand y = f(x) und z = f(x)
+   FOR i := 1 TO BorderInfoLeft.iNumber-1 DO
+      IF (rAbs(BorderDataLeft[i+1].mp.mPos.mValues[0] - BorderDataLeft[i].mp.mPos.mValues[0]) < rMinDeltaX) THEN
+         RcuSetMessageOnce(TRcVisionZeiss_ErrMinDist, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_CorrStart", "X", 
+                           STR(rAbs(BorderDataLeft[i+1].mp.mPos.mValues[0] - BorderDataLeft[i].mp.mPos.mValues[0])), STR(rMinDeltaX));
+         RETURN FALSE;
+      END_IF;
+      BorderDataLeft[i].mp_m1 := (BorderDataLeft[i+1].mp.mPos.mValues[1] - BorderDataLeft[i].mp.mPos.mValues[1]) /
+                                 (BorderDataLeft[i+1].mp.mPos.mValues[0] - BorderDataLeft[i].mp.mPos.mValues[0]);
+      BorderDataLeft[i].mp_b1 := BorderDataLeft[i].mp.mPos.mValues[1] - BorderDataLeft[i].mp.mPos.mValues[0] * BorderDataLeft[i].mp_m1; 
+      BorderDataLeft[i].mp_m2 := (BorderDataLeft[i+1].mp.mPos.mValues[2] - BorderDataLeft[i].mp.mPos.mValues[2]) /
+                                 (BorderDataLeft[i+1].mp.mPos.mValues[0] - BorderDataLeft[i].mp.mPos.mValues[0]);
+      BorderDataLeft[i].mp_b2 := BorderDataLeft[i].mp.mPos.mValues[2] - BorderDataLeft[i].mp.mPos.mValues[0] * BorderDataLeft[i].mp_m2; 
+      BorderDataLeft[i].mpCorr_m1 := (BorderDataLeft[i+1].mpCorr.mPos.mValues[1] - BorderDataLeft[i].mpCorr.mPos.mValues[1]) /
+                                 (BorderDataLeft[i+1].mpCorr.mPos.mValues[0] - BorderDataLeft[i].mpCorr.mPos.mValues[0]);
+      BorderDataLeft[i].mpCorr_b1 := BorderDataLeft[i].mpCorr.mPos.mValues[1] - BorderDataLeft[i].mpCorr.mPos.mValues[0] * BorderDataLeft[i].mpCorr_m1; 
+      BorderDataLeft[i].mpCorr_m2 := (BorderDataLeft[i+1].mpCorr.mPos.mValues[2] - BorderDataLeft[i].mpCorr.mPos.mValues[2]) /
+                                 (BorderDataLeft[i+1].mpCorr.mPos.mValues[0] - BorderDataLeft[i].mpCorr.mPos.mValues[0]);
+      BorderDataLeft[i].mpCorr_b2 := BorderDataLeft[i].mpCorr.mPos.mValues[2] - BorderDataLeft[i].mpCorr.mPos.mValues[0] * BorderDataLeft[i].mpCorr_m2; 
+   END_FOR;
+   
+   FOR i := 1 TO BorderInfoRight.iNumber-1 DO
+      IF (rAbs(BorderDataRight[i+1].mp.mPos.mValues[0] - BorderDataRight[i].mp.mPos.mValues[0]) < rMinDeltaX) THEN
+         RcuSetMessageOnce(TRcVisionZeiss_ErrMinDist, myRobot.kinListInx, 2, 0, "TRcuVisionZeiss.Z_CorrStart", "X", 
+                           STR(rAbs(BorderDataRight[i+1].mp.mPos.mValues[0] - BorderDataRight[i].mp.mPos.mValues[0])), STR(rMinDeltaX));
+         RETURN FALSE;
+      END_IF;
+      BorderDataRight[i].mp_m1 := (BorderDataRight[i+1].mp.mPos.mValues[1] - BorderDataRight[i].mp.mPos.mValues[1]) /
+                                 (BorderDataRight[i+1].mp.mPos.mValues[0] - BorderDataRight[i].mp.mPos.mValues[0]);
+      BorderDataRight[i].mp_b1 := BorderDataRight[i].mp.mPos.mValues[1] - BorderDataRight[i].mp.mPos.mValues[0] * BorderDataRight[i].mp_m1; 
+      BorderDataRight[i].mp_m2 := (BorderDataRight[i+1].mp.mPos.mValues[2] - BorderDataRight[i].mp.mPos.mValues[2]) /
+                                 (BorderDataRight[i+1].mp.mPos.mValues[0] - BorderDataRight[i].mp.mPos.mValues[0]);
+      BorderDataRight[i].mp_b2 := BorderDataRight[i].mp.mPos.mValues[2] - BorderDataRight[i].mp.mPos.mValues[0] * BorderDataRight[i].mp_m2; 
+      BorderDataRight[i].mpCorr_m1 := (BorderDataRight[i+1].mpCorr.mPos.mValues[1] - BorderDataRight[i].mpCorr.mPos.mValues[1]) /
+                                 (BorderDataRight[i+1].mpCorr.mPos.mValues[0] - BorderDataRight[i].mpCorr.mPos.mValues[0]);
+      BorderDataRight[i].mpCorr_b1 := BorderDataRight[i].mpCorr.mPos.mValues[1] - BorderDataRight[i].mpCorr.mPos.mValues[0] * BorderDataRight[i].mpCorr_m1; 
+      BorderDataRight[i].mpCorr_m2 := (BorderDataRight[i+1].mpCorr.mPos.mValues[2] - BorderDataRight[i].mpCorr.mPos.mValues[2]) /
+                                 (BorderDataRight[i+1].mpCorr.mPos.mValues[0] - BorderDataRight[i].mpCorr.mPos.mValues[0]);
+      BorderDataRight[i].mpCorr_b2 := BorderDataRight[i].mpCorr.mPos.mValues[2] - BorderDataRight[i].mpCorr.mPos.mValues[0] * BorderDataRight[i].mpCorr_m2; 
+   END_FOR;
+   
+   // Punkte nach steigenden Y-Werten sortieren
+   IF (BorderDataStart[2].mp.mPos.mValues[1] < BorderDataStart[1].mp.mPos.mValues[1]) THEN
+      FOR i := 1 TO INT(BorderInfoStart.iNumber/2) DO
+         p := BorderDataStart[i].mp;
+         BorderDataStart[i].mp := BorderDataStart[BorderInfoStart.iNumber+1-i].mp;
+         BorderDataStart[BorderInfoStart.iNumber+1-i].mp := p;
+         p := BorderDataStart[i].mpCorr;
+         BorderDataStart[i].mpCorr := BorderDataStart[BorderInfoStart.iNumber+1-i].mpCorr;
+         BorderDataStart[BorderInfoStart.iNumber+1-i].mpCorr := p;
+      END_FOR;
+   END_IF;
+   IF (BorderDataEnd[2].mp.mPos.mValues[1] < BorderDataEnd[1].mp.mPos.mValues[1]) THEN
+      FOR i := 1 TO INT(BorderInfoEnd.iNumber/2) DO
+         p := BorderDataEnd[i].mp;
+         BorderDataEnd[i].mp := BorderDataEnd[BorderInfoEnd.iNumber+1-i].mp;
+         BorderDataEnd[BorderInfoEnd.iNumber+1-i].mp := p;
+         p := BorderDataEnd[i].mpCorr;
+         BorderDataEnd[i].mpCorr := BorderDataEnd[BorderInfoEnd.iNumber+1-i].mpCorr;
+         BorderDataEnd[BorderInfoEnd.iNumber+1-i].mpCorr := p;
+      END_FOR;
+   END_IF;
+   
+   // Start- und Endrand x = f(y) und z = f(y)
+   FOR i := 1 TO BorderInfoStart.iNumber-1 DO
+      IF (rAbs(BorderDataStart[i+1].mp.mPos.mValues[1] - BorderDataStart[i].mp.mPos.mValues[1]) < rMinDeltaY) THEN
+         RcuSetMessageOnce(TRcVisionZeiss_ErrMinDist, myRobot.kinListInx, 2, 0, "TRcuVisionZeiss.Z_CorrStart", "Y", 
+                           STR(rAbs(BorderDataStart[i+1].mp.mPos.mValues[1] - BorderDataStart[i].mp.mPos.mValues[1])), STR(rMinDeltaY));
+         RETURN FALSE;
+      END_IF;
+      BorderDataStart[i].mp_m3 := (BorderDataStart[i+1].mp.mPos.mValues[0] - BorderDataStart[i].mp.mPos.mValues[0]) /
+                                 (BorderDataStart[i+1].mp.mPos.mValues[1] - BorderDataStart[i].mp.mPos.mValues[1]);
+      BorderDataStart[i].mp_b3 := BorderDataStart[i].mp.mPos.mValues[0] - BorderDataStart[i].mp.mPos.mValues[1] * BorderDataStart[i].mp_m3; 
+      BorderDataStart[i].mp_m4 := (BorderDataStart[i+1].mp.mPos.mValues[2] - BorderDataStart[i].mp.mPos.mValues[2]) /
+                                 (BorderDataStart[i+1].mp.mPos.mValues[1] - BorderDataStart[i].mp.mPos.mValues[1]);
+      BorderDataStart[i].mp_b4 := BorderDataStart[i].mp.mPos.mValues[2] - BorderDataStart[i].mp.mPos.mValues[1] * BorderDataStart[i].mp_m4; 
+      BorderDataStart[i].mpCorr_m3 := (BorderDataStart[i+1].mpCorr.mPos.mValues[0] - BorderDataStart[i].mpCorr.mPos.mValues[0]) /
+                                 (BorderDataStart[i+1].mpCorr.mPos.mValues[1] - BorderDataStart[i].mpCorr.mPos.mValues[1]);
+      BorderDataStart[i].mpCorr_b3 := BorderDataStart[i].mpCorr.mPos.mValues[0] - BorderDataStart[i].mpCorr.mPos.mValues[1] * BorderDataStart[i].mpCorr_m3; 
+      BorderDataStart[i].mpCorr_m4 := (BorderDataStart[i+1].mpCorr.mPos.mValues[2] - BorderDataStart[i].mpCorr.mPos.mValues[2]) /
+                                 (BorderDataStart[i+1].mpCorr.mPos.mValues[1] - BorderDataStart[i].mpCorr.mPos.mValues[1]);
+      BorderDataStart[i].mpCorr_b4 := BorderDataStart[i].mpCorr.mPos.mValues[2] - BorderDataStart[i].mpCorr.mPos.mValues[1] * BorderDataStart[i].mpCorr_m4; 
+   END_FOR;
+   FOR i := 1 TO BorderInfoEnd.iNumber-1 DO
+      IF (rAbs(BorderDataEnd[i+1].mp.mPos.mValues[1] - BorderDataEnd[i].mp.mPos.mValues[1]) < rMinDeltaY) THEN
+         RcuSetMessageOnce(TRcVisionZeiss_ErrMinDist, myRobot.kinListInx, 2, 0, "TRcuVisionZeiss.Z_CorrStart", "Y", 
+                           STR(rAbs(BorderDataEnd[i+1].mp.mPos.mValues[1] - BorderDataEnd[i].mp.mPos.mValues[1])), STR(rMinDeltaY));
+         RETURN FALSE;
+      END_IF;
+      BorderDataEnd[i].mp_m3 := (BorderDataEnd[i+1].mp.mPos.mValues[0] - BorderDataEnd[i].mp.mPos.mValues[0]) /
+                                 (BorderDataEnd[i+1].mp.mPos.mValues[1] - BorderDataEnd[i].mp.mPos.mValues[1]);
+      BorderDataEnd[i].mp_b3 := BorderDataEnd[i].mp.mPos.mValues[0] - BorderDataEnd[i].mp.mPos.mValues[1] * BorderDataEnd[i].mp_m3; 
+      BorderDataEnd[i].mp_m4 := (BorderDataEnd[i+1].mp.mPos.mValues[2] - BorderDataEnd[i].mp.mPos.mValues[2]) /
+                                 (BorderDataEnd[i+1].mp.mPos.mValues[1] - BorderDataEnd[i].mp.mPos.mValues[1]);
+      BorderDataEnd[i].mp_b4 := BorderDataEnd[i].mp.mPos.mValues[2] - BorderDataEnd[i].mp.mPos.mValues[1] * BorderDataEnd[i].mp_m4; 
+      BorderDataEnd[i].mpCorr_m3 := (BorderDataEnd[i+1].mpCorr.mPos.mValues[0] - BorderDataEnd[i].mpCorr.mPos.mValues[0]) /
+                                 (BorderDataEnd[i+1].mpCorr.mPos.mValues[1] - BorderDataEnd[i].mpCorr.mPos.mValues[1]);
+      BorderDataEnd[i].mpCorr_b3 := BorderDataEnd[i].mpCorr.mPos.mValues[0] - BorderDataEnd[i].mpCorr.mPos.mValues[1] * BorderDataEnd[i].mpCorr_m3; 
+      BorderDataEnd[i].mpCorr_m4 := (BorderDataEnd[i+1].mpCorr.mPos.mValues[2] - BorderDataEnd[i].mpCorr.mPos.mValues[2]) /
+                                 (BorderDataEnd[i+1].mpCorr.mPos.mValues[1] - BorderDataEnd[i].mpCorr.mPos.mValues[1]);
+      BorderDataEnd[i].mpCorr_b4 := BorderDataEnd[i].mpCorr.mPos.mValues[2] - BorderDataEnd[i].mpCorr.mPos.mValues[1] * BorderDataEnd[i].mpCorr_m4; 
+   END_FOR;
+   
+   // File öffnen für Testausgaben
+   IF (FileHandle = 0) THEN
+      CatalogReadString(giSysBaseHdl, "applPath", sDir, TRUE);
+      sDir := sDir + "application/oflatest";
+      IF NOT MkDir(sDir) THEN                                 //create directory
+         RcuSetMessageOnce(TRcVisionZeiss_WarCreateFolder, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_CorrStart", sDir);
+      ELSE
+         sPath       := sDir + "/Korrektur.dat";
+         FileHandle := FileOpen(sPath, eFileModeReadWriteDelete); //create file
+         IF FileHandle = 0 THEN
+            RcuSetMessageOnce(TRcVisionZeiss_WarCreateFile, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.Z_CorrStart", sPath);
+         ELSE   
+            //write header
+            SysTimerGetUs(iTime);
+            SysTimerString(str, iTime); 
+            sChr := "";
+            iLen := StrLen(str); 
+            str := StrDelete(str, 4, 1);
+            //Day
+            sChr := sChr + StrMid(str, 2, 5) + ".";
+            //Month
+            sMonth := StrMid(str, 3, 1) + ".";
+            CASE sMonth OF
+             "Jan": sChr := sChr + "01.";
+             "Feb": sChr := sChr + "02.";
+             "Mar": sChr := sChr + "03.";
+             "Apr": sChr := sChr + "04.";
+             "May": sChr := sChr + "05.";
+             "Jun": sChr := sChr + "06.";
+             "Jul": sChr := sChr + "07.";
+             "Aug": sChr := sChr + "08.";
+             "Sep": sChr := sChr + "09.";
+             "Oct": sChr := sChr + "10.";
+             "Nov": sChr := sChr + "11.";
+             "Dec": sChr := sChr + "12.";
+            END_CASE;  
+            //Year
+            sChr := sChr + StrMid(str, 4, 17);
+            sChr := sChr + " ";
+            //hour:min:sec
+            sChr := sChr + StrMid(str, 8, 8);
+            str := ";    File generated by TRcuVisionZeiss:  " + sChr + CHR(13);
+            FileWriteLn(FileHandle, str);
+            FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+            FileWriteLn(FileHandle, ";Korrekturen                                                                                               " + CHR(13));
+            FileWriteLn(FileHandle, ";                                                                                                          " + CHR(13));
+            FileWriteLn(FileHandle, ";Name     X    Y    Z    DeltaX    DeltaY    DeltaZ    DeltaZ_2                                            " + CHR(13));
+            FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+         END_IF;   
+      END_IF;
+   ELSE
+      FileWriteLn(FileHandle, str);
+      FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+      FileWriteLn(FileHandle, ";Korrekturen                                                                                               " + CHR(13));
+      FileWriteLn(FileHandle, ";                                                                                                          " + CHR(13));
+      FileWriteLn(FileHandle, ";Name     X    Y    Z    DeltaX    DeltaY    DeltaZ     DeltaZ_2                                           " + CHR(13));
+      FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+   END_IF;
+   bCorrActive := TRUE;
+   RETURN TRUE;
+END_ROUTINE
+
+// wird vom Makro Z_CORRPATH aufgerufen
+// wird noch nicht verwendet. Noch nicht getestet!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+(*
+ROUTINE Z_CorrPath(Area : DINT; PSTART : POINT; PEND : POINT) : BOOL
+VAR
+   x1           : REAL;
+   y1           : REAL;
+   x2           : REAL;
+   y2           : REAL;
+   deltaXCorr   : REAL;
+   deltaYCorr   : REAL;
+   deltaZCorr   : REAL;
+   deltaZCorr_2 : REAL;
+   lenOrg       : REAL;
+   lenCorr      : REAL;
+   lFactor      : REAL;
+END_VAR   
+
+   IF bCorrActive THEN
+      x1 := PSTART.A;
+      y1 := PSTART.B;
+      x2 := PEND.A;
+      y2 := PEND.B;
+      Sqrt( ( (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2)), lenOrg);
+      ComputeCorr(x1, y1, deltaXCorr, deltaYCorr, deltaZCorr, deltaZCorr_2);
+      FileWriteLn(FileHandle, PSTART.GetName() + " " + STR(PSTART.A) + " " + STR(PSTART.B) + " " + STR(PSTART.C) + " " + STR(deltaXCorr) + " " + STR(deltaYCorr) + " " + STR(deltaZCorr) + " " + STR(deltaZCorr_2) + CHR(13));
+      x1 := x1 + deltaXCorr;
+      y1 := y1 + deltaYCorr;
+      ComputeCorr(x2, y2, deltaXCorr, deltaYCorr, deltaZCorr, deltaZCorr_2);
+      FileWriteLn(FileHandle, PEND.GetName() + " " + STR(PEND.A) + " " + STR(PEND.B) + " " + STR(PEND.C) + " " + STR(deltaXCorr) + " " + STR(deltaYCorr) + " " + STR(deltaZCorr) + " " + STR(deltaZCorr_2) + CHR(13));
+      x2 := x2 + deltaXCorr;
+      y2 := y2 + deltaYCorr;
+      Sqrt( ( (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2)), lenCorr);
+      lFactor := lenCorr / lenOrg;
+      FileWriteLn(FileHandle, "Path length org = " + STR(lenOrg) + " Path length new = " + STR(lenCorr) + " Overridefactor = " + STR(lFactor) + CHR(13));
+      RETURN TRUE;
+   ELSE
+      // Fehler, keine Korrektur aktiv
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+*)
+
+ROUTINE Z_CorrFinish(Area : DINT)
+   bCorrActive := FALSE;
+   FileWriteLn(FileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+   StreamClose(FileHandle);                    //close file
+   FileHandle := 0;
+END_ROUTINE
+
+// Test Korrektur zu einem Punkt berechnen. Zum Makro Z_CORR
+// Z-Korrekturen können sowohl zwischen linkem Rand und rechtem Rand, d.h. Projektion in XZ-Ebene als auch
+// zwischen Startrand und Endrand, d.h Projektion in YZ-Ebene berechnet werden.
+ROUTINE Z_Corr(POrg : POINT; PCorr : POINT)
+VAR
+   deltaXCorr  : REAL;
+   deltaYCorr  : REAL;
+   deltaZCorr  : REAL;
+   deltaZCorr_2  : REAL;
+   str         : STRING;
+   b           : BOOL;
+END_VAR 
+  
+  IF NOT ComputeCorr(POrg.A, POrg.B, deltaXCorr, deltaYCorr, deltaZCorr, deltaZCorr_2) THEN
+     RcuSetMessageOnce(TRcVisionZeiss_ErrComputeCorr, myRobot.kinListInx, 2, 0, "TRcuVisionZeiss.Z_Corr", PCorr.GetInstancePathName());
+  END_IF;
+  PCorr := POrg;
+  PCorr.A := POrg.A + deltaXCorr;
+  PCorr.B := POrg.B + deltaYCorr;
+  PCorr.C := POrg.C + deltaZCorr;
+
+  str := PCorr.GetInstancePathName();
+  b := WriteInitValues(str); 
+     
+  FileWriteLn(FileHandle, POrg.GetName() + " " + STR(POrg.A) + " " + STR(POrg.B) + " " + STR(POrg.C) + " " + STR(deltaXCorr) + " " + STR(deltaYCorr) + " " + STR(deltaZCorr) + " " + STR(deltaZCorr_2) + CHR(13));
+//  FileWriteLn(FileHandle, STR(POrg.A) + " " + STR(POrg.B) + " " + STR(POrg.C) + " " + STR(deltaXCorr) + " " + STR(deltaYCorr) + " " + STR(deltaZCorr) + " " + STR(deltaZCorr_2) + CHR(13));
+  
+END_ROUTINE
+
+
+// Korrektur zu einem Punkt berechnen.
+// wird aus der Routine GetMcuPos() von TRcuPositionCart (wegen Triggerpunkten) und POINT sowie POINT_M aufgerufen
+// Z-Korrekturen können sowohl zwischen linkem Rand und rechtem Rand, d.h. Projektion in XZ-Ebene als auch
+// zwischen Startrand und Endrand, d.h Projektion in YZ-Ebene berechnet werden.
+ROUTINE PosCorr(PosName : STRING; PosX : REAL; PosY : REAL; PosZ : REAL)
+VAR
+   deltaXCorr  : REAL;
+   deltaYCorr  : REAL;
+   deltaZCorr  : REAL;
+   deltaZCorr_2  : REAL;
+END_VAR 
+
+  IF NOT bCorrActive THEN
+     // Fehler keine Korrektur aktiv
+     // kann nicht vorkommen, da es bereits beim Aufruf abgefragt wird!
+     RETURN;
+  END_IF;
+  IF NOT ComputeCorr(PosX, PosY, deltaXCorr, deltaYCorr, deltaZCorr, deltaZCorr_2) THEN
+     RcuSetMessageOnce(TRcVisionZeiss_ErrComputeCorr, myRobot.kinListInx, 1, 0, "TRcuVisionZeiss.PosCorr", PosName);
+  END_IF;
+  FileWriteLn(FileHandle, PosName + " " + STR(PosX) + " " + STR(PosY) + " " + STR(PosZ) + " " + STR(deltaXCorr) + " " + STR(deltaYCorr) + " " + STR(deltaZCorr) + " " + STR(deltaZCorr_2) + CHR(13));
+//  FileWriteLn(FileHandle, STR(POrg.A) + " " + STR(POrg.B) + " " + STR(POrg.C) + " " + STR(deltaXCorr) + " " + STR(deltaYCorr) + " " + STR(deltaZCorr) + " " + STR(deltaZCorr_2) + CHR(13));
+  PosX := PosX + deltaXCorr;
+  PosY := PosY + deltaYCorr;
+  PosZ := PosZ + (deltaZCorr+deltaZCorr_2)/2;
+
+  
+END_ROUTINE
+
+// zum Test Korrekturen für Messpunkte simulieren
+// zum Makro Z_TESTDATA
+ROUTINE Z_TestData(pointNumber : DINT; DX : REAL; DY : REAL; DZ : REAL)
+   
+   IF indexTestData > MAX_MP THEN
+      RcuSetMessageOnce(TRcVisionZeiss_ErrTooManyMP, myRobot.kinListInx, 2, 0, "TRcuVisionZeiss.Z_TestData", STR(indexTestData), STR(MAX_MP));
+      myRobot.DebugPrint(eTraceVision, "indexTestData:  point = " + STR(pointNumber) + " zu viele Testdaten");
+      RETURN;
+   ELSE
+      M_TestData[indexMeasureArea][indexTestData].mp_nr  := pointNumber;
+      M_TestData[indexMeasureArea][indexTestData].deltaX := DX;
+      M_TestData[indexMeasureArea][indexTestData].deltaY := DY;
+      M_TestData[indexMeasureArea][indexTestData].deltaZ := DZ;
+      indexTestData := indexTestData + 1;
+   END_IF;
+   
+END_ROUTINE
+
+// zum Test alle Korrekturen für die simulierten Messpunkte löschen
+// zum Makro Z_RESET
+ROUTINE Z_ResetTestData()
+VAR
+   i : INT;
+END_VAR   
+   
+   IF indexTestData >= 1 THEN
+      FOR i := 1 TO indexTestData  DO
+         M_TestData[indexMeasureArea][i] := NullTestData;
+      END_FOR;
+   END_IF;
+   indexTestData := 1;
+END_ROUTINE
+
+
+//-------------------------------------------------------------------------------------------
+// Check PLC feedback even measuring was successful to syncronize several robots
+//-------------------------------------------------------------------------------------------
+ROUTINE SyncRobots(state : BOOL)
+  bSyncRobots := state;
+END_ROUTINE
+
+
+ROUTINE TriggerDirect(ipointNumber : INT; mptype : MP_TYPE)
+VAR
+   p : POINT;
+   tcp : TMcuFrame;
+END_VAR
+
+   STOPPOINT();
+   ActCartInObjectCoord(tcp);
+   p.A := tcp.mPos.mValues[0]; // nur diese Werte werden in Z_TriggerPoint verwendet!
+   p.B := tcp.mPos.mValues[1];
+   p.C := tcp.mPos.mValues[2];
+   p.D := tcp.mOri.mValues[0];
+   p.E := tcp.mOri.mValues[1];
+   p.F := tcp.mOri.mValues[2];
+   myRobot.DebugPrint(eTraceVision, "TriggerDirect: pointnumber = " + STR(ipointNumber));
+   //START Z_TriggerPoint(p, ipointNumber);
+   
+   PreTriggerPoint   := p;
+   PreTriggerPointID := ipointNumber;
+   PreTriggerPointMpType := mptype;
+   bTriggerPending := TRUE;
+   Sleep(500);
+   
+   IF bZEISS_SIG_TRIGGER THEN
+      WAIT NOT bZEISS_SIG_TRIGGER;
+      RcuSetMessageOnce(TRcVisionZeiss_ErrTrigTooFast, myRobot.kinListInx, 3, instId, "TRcuVisionZeiss.TriggerDirect", STR(ipointNumber));
+      RETURN;
+   ELSE
+      PULSE(bZEISS_SIG_TRIGGER, TRUE, TriggerTime);
+   END_IF;
+   WAIT NOT bTriggerPending; // Z_TriggerPoint ist fertig
+END_ROUTINE
+
+(*
+ROUTINE PreTrigger(p : POINT; pointNumber : INT)
+   
+   PreTriggerPoint   := p; 
+   PreTriggerPointID := pointNumber;
+   bTriggerPending := TRUE;
+      
+END_ROUTINE
+*)
+
+// Wird aus TRcuProgPath.WaitTrigger unmittelbar nach der Triggersignalisierung durch die MCU aufgerufen. Das eigentliche Triggersignal (HW-Trigger)
+// wird um Vorwarnzeit + DelayRobotDives verzögert gesetzt. Dies ist notwendig, weil der Messrechner "Vorbereitungszeit" für die Messung braucht.
+ROUTINE PreTriggerProgPath(frame : TMcuFrame; pointNumber : INT; mptype : MP_TYPE)
+   
+   IF bTriggerPending THEN
+      RcuSetMessageOnce(TRcVisionZeiss_ErrTrigTooFast, myRobot.kinListInx, 4, instId, "TRcuVisionZeiss.PreTriggerProgPath", STR(pointNumber));
+   END_IF;
+   PreTriggerPoint.A := frame.mPos.mValues[0];
+   PreTriggerPoint.B := frame.mPos.mValues[1];
+   PreTriggerPoint.C := frame.mPos.mValues[2];
+   PreTriggerPoint.D := frame.mOri.mValues[0];
+   PreTriggerPoint.E := frame.mOri.mValues[1];
+   PreTriggerPoint.F := frame.mOri.mValues[2];
+   PreTriggerPointID := pointNumber;
+   PreTriggerPointMpType := mptype;
+   bTriggerPending := TRUE; // ObservePreTrigger schickt Telegramm an Messrechner
+      
+END_ROUTINE
+
+
+ROUTINE ObservePreTrigger()
+
+   
+   WHILE TRUE DO
+      WAIT bTriggerPending;
+      // Triggertelegramm senden
+      Z_TriggerPoint(PreTriggerPoint, PreTriggerPointID, PreTriggerPointMpType);
+      bTriggerPending := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE SignalZeissTrigger(commandData : TMcuUserData; pos : TRcuTrigger;
+                            posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+VAR
+   triggerNumOnSeg  : DINT;
+   command          : DINT;
+END_VAR
+
+   myRobot.DebugPrint(eTraceVision, "SignalZeissTrigger");
+   triggerNumOnSeg := commandData.mDataInt[1];
+   command         := commandData.mDataInt[3];
+   START Trigger_Aktion(commandData, pos, posInvalid, triggerIdx) PRIO 0;
+   myRobot.progPath.lastExecutedTrigger := triggerNumOnSeg;
+
+END_ROUTINE
+
+
+
+VAR PRIVATE
+   myRobot                  : MAPTO TRcuRobot;
+   iLoggerNumber            : INT;
+   instId                   : DINT;    // instance identification number
+   
+   bActive                  : BOOL;    // STARTCYCLE wurde aufgerufen, ENDCYCLE noch nicht
+                               // TCP/IP Verbindung geoeffnet
+   bConnect                 : BOOL;
+   bMappingOk               : BOOL;
+   bCommError               : BOOL;
+   bSyncRobots              : BOOL;  //Check PLC feedback even measuring was successful to syncronize several robots
+   
+   client                   : TRcuNetworkTcpClient;    
+   TelCounter               : INT;
+   bZEISS_SIG_TRIGGER       : MAPTO BOOL;
+   Sym_Out_TRIGGER          : STRING := "RCU1.HWO_mZeiss_TRIGGER";
+   
+   PreTriggerPoint          : POINT; 
+   PreTriggerPointID        : INT;
+   PreTriggerPointMpType    : MP_TYPE;
+
+   FileHandle               : DINT;
+END_VAR
+
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to ZEISS
+//----------------------------------------------------------------------------------------
+ROUTINE MapSignals() PRIVATE
+   
+   bMappingOk := TRUE;
+   RcuReadSymbols(myRobot.kinListInx);   
+   bZEISS_SIG_TRIGGER := MAPX(Sym_Out_TRIGGER);
+      
+   IF NOT IS_MAPPED(bZEISS_SIG_TRIGGER) THEN
+      bMappingOk := FALSE;
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcVisionZeiss_ErrTrigNotMapped, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.MapSignals", Sym_Out_TRIGGER);
+   END_IF;   
+   
+   IF bMappingOk AND NOT myRobot.bFieldbusSlaveReady THEN
+      bMappingOk    := FALSE;
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcuVision_ErrFieldbus, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.MapSignals");
+   END_IF;
+      
+   IF bMappingOk AND NOT myRobot.vision.bUseExtendedInterface THEN
+      bMappingOk    := FALSE;
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcVisionZeiss_ErrNoExtConfig, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.MapSignals");
+   END_IF;
+   
+END_ROUTINE
+
+
+
+ROUTINE RcuReadSymbols(kinListIndex : DINT) : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      name  : STRING;
+      i      : SINT;
+   END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionZeiss.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      IF NOT CatalogReadString(dirHdl, "Sym_ZEISS_TRIGGER", name, TRUE) THEN
+         Sym_Out_TRIGGER := "RCU1.HWO_mZeiss_TRIGGER";
+      ELSE
+         Sym_Out_TRIGGER := "RCU" + STR(gyiNrRcu[i]) + "." + name;
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionZeiss.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+RETURN TRUE;
+
+END_ROUTINE
+
+
+// Korrektur zu einem Punkt berechnen.
+// Z-Korrekturen können sowohl zwischen linkem Rand und rechtem Rand, d.h. Projektion in XZ-Ebene als auch
+// zwischen Startrand und Endrand, d.h Projektion in YZ-Ebene berechnet werden.
+ROUTINE ComputeCorr(VAR_IN xOrg : REAL; VAR_IN yOrg : REAL; deltaXCorr : REAL; deltaYCorr  : REAL; deltaZCorr  : REAL; deltaZCorr_2  : REAL): BOOL PRIVATE
+VAR
+   i : INT;
+   index : INT;
+   x1 : REAL;
+   y1 : REAL;
+   z1 : REAL;
+   z1_2 : REAL;
+   x2 : REAL;
+   y2 : REAL;
+   z2 : REAL;
+   z2_2 : REAL;
+   x1Corr : REAL;
+   y1Corr : REAL;
+   z1Corr : REAL;
+   z1Corr_2 : REAL;
+   x2Corr : REAL;
+   y2Corr : REAL;
+   z2Corr : REAL;
+   z2Corr_2 : REAL;
+   deltaX : REAL; // Abstand Start Rand zu Punkt
+   deltaY : REAL; // Abstand linker Rand zu Punkt
+   deltaZ : REAL;
+   distX1X2    : REAL; // Abstand zwischen Start Rand und End Rand 
+   distY1Y2    : REAL; // Abstand zwischen linkem Rand und rechtem Rand
+   gfx1        : REAL; 
+   gfx2        : REAL;
+   gfy1        : REAL;
+   gfy2        : REAL;
+   str         : STRING;
+   b           : BOOL;
+END_VAR 
+  
+  IF (M_MeasureInfo[indexMeasureArea].iNumberMeasure > 0) THEN
+     IF (xOrg <= BorderDataLeft[1].mp.mPos.mValues[0]) THEN
+        // extrapolieren
+        y1  := xOrg* BorderDataLeft[1].mp_m1 + BorderDataLeft[1].mp_b1;
+        y1Corr  := xOrg* BorderDataLeft[1].mpCorr_m1 + BorderDataLeft[1].mpCorr_b1;
+        // fuer z 
+        z1  := xOrg* BorderDataLeft[1].mp_m2 + BorderDataLeft[1].mp_b2;
+        z1Corr  := xOrg* BorderDataLeft[1].mpCorr_m2 + BorderDataLeft[1].mpCorr_b2;
+     ELSIF (xOrg > BorderDataLeft[BorderInfoLeft.iNumber-1].mp.mPos.mValues[0]) THEN
+        // extrapolieren
+        y1  := xOrg* BorderDataLeft[BorderInfoLeft.iNumber-1].mp_m1 + BorderDataLeft[BorderInfoLeft.iNumber-1].mp_b1;
+        y1Corr  := xOrg* BorderDataLeft[BorderInfoLeft.iNumber-1].mpCorr_m1 + BorderDataLeft[BorderInfoLeft.iNumber-1].mpCorr_b1;
+        // fuer z 
+        z1  := xOrg* BorderDataLeft[BorderInfoLeft.iNumber-1].mp_m2 + BorderDataLeft[BorderInfoLeft.iNumber-1].mp_b2;
+        z1Corr  := xOrg* BorderDataLeft[BorderInfoLeft.iNumber-1].mpCorr_m2 + BorderDataLeft[BorderInfoLeft.iNumber-1].mpCorr_b2;
+     ELSE // Gerade zwischen den Messpunkten suchen
+        FOR i := 1 TO BorderInfoLeft.iNumber-1  DO
+           IF ((xOrg > BorderDataLeft[i].mp.mPos.mValues[0]) AND (xOrg <= BorderDataLeft[i+1].mp.mPos.mValues[0])) THEN
+             index := i;
+           END_IF;
+        END_FOR;
+        y1  := xOrg* BorderDataLeft[index].mp_m1 + BorderDataLeft[index].mp_b1;
+        y1Corr  := xOrg* BorderDataLeft[index].mpCorr_m1 + BorderDataLeft[index].mpCorr_b1;
+        // fuer z 
+        z1  := xOrg* BorderDataLeft[index].mp_m2 + BorderDataLeft[index].mp_b2;
+        z1Corr  := xOrg* BorderDataLeft[index].mpCorr_m2 + BorderDataLeft[index].mpCorr_b2;
+     END_IF;
+     IF (xOrg <= BorderDataRight[1].mp.mPos.mValues[0]) THEN
+        // extrapolieren
+        y2  := xOrg* BorderDataRight[1].mp_m1 + BorderDataRight[1].mp_b1;
+        y2Corr  := xOrg* BorderDataRight[1].mpCorr_m1 + BorderDataRight[1].mpCorr_b1;
+        // fuer z 
+        z2  := xOrg* BorderDataRight[1].mp_m2 + BorderDataRight[1].mp_b2;
+        z2Corr  := xOrg* BorderDataRight[1].mpCorr_m2 + BorderDataRight[1].mpCorr_b2;
+     ELSIF (xOrg > BorderDataRight[BorderInfoRight.iNumber-1].mp.mPos.mValues[0]) THEN
+        // extrapolieren
+        y2  := xOrg* BorderDataRight[BorderInfoRight.iNumber-1].mp_m1 + BorderDataRight[BorderInfoRight.iNumber-1].mp_b1;
+        y2Corr  := xOrg* BorderDataRight[BorderInfoRight.iNumber-1].mpCorr_m1 + BorderDataRight[BorderInfoRight.iNumber-1].mpCorr_b1;
+        // fuer z 
+        z2  := xOrg* BorderDataRight[BorderInfoRight.iNumber-1].mp_m2 + BorderDataRight[BorderInfoRight.iNumber-1].mp_b2;
+        z2Corr  := xOrg* BorderDataRight[BorderInfoRight.iNumber-1].mpCorr_m2 + BorderDataRight[BorderInfoRight.iNumber-1].mpCorr_b2;
+     ELSE // Gerade zwischen den Messpunkten suchen
+        FOR i := 1 TO BorderInfoRight.iNumber-1  DO
+           IF ((xOrg > BorderDataRight[i].mp.mPos.mValues[0]) AND (xOrg <= BorderDataRight[i+1].mp.mPos.mValues[0])) THEN
+             index := i;
+           END_IF;
+        END_FOR;
+        y2  := xOrg* BorderDataRight[index].mp_m1 + BorderDataRight[index].mp_b1;
+        y2Corr  := xOrg* BorderDataRight[index].mpCorr_m1 + BorderDataRight[index].mpCorr_b1;
+        // fuer z 
+        z2  := xOrg* BorderDataRight[index].mp_m2 + BorderDataRight[index].mp_b2;
+        z2Corr  := xOrg* BorderDataRight[index].mpCorr_m2 + BorderDataRight[index].mpCorr_b2;
+     END_IF;
+     myRobot.DebugPrint(eTraceVision,"M_CORR linker Rand Y = "+STR(y1)+" rechter Rand = "+STR(y2));
+     myRobot.DebugPrint(eTraceVision,"M_CORR linker Rand YCorr = "+STR(y1Corr)+" rechter Rand = "+STR(y2Corr));
+        // fuer z 
+     myRobot.DebugPrint(eTraceVision,"M_CORR linker Rand Z = "+STR(z1)+" rechter Rand = "+STR(z2));
+     myRobot.DebugPrint(eTraceVision,"M_CORR linker Rand ZCorr = "+STR(z1Corr)+" rechter Rand = "+STR(z2Corr));
+
+     IF (yOrg <= BorderDataStart[1].mp.mPos.mValues[1]) THEN
+        // extrapolieren
+        x1  := yOrg* BorderDataStart[1].mp_m3 + BorderDataStart[1].mp_b3;
+        x1Corr  := yOrg* BorderDataStart[1].mpCorr_m3 + BorderDataStart[1].mpCorr_b3;
+        // fuer z 
+        z1_2  := yOrg* BorderDataStart[1].mp_m4 + BorderDataStart[1].mp_b4;
+        z1Corr_2  := yOrg* BorderDataStart[1].mpCorr_m4 + BorderDataStart[1].mpCorr_b4;
+     ELSIF (yOrg > BorderDataStart[BorderInfoStart.iNumber-1].mp.mPos.mValues[1]) THEN
+        // extrapolieren
+        x1  := yOrg* BorderDataStart[BorderInfoStart.iNumber-1].mp_m3 + BorderDataStart[BorderInfoStart.iNumber-1].mp_b3;
+        x1Corr  := yOrg* BorderDataStart[BorderInfoStart.iNumber-1].mpCorr_m3 + BorderDataStart[BorderInfoStart.iNumber-1].mpCorr_b3;
+        // fuer z 
+        z1_2  := yOrg* BorderDataStart[BorderInfoStart.iNumber-1].mp_m4 + BorderDataStart[BorderInfoStart.iNumber-1].mp_b4;
+        z1Corr_2  := yOrg* BorderDataStart[BorderInfoStart.iNumber-1].mpCorr_m4 + BorderDataStart[BorderInfoStart.iNumber-1].mpCorr_b4;
+     ELSE // Gerade zwischen den Messpunkten suchen
+        FOR i := 1 TO BorderInfoStart.iNumber-1  DO
+           IF ((yOrg > BorderDataStart[i].mp.mPos.mValues[1]) AND (yOrg <= BorderDataStart[i+1].mp.mPos.mValues[1])) THEN
+             index := i;
+           END_IF;
+        END_FOR;
+        x1  := yOrg* BorderDataStart[index].mp_m3 + BorderDataStart[index].mp_b3;
+        x1Corr  := yOrg* BorderDataStart[index].mpCorr_m3 + BorderDataStart[index].mpCorr_b3;
+        // fuer z 
+        z1_2  := yOrg* BorderDataStart[index].mp_m4 + BorderDataStart[index].mp_b4;
+        z1Corr_2  := yOrg* BorderDataStart[index].mpCorr_m4 + BorderDataStart[index].mpCorr_b4;
+     END_IF;
+     IF (yOrg <= BorderDataEnd[1].mp.mPos.mValues[1]) THEN
+        // extrapolieren
+        x2  := yOrg* BorderDataEnd[1].mp_m3 + BorderDataEnd[1].mp_b3;
+        x2Corr  := yOrg* BorderDataEnd[1].mpCorr_m3 + BorderDataEnd[1].mpCorr_b3;
+        // fuer z 
+        z2_2  := yOrg* BorderDataEnd[1].mp_m4 + BorderDataEnd[1].mp_b4;
+        z2Corr_2  := yOrg* BorderDataEnd[1].mpCorr_m4 + BorderDataEnd[1].mpCorr_b4;
+     ELSIF (yOrg > BorderDataEnd[BorderInfoEnd.iNumber-1].mp.mPos.mValues[1]) THEN
+        // extrapolieren
+        x2  := yOrg* BorderDataEnd[BorderInfoEnd.iNumber-1].mp_m3 + BorderDataEnd[BorderInfoEnd.iNumber-1].mp_b3;
+        x2Corr  := yOrg* BorderDataEnd[BorderInfoEnd.iNumber-1].mpCorr_m3 + BorderDataEnd[BorderInfoEnd.iNumber-1].mpCorr_b3;
+        // fuer z 
+        z2_2  := yOrg* BorderDataEnd[BorderInfoEnd.iNumber-1].mp_m4 + BorderDataEnd[BorderInfoEnd.iNumber-1].mp_b4;
+        z2Corr_2  := yOrg* BorderDataEnd[BorderInfoEnd.iNumber-1].mpCorr_m4 + BorderDataEnd[BorderInfoEnd.iNumber-1].mpCorr_b4;
+     ELSE // Gerade zwischen den Messpunkten suchen
+        FOR i := 1 TO BorderInfoEnd.iNumber-1  DO
+           IF ((yOrg > BorderDataEnd[i].mp.mPos.mValues[1]) AND (yOrg <= BorderDataEnd[i+1].mp.mPos.mValues[1])) THEN
+             index := i;
+           END_IF;
+        END_FOR;
+        x2  := yOrg* BorderDataEnd[index].mp_m3 + BorderDataEnd[index].mp_b3;
+        x2Corr  := yOrg* BorderDataEnd[index].mpCorr_m3 + BorderDataEnd[index].mpCorr_b3;
+        // fuer z 
+        z2_2  := yOrg* BorderDataEnd[index].mp_m4 + BorderDataEnd[index].mp_b4;
+        z2Corr_2  := yOrg* BorderDataEnd[index].mpCorr_m4 + BorderDataEnd[index].mpCorr_b4;
+     END_IF;
+     myRobot.DebugPrint(eTraceVision,"M_CORR Start Rand X = "+STR(x1)+" End Rand = "+STR(x2));
+     myRobot.DebugPrint(eTraceVision,"M_CORR Start Rand XCorr = "+STR(x1Corr)+" End Rand = "+STR(x2Corr));
+        // fuer z 
+     myRobot.DebugPrint(eTraceVision,"M_CORR Start Rand Z = "+STR(z1_2)+" End Rand = "+STR(z2_2));
+     myRobot.DebugPrint(eTraceVision,"M_CORR Start Rand ZCorr = "+STR(z1Corr_2)+" End Rand = "+STR(z2Corr_2));
+
+     // Korrekturwerte berechnen
+     distX1X2 := rAbs(x2 - x1);
+     distY1Y2 := rAbs(y2 - y1);
+     // Formal Division durch Null verhindern. Kann eigentlich nicht sein, da sonst der Abstand von
+     // gegenüberliegenden Rändern Null wäre!
+     IF (rAbs(distX1X2) <= EPS) OR (rAbs(distY1Y2) <= EPS) THEN
+        deltaXCorr := 0.0;
+        deltaYCorr := 0.0;
+        deltaZCorr := 0.0;
+        deltaZCorr_2 := 0.0;
+        myRobot.DebugPrint(eTraceVision,"Korrektur kann nicht berechnet werden: x1 = "+STR(x1)+" x2 = "+STR(x2)+"y1 = "+STR(y1)+" y2 = "+STR(y2));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur X = "+STR(deltaXCorr));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur Y = "+STR(deltaYCorr));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur Z = "+STR(deltaZCorr));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur Z_2 = "+STR(deltaZCorr_2));
+        RETURN FALSE;
+     ELSE
+        deltaX   := rAbs(xOrg - x1);
+        deltaY   := rAbs(yOrg - y1);
+        gfx1     := 1 - deltaX/distX1X2;
+        gfx2     := 1 - (distX1X2-deltaX)/distX1X2;
+        gfy1     := 1 - deltaY/distY1Y2;
+        gfy2     := 1 - (distY1Y2-deltaY)/distY1Y2;
+        deltaXCorr := (x1Corr - x1)*gfx1 + (x2Corr - x2)*gfx2;
+        deltaYCorr := (y1Corr - y1)*gfy1 + (y2Corr - y2)*gfy2;
+           // fuer z 
+        deltaZCorr := (z1Corr - z1)*gfy1 + (z2Corr - z2)*gfy2;
+           // fuer z 
+        deltaZCorr_2 := (z1Corr_2 - z1_2)*gfx1 + (z2Corr_2 - z2_2)*gfx2;
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur X = "+STR(deltaXCorr));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur Y = "+STR(deltaYCorr));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur Z = "+STR(deltaZCorr));
+        myRobot.DebugPrint(eTraceVision,"M_CORR  Korrektur Z_2 = "+STR(deltaZCorr_2));
+        RETURN TRUE;
+     END_IF;
+  ELSE
+     // M_MeasureInfo[indexMeasureArea].iNumberMeasure <= 0
+     myRobot.DebugPrint(eTraceVision,"Korrektur kann nicht berechnet werden: iNumberMeasure = "+STR(M_MeasureInfo[indexMeasureArea].iNumberMeasure));
+     RETURN FALSE;
+  END_IF;  
+END_ROUTINE
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier wird der Sensor getriggert 
+ROUTINE Trigger_Aktion(commandData : TMcuUserData; pos : TRcuTrigger;
+                            posInvalid : BOOL; VAR_IN triggerIdx  : DINT) PRIVATE
+VAR
+   command          : DINT;
+   bMRTriggerSignal : BOOL;
+   bTimeOut         : BOOL;
+   sTriggerName     : STRING;
+   sLogText         : STRING;
+   timeOut          : BOOL;
+   PunktIndex       : INT;
+   readBackObj      : TMcuFrame;
+END_VAR
+
+  
+  command         := commandData.mDataInt[3];
+
+  myRobot.DebugPrint(eTraceVision, "Trigger_Aktion: pointnumber = " + STR(command));
+
+   IF bZEISS_SIG_TRIGGER THEN
+      WAIT NOT bZEISS_SIG_TRIGGER;
+      RcuSetMessageOnce(TRcVisionZeiss_ErrTrigTooFast, myRobot.kinListInx, 3, instId, "TRcuVisionZeiss.Trigger_Aktion", STR(command));
+      RETURN;
+   ELSE
+      PULSE(bZEISS_SIG_TRIGGER, TRUE, TriggerTime);
+   END_IF;
+
+
+END_ROUTINE
+
+
+ROUTINE PULSE(bOut : MAPTO BOOL; bSig: BOOL; time : REAL ) PRIVATE
+  IF NOT IS_MAPPED(bOut) THEN
+     RETURN;
+  END_IF; 
+  bOut := bSig;
+  Sleep(DINT(1000*time));
+  bOut := NOT bSig;
+END_ROUTINE
+
+
+ROUTINE ActCartInObjectCoord(tcp : TMcuFrame) PRIVATE
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := myRobot.actCartVals.mPos;
+   actPos.mFrame.mOri := myRobot.actCartVals.mOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(myRobot.kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, refSysId) THEN
+      myRobot.DebugPrint(eTraceVision, "ActPosInObjectCoord RcuRefSystemObject = "+STR(myRobot.RcuRefSystemObject)+" refSysId = "+STR(refSysId));
+      // ERROR
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         myRobot.DebugPrint(eTraceVision, "error in McuTransformPosCart in TRcuRobot");
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         //ERROR
+      END_IF;
+      tcp := calcPos.mFrame;
+   ELSE
+      tcp := actPos.mFrame;
+   END_IF;
+END_ROUTINE
+
+
+
+
+ROUTINE ObserveActive() PRIVATE
+   
+   WHILE TRUE DO
+      WAIT bConnect;
+      Open(sIPAddress, WORD(dPortNumber));
+      IF client.tcpConnectionState = stateSckConnected THEN
+         
+         IF NOT bSimulate THEN
+            START ReceiveTelegram(); // Telegramme von MR empfangen
+         ELSE
+            TelCounter := 1;           
+         END_IF;
+         
+                 
+         bActive := TRUE; // Mit Vision verbunden 
+         
+         WAIT NOT bConnect; 
+         STOP ReceiveTelegram;
+         Close();
+         bActive := FALSE;
+      ELSE
+         RcuSetMessageOnce(TRcVisionZeiss_ErrTcpIpConnect, myRobot.kinListInx, 1, instId, "TRcuVisionZeiss.ObserveBkActive");
+         WAIT NOT bConnect;
+      END_IF;
+   END_WHILE;
+
+END_ROUTINE
+
+
+
+//-----------------------------------------------------------------------------
+// Empfangen von Telegrammen vom Messrechner
+//-----------------------------------------------------------------------------
+ROUTINE ReceiveTelegram() PRIVATE
+VAR
+   i        : INT;
+   j        : INT;
+   k        : INT;
+   l        : INT;
+   bNewData : BOOL;
+   InData1  : STRING;
+   bStart      : BOOL;
+   bOk         : BOOL;
+   s           : STRING;
+   bNext       : BOOL;
+   dTest       : DINT;
+   val         : FRAME; 
+   arValues    : R16;
+   iNrValues   : INT;
+END_VAR
+
+
+   bNewData := FALSE;
+   TelCounter := 0;
+   START TcpClientTask(bNewData, InData1);
+
+   WHILE TRUE DO
+      
+         WAIT bNewData;
+         bOk :=  TRUE;
+         s := "Ack";
+         IF (StrFind(InData1, "Ack") <> 0) THEN
+            bAckMR := TRUE;
+            myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: Ack                     InData1 = "+InData1);
+         ELSIF (StrFind(InData1, "Release") <> 0) THEN
+            // Status lesen
+            IF ReadStatus(InData1, s) THEN
+               bReleaseMR := TRUE;
+               dStatusMR := StrToDint(s);
+               myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: Release                 InData1 = "+InData1);
+            ELSE
+               myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: Fehler bei ReadElement! InData1 = "+InData1);
+            END_IF;
+            // weitere Werte lesen
+            IF ReadValues(InData1, iNrValues, arValues) THEN
+               IF iNrValues = 3 THEN
+                  corrXYZMR.X := arValues[1];
+                  corrXYZMR.Y := arValues[2];
+                  corrXYZMR.Z := arValues[3];
+                  bXYZReadMR := TRUE;
+               ELSIF iNrValues = 16 THEN
+                  l := 1;
+                  FOR j := 0 TO 3 DO
+                     FOR k := 0 TO 3 DO
+                        corrMatrixMR[j][k] := arValues[l];
+                        l := l + 1;
+                     END_FOR;
+                  END_FOR;
+                  bCorrMatrixReadMR := TRUE;
+               ELSE
+                  myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: Fehler bei ReadValues! InData1 = "+InData1);
+               END_IF;
+            END_IF;
+         ELSIF (StrFind(InData1, "{") <> 0) THEN
+            // Frame lesen
+            ReadFrame("{", InData1, val);
+            corrFrameMR := val;
+            PrintFrame(val);
+            bFrameReadMR := TRUE;
+            myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: Frame                   InData1 = "+InData1);
+         ELSIF (StrFind(InData1, "CalibProg") <> 0) THEN
+            // Programmnr. lesen
+            ReadElement("CalibProg", InData1, s);
+            dTest := StrToDint(s);
+            myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: CalibProg               InData1 = "+InData1);
+         ELSE
+            // Unbekanntes Telegram empfangen
+            // Fehler
+            myRobot.DebugPrint(eTraceVision, "ReceiveTelegram: unbekannt!              InData1 = "+InData1);
+         END_IF;
+         bNewData := FALSE;
+
+   END_WHILE;
+END_ROUTINE
+
+
+
+//-----------------------------------------------------------------------------
+// Empfangen von Telegrammen vom Messrechner
+//-----------------------------------------------------------------------------
+(*
+ROUTINE TestTelegram() PRIVATE
+VAR
+   i        : INT;
+   bNewData : BOOL;
+   InData1  : STRING;
+   bStart      : BOOL;
+   bOk         : BOOL;
+   s           : STRING;
+   bNext       : BOOL;
+   dTest       : DINT;
+   val         : FRAME;
+   arValues    : R16;
+   iNrValues   : INT;
+END_VAR
+
+         InData1 := "Release,403";
+         IF (StrFind(InData1, "Ack") <> 0) THEN
+            
+         ELSIF (StrFind(InData1, "Release") <> 0) THEN
+            // Status lesen
+            ReadStatus(InData1, s);
+            dTest := StrToDint(s);
+            PRINT("dTest = "+STR(dTest));
+            ReadValues(InData1, iNrValues, arValues);
+         ELSIF (StrFind(InData1, "{") <> 0) THEN
+            ReadFrame("{", InData1, val);
+            
+         ELSIF (StrFind(InData1, "CalibProg") <> 0) THEN
+            // Programmnr. lesen
+            
+         ELSE
+            // Unbekanntes Telegram empfangen
+            // Fehler
+            
+         END_IF;
+         
+         InData1 := "Release,403,1000.001,2000.002,-3000.003";
+         IF (StrFind(InData1, "Ack") <> 0) THEN
+            
+         ELSIF (StrFind(InData1, "Release") <> 0) THEN
+            // Status lesen
+            ReadStatus(InData1, s);
+            dTest := StrToDint(s);
+            PRINT("dTest = "+STR(dTest));
+            ReadValues(InData1, iNrValues, arValues);
+         ELSIF (StrFind(InData1, "{") <> 0) THEN
+            ReadFrame("{", InData1, val);
+            
+         ELSIF (StrFind(InData1, "CalibProg") <> 0) THEN
+            // Programmnr. lesen
+            
+         ELSE
+            // Unbekanntes Telegram empfangen
+            // Fehler
+            
+         END_IF;
+
+END_ROUTINE
+*)
+
+
+
+
+//----------------------------------------------------------------------------------------
+// calculate object and correction values for teachview
+//----------------------------------------------------------------------------------------
+ROUTINE CalcActualObject(corrFrame : TMcuFrame; bMRFlag : BOOL) PRIVATE
+
+VAR
+   mRefSysId  : TMcuDbObjID;
+   tVmtObject : TMcuTransformation;
+   tObject    : TMcuTransformation;
+   lCorrFrame : TMcuFrame;
+   iLocNr     : INT;
+END_VAR
+
+   lCorrFrame := corrFrame;
+   RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, tVmtObject.mRefSysID);
+   McuCreateTrsf(mRefSysId, tVmtObject);
+   IF bMRFlag THEN
+      WAIT MAIN_RUN;
+   END_IF;
+   myRobot.vision.VisionBK.iBkPPNr := iLocNr;
+   myRobot.vision.VisionBK.tVmtCorr.X_mm  := lCorrFrame.mPos.mValues[0];
+   myRobot.vision.VisionBK.tVmtCorr.Y_mm  := lCorrFrame.mPos.mValues[1];
+   myRobot.vision.VisionBK.tVmtCorr.Z_mm  := lCorrFrame.mPos.mValues[2];
+   myRobot.vision.VisionBK.tVmtCorr.A_deg := lCorrFrame.mOri.mValues[0];
+   myRobot.vision.VisionBK.tVmtCorr.B_deg := lCorrFrame.mOri.mValues[1];
+   myRobot.vision.VisionBK.tVmtCorr.C_deg := lCorrFrame.mOri.mValues[2];
+   IF McuReadTrsfInWorld(mRefSysId, tObject) THEN
+      myRobot.vision.VisionBK.tObjectData.X_mm  := tObject.mFrame.mPos.mValues[0];
+      myRobot.vision.VisionBK.tObjectData.Y_mm  := tObject.mFrame.mPos.mValues[1];
+      myRobot.vision.VisionBK.tObjectData.Z_mm  := tObject.mFrame.mPos.mValues[2];
+      myRobot.vision.VisionBK.tObjectData.A_deg := tObject.mFrame.mOri.mValues[0];
+      myRobot.vision.VisionBK.tObjectData.B_deg := tObject.mFrame.mOri.mValues[1];
+      myRobot.vision.VisionBK.tObjectData.C_deg := tObject.mFrame.mOri.mValues[2];
+   END_IF;
+
+   McuReleaseDbObj(mRefSysId);
+
+END_ROUTINE 
+
+
+
+(*******************************************************************************
+*
+*  TCP/IP Kommunikation
+*
+*******************************************************************************)
+
+ROUTINE Open(strIpAddress : STRING; remotePort : WORD ) PRIVATE
+   VAR
+      result : DINT;
+   END_VAR
+   
+   client.tcpConnectionState := stateSckConnecting;
+   IF NOT bSimulate THEN
+      result := client.GetIPaddressAndOpen( strIpAddress, remotePort);
+   ELSE
+      result := 0;
+   END_IF;
+   DebugPrint(eTraceVision, "TCP Client: "+ strIpAddress + " "+STR(remotePort));
+   CASE result OF
+   0: myRobot.DebugPrint(eTraceVision, "TCP Client: Connect ok"); 
+      client.tcpConnectionState := stateSckConnected;
+
+   1: myRobot.DebugPrint(eTraceVision, "TCP Client: Connect not ok - Internal error");    client.tcpConnectionState := stateSckError;         
+   2: myRobot.DebugPrint(eTraceVision, "TCP Client: Connect not ok - Socket failed");     client.tcpConnectionState := stateSckError;
+   3: myRobot.DebugPrint(eTraceVision, "TCP Client: Connect not ok - Connect failed");    client.tcpConnectionState := stateSckError;
+   8: myRobot.DebugPrint(eTraceVision, "TCP Client: Connect not ok - Param error (invalid notification mode or notification handle)");
+                                                               client.tcpConnectionState := stateSckError;
+   16:myRobot.DebugPrint(eTraceVision, "TCP Client: Connect not ok - Wrong IP address");  client.tcpConnectionState := stateSckError;
+   ELSE
+      myRobot.DebugPrint(eTraceVision, "TCP Client: Connect not ok - Unknown error");     client.tcpConnectionState := stateSckError;
+   END_CASE;
+
+END_ROUTINE
+
+
+ROUTINE Close() PRIVATE
+   VAR
+      result : DINT;
+   END_VAR
+   
+   client.tcpConnectionState := stateSckClosing;
+   IF NOT bSimulate AND NOT bSimulate THEN
+      result := client.Close();
+   ELSE
+       result := 0;
+   END_IF;
+   CASE result OF
+   0: myRobot.DebugPrint(eTraceVision, "TCP Client: Close ok");                             client.tcpConnectionState := stateSckClosed;
+   1: myRobot.DebugPrint(eTraceVision, "TCP Client: Close not ok - Internal error");        client.tcpConnectionState := stateSckError;
+   2: myRobot.DebugPrint(eTraceVision, "TCP Client: Close not ok - Socket failed");         client.tcpConnectionState := stateSckError;
+   9: myRobot.DebugPrint(eTraceVision, "TCP Client: Close not ok - invalid socket handle"); client.tcpConnectionState := stateSckError;
+   ELSE
+      myRobot.DebugPrint(eTraceVision, "TCP Client: Close not ok - Unknown error");         client.tcpConnectionState := stateSckError;
+   END_CASE;
+END_ROUTINE
+
+
+ROUTINE Send(outData1 : STRING) PRIVATE
+   VAR
+      result   : DINT;
+      data     : ARRAY[1..768] OF BYTE;
+      dataLen1 : DINT;
+      dataLen2 : DINT;
+      dataLen3 : DINT;
+      i        : DINT;
+      chr      : STRING;
+   END_VAR 
+   
+   myRobot.DebugPrint(eTraceVision, "SEND "+outData1);
+   dataLen1 := StrLen(outData1);
+   FOR i:= 1 TO dataLen1 DO  
+      chr := StrMid(outData1, 1, i);
+      data[i] := ORD(chr);     
+   END_FOR;
+   data[dataLen1+1] := 13; // CR
+   data[dataLen1+2] := 10; // LF
+   IF NOT bSimulate THEN
+      result := client.Send(dataLen1+2, data);
+   ELSE
+       result := 0;
+   END_IF;
+  
+   CASE result OF
+   0: myRobot.DebugPrint(eTraceVision, "TCP Client: Send ok");
+   1: myRobot.DebugPrint(eTraceVision, "TCP Client: Send not ok - Internal error");        client.tcpConnectionState := stateSckError;
+   2: myRobot.DebugPrint(eTraceVision, "TCP Client: Send not ok - Send error");            client.tcpConnectionState := stateSckError;
+   8: myRobot.DebugPrint(eTraceVision, "TCP Client: Send not ok - Param error (invalid notification mode or notification handle)");
+   9: myRobot.DebugPrint(eTraceVision, "TCP Client: Send not ok - invalid socket handle"); client.tcpConnectionState := stateSckError;
+   ELSE
+      myRobot.DebugPrint(eTraceVision, "TCP Client: Send not ok - Unknown error");         client.tcpConnectionState := stateSckError;
+   END_CASE;
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+// Empfangen der Telegramme über die TCP/IP-Schnittstelle. Ein empfangenes Telegramm
+// wird zeilenweise in einen String konvertiert. Der Empfang wird mit der
+// Variablen bNotification an die Verarbeitung der Telegramme gemeldet (ReceiveTelegram)
+//-----------------------------------------------------------------------------
+ROUTINE TcpClientTask(bNotification : BOOL; inData1 : STRING) PRIVATE
+VAR
+   buf           : ARRAY [1..256] OF BYTE;
+   bytesReceived : DINT;
+   i             : DINT;
+   rv            : DINT;
+   lastChr       : BYTE := 0;
+END_VAR
+   
+   WHILE TRUE DO
+      // collect
+      WAIT NOT bNotification;
+      rv := client.Receive(255, buf, bytesReceived);
+      myRobot.DebugPrint(eTraceVision, "TCP client 1 : bytesReceived = " + STR(bytesReceived));
+      IF rv <> 0 THEN
+          myRobot.DebugPrint(eTraceVision, "TCP client: Server disconnected");
+          client.tcpConnectionState := stateSckClosed;
+          RETURN;
+      END_IF;
+
+      i := 1;
+      WHILE (i < bytesReceived) DO
+         IF lastChr <> 0 THEN
+            inData1 := CHR(lastChr);
+         ELSE
+            inData1 := "";
+         END_IF;
+//         WHILE ((buf[i] <> 10) OR ( i <= 1))  DO // LF Zeilenende
+         WHILE ((buf[i] <> 10))  DO // LF Zeilenende
+            myRobot.DebugPrint(eTraceVision, " inData1 buf[" + STR(i) + "] = " + STR(buf[i]));
+            IF (buf[i] <> 13) THEN
+               inData1 := inData1 +  CHR(buf[i]);
+            END_IF;
+//            inData1 := inData1 +  CHR(buf[i]);
+            i := i + 1;
+            IF (i > bytesReceived) THEN
+               rv := client.Receive(255, buf, bytesReceived);
+               myRobot.DebugPrint(eTraceVision, "TCP client 2: bytesReceived = " + STR(bytesReceived));
+               IF rv <> 0 THEN
+                   myRobot.DebugPrint(eTraceVision, "TCP client: Server disconnected");
+                   client.tcpConnectionState := stateSckClosed;
+                   RETURN;
+               END_IF;
+               i := 1;
+            END_IF;
+         END_WHILE;
+         i := i+1;
+         myRobot.DebugPrint(eTraceVision, "TCP client: next line = " + inData1);
+         bNotification := TRUE;
+         WAIT NOT bNotification;
+         IF (i = bytesReceived) THEN
+            myRobot.DebugPrint(eTraceVision, "lastchr buf[" + STR(i) + "] = " + STR(buf[i]));
+            lastChr := buf[i];
+            rv := client.Receive(255, buf, bytesReceived);
+            myRobot.DebugPrint(eTraceVision, "TCP client 3: bytesReceived = " + STR(bytesReceived));
+            IF rv <> 0 THEN
+                myRobot.DebugPrint(eTraceVision, "TCP client: Server disconnected");
+                client.tcpConnectionState := stateSckClosed;
+                RETURN;
+            END_IF;
+            i := 1;
+         ELSE
+            lastChr := 0;
+         END_IF;
+      END_WHILE;
+      
+      //bNotification := TRUE;
+   END_WHILE;
+END_ROUTINE
+
+
+(*******************************************************************************
+*
+*  Decodieren der Telegramme
+*
+*******************************************************************************)
+
+
+(*-----------------------------------------------------------------------------
+* Liest den Wert des Attributs "attr" im Telegramm InData1
+* ab der Position p  in Indata1. Der Wert wird als String in val zurueckgegeben.
+*)
+ROUTINE ReadAttribute(CONST attr : STRING; CONST InData1 : STRING;  val :STRING; 
+                      OPTIONAL CONST p : DINT ) : BOOL PRIVATE
+VAR
+   s  : STRING;
+   s1 : STRING;
+   s2 : STRING;
+   p1 : DINT;
+   p2 : DINT;
+   p3 : DINT;
+END_VAR
+   
+   s :=attr +" ";
+   myRobot.DebugPrint(eTraceVision, "ReadAttribute " + s);
+   p1 := StrFind(InData1, s, p);
+   IF (p1 > 0) THEN
+      p1 := StrFind(InData1, s, p);
+      p2 := StrFind(InData1, "}", p1);
+      p3 := StrFind(InData1, ",", p1);
+      IF (p2 = 0) AND (p3 = 0) THEN
+         RETURN FALSE;
+      END_IF;
+      p1 := p1 + StrLen(s);
+      IF (p3 < p2) AND (p3 <> 0) THEN
+         p2 := p3;
+      END_IF;
+      val  := StrMid(InData1, p2-p1, p1);
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Liest den Wert des Elements "elem" im Telegramm InData1.
+* Der Wert wird als String in val zurueckgegeben. 
+*)
+ROUTINE ReadElement(CONST elem : STRING; InData1 : STRING; val :STRING) : BOOL PRIVATE
+VAR
+   s  : STRING;
+   s1 : STRING;
+   s2 : STRING;
+   p1 : DINT;
+   p2 : DINT;
+   l  : DINT;
+END_VAR
+   
+   s := elem;
+   IF (StrFind(InData1, s) > 0) THEN
+      p1 := StrFind(InData1, s) + StrLen(s);
+      p2 := StrFindRight(InData1, " ");
+      IF (p2 <> 0) THEN
+         p1 := p2;
+      END_IF;
+      val  := StrMid(InData1, StrLen(InData1)-p1, p1+1);
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Liest den Status im Telegramm InData1.
+* Der Wert wird als String in val zurueckgegeben. 
+*)
+ROUTINE ReadStatus(InData1 : STRING; val :STRING) : BOOL PRIVATE
+VAR
+   s  : STRING;
+   s1 : STRING;
+   s2 : STRING;
+   p1 : DINT;
+   p2 : DINT;
+   l  : DINT;
+END_VAR
+   
+   l := StrLen(InData1);
+   IF (StrFind(InData1, ",") > 0) THEN
+      p1 := StrFind(InData1,",");
+      p2 := StrFind(InData1, ",", p1+1);
+      IF (p2 <> 0) THEN
+         val := StrMid(InData1, p2-p1-1, p1+1);
+      ELSE
+         val := StrMid(InData1, l-p1, p1+1);
+      END_IF;
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+ROUTINE ReadValues(InData1 : STRING; iNrValues : INT; arValues : R16) : BOOL PRIVATE
+VAR
+   s  : STRING;
+   s1 : STRING;
+   s2 : STRING;
+   p1 : DINT;
+   p2 : DINT;
+   l  : DINT;
+   j  : INT;
+END_VAR
+
+   l := StrLen(InData1);
+   j := 0;
+   p1 := StrFind(InData1,",");
+   p2 := StrFind(InData1, ",", p1+1);
+   IF p2 = 0 THEN
+      iNrValues := 0;
+      RETURN FALSE;
+   END_IF;
+   WHILE (StrFind(InData1, ",", p1+1)<>0) DO
+      p1 := StrFind(InData1, ",", p1+1);
+      p2 := StrFind(InData1, ",", p1+1);
+      IF (p2 <> 0) THEN
+         s2 := StrMid(InData1, p2-p1-1, p1+1);
+      ELSE
+         s2 := StrMid(InData1, l-p1, p1+1);
+      END_IF;
+      j := j+1;
+      arValues[j] := StrToReal(s2);
+   END_WHILE;
+   iNrValues := j;
+   RETURN TRUE;
+END_ROUTINE
+(*
+   // erste Position von String s2 in String s1, ab Position p, 0 wenn nicht
+   // vorhanden
+   StrFind : ROUTINE (CONST s1 : STRING; CONST s2 : STRING;
+      OPTIONAL CONST p : DINT) : DINT := MAPX("TC/String/StrFind");
+
+   // l Zeichen beginnend ab Position p
+   StrMid : ROUTINE (CONST s : STRING; CONST l : DINT; CONST p : DINT)
+      : STRING := MAPX("TC/String/StrMid");
+*)
+
+
+(*-----------------------------------------------------------------------------
+* Liest die Framedaten X, Y, Z, A, B, C aus dem Element "name" im Telegramm 
+* Der Wert wird als FRAME in val zurueckgegeben. 
+*)
+ROUTINE ReadFrame(CONST name : STRING; CONST InData1 : STRING; val : FRAME) : BOOL PRIVATE
+VAR
+   s  : STRING;
+   s1 : STRING;
+   s2 : STRING;
+   p1 : DINT;
+   p2 : DINT;
+   l  : DINT;
+END_VAR
+   
+      p1 := 1;
+      IF ReadAttribute("X", InData1, s, p1) THEN
+         val.X := StrToReal(s);
+      END_IF;
+      IF ReadAttribute("Y", InData1, s, p1) THEN
+         val.Y := StrToReal(s);
+      END_IF;
+      IF ReadAttribute("Z", InData1, s, p1) THEN
+         val.Z := StrToReal(s);
+      END_IF;
+      IF ReadAttribute("A", InData1, s, p1) THEN
+         val.A := StrToReal(s);
+      END_IF;
+      IF ReadAttribute("B", InData1, s, p1) THEN
+         val.B := StrToReal(s);
+      END_IF;
+      IF ReadAttribute("C", InData1, s, p1) THEN
+         val.C := StrToReal(s);
+      END_IF;
+
+      RETURN TRUE;
+   
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+* Testausgabe
+*)
+ROUTINE PrintFrame(val : FRAME) PRIVATE
+   myRobot.DebugPrint(eTraceVision, "  X = "+STR(val.X));
+   myRobot.DebugPrint(eTraceVision, "  Y = "+STR(val.Y));
+   myRobot.DebugPrint(eTraceVision, "  Z = "+STR(val.Z));
+   myRobot.DebugPrint(eTraceVision, "  A = "+STR(val.A));
+   myRobot.DebugPrint(eTraceVision, "  B = "+STR(val.B));
+   myRobot.DebugPrint(eTraceVision, "  C = "+STR(val.C));
+END_ROUTINE
+
+
+(******************************************************************************
+* systemroutines
+*)
+
+
+ROUTINE NEW()
+
+   instId := RcuGetInstanceId(); // instance identification number (for alarms)
+
+END_ROUTINE
+
+(******************************************************************************
+* systemroutine - kinematic is released by RDESELECT
+******************************************************************************)
+ROUTINE RELEASE()
+VAR
+   corrFrame : TMcuFrame;
+   timeOut   : BOOL;
+END_VAR
+
+
+   IF myRobot.bReleaseBlockedByHandler THEN   
+      myRobot.DebugPrint(eTraceVision, "TRcuVisionZeiss.RELEASE: not executed - releaseBlockedByHandler");
+   ELSE
+       corrFrame.mFrameTyp := eMcuFrameKardan;
+       corrFrame.mPos.mValues[0] := 0.0;
+       corrFrame.mPos.mValues[1] := 0.0;
+       corrFrame.mPos.mValues[2] := 0.0;
+       corrFrame.mOri.mValues[0] := 0.0;
+       corrFrame.mOri.mValues[1] := 0.0;
+       corrFrame.mOri.mValues[2] := 0.0;
+       bFrameReadMR      := FALSE;
+       bReleaseMR        := FALSE;
+       bTriggerPending   := FALSE;
+       bXYZReadMR        := FALSE;
+       bCorrMatrixReadMR := FALSE;
+       bCommError := FALSE;
+       
+       bCorrActive := FALSE;
+       
+       IF FileHandle <> 0 THEN
+         StreamClose(FileHandle);                    //close file
+         FileHandle := 0;
+       END_IF;
+
+
+       RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrame, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+       myRobot.homing.StoreRefSystemVision(FALSE, corrFrame);
+       CalcActualObject(corrFrame, FALSE);
+       IF IS_MAPPED(myRobot.fieldbusOut.VisionError.svBool) THEN
+          myRobot.fieldbusOut.VisionError.svBool := FALSE;
+       END_IF;
+       IF bActive THEN
+          SysTimerSet(1000, timeOut);
+          bConnect := FALSE;
+          WAIT NOT bActive OR timeOut;
+          IF timeOut THEN
+             myRobot.DebugPrint(eTraceVision, "TRcuVisionZeiss.RELEASE: timeOut bei Close TCP/IP");
+          END_IF;
+       END_IF;
+   END_IF;
+END_ROUTINE
+

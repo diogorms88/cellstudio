@@ -1,0 +1,309 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2005 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : main.ttp
+*  First Author : nmr
+*  Date         : 26.08.2005
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  main.ttp is executed as last file on bootup
+*------------------------------------------------------------------------------
+* 26.08.05 nmr: added version-info to the sys-trace on bootup
+*)
+
+CONSTANT
+   cMaxComponentNumbers : DINT := 100;
+   cMaxItems            : DINT := 1000;
+END_CONSTANT
+
+
+TYPE GLOBAL
+   TMessageFilterData : STRUCT 
+      changeCnt : DINT;
+      componentNr : ARRAY[cMaxComponentNumbers] OF DINT;
+      nrOfComponents : DINT;
+      kinInstanceNumbers : ARRAY[cgiRcuMaxKinematics] OF TInstanceStruct;
+   END_STRUCT;
+   
+   TInstanceStruct : STRUCT
+      nrOfInstanceNrs : DINT;
+      instanceNumbers : ARRAY[cMaxItems] OF DINT;
+   END_STRUCT;
+END_TYPE
+
+
+VAR GLOBAL
+   gbBootupError      : BOOL := FALSE;
+   giFocusedKinematic : MAPTO INT;
+END_VAR
+
+VAR
+   robotName         : STRING;
+   serialNrRetain    : MAPTO DINT;
+   motionReady       : MAPTO BOOL;
+   mBootUpFinished   : MAPTO BOOL; 
+END_VAR
+
+
+ROUTINE NEW ()
+   VAR
+      rDiff     : REAL;
+      sInitTime : STRING;
+      i         : DINT;
+   END_VAR
+   
+   FOR i := 0 TO giNumberOfRobots - 1 DO
+      WAIT PaintRobot[i].initRobComplete;
+      
+      IF PaintRobot[i].iSerialNr = -2 THEN // simulation case -> continue
+         ;
+      ELSIF PaintRobot[i].iSerialNr = -1 THEN // error while reading serial number from config
+         RcuSetMessageOnce(main_WarSystemNotReady, PaintRobot[i].kinListInx, 1, 0, "main.NEW"); // fatal error was set in _RcuConfiguration.ttp
+         RETURN;
+      ELSE // cases configured serial number >= 0
+         
+         // check whether retain serial number exists
+         serialNrRetain := MAPX(cSV_SerialNr[i]);
+         IF NOT IS_MAPPED(serialNrRetain) THEN
+            RcuSetMessageOnce(main_FaErrVarNotMapped, PaintRobot[i].kinListInx, 1, 0, "main.NEW", cSV_SerialNr[i]);
+            RcuSetMessageOnce(main_WarSystemNotReady, PaintRobot[i].kinListInx, 2, 0, "main.NEW");
+            RETURN;
+         END_IF;
+         
+         IF PaintRobot[i].iSerialNr = 0 THEN
+            IF serialNrRetain = 0 THEN // you´re not allowed to run with configured serial number = 0
+               RcuSetMessageOnce(main_FaErrSerialNrInvalid, PaintRobot[i].kinListInx, 1, 0, "main.NEW", PaintRobot[i].robotName);
+               RcuSetMessageOnce(main_WarSystemNotReady, PaintRobot[i].kinListInx, 3, 0, "main.NEW");
+               RETURN;
+            ELSE // special case: reset of retain serial number, you don´t have to delete the whole retain data
+               serialNrRetain := 0;
+               RcuSetMessageOnce(main_InfSerialNrReset, PaintRobot[i].kinListInx, 1, 0, "main.NEW");
+               RcuSetMessageOnce(main_WarSystemNotReady, PaintRobot[i].kinListInx, 4, 0, "main.NEW");
+               StopSystem(); // you have to start again with configured serial number > 0
+               RETURN;
+            END_IF;
+         ELSE // configured serial number > 0
+            IF serialNrRetain = 0 THEN // save configured serial number in retain data
+               serialNrRetain := PaintRobot[i].iSerialNr ;
+            ELSE
+               IF NOT (serialNrRetain = PaintRobot[i].iSerialNr) THEN
+                  RcuSetMessageOnce(main_FaErrSerialNrInvalid, PaintRobot[i].kinListInx, 2, 0, "main.NEW", PaintRobot[i].robotName);
+                  RcuSetMessageOnce(main_WarSystemNotReady, PaintRobot[i].kinListInx, 5, 0, "main.NEW");
+                  RETURN;
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      //Verify Kinname to FG-Name
+      IF PaintRobot[i].kinematic.mName <> GetFgName(i) THEN
+         RcuSetMessageOnce(main_FaErrKinDiffFG, PaintRobot[i].kinListInx, 1, 0, "main.NEW", GetFgName(i), PaintRobot[i].kinematic.mName);
+      END_IF;
+      
+   END_FOR;
+   
+   IF NOT gbBootupError THEN
+      
+      giFocusedKinematic := MAPX(cSV_FocusedKinematic);
+      IF NOT IS_MAPPED(giFocusedKinematic) THEN
+          RcuSetMessageOnce(main_FaErrVarNotMapped, -1, 4, 0, "main.NEW", cSV_FocusedKinematic);
+      END_IF;
+      START SetBootUpFinished();
+      
+      RETURN;
+   ELSE
+      // determine bootup time of RCU
+      SysTimerGetUs(RcData.iT2);
+      rDiff := (RcData.iT2-RcData.iT1)/1000000.0;
+      sInitTime := STR(rDiff);
+      PRINT(gRcuVersion + " END Init, nok, t = " + StrLeft(sInitTime,4) + "s");
+      RcuSetMessageOnce(main_WarSystemNotReady, -1, 7, 0, "main.NEW");
+   END_IF;
+   
+   IoDeviceGuarding(RcuTeachPendantControl.deviceHdl, TRUE);
+   PRINT (" ### IoDeviceGuarding activated ###");
+   
+END_ROUTINE
+
+ROUTINE SetBootUpFinished()
+   VAR
+      rDiff     : REAL;
+      sInitTime : STRING;
+      i         : DINT;
+      j         : DINT;
+      name      : STRING;
+      jointHdl  : DINT;
+      helpcounter  : INT;
+      counter  : INT;
+      systemHdl : DINT;
+      robotHdl  : DINT;
+   END_VAR
+   
+   // init rc-tv-interface
+   RcData.InitAll();
+
+   // write the filter for kinematic specific messages
+   gRcData.messageFilterData := MAPX(cSV_MessageFilterData);
+   IF IS_MAPPED(gRcData.messageFilterData) THEN
+      gRcData.messageFilterData.componentNr[0] := 3700; // TC
+      gRcData.messageFilterData.componentNr[1] := 4000; // MC
+      gRcData.messageFilterData.nrOfComponents := 2;
+
+      FOR i:=0 TO giNumberOfRobots - 1 DO
+         gRcData.messageFilterData.kinInstanceNumbers[i].instanceNumbers[0] := PaintRobot[i].mcCatHdl;
+         counter := 1;
+         IF CatalogGetHandle("TC._system", systemHdl) THEN
+            name := StrToLower(gRcData.robotDir[i]);
+            IF CatalogGetHandleRelative(systemHdl, name, robotHdl) THEN
+               gRcData.messageFilterData.kinInstanceNumbers[i].instanceNumbers[counter] := robotHdl;
+               counter := counter + 1;
+            END_IF;
+         END_IF;
+         helpcounter := counter;
+         FOR j:=0 TO PaintRobot[i].kinematic.mNrOfJoints - 1 DO
+            name := "MC.KINEMATIC:" + STR(i) + ".Joint:" + STR(j);
+            IF CatalogGetHandle(name, jointHdl) THEN
+               gRcData.messageFilterData.kinInstanceNumbers[i].instanceNumbers[helpcounter+j] := jointHdl;
+               counter := counter + 1;
+            END_IF;
+         END_FOR;
+         // perhaps more instances have to be written into the filter -> here
+         gRcData.messageFilterData.kinInstanceNumbers[i].nrOfInstanceNrs := counter;
+      END_FOR;
+   ELSE
+      RcuSetMessageOnce(main_ErrVarNotMap, PaintRobot[i].kinListInx, 1, 0, "main.NEW", cSV_MessageFilterData);
+   END_IF;
+   
+   PRINT("SetBootUpFinished: WAIT (giNoOfTypes <> 0)");
+   FOR i := 0 TO giNumberOfRobots - 1 DO
+      WAIT PaintRobot[i].fixPosReady; // kin1._global.main.NEW() is ready
+   END_FOR;
+   IF (giNoOfTypes = 0) THEN
+      PRINT("SetBootUpFinished: giNoOfTypes = "+STR(giNoOfTypes));
+      DebugPrint(eTraceEquipment, "-------- Initialization of Motion aborted with error --------");
+      RcuSetMessageOnce(main_FaErrNrOfTypesInvalid, -1, 1, 0, "main.NEW");
+      RcuSetMessageOnce(main_WarSystemNotReady, -1, 6, 0, "main.NEW");
+      RETURN;
+   END_IF;
+   PRINT("SetBootUpFinished: giNoOfTypes = "+STR(giNoOfTypes));
+
+   DebugPrint(eTraceEquipment, "-------- Initialization of Motion finished --------");
+
+   // signal end of RCU bootup to process (FU system)
+   motionReady := MAPX(cSV_MotionReady);
+   IF IS_MAPPED(motionReady) THEN
+      motionReady := TRUE;
+   ELSE
+      RcuSetMessageOnce(main_FaErrVarNotMapped, -1, 2, 0, "main.NEW", cSV_MotionReady);
+      RcuSetMessageOnce(main_WarSystemNotReady, -1, 6, 0, "main.NEW");
+
+      // determine bootup time of RCU
+      SysTimerGetUs(RcData.iT2);
+      rDiff := (RcData.iT2-RcData.iT1)/1000000.0;
+      sInitTime := STR(rDiff);
+      PRINT(gRcuVersion + " END Init, nok, t = " + StrLeft(sInitTime,4) + "s");
+      RETURN;
+   END_IF;
+
+   // wait until process (FU system) signals that complete application software has booted up
+   mBootUpFinished := MAPX(cSV_BootUpFinished);
+   IF IS_MAPPED(mBootUpFinished) THEN
+      WAIT mBootUpFinished;
+      gbBootupFinished := TRUE;
+
+      // determine bootup time of RCU
+      SysTimerGetUs(RcData.iT2);
+      rDiff := (RcData.iT2-RcData.iT1)/1000000.0;
+      sInitTime := STR(rDiff);
+      PRINT(gRcuVersion + " END Init, ok, t = " + StrLeft(sInitTime,4) + "s");
+   ELSE
+      // determine bootup time of RCU
+      SysTimerGetUs(RcData.iT2);
+      rDiff := (RcData.iT2-RcData.iT1)/1000000.0;
+      sInitTime := STR(rDiff);
+      PRINT(gRcuVersion + " END Init, nok, t = " + StrLeft(sInitTime,4) + "s");
+      RcuSetMessageOnce(main_FaErrVarNotMapped, -1, 3, 0, "main.NEW", cSV_BootUpFinished);
+   END_IF;
+   
+   IoDeviceGuarding(RcuTeachPendantControl.deviceHdl, TRUE);
+   PRINT (" ### IoDeviceGuarding activated ###");
+   
+END_ROUTINE
+
+// routine is called whenever a program is started
+ROUTINE BEGINPROG()
+VAR
+   name       : STRING;
+   hdl        : DINT;
+   projHdl    : DINT;
+   typlistHdl : DINT;
+   typeName   : STRING;
+   projName   : STRING;
+   progName   : STRING;
+   ok         : BOOL;
+   nr         : INT;
+   l          : DINT;
+   s          : STRING;
+END_VAR
+
+   hdl := GetProgHdl();
+   GetNameFromProgHdl(hdl, name);
+   DebugPrint(eTraceCommon, "BEGINPROG " + name);
+   s := StrMid (name, 1, 4);
+   l := StrToDint(s);
+   IF ( l >= 1) AND (l <= 4) THEN
+      l := l-1;
+      gRcuKinList[l].kin.progNameKin := name;
+      gRcuKinList[l].kin.RcuInterfaceToBCU.sProgName := name;
+      gRcuKinList[l].kin.RcuInterfaceToBCU.bProgStart := TRUE;
+      gRcuKinList[l].kin.bEmptyProgPath := TRUE;
+   ELSE
+      gRcuKinList[gRcuFocusedKinematic.kinListInx].kin.progNameKin := name;
+      gRcuKinList[gRcuFocusedKinematic.kinListInx].kin.RcuInterfaceToBCU.sProgName := name;
+      gRcuKinList[gRcuFocusedKinematic.kinListInx].kin.RcuInterfaceToBCU.bProgStart := TRUE;
+      gRcuKinList[gRcuFocusedKinematic.kinListInx].kin.bEmptyProgPath := TRUE;
+   END_IF;
+   
+   IF ok THEN  // program found in list -> select robot
+//      CatalogGetName(projHdl, typeName);
+//      PRINT("Program " + ProjectName + "/" + name + " found in typelist (" + typeName + ")");
+      
+      // todo - fetch appropriate robot and select it (from catalog, bus, ...)
+      //RSELECT("R12");
+   ELSE
+//      PRINT("Program " + ProjectName + "/" + name + " not found in typelist");
+      
+      // maybe this is a new program - user is asked for a robot?, users answer should be added to list (e.g. catalog)
+      //ReadString(0, "Robot to select for this program", "_system.main.robotName");
+      // alernativly use a text defined in tt_DialogTx.properties
+      //ReadString(1, "", "_system.main.robotName");
+      //RSELECT(robotName);
+   END_IF;
+END_ROUTINE
+
+
+// routine is called whenever a program ends
+ROUTINE ENDPROG()
+VAR
+   name       : STRING;
+   hdl        : DINT;
+   l          : DINT;
+   s          : STRING;
+END_VAR
+
+   hdl := GetProgHdl();
+   GetNameFromProgHdl(hdl,name);
+   DebugPrint(eTraceCommon, "ENDPROG " + name);
+   s := StrMid (name, 1, 4);
+   l := StrToDint(s);
+   IF ( l >= 1) AND (l <= 4) THEN
+      l := l-1;
+      gRcuKinList[l].kin.progNameKin :="-";
+   ELSE
+      gRcuKinList[gRcuFocusedKinematic.kinListInx].kin.progNameKin :="-";
+   END_IF;
+END_ROUTINE

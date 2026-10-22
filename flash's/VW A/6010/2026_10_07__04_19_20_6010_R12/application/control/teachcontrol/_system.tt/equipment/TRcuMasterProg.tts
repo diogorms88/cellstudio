@@ -1,0 +1,732 @@
+(*-----------------------------------------------------------------------------            
+*    K2-System Robot Control Unit                                             *            
+*                                                                             *            
+*    Dürr Systems GmbH APT                                                    *            
+*    Rosenstr. 39                                                             *            
+*    74321 Bietigheim-Bissingen                                               *            
+*    Germany                                                                  *            
+*                                                                             *            
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *            
+*    All rights reserved.                                                     *            
+*                                                                             *            
+*                                                                             *            
+*    Author :     Bauder                                                      *            
+*    E-Mail:      Manfred.Bauder@durr.com                                     *            
+*                                                                             *            
+*    Modul:       TRcuMasterProg.tts                                          *            
+*    Description:                                                             *            
+*-----------------------------------------------------------------------------            
+*-----------------------------------------------------------------------------            
+*)                        
+VAR
+   //requests
+   bMasterRequest       : BOOL;  // mastering requested via teachview                     
+   iRequestedAxis       : DINT;  // axis to be mastered      
+   bPreMaster           : BOOL;  // set absolutevalue without moving
+   bMasterSelected      : BOOL;
+   yMasterAxis          : ARRAY [max_axes] OF BOOL;
+   bAllAxisDuerr        : BOOL;
+   //states
+   bInterrupted         : BOOL;       
+   bStop                : BOOL;
+   actualStatus         : eState;
+   iActualStatus        : DINT;
+   bMasteringSuccessful : BOOL;
+   //TeachView
+   bShowKukaPage        : BOOL;
+   bShowDuerrPage       : BOOL;
+   bShowInfoScpRef      : BOOL;
+   bRelScpRefPage       : BOOL;
+   bShowDialogTV        : BOOL;
+   mShowWarning         : BOOL;
+   bShowButtons         : BOOL;
+   bUserYes             : BOOL;
+   bUserNo              : BOOL;
+   //working data
+   AxisNr               : INT;
+   bMain                : BOOL;
+   bFound               : BOOL;
+   dInx                 : DINT;
+   dAxis                : DINT; 
+   dif                  : REAL;
+   bDistanceZero        : ARRAY[max_axes] OF BOOL;              
+   last_value           : ARRAY [max_axes] OF REAL SAVE;
+   bEdge0               : BOOL;
+   bEdge1               : BOOL;            
+   bEdge2               : BOOL;
+   bEdgeDetected        : ARRAY[max_axes] OF BOOL;
+   yOffset              : ARRAY [max_axes] OF MAPTO REAL;
+   yLastValue           : ARRAY [max_axes] OF MAPTO REAL;
+   A1_START             : TRcuPositionJoints;
+   A1_SENSOR            : TRcuPositionJoints;
+   A1_TARGET            : TRcuPositionJoints;
+   //Kuka
+   A1Value1             : REAL;
+   A1Value2             : REAL;
+   A1Value3             : REAL;
+   A1Value4             : REAL;
+   A1Value11            : REAL;
+   //HW-Sensors
+   bMasterSensor1       : MAPTO BOOL;
+   bMasterSensor2       : MAPTO BOOL;   
+   bMasterSensorSignals : ARRAY [5] OF INT;
+   iArrayIndex          : INT;   
+   bMasterSensor1_duerr : ARRAY[max_axes] OF MAPTO BOOL;
+   bSensorSignal_duerr  : ARRAY[max_axes] OF DINT;
+   bSensorsMapped       : BOOL;
+   
+   // variable interface for mastering of dosing pistons   
+   mEnableMasterPiston1 : MAPTO BOOL;            
+   mActiveMasterPiston1 : MAPTO BOOL;            
+   mEnableMasterPiston2 : MAPTO BOOL;            
+   mActiveMasterPiston2 : MAPTO BOOL;            
+   mEnableManualMaster  : MAPTO BOOL;            
+   mActiveManualMaster  : MAPTO BOOL;            
+   mEnableAutoMaster    : MAPTO BOOL;            
+   mActiveAutoMaster    : MAPTO BOOL;            
+   mEnableAutoStop      : MAPTO BOOL;            
+   mActiveAutoStop      : MAPTO BOOL;            
+   zStatusInfo          : MAPTO STRING;
+   rLastPosition        : MAPTO REAL;
+   rReferencePosition   : MAPTO REAL;
+   bPreMasterRequest    : BOOL;  // set absolutevalue without moving            
+   bPistonActive        : BOOL;
+   hasSafeEncoderMastering : BOOL;
+   masterSafeEncoders      : ARRAY[max_axes] OF ARRAY[2] OF BOOL;
+   signalSafeEncoders      : BOOL;
+   iStartTimeEdges         : LINT;
+   bSignalError            : BOOL;
+   bErrorChange            : BOOL;
+   bErrorLowCount          : BOOL;
+   bErrorNotchCount        : BOOL;
+   
+   ybSwitchedOn  : ARRAY[max_axes] OF BOOL;
+   ybSwitchedOff : ARRAY[max_axes] OF BOOL;
+   ybActive      : ARRAY[max_axes] OF BOOL;
+   yValueOnOff   : ARRAY[max_axes] OF REAL;
+   yValueOffOn   : ARRAY[max_axes] OF REAL;
+   
+END_VAR
+
+(*******************************************************************************
+* private members
+*)
+CONSTANT PRIVATE    
+   max_axes : DINT := cgiRcuMaxJoints + cgiRcuMaxAuxJoints;            
+END_CONSTANT    
+
+VAR PRIVATE
+  bAllSelectAxes       : BOOL;
+  bAxisAlreadySelected : BOOL;
+  bRunning             : BOOL;
+  bRestart             : BOOL;
+  myRobot              : MAPTO TRcuRobot; 
+END_VAR
+                        
+//----------------------------------------------------------------------------------------
+// main observation routine, keeps the flag up to date and starts the master-program
+//----------------------------------------------------------------------------------------
+ROUTINE Observe() PRIVATE            
+   VAR             
+      state         : TProgState;            
+      finished      : BOOL;            
+      hdl           : DINT;            
+      wAxisNr       : DINT;            
+      bAxisSelected : BOOL;
+      i             : DINT;
+      s             : STRING;
+      mappingFailed : BOOL;
+   END_VAR            
+               
+   WAIT gbBootupFinished; 
+        
+   FOR wAxisNr := 0 TO myRobot.kinematic.mNrOfJoints-1 DO   
+      IF gyDrives[wAxisNr].connected AND myRobot.drive[wAxisNr].masteringExist THEN
+         IF myRobot.drive[wAxisNr].masteringType = eDuerr THEN   
+            IF (wAxisNr < myRobot.nrOfMainJoints) THEN
+               s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + STR(wAxisNr+1);
+               IF IsPaintArm7VWrist(myRobot) THEN // RP E 043
+                  IF (wAxisNr = 2) THEN
+                     s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + "21";
+                  ELSIF (wAxisNr = 3) THEN
+                     s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + "3";
+                  END_IF;
+               END_IF;
+            ELSE
+               IF (wAxisNr < myRobot.nrMaxMainJoints) THEN
+                  s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + STR(myRobot.nrMaxMainJoints + (wAxisNr - (myRobot.nrOfMainJoints-1)));
+               ELSE
+                  IF IsPaintArm7VWrist(myRobot) THEN // RP E 043
+                     IF myRobot.kinematic.mJoints[7].mDHParam.mTyp = eMcuJointRot THEN // axis 8 is rotatory => RP-L-063
+                        s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + STR(wAxisNr+1);
+                     ELSE   
+                        s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + STR(wAxisNr);
+                     END_IF;
+                  ELSE   
+                     IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                        s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + STR(wAxisNr+2);
+                     ELSE   
+                        s := cHW_mMasterSig_Duerr[myRobot.kinListInx] + STR(wAxisNr+1);
+                     END_IF;
+                  END_IF;
+               END_IF;
+            END_IF;
+            bMasterSensor1_duerr[wAxisNr] := MAPX(s);            
+            IF NOT IS_MAPPED(bMasterSensor1_duerr[wAxisNr]) THEN            
+               yMasterAxis[wAxisNr] := FALSE;            
+               RcuResetMessage(RcuMasterProg_InfMasterSensor1,  myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe", s, myRobot.drive[wAxisNr].axesName);
+               myRobot.drive[wAxisNr].masteringExist := FALSE;
+               mappingFailed := TRUE;
+            END_IF;   
+         ELSE
+            bMasterSensor1 := MAPX(cHW_mMasterSig1_Kuka[myRobot.kinListInx]);            
+            IF NOT IS_MAPPED(bMasterSensor1) THEN            
+               RcuResetMessage(RcuMasterProg_InfMasterSensor1,  myRobot.kinListInx, 2, 0, "RcuMasterProg.Observe",
+                               cHW_mMasterSig1_Kuka[myRobot.kinListInx], myRobot.drive[wAxisNr].axesName);
+               myRobot.drive[wAxisNr].masteringExist := FALSE;            
+               mappingFailed := TRUE;           
+            END_IF;            
+            bMasterSensor2 := MAPX(cHW_mMasterSig2_Kuka[myRobot.kinListInx]);            
+            IF NOT IS_MAPPED(bMasterSensor2) THEN            
+               RcuResetMessage(RcuMasterProg_InfMasterSensor1,  myRobot.kinListInx, 3, 0, "RcuMasterProg.Observe",
+                               cHW_mMasterSig2_Kuka[myRobot.kinListInx], myRobot.drive[wAxisNr].axesName);
+               myRobot.drive[wAxisNr].masteringExist := FALSE;           
+               mappingFailed := TRUE;         
+            END_IF;
+         END_IF;
+       END_IF;   
+   END_FOR; 
+   bSensorsMapped := NOT mappingFailed;
+   bShowInfoScpRef := FALSE;
+  
+   CalcWristMasteringOffset();  //if drivezerooffset of wristjoints is not 0 correct other wristjoint offset
+   START SensorSignalToTV();    //build state of the sensors for teachview
+   START ToggleWarningTV();     //toggle warning sign on teachview when user input is requested
+   START ObserveCheckSensor();
+                     
+   WHILE TRUE DO            
+      state := GetProgState("RcuMasterProg");            
+      
+      // stop masterProg via teachview
+      IF bStop THEN                         
+         IF (hdl <> 0) AND (hdl <> -1) THEN            
+            STOP ObserveFlow;
+            IF (NOT StopProg(hdl, finished)) THEN
+               RcuSetMessageOnce(RcuMasterProg_ErrFuncFailed, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe", "StopProg");
+               finished := TRUE;
+            END_IF;
+            WHILE (NOT finished) AND (state <> eProgInactive) AND (state <> eProgUnknown) DO
+               myRobot.WaitMcMicroCycles(5);
+               state := GetProgState("RcuMasterProg");
+            END_WHILE;
+            //stop simulating mastersensors
+            IF gbSimulationOS OR gbFBSSActive THEN
+               RcuMasterProg.RunSimulation(myRobot, FALSE);
+            END_IF;
+            hdl := 0;
+            finished := FALSE;            
+         END_IF;            
+         bMasterRequest := FALSE;            
+         bMasterSelected := FALSE;   
+         bPreMaster := FALSE;   
+         bPreMasterRequest := FALSE;            
+         bAxisAlreadySelected := FALSE;   
+         IF NOT bMasteringSuccessful THEN
+            RcuResetMessage(RcuMasterProg_InfMasterUserStop, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe");
+            actualStatus := eStateStopped;
+            iActualStatus := eStateStopped;
+         ELSE
+            //deselect all axis after mastering
+            FOR wAxisNr := 0 TO myRobot.kinematic.mNrOfJoints-1 DO
+                yMasterAxis[wAxisNr] := FALSE;            
+            END_FOR;
+            bAllSelectAxes := FALSE;
+            IF myRobot.interfaceToSCP.bSafeRobotic THEN
+               //show information on user page
+               IF bRelScpRefPage THEN
+                  bShowInfoScpRef := TRUE;
+                  bRelScpRefPage  := FALSE;
+               END_IF;
+               //mastering ok --> delete reference of SCP
+               START myRobot.interfaceToSCP.ResetReference();
+            END_IF;
+         END_IF;   
+         bStop := FALSE;            
+         IF IS_MAPPED(myRobot.mainModeMgr.actMainModeDef) THEN
+            myRobot.mainModeMgr.holdToRun := myRobot.mainModeMgr.actMainModeDef.actions.holdToRun;            
+         ELSE
+            myRobot.mainModeMgr.holdToRun := TRUE;
+         END_IF;
+        
+      // start masterProg via teachview  
+      ELSIF state = eProgInactive THEN 
+         WAIT bMasterSelected OR bPreMaster;        
+         bMasteringSuccessful := FALSE;
+         IF (myRobot.allDrivesReady AND bMasterSelected) OR bPreMaster THEN
+            bMasterRequest    := bMasterSelected;            
+            bPreMasterRequest := bPreMaster;            
+            bAxisSelected     := FALSE;   
+            //KTO: check automaster possible and function to select all            
+            FOR wAxisNr := 0 TO myRobot.kinematic.mNrOfJoints-1 DO            
+               IF gyDrives[wAxisNr].connected THEN  
+                  //SCP - EncoderBox-Alarm --> mastering not possible
+                  IF myRobot.interfaceToSCP.bSafeRobotic AND myRobot.interfaceToSCP.svSCP_RCU.sScpToRcu.bSMM12Alarm THEN
+                     yMasterAxis[wAxisNr] := FALSE;
+                     bAxisSelected        := FALSE;
+                     bAllSelectAxes       := FALSE;
+                     bMasterSelected      := FALSE;
+                     bPreMaster           := FALSE;
+                     iRequestedAxis       := 0;
+                     RcuSetMessageOnce(RcuMasterProg_ErrEncBoxFault, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe");   
+                  ELSE
+                     IF myRobot.drive[wAxisNr].masteringType = eKuka THEN
+                        //Mastering-Auto
+                        IF bMasterSelected THEN
+                           bAllSelectAxes       := FALSE;  //only one axis at the same time
+                           IF myRobot.drive[wAxisNr].masteringExist THEN
+                              IF yMasterAxis[wAxisNr] AND NOT bAxisAlreadySelected THEN
+                                  bAxisAlreadySelected := TRUE;
+                                  iRequestedAxis       := wAxisNr;
+                                  bAxisSelected        := bAxisSelected OR yMasterAxis[wAxisNr];
+                              END_IF;  
+                           ELSE
+                              yMasterAxis[wAxisNr] := FALSE;
+                              RcuResetMessage(RcuMasterProg_WarNoAutoMaster, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe", myRobot.drive[wAxisNr].axesName);
+                              myRobot.DebugPrint(eTraceAutoControl, "set axis:" + myRobot.drive[wAxisNr].axesName + " to false because no automaster possible");
+                           END_IF;
+                        //Mastering-Manual
+                        ELSIF bPreMaster THEN
+                           bAxisSelected := bAxisSelected OR yMasterAxis[wAxisNr];
+                        END_IF;
+                      
+                     ELSIF myRobot.drive[wAxisNr].masteringType = eDuerr THEN
+                        //Mastering-Auto
+                        IF bMasterSelected THEN
+                           IF myRobot.drive[wAxisNr].masteringExist THEN
+                              IF (NOT bAllAxisDuerr) AND yMasterAxis[wAxisNr] AND (NOT bAxisAlreadySelected) THEN
+                                 iRequestedAxis := wAxisNr;
+                              END_IF;
+                              bAxisSelected := bAxisSelected OR yMasterAxis[wAxisNr];
+                           ELSIF NOT myRobot.drive[wAxisNr].masteringExist AND bAllSelectAxes THEN
+                              yMasterAxis[wAxisNr] := FALSE;
+                           ELSIF yMasterAxis[wAxisNr] THEN
+                              yMasterAxis[wAxisNr] := FALSE;
+                              RcuResetMessage(RcuMasterProg_WarNoAutoMaster, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe", myRobot.drive[wAxisNr].axesName);
+                              myRobot.DebugPrint(eTraceAutoControl, "set axis:" + myRobot.drive[wAxisNr].axesName + " to false because no automaster possible");
+                           END_IF;
+                        //Mastering-Manual
+                        ELSIF bPreMaster THEN
+                           bAxisSelected := bAxisSelected OR yMasterAxis[wAxisNr];
+                        END_IF;  
+                     END_IF;
+                     
+                     // sbj : write drive parameter s52
+                     IF bMasterSelected AND yMasterAxis[wAxisNr] AND myRobot.drive[wAxisNr].masteringExist THEN
+                        myRobot.drive[wAxisNr].driveZeroOffsetConfig := myRobot.drive[wAxisNr].driveZeroOffsetConfigAuto;
+                        IF NOT myRobot.drive[wAxisNr].WriteZeroOffset() THEN
+                           yMasterAxis[wAxisNr] := FALSE;
+                        END_IF;
+                     ELSIF bPreMaster AND yMasterAxis[wAxisNr] THEN
+                        myRobot.drive[wAxisNr].driveZeroOffsetConfig := myRobot.drive[wAxisNr].driveZeroOffsetConfigManu;
+                        IF NOT myRobot.drive[wAxisNr].WriteZeroOffset() THEN
+                           yMasterAxis[wAxisNr] := FALSE;
+                        END_IF;
+                     END_IF;
+                  END_IF; //IF myRobot.interfaceToSCP.bSafeRobotic AND myRobot.in...
+               END_IF;   //IF gyDrives[wAxisNr].connected THEN
+            END_FOR;            
+   
+            bAllSelectAxes  := FALSE;
+            bMasterSelected := FALSE;
+            bPreMaster      := FALSE;
+   
+            IF bAxisSelected THEN            
+               actualStatus := eStateRunning;
+               iActualStatus := eStateRunning;
+               bRestart     := FALSE;            
+               bInterrupted := FALSE;
+               bRunning     := TRUE;            
+               hdl := StartProg("RcuMasterProg");  // startProg() because this should             
+               // run in its own flow, to avoid problems on errors (flow is stopped)              
+               START ObserveFlow(hdl);            
+               IF gbSimulationOS OR gbFBSSActive THEN
+                  RcuMasterProg.RunSimulation(myRobot, TRUE);
+               END_IF; 
+            ELSE            
+               actualStatus := eStateNoAxis;
+               iActualStatus := eStateNoAxis;
+               Sleep(2000);
+               bStop := TRUE;   
+            END_IF;            
+         ELSE            
+            bPreMaster := FALSE;            
+            bMasterSelected := FALSE;            
+            bAllSelectAxes := FALSE;
+            RcuResetMessage(RcuMasterProg_InfUpdateNotActiv, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe", myRobot.robotName);
+            Sleep(2000);
+         END_IF;                    
+      ELSIF bInterrupted THEN            
+         bRunning     := FALSE;            
+         actualStatus := eStateInterrupted;
+         iActualStatus := eStateInterrupted;
+         RcuResetMessage(RcuMasterProg_InfMastringInterr, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe");
+         bStop        := TRUE;
+         WAIT bStop OR bRestart OR NOT bInterrupted;
+         IF NOT bStop THEN            
+            actualStatus := eStateRunning;
+            iActualStatus := eStateRunning;
+            IF bRestart THEN            
+               ContinueProgSignal(hdl, finished);            
+               WAIT finished;            
+               finished := FALSE;            
+            END_IF;            
+            bRunning := TRUE;            
+            bRestart := FALSE;
+            RcuResetMessage(RcuMasterProg_InfMasterUserCont, myRobot.kinListInx, 1, 0, "RcuMasterProg.Observe");
+         END_IF;
+      ELSE            
+         bRestart := FALSE;            
+         WAIT bStop OR bInterrupted OR NOT (bMasterSelected OR bPreMaster);              
+      END_IF;            
+      WAIT bStop OR bInterrupted OR bMasterSelected OR bPreMaster;            
+   END_WHILE;            
+END_ROUTINE            
+            
+//----------------------------------------------------------------------------------------
+// Observe the flow of masterprog
+//----------------------------------------------------------------------------------------
+ROUTINE ObserveFlow(hdl : DINT) PRIVATE            
+VAR            
+   state : TFlowState;            
+END_VAR            
+            
+   state := GetFlowState(hdl);            
+   WHILE state <> eFlowInvalid DO            
+      Sleep(200);            
+      state := GetFlowState(hdl);            
+   END_WHILE;            
+   IF GetProgTerminateState("RcuMasterProg") = eTerminateBreak THEN
+      PRINT("ObserveFlow "+myRobot.robotName+" GetProgTerminateState = eTerminateBreak");
+      bStop := TRUE;            
+   END_IF;            
+END_ROUTINE      
+
+//----------------------------------------------------------------------------------------
+// Look if user has selected all axis
+//----------------------------------------------------------------------------------------
+ROUTINE ObserveTV() PRIVATE
+ VAR
+   bChgAllSelected : BOOL;
+   wAxisNr         : SINT;
+ END_VAR
+ 
+ bChgAllSelected := IS_CHANGED(bAllSelectAxes);
+ WHILE TRUE DO
+   WAIT bChgAllSelected;
+   bChgAllSelected := FALSE;
+   IF (actualStatus <> eStateRunning) AND (actualStatus <> eScanning) THEN
+      FOR wAxisNr := 0 TO myRobot.kinematic.mNrOfJoints-1 DO
+         IF bAllSelectAxes THEN
+            yMasterAxis[wAxisNr] := TRUE;
+         ELSE
+            yMasterAxis[wAxisNr] := FALSE;
+         END_IF;
+      END_FOR;
+   END_IF;
+ END_WHILE;      
+ 
+END_ROUTINE            
+
+//---------------------------------------------------------------------------------
+// correct the masteringoffset for wrist joints - RPE notch of axis 4 not in 
+// Zero-position, so the offset of axis 5 and 6 have to be corrected
+//---------------------------------------------------------------------------------
+ROUTINE CalcWristMasteringOffset() PRIVATE
+ VAR
+   mainDrive : TMcuVector;
+   auxDrive  : TMcuVector;
+   mainJoint : TMcuVector;
+   auxJoint  : TMcuVector;
+   i         : INT;
+   j         : INT;
+ END_VAR
+      
+  IF (myRobot.nrOfWristJoints > 0) THEN
+      //check if masteringtype is duerr otherwise leave routine
+      FOR j:=1 TO myRobot.nrOfWristJoints-1 DO
+          i := myRobot.nrOfBaseJoints + j;
+          IF myRobot.drive[i].masteringType <> eDuerr THEN
+             RETURN;
+          END_IF;   
+      END_FOR;
+      //main joints
+      i := myRobot.nrOfMainJoints - myRobot.nrOfWristJoints;
+      mainJoint.mValues[i] := myRobot.drive[i].driveZeroOffsetConfigManu;
+      mainJoint.mValidLen  :=  myRobot.nrOfMainJoints;
+      //aux joints
+      auxJoint.mValidLen  := myRobot.nrOfAuxJoints;
+      //joints values to drive values
+      IF NOT McuJointsToDrives(mainDrive, auxDrive, mainJoint, auxJoint, myRobot.kinematicMcuId) THEN         
+         RcuSetMessageOnce(RcuMasterProg_ErrJointsToDrives, myRobot.kinListInx, 1, 0, "RcuMasterProg.CalcWristMasteringOffset");
+         RETURN;
+      END_IF;
+      //new offsets
+      FOR j:=1 TO myRobot.nrOfWristJoints-1 DO
+         i := myRobot.nrOfBaseJoints + j;
+         myRobot.drive[i].driveZeroOffsetConfigManu := myRobot.drive[i].driveZeroOffsetConfigManu + mainDrive.mValues[i];
+      END_FOR;
+  END_IF;
+  
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+// copy sensor state to a INT-Var for TeachView
+//---------------------------------------------------------------------------------
+ROUTINE SensorSignalToTV() PRIVATE
+ VAR
+  i    : INT;
+  yChg : ARRAY [max_axes] OF BOOL;
+  bChg : BOOL;
+ END_VAR
+  
+  FOR i := 0 TO myRobot.kinematic.mNrOfJoints-1 DO
+    IF IS_MAPPED(bMasterSensor1_duerr[i]) THEN
+       yChg[i] := IS_CHANGED(bMasterSensor1_duerr[i]);
+    END_IF;
+  END_FOR;
+  bChg := IS_CHANGED(yChg);
+  
+  WHILE TRUE DO
+    FOR i := 0 TO myRobot.kinematic.mNrOfJoints-1 DO
+       IF IS_MAPPED(bMasterSensor1_duerr[i]) THEN
+          IF bMasterSensor1_duerr[i] THEN
+             bSensorSignal_duerr[i] := 2;
+          ELSE
+             bSensorSignal_duerr[i] := 1;
+          END_IF;
+       END_IF;
+       yChg[i] := FALSE;
+    END_FOR;
+    bChg := FALSE;
+    WAIT bChg;
+  END_WHILE;
+    
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+//toggle warning sign on teachview when user input is requested
+//---------------------------------------------------------------------------------
+ROUTINE ToggleWarningTV() PRIVATE
+ VAR
+   timeout : BOOL;
+ END_VAR
+ 
+  IF bShowDialogTV THEN
+     WHILE TRUE DO
+        mShowWarning := FALSE;
+        WAIT bShowButtons;
+        mShowWarning := TRUE;
+        WHILE bShowButtons DO
+           SysTimerSet(1000, timeout);
+           WAIT timeout OR NOT bShowButtons;
+           SysTimerClear(timeout);
+           timeout := FALSE;
+           mShowWarning := NOT mShowWarning;
+        END_WHILE;
+     END_WHILE;  
+  ELSE
+     mShowWarning := FALSE;
+  END_IF;
+ 
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+// observation routine for the mastersignals. Needed for CHECK_MASTER_SENSOR
+//---------------------------------------------------------------------------------
+ROUTINE ObserveCheckSensor() PRIVATE
+VAR
+   i    : INT;
+   yChg : ARRAY [max_axes] OF BOOL;
+   bChg : BOOL;
+   val  : REAL;
+END_VAR
+  
+   FOR i := 0 TO myRobot.kinematic.mNrOfJoints-1 DO
+      IF IS_MAPPED(bMasterSensor1_duerr[i]) THEN
+         yChg[i] := IS_CHANGED(bMasterSensor1_duerr[i]);
+      END_IF;
+   END_FOR;
+   bChg := IS_CHANGED(yChg);
+  
+   WHILE TRUE DO
+      FOR i := 0 TO myRobot.kinematic.mNrOfJoints-1 DO
+         IF IS_MAPPED(bMasterSensor1_duerr[i]) THEN
+            IF yChg[i] AND ybActive[i] THEN
+               IF i < myRobot.nrOfMainJoints THEN
+                  val := myRobot.readBackVals.mJoints.mMainJoints.mValues[i];
+               ELSE
+                  val := myRobot.readBackVals.mJoints.mAuxJoints.mValues[i-myRobot.nrOfMainJoints];
+               END_IF;
+               IF bMasterSensor1_duerr[i] THEN
+                  yValueOffOn[i] := val;
+                  ybSwitchedOn[i] := TRUE;
+               ELSE
+                  yValueOnOff[i] := val;
+                  ybSwitchedOff[i] := TRUE;
+               END_IF;
+            END_IF;
+         END_IF;
+         yChg[i] := FALSE;
+      END_FOR;
+      bChg := FALSE;
+      WAIT bChg;
+   END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+// Called from EcoTalk CHECK_MASTER_SENSOR
+//---------------------------------------------------------------------------------
+ROUTINE StartCheckSensor(AxisNumber : AXISNAME)
+VAR
+   nr : INT;
+END_VAR   
+
+   nr := AxisNumber;
+   WAIT MAIN_RUN;
+   IF IS_MAPPED(bMasterSensor1_duerr[nr]) THEN
+      ybSwitchedOn[nr]  := FALSE;
+      ybSwitchedOff[nr] := FALSE;
+      ybActive[nr]      := TRUE;
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "Check Mastersensor: Axis = "+myRobot.drive[nr].axesName+" no mastersensor");
+      RcuSetMessageOnce(RcuMasterProg_CheckNPossible, myRobot.kinListInx, 1, 0, "TRcuMasterProg.StopCheckSensor", myRobot.drive[nr].axesName);
+   END_IF;
+   
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+// Called from EcoTalk CHECK_MASTER_SENSOR
+//---------------------------------------------------------------------------------
+ROUTINE StopCheckSensor(AxisNumber : AXISNAME)
+VAR
+   nr : INT;
+END_VAR   
+
+   nr := AxisNumber;
+   
+   IF IS_MAPPED(bMasterSensor1_duerr[nr]) THEN
+      WAIT MAIN_RUN;
+      ybActive[nr]   := FALSE;
+      IF ybSwitchedOn[nr] AND ybSwitchedOff[nr] THEN
+         myRobot.DebugPrint(eTraceAutoControl, "Check Mastersensor: Axis = "+myRobot.drive[nr].axesName+" "+VAR_NAME(bMasterSensor1_duerr[nr])+" ON = "+STR(yValueOffOn[nr])+" OFF = "+STR(yValueOnOff[nr])+" Masterpos = "+STR(myRobot.drive[nr].driveZeroOffsetConfigAuto));
+      ELSE
+         myRobot.DebugPrint(eTraceAutoControl, "Check Mastersensor: Axis = "+myRobot.drive[nr].axesName+" no sensorsignal from "+VAR_NAME(bMasterSensor1_duerr[nr]));
+         RcuSetMessageOnce(RcuMasterProg_ErrChckSig, myRobot.kinListInx, 1, 0, "TRcuMasterProg.StopCheckSensor", myRobot.drive[nr].axesName, VAR_NAME(bMasterSensor1_duerr[nr]));
+      END_IF;
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "Check Mastersensor: Axis = "+myRobot.drive[nr].axesName+" no mastersensor");
+      RcuSetMessageOnce(RcuMasterProg_CheckNPossible, myRobot.kinListInx, 2, 0, "TRcuMasterProg.StopCheckSensor", myRobot.drive[nr].axesName);
+   END_IF;
+   
+END_ROUTINE
+
+//---------------------------------------------------------------------------------
+// Build release for userpage SCP reference - only first time in T1 mode
+//---------------------------------------------------------------------------------
+ROUTINE ReleaseForScpRef() PRIVATE
+ VAR
+  chg : BOOL;
+ END_VAR
+
+  WAIT gbEquipmentReady;
+  IF NOT myRobot.interfaceToSCP.bSafeRobotic THEN
+     bRelScpRefPage := FALSE;
+     RETURN;
+  END_IF;
+     
+  chg := IS_CHANGED(myRobot.mainModeMgr.mode);
+  WHILE TRUE DO
+    IF (myRobot.mainModeMgr.mode <> ciT1) THEN
+       bRelScpRefPage := TRUE;
+    END_IF;
+    WAIT chg;
+    chg := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Init mastering-routine
+//----------------------------------------------------------------------------------------            
+ROUTINE Init(rob: TRcuRobot)            
+VAR            
+   i : INT;         
+END_VAR            
+         
+   myRobot := MAP(rob);
+     
+   FOR i := 0 TO myRobot.nrOfDrives - 1 DO
+      yOffset[i] := MAP(myRobot.drive[i].driveZeroOffset);
+      last_value[i] := 0.0;
+   END_FOR;
+   
+   yLastValue[0] := MAP(myRobot.readBackVals.mJoints.mMainJoints.mValues[0]);
+   yLastValue[1] := MAP(myRobot.readBackVals.mJoints.mMainJoints.mValues[1]);
+   yLastValue[2] := MAP(myRobot.readBackVals.mJoints.mMainJoints.mValues[2]);
+   yLastValue[3] := MAP(myRobot.readBackVals.mJoints.mMainJoints.mValues[3]);
+   yLastValue[4] := MAP(myRobot.readBackVals.mJoints.mMainJoints.mValues[4]);
+   yLastValue[5] := MAP(myRobot.readBackVals.mJoints.mMainJoints.mValues[5]);
+   yLastValue[6] := MAP(myRobot.readBackVals.mJoints.mAuxJoints.mValues[0]);
+   yLastValue[7] := MAP(myRobot.readBackVals.mJoints.mAuxJoints.mValues[1]);
+   yLastValue[8] := MAP(myRobot.readBackVals.mJoints.mAuxJoints.mValues[2]);
+   
+   START Observe();
+   bAllAxisDuerr := TRUE;
+   FOR i := 0 TO myRobot.nrOfDrives - 1 DO
+       bAllAxisDuerr := bAllAxisDuerr AND (myRobot.drive[i].masteringType = eDuerr);
+   END_FOR;
+   IF bAllAxisDuerr THEN
+      START ObserveTV();
+   END_IF;
+   //visible vars for TeachView
+   bShowKukaPage  := UPDATE(NOT (bAllAxisDuerr OR bShowInfoScpRef));
+   bShowDuerrPage := UPDATE(bAllAxisDuerr AND NOT bShowInfoScpRef);
+   START ReleaseForScpRef();
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// check if any teachprog is selected
+//----------------------------------------------------------------------------------------
+ROUTINE ExistFlow(projName : STRING) : BOOL
+VAR             
+   kinName  : STRING;
+   progHdl     : DINT;
+   j        : INT;
+END_VAR            
+          
+   kinName := "kin"+STR(myRobot.kinListInx+1);
+   IF GetFirstFlow(TRUE, progHdl) THEN
+      GetNameFromProgHdl(progHdl, projName);
+      projName := StrToLower(projName);
+      j := StrFind(projName, kinName);
+      IF j = 1 THEN
+         RETURN TRUE;
+      END_IF; 
+      WHILE GetNextFlow(progHdl) DO
+         GetNameFromProgHdl(progHdl, projName);
+         projName := StrToLower(projName);
+         IF StrFind(projName, kinName) = 1 THEN
+            RETURN TRUE;
+         END_IF;
+      END_WHILE;
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE INTERRUPT()   
+   bInterrupted := TRUE;
+END_ROUTINE
+
+
+ROUTINE CONTINUE()
+   bInterrupted := FALSE;
+END_ROUTINE

@@ -1,0 +1,294 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : TRcuColorDef.ttp                                            *
+*   Description : PaintAssignment table for code and color group              *
+*-----------------------------------------------------------------------------*)
+
+CONSTANT GLOBAL
+   cPacMaxNoOfPoints        : INT    := 100;
+END_CONSTANT
+
+CONSTANT PRIVATE   
+   // Pathes and file names
+   cRelPathCfg           : STRING := "application/control/BCU?/typelists";
+   cFileName             : STRING := "EcoatAtPoints_";
+   
+   // Section and key  names
+   cIniSectionName       : STRING := "point";
+   cIniKeyEcoat          : STRING := "ecoat";
+ 
+   cDefSectionName       : STRING := "section";
+   cDefColumnName        : STRING := "column";
+   cIniColumnName        : STRING := "group";
+   cIniKeySectionName    : STRING := "sectionname";
+   cIniKeySectionAlias   : STRING := "sectionalias";
+   cIniKeyStartRow       : STRING := "startrow";
+   cIniKeyRows           : STRING := "rows";
+   cIniKeyKey            : STRING := "key";
+   cIniKeyRangeMax       : STRING := "rangemax"; 
+END_CONSTANT
+
+VAR PRIVATE
+   myRobot           : MAPTO TRcuRobot;
+END_VAR
+
+VAR
+   EcoatValues : ARRAY [1..cPacMaxNoOfPoints] OF REAL;
+END_VAR
+
+ROUTINE Init(locRobot : TRcuRobot)
+   myRobot := MAP(locRobot);  
+
+   WAIT PaintRobot[myRobot.kinListInx].initRobComplete;
+END_ROUTINE
+
+ROUTINE ReadCompValues(CONST iTypeNo : INT)
+   ResetValues();
+        
+   ReadIni(GetPath(cRelPathCfg + "\" + cFileName + STR(iTypeNo) + ".ini"));
+END_ROUTINE
+
+ROUTINE ResetValues()
+   VAR
+      i : INT;
+   END_VAR
+   
+   FOR i := 1 TO 100 DO
+      EcoatValues[i] := 0.0;
+   END_FOR;
+END_ROUTINE
+
+ROUTINE ReadIni(CONST sIniFilePath : STRING) 
+   
+   myRobot.DebugPrint(eTracePaintChecker, "TRcuEcoatCompDef.ReadIni: Update of ecoat measurement values started: " + sIniFilePath);
+
+   ReadIniFile(sIniFilePath);
+   
+   myRobot.DebugPrint(eTracePaintChecker, "TRcuEcoatCompDef.ReadIni: finished");
+END_ROUTINE
+
+ROUTINE ReadIniFile(CONST sInFilePath : STRING) 
+                       : BOOL PRIVATE
+   VAR
+      fileHandle      : DINT;
+      bEof            : BOOL;
+      s               : STRING;
+      sTmp            : STRING;      
+
+      sNewSection     : STRING := "";
+      sSection        : STRING := "";
+      sKey            : STRING := "";
+      sValue          : STRING := "";
+      sComment        : STRING := "";
+      
+      sEcoat           : STRING := "";
+      
+      bResult         : BOOL := TRUE;
+   END_VAR
+   
+   fileHandle := FileOpen(sInFilePath, 
+                          eFileModeReadOnly);
+   IF fileHandle <> -1 THEN
+      bEof := FALSE;
+      WHILE NOT bEof DO
+         bEof := NOT FileReadLn(fileHandle, 
+                                s);
+                                
+         IF NOT bEof THEN
+            s := StrLtrim(s);
+            
+            IF IsSection(s, 
+                         sTmp) THEN
+               // New section found
+               sNewSection := sTmp;      
+            ELSE                                
+               // Check keys
+               IF StrLen(sSection) > 0 THEN
+                  IF IsParameter(s, 
+                                 sKey,
+                                 sValue,
+                                 sComment) THEN
+                     sKey := StrToLower(sKey);
+                     
+                     CASE sKey OF
+                        cIniKeyEcoat:  sEcoat  := sValue;
+                     END_CASE;
+                  END_IF;
+               END_IF; 
+            END_IF;
+         END_IF;
+
+         IF bEof OR (sSection <> sNewSection) THEN
+            // IF End of file or new section found
+            IF StrLeft(StrToLower(sSection), 
+                       StrLen(cIniSectionName)) = cIniSectionName THEN
+               IF NOT SetValue(sSection,
+                               sEcoat) THEN
+                  bResult:= FALSE;
+               END_IF;
+            END_IF;
+            
+            IF (StrLeft(StrToLower(sNewSection), 
+                        StrLen(cIniSectionName)) = cIniSectionName) THEN
+               sSection := sNewSection;
+            ELSE
+               sSection := "";
+            END_IF;
+            
+            sEcoat  := "";
+         END_IF;                 
+      END_WHILE;
+   ELSE
+      bResult := FALSE;
+      myRobot.DebugPrint(eTracePaintChecker, "File " + sInFilePath + " cannot be opened");
+   END_IF;
+   
+   StreamClose(fileHandle);        
+                             
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE SetValue(CONST sSectionName : STRING;
+                 CONST sEcoat : STRING) 
+                : BOOL PRIVATE
+   VAR
+      sPointNo  : STRING;
+      iPointNo  : INT;      
+      r         : REAL;
+      bIsNum    : BOOL;
+      bResult   : BOOL := FALSE;
+   END_VAR
+                 
+   sPointNo := StrMid(sSectionName,
+                      StrLen(sSectionName) - StrLen(cIniSectionName), 
+                      StrLen(cIniSectionName)+1);
+   iPointNo := StrToInt(sPointNo,
+                        bIsNum);
+   
+   IF bIsNum THEN
+      IF (iPointNo>0) AND (iPointNo<=cPacMaxNoOfPoints) THEN
+         EcoatValues[iPointNo] := 0.0;         
+
+         r := StrToReal(sEcoat, bIsNum);
+         IF bIsNum THEN
+            EcoatValues[iPointNo] := r;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   RETURN bResult;
+END_ROUTINE
+   
+ROUTINE IsSection(VAR_IN s : STRING;
+                  sSection : STRING)
+                  : BOOL PRIVATE
+   VAR
+      iEnd    : DINT;
+      bResult : BOOL := FALSE;
+   END_VAR
+   
+   IF StrLeft(s,
+              1) = "[" THEN
+      iEnd := StrFind(s, 
+                      "]");
+      IF iEnd > 2 THEN
+         sSection := StrMid(s, 
+                            iEnd-2, 
+                            2);
+        
+         bResult := TRUE;
+      END_IF;
+   END_IF;
+
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE IsParameter(CONST s  : STRING;
+                    sKey     : STRING;
+                    sValue   : STRING;
+                    sComment : STRING)
+                   : BOOL PRIVATE
+   VAR
+      bResult  : BOOL := FALSE;
+      iPos     : DINT;
+      sLine    : STRING;
+   END_VAR
+   
+   sKey     := "";
+   sValue   := "";
+   sComment := "";
+   
+   sLine := s;
+   
+   // Replace tabs
+   iPos := StrFind(sLine, CHR(9)); 
+   WHILE  iPos > 0 DO
+      sLine := StrReplace(s, 
+                          " ", 
+                          1, 
+                          iPos); 
+                          
+      iPos := StrFind(sLine, CHR(9)); 
+   END_WHILE;
+   
+   // Find comment
+   iPos := StrFind(sLine, "//");
+   IF iPos > 0 THEN
+      // Comment is the rest of line after comment string
+      sComment := StrRight(sLine,
+                           StrLen(sLine) - (iPos+2));
+      
+      // Remove comment from sLine
+      sLine := StrLeft(sLine, 
+                       iPos-1);
+      sLine := StrRtrim(sLine);
+   END_IF;
+   
+   // Split key and value at '='
+   iPos := StrFind(sLine, "=");
+   IF iPos > 0 THEN
+      sKey := StrLeft(sLine,
+                      iPos-1);
+      sKey := StrRtrim(sKey);
+ 
+      sValue := StrRight(sLine,
+                         StrLen(sLine) - iPos);
+      sValue := StrLtrim(sValue);
+                        
+      IF sKey <> "" THEN
+         bResult := TRUE;
+      END_IF;
+   END_IF;   
+   
+   RETURN bResult;
+END_ROUTINE
+
+ROUTINE GetPath(sRelPathToFile : STRING) : STRING PRIVATE
+   VAR
+      sApplPath    : STRING;
+      sPath        : STRING;
+      iPos         : DINT;
+   END_VAR
+
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   sPath := sApplPath + sRelPathToFile;
+   
+   iPos := StrFind(sPath, "?");
+   IF iPos > 0 THEN
+     sPath := StrReplace(sPath, STR(gyiNrBcu[myRobot.kinListInx]), 1, iPos);
+   END_IF;
+   
+   RETURN sPath;
+END_ROUTINE

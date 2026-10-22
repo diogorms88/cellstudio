@@ -1,0 +1,220 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuSimulatePLC.ttp                                          *
+*    Description: For testing when no external PLC is available               *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 19.08.04 nmr: replaced HTKeyMem[2] and HTKeyMem[3] by configured keys
+*               "DrivesOn" and "DrivesOff",
+*               renamed the related observation routines
+* 30.08.04 BMA: quit errors with the variable bSimErrorQuit
+* 24.11.04 BMA: simulation of life bit
+* 20.01.05 nmr: changed KeyDrivesOn and KeyDrivesOff from event routines into
+*               normal observation routines,
+*               check mapping of keys
+* 29.03.05 nmr: ew flag gbEquipmentReady for boot control instead of
+*               gbBootupFinished
+* 01.07.05 sbj: RcuSimulatePLC is with immediate effect only used for
+*               global variables. For every special RPC-PLC-interface
+*               there exists an own file, e.g. RcuSimulatePLCPaint.
+* 07.02.06 BMA: Ghost without motion
+* 23.05.06 BMA: Functions KeyDrivesOn and KeyDrivesOff are obsolete because
+*               keys are removed
+*)
+
+
+TYPE
+  TDataFromSim : STRUCT
+    iVisionDisplaceX  : INT;
+    iVisionDisplaceY  : INT;
+    iVisionDisplaceZ  : INT;
+    iVisionDisplaceA  : INT;
+    iVisionDisplaceB  : INT;
+    iVisionDisplaceC  : INT;
+    bStrobeVisionData : BOOL;
+  END_STRUCT;
+END_TYPE
+    
+VAR 
+   bMappingReady               : BOOL;
+END_VAR
+
+// starts the communication with the PLC
+ROUTINE SimulationOfPLC(myRobot : TRcuRobot) 
+  VAR
+      bStop     : MAPTO BOOL;
+      hdl       : DINT;
+      myKin     : MAPTO TRcuKinematic;
+  END_VAR
+
+   myKin := MAP(myRobot);
+   //simulates no emergency stop
+   bStop    := MAP(myRobot.RcuEmergencyStop.stop);
+   IF IS_MAPPED(bStop) THEN
+      bStop := TRUE;
+   ELSE
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 1, 0, "RcuSimulatePLCPaint.SimulationOfPLC", cHW_mEmergencyStop[myRobot.kinListInx]);
+      //gbBootupError := TRUE;
+   END_IF;
+   myRobot.fieldbusIn.VisionDisplaceX.svWord := MAP(DataFromSim.iVisionDisplaceX);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.VisionDisplaceX.svWord) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 10, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "VisionDisplaceX");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   myRobot.fieldbusIn.VisionDisplaceY.svWord := MAP(DataFromSim.iVisionDisplaceY);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.VisionDisplaceY.svWord) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 11, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "VisionDisplaceY");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   myRobot.fieldbusIn.VisionDisplaceZ.svWord := MAP(DataFromSim.iVisionDisplaceZ);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.VisionDisplaceZ.svWord) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 12, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "VisionDisplaceZ");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   myRobot.fieldbusIn.VisionDisplaceA.svWord := MAP(DataFromSim.iVisionDisplaceA);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.VisionDisplaceA.svWord) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 13, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "VisionDisplaceA");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   myRobot.fieldbusIn.VisionDisplaceB.svWord := MAP(DataFromSim.iVisionDisplaceB);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.VisionDisplaceB.svWord) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 14, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "VisionDisplaceB");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   myRobot.fieldbusIn.VisionDisplaceC.svWord := MAP(DataFromSim.iVisionDisplaceC);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.VisionDisplaceC.svWord) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 15, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "VisionDisplaceC");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   myRobot.fieldbusIn.StrobeVisionData.svBool := MAP(DataFromSim.bStrobeVisionData);
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.StrobeVisionData.svBool) THEN
+      RcuSetMessageOnce(RcuSimulatePLCPaint_ErrNotConf, myRobot.kinListInx, 16, 0, "RcuSimulatePLCPaint.SimulationOfPLC", "StrobeVisionData");
+      myRobot.bFieldbusSlaveReady := FALSE;
+   END_IF;
+   bMappingReady := TRUE;
+   START ObserveInputs(myRobot);
+   START ObserveFocusKin(myKin);
+   IF myRobot.gluingRobot THEN
+     START ObservePLCStates(myRobot); 
+   END_IF;
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+VAR PRIVATE
+   DataFromSim          : TDataFromSim;
+   iSimMode             : DINT;    // main mode selection
+   ySimVisionData       : ARRAY [1..6] OF INT;
+   bSimAckVisionData    : BOOL;   // acknowledge vision data
+   bSimErrorQuit        : BOOL;   // error quit
+END_VAR
+
+ROUTINE ObserveInputs(locRobot : TRcuRobot) PRIVATE
+   VAR
+      bChangedSimAckVisionData    : BOOL;
+      bChangedErrorQuit           : BOOL;
+      bChangedRobotRelease        : BOOL;
+      myRobot                     : MAPTO TRcuRobot;
+      i                           : INT;
+   END_VAR
+   
+   myRobot := MAP(locRobot);   
+   
+   bChangedSimAckVisionData    := IS_CHANGED(gbSimAckVisionData);
+   bChangedErrorQuit           := IS_CHANGED(gbSimErrorQuit);
+   
+   FOR i:=1 TO 6 DO
+      ySimVisionData[i] := gySimVisionData[i];
+   END_FOR;
+   bSimAckVisionData    := gbSimAckVisionData;
+   bSimErrorQuit        := gbSimErrorQuit;
+
+   WHILE TRUE DO
+      IF myRobot.kinListInx = gRcuFocusedKinematic.kinListInx THEN
+         myRobot.DebugPrint(eTraceCommon, "Input changed Kinematic "+ myRobot.robotName);
+         
+         FOR i:=1 TO 6 DO
+            ySimVisionData[i] := gySimVisionData[i];
+         END_FOR;
+         bSimAckVisionData    := gbSimAckVisionData;
+         bSimErrorQuit        := gbSimErrorQuit;
+
+         IF gbSimAckVisionData THEN
+            // set offset values before               
+            DataFromSim.iVisionDisplaceX := gySimVisionData[1]; // X
+            DataFromSim.iVisionDisplaceY := gySimVisionData[2]; // Y
+            DataFromSim.iVisionDisplaceZ := gySimVisionData[3]; // Z
+            DataFromSim.iVisionDisplaceA := gySimVisionData[4]; // A
+            DataFromSim.iVisionDisplaceB := gySimVisionData[5]; // B
+            DataFromSim.iVisionDisplaceC := gySimVisionData[6]; // C
+            DataFromSim.bStrobeVisionData := TRUE;
+         ELSE
+            DataFromSim.bStrobeVisionData := FALSE; // acknowledge offsets
+         END_IF;
+      END_IF;
+      WAIT bChangedSimAckVisionData OR 
+           bChangedRobotRelease;
+      bChangedSimAckVisionData    := FALSE;
+      bChangedRobotRelease        := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveFocusKin(myKin : TRcuKinematic) PRIVATE
+VAR
+   bChgFocus : BOOL;
+   i         : INT;
+END_VAR
+
+   WHILE NOT IS_MAPPED(gRcuFocusedKinematic) DO
+      Sleep(100);
+   END_WHILE;
+   
+   // don't observe gRcuFocusedKinematic itself, it changes whenever a member changes
+   bChgFocus := IS_CHANGED(gbRcuFocusFlipFlop);
+   
+   WHILE TRUE DO
+      WAIT bChgFocus;
+      bChgFocus := FALSE;
+      IF myKin.kinListInx = gRcuFocusedKinematic.kinListInx THEN
+         FOR i:=1 TO 6 DO
+            gySimVisionData[i] := ySimVisionData[i];
+         END_FOR;
+         gbSimAckVisionData    := bSimAckVisionData;
+         gbSimErrorQuit        := bSimErrorQuit;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObservePLCStates(locRobot : TRcuRobot) PRIVATE
+   VAR
+      bChangedPLCStep             : BOOL;
+      myRobot                     : MAPTO TRcuRobot;
+   END_VAR
+
+   myRobot := MAP(locRobot);   
+   
+   bChangedPLCStep    := IS_CHANGED(myRobot.fieldbusOut.PlcOrder.svByte);
+   
+   WHILE TRUE DO
+      myRobot.fieldbusIn.PlcOrder.svByte := myRobot.fieldbusOut.PlcOrder.svByte;
+      WAIT bChangedPLCStep;
+      bChangedPLCStep    := FALSE;
+   END_WHILE;
+END_ROUTINE

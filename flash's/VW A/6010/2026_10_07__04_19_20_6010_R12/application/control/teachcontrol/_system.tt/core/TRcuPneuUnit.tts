@@ -1,0 +1,896 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2013 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuPneuUnit.tts                                             *
+*   Description: Functions for the pneumatic cylinder of the hoodopener       *
+*-----------------------------------------------------------------------------*
+*  
+*)
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL USER
+   PNEUORDER : (HomePosPinDown:=-3, HomePosPinUp:=-2, CleaningPos:=-1,   
+                NoOrder:=0, CylinderUp:=1, CylinderDown:=2, Foot1Back:=3, Foot1Front:=4, Foot2Back:=5, Foot2Front:=6, Foot3Back:=7, Foot3Front:=8, AllFeetBack:=9, AllFeetFront:=10);
+END_TYPE 
+
+CONSTANT GLOBAL
+  cgiMaxCylUnit   : SINT := 1;    //Max cylinders per pneumatic unit
+  cgiMaxFeetUnit  : SINT := 3;    //Max feet per pneumatic unit
+  cgiMaxPneuDev   : SINT := 6;    //cgiMaxCylUnit + cgiMaxFeetUnit + 2 AllFeet
+END_CONSTANT
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  sName               : STRING;
+  iUnitNr             : SINT := -1;
+  iNumberOfCylinders  : DINT;
+  iNumberOfFeet       : DINT;
+  yCylinder           : ARRAY [cgiMaxCylUnit] OF tCylinder;
+  yFeet               : ARRAY [cgiMaxFeetUnit] OF tFeet;
+  
+  bInitDone           : BOOL;
+  bInBypass           : BOOL;
+  bMoveWithoutCheck   : BOOL;
+  bManualRelease      : BOOL;
+  bTeachModeRelease   : BOOL;
+  bEcoScreenMapped    : BOOL;
+  
+  eOrder              : PNEUORDER := NoOrder;
+  iStateMainMode      : DINT;
+  iStateRobMode       : DINT;
+  iStateDeadman       : DINT;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//   read values from catalog
+//------------------------------------------------------------------------------------------------------
+ROUTINE init(kin : TRcuRobot; catHdl : DINT) : BOOL
+
+  myRob      := MAP(kin);
+  bMappingOk := TRUE;
+  IF NOT CatalogReadString(catHdl, "Name", sName, FALSE) THEN
+     sName := "PneuUnit " + STR(myRob.handler.tool.yUnit[iUnitNr].iCountPneuUnit);
+  END_IF;
+  IF NOT CatalogReadIntRange(catHdl, "NumberOfCylinders", iNumberOfCylinders, 0, cgiMaxCylUnit, FALSE) THEN
+     RETURN FALSE;
+  END_IF;
+  IF NOT CatalogReadIntRange(catHdl, "NumberOfFeet", iNumberOfFeet, 0, cgiMaxFeetUnit, FALSE) THEN
+     RETURN FALSE;
+  END_IF;
+  IF InitIO() THEN
+     START RunUpdate();
+     START Cyclic();
+     START MoveCylinder();
+     bInitDone := TRUE;
+  END_IF;
+  START EcoScreenInterface();  
+  RETURN TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  oders from teach  macro
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroSetOrder(inOrder : PNEUORDER) : BOOL
+ IF bInitDone THEN
+    bMoveWithoutCheck := FALSE;
+    eOrder := inOrder;
+    RETURN TRUE;
+ ELSE
+    RcuSetMessageOnce(TRcuPneuCyl_ErrPneuNoInstalled, myRob.kinListInx, 1, instId, "TRcuPneuUnit.MacroSetOrder");
+    RETURN FALSE;
+ END_IF; 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  oders from EcoScreen
+//------------------------------------------------------------------------------------------------------
+ROUTINE HmiSetOrder(inOrder : PNEUORDER) : BOOL
+ IF bInitDone THEN
+    bMoveWithoutCheck := TRUE;
+    eOrder := inOrder;
+    RETURN TRUE;
+ ELSE
+    RcuSetMessageOnce(TRcuPneuCyl_ErrPneuNoInstalled, myRob.kinListInx, 2, instId, "TRcuPneuUnit.HmiSetOrder");
+    RETURN FALSE;
+ END_IF; 
+END_ROUTINE
+
+
+(******************************************************************************
+***  oders from teachIn macro and handling of the cylinder ********************
+******************************************************************************)
+ROUTINE ReceivePosition(inOrder : PNEUORDER) : BOOL
+ VAR
+  bInPos : BOOL;
+ END_VAR
+ 
+   IF bInitDone THEN
+      CASE inOrder OF
+        CylinderUp:    bInPos := AllCylindersUp();                         
+                       WHILE NOT bInPos DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllCylindersUp();
+                       END_WHILE;
+                       WAIT bInPos;
+                       RETURN TRUE;
+        CylinderDown:  bInPos := AllCylindersDown();                         
+                       WHILE NOT bInPos DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllCylindersDown();
+                       END_WHILE;
+                       WAIT bInPos;
+                       RETURN TRUE;
+        Foot1Front:    IF (iNumberOfFeet < 1) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 1, instId, "TRcuPneuUnit.ReceivePosition", "1", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       WAIT yFeet[0].sHWI_IsInFront.bSignal AND NOT yFeet[0].sHWI_IsInBack.bSignal;
+                       RETURN TRUE;
+        Foot1Back:     IF (iNumberOfFeet < 1) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 2, instId, "TRcuPneuUnit.ReceivePosition", "1", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       WAIT yFeet[0].sHWI_IsInBack.bSignal AND NOT yFeet[0].sHWI_IsInFront.bSignal;
+                       RETURN TRUE;
+        Foot2Front:    IF (iNumberOfFeet < 2) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 3, instId, "TRcuPneuUnit.ReceivePosition", "2", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       WAIT yFeet[1].sHWI_IsInFront.bSignal AND NOT yFeet[1].sHWI_IsInBack.bSignal;
+                       RETURN TRUE;
+        Foot2Back:     IF (iNumberOfFeet < 2) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 4, instId, "TRcuPneuUnit.ReceivePosition", "2", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       WAIT yFeet[1].sHWI_IsInBack.bSignal AND NOT yFeet[1].sHWI_IsInFront.bSignal;
+                       RETURN TRUE;
+        Foot3Front:    IF (iNumberOfFeet < 3) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 5, instId, "TRcuPneuUnit.ReceivePosition", "3", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       WAIT yFeet[2].sHWI_IsInFront.bSignal AND NOT yFeet[2].sHWI_IsInBack.bSignal;
+                       RETURN TRUE;
+        Foot3Back:     IF (iNumberOfFeet < 3) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 6, instId, "TRcuPneuUnit.ReceivePosition", "3", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       WAIT yFeet[2].sHWI_IsInBack.bSignal AND NOT yFeet[2].sHWI_IsInFront.bSignal;
+                       RETURN TRUE;
+        AllFeetBack:   IF (iNumberOfFeet = 0) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 7, instId, "TRcuPneuUnit.ReceivePosition", "all", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       bInPos := AllFeetInBackPos();                         
+                       WHILE NOT bInPos DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllFeetInBackPos();
+                       END_WHILE;
+                       WAIT bInPos;
+                       RETURN TRUE;
+        AllFeetFront:  IF (iNumberOfFeet = 0) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoFoot, myRob.kinListInx, 8, instId, "TRcuPneuUnit.ReceivePosition", "all", STR(iNumberOfFeet));
+                          myRob.ErrorReaction(TRUE);
+                       END_IF;
+                       bInPos := AllFeetInFrontPos();                         
+                       WHILE NOT bInPos DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllFeetInFrontPos();
+                       END_WHILE;
+                       WAIT bInPos;
+                       RETURN TRUE;
+      END_CASE;
+   ELSE
+      RcuSetMessageOnce(TRcuPneuCyl_ErrPneuNoInstalled, myRob.kinListInx, 3, instId, "TRcuPneuUnit.ReceivePosition");
+      myRob.ErrorReaction(TRUE);
+   END_IF;
+   RETURN FALSE;
+   
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// feedback received for feet in back or cylinders up, set corresponding outputs to  
+// fix this positions                                                   
+//----------------------------------------------------------------------------------------
+ROUTINE KeepCylinderUp()
+ VAR 
+  i : SINT;
+ END_VAR
+    
+   //valves of cylinders should be switched on to keep them up
+   IF AllCylindersUp() THEN
+      FOR i:=0 TO (iNumberOfCylinders-1) DO
+          yCylinder[i].sHWO_MoveUp.bSignal := TRUE;  
+      END_FOR;
+   ELSIF NOT AllCylindersDown() THEN
+      FOR i:=0 TO (iNumberOfCylinders-1) DO
+          yCylinder[i].sHWO_MoveUp.bSignal := FALSE;  
+      END_FOR;
+   END_IF;
+   //valves of feet should be switched on to keep them in back
+   FOR i:=0 TO (iNumberOfFeet-1) DO
+      IF yFeet[i].sHWI_IsInBack.bSignal THEN
+         yFeet[i].sHWO_MoveToBack.bSignal  := TRUE;
+      ELSIF NOT yFeet[i].sHWI_IsInFront.bSignal THEN   
+         yFeet[i].sHWO_MoveToBack.bSignal  := FALSE;
+      END_IF;
+  END_FOR;
+   
+END_ROUTINE 
+
+//******************************************************************************
+// private
+TYPE PRIVATE
+  tHW_SignalBool : STRUCT
+    bError  : MAPTO BOOL;
+    bSignal : MAPTO BOOL;
+  END_STRUCT;
+  
+  tCylinder : STRUCT
+   sHWI_IsUp     : tHW_SignalBool;
+   sHWI_IsDown   : tHW_SignalBool;
+   sHWO_MoveUp   : tHW_SignalBool;
+   sHWO_MoveDown : tHW_SignalBool;
+  END_STRUCT;
+  
+  tFeet : STRUCT
+   sHWI_IsInFront   : tHW_SignalBool;
+   sHWI_IsInBack    : tHW_SignalBool;
+   sHWO_MoveToFront : tHW_SignalBool;
+   sHWO_MoveToBack  : tHW_SignalBool;
+  END_STRUCT;
+  
+  TBcuMainModes   : (eInit, eSleep, eManual, eAuto);
+END_TYPE
+
+CONSTANT PRIVATE
+  cTimeToMoveCylinder : DINT := 5000;   // Time => 5000 ms or 5   sec
+  cTimeToMovePin      : DINT := 2500;   // Time => 2500 ms or 2,5 sec
+  cTimeIniOff         : DINT := 2000;   // Time => 2000 ms or 2,0 sec
+END_CONSTANT
+
+VAR PRIVATE
+  myRob             : MAPTO TRcuRobot;
+  instId            : DINT;    // instance identification number
+  bMappingOk        : BOOL;
+  bHWI_SignalError  : BOOL;
+  bMovementRelease  : BOOL;
+  iModeBCU          : MAPTO DINT;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//  init the I/O's  
+//------------------------------------------------------------------------------------------------------
+ROUTINE InitIO() : BOOL PRIVATE
+ VAR
+  i : SINT;
+  j : SINT;
+ END_VAR
+
+ FOR i:=0 TO (iNumberOfCylinders-1) DO
+     j := myRob.handler.tool.iUsedCylPneuUnit;
+     MapAndCheckBoolIn(yCylinder[i].sHWI_IsUp,     cHWI_CylinderIsUp[myRob.kinListInx][j],     "HWI_Cyl_"+STR(j+1)+"_IsUp");
+     MapAndCheckBoolIn(yCylinder[i].sHWI_IsDown,   cHWI_CylinderIsDown[myRob.kinListInx][j],   "HWI_Cyl_"+STR(j+1)+"_IsDown");
+     MapAndCheckBoolIn(yCylinder[i].sHWO_MoveUp,   cHWO_MoveCylinderUp[myRob.kinListInx][j],   "HWO_MoveCyl_"+STR(j+1)+"_Up");
+     MapAndCheckBoolIn(yCylinder[i].sHWO_MoveDown, cHWO_MoveCylinderDown[myRob.kinListInx][j], "HWO_MoveCyl_"+STR(j+1)+"_Down");
+     IF (gbSimulationOS OR gbFBSSActive) AND bMappingOk THEN //init signal for simulation
+        yCylinder[i].sHWO_MoveUp.bSignal    := TRUE;
+        yCylinder[i].sHWO_MoveDown.bSignal  := FALSE;
+        yCylinder[i].sHWI_IsUp.bSignal      := UPDATE(yCylinder[i].sHWO_MoveUp.bSignal);
+        yCylinder[i].sHWI_IsDown.bSignal    := UPDATE(yCylinder[i].sHWO_MoveDown.bSignal); 
+     END_IF;
+     myRob.handler.tool.iUsedCylPneuUnit := myRob.handler.tool.iUsedCylPneuUnit + 1;
+ END_FOR;
+ 
+ FOR i:=0 TO (iNumberOfFeet-1) DO
+     j := myRob.handler.tool.iUsedFeetPneuUnit;
+     MapAndCheckBoolIn(yFeet[i].sHWI_IsInFront,   cHWI_FootIsInFront[myRob.kinListInx][j],   "HWI_Foot_"+STR(j+1)+"_IsInFront");
+     MapAndCheckBoolIn(yFeet[i].sHWI_IsInBack,    cHWI_FootIsInBack[myRob.kinListInx][j],    "HWI_Foot_"+STR(j+1)+"_IsInBack");
+     MapAndCheckBoolIn(yFeet[i].sHWO_MoveToFront, cHWO_MoveFootToFront[myRob.kinListInx][j], "HWO_MoveFoot_"+STR(j+1)+"_MoveToFront");
+     MapAndCheckBoolIn(yFeet[i].sHWO_MoveToBack,  cHWO_MoveFootToBack[myRob.kinListInx][j],  "HWO_MoveFoot_"+STR(j+1)+"_MoveToBack");
+     IF (gbSimulationOS OR gbFBSSActive) AND bMappingOk THEN //init signal for simulation
+        yFeet[i].sHWO_MoveToFront.bSignal := FALSE;
+        yFeet[i].sHWO_MoveToBack.bSignal  := TRUE;
+        yFeet[i].sHWI_IsInFront.bSignal   := UPDATE(yFeet[i].sHWO_MoveToFront.bSignal);
+        yFeet[i].sHWI_IsInBack.bSignal    := UPDATE(yFeet[i].sHWO_MoveToBack.bSignal);
+     END_IF;
+     myRob.handler.tool.iUsedFeetPneuUnit := myRob.handler.tool.iUsedFeetPneuUnit + 1;
+ END_FOR;
+ 
+ iModeBCU := MAPX(cSV_ModeBCU[myRob.kinListInx]);
+ IF NOT IS_MAPPED(iModeBCU) THEN 
+    bMappingOk := FALSE;
+    RcuSetMessageOnce(TRcuPneuCyl_ErrVarNotMapped, myRob.kinListInx, 1, 0, "TRcuPneuUnit.InitIO", cSV_ModeBCU[myRob.kinListInx]);
+ END_IF;
+ RETURN bMappingOk;  
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  keep update functions alive
+//------------------------------------------------------------------------------------------------------
+ROUTINE RunUpdate() PRIVATE
+ VAR
+  i : SINT;
+ END_VAR
+  
+  //_stat information of all inputs from KEBA
+  bHWI_SignalError := UPDATE(FALSE);
+  FOR i:=0 TO (iNumberOfCylinders-1) DO    
+      bHWI_SignalError := UPDATE(THIS OR yCylinder[i].sHWI_IsUp.bError OR yCylinder[i].sHWI_IsDown.bError);
+  END_FOR;
+  FOR i:=0 TO (iNumberOfFeet-1) DO
+      bHWI_SignalError := UPDATE(THIS OR yFeet[i].sHWI_IsInFront.bError OR yFeet[i].sHWI_IsInBack.bError);
+  END_FOR;
+  //Bypass signal (all cylinders are up and all feet are in back position)
+  bInBypass := UPDATE(NOT bHWI_SignalError);
+  FOR i:=0 TO (iNumberOfCylinders-1) DO    
+      bInBypass := UPDATE(THIS AND yCylinder[i].sHWI_IsUp.bSignal);
+  END_FOR;
+  FOR i:=0 TO (iNumberOfFeet-1) DO
+      bInBypass := UPDATE(THIS AND yFeet[i].sHWI_IsInBack.bSignal);
+  END_FOR; 
+  
+  bTeachModeRelease := UPDATE(((myRob.mainModeMgr.mode = ciT1) OR (myRob.mainModeMgr.mode = ciT2)) AND myRob.fieldbusIn.Deadman.svBool);
+  bManualRelease    := UPDATE((iModeBCU = eManual) AND (myRob.mainModeMgr.mode = ciAuto));
+  bMovementRelease  := UPDATE(myRob.svMotionAllowed AND ((NOT myRob.fieldbusIn.IgnorePartControl.svBool) OR gbSimulationOS) AND (NOT bHWI_SignalError));
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  information for TeachView
+//------------------------------------------------------------------------------------------------------
+ROUTINE Cyclic() PRIVATE
+ VAR
+  chgModeBCU : BOOL;
+  chgModeRob : BOOL;
+  chgDeadMan : BOOL;
+ END_VAR
+ 
+  chgModeBCU := IS_CHANGED(iModeBCU);
+  chgModeRob := IS_CHANGED(myRob.mainModeMgr.mode);
+  chgDeadMan := IS_CHANGED(myRob.fieldbusIn.Deadman.svBool);
+  WHILE TRUE DO
+    iStateMainMode := 0;
+    iStateRobMode  := 0;
+    iStateDeadman  := 0;
+    IF (myRob.mainModeMgr.mode = ciSleep) OR (myRob.mainModeMgr.mode = ciT1) OR (myRob.mainModeMgr.mode = ciT2) THEN
+       iStateMainMode := 1;
+    END_IF;
+    IF (myRob.mainModeMgr.mode = ciT1) OR (myRob.mainModeMgr.mode = ciT2) THEN
+       iStateRobMode := 1;
+    END_IF;
+    IF myRob.fieldbusIn.Deadman.svBool THEN
+       iStateDeadman := 1;
+    END_IF;
+    chgModeBCU := FALSE;
+    chgModeRob := FALSE;
+    chgDeadMan := FALSE;
+    WAIT chgModeBCU OR chgModeRob OR chgDeadMan;
+  END_WHILE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a single bool Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckBoolIn(bInput : tHW_SignalBool; sSvVarName : STRING; sSwoName : STRING) PRIVATE
+
+  bInput.bSignal := MAPX(sSvVarName);    
+  IF NOT IS_MAPPED(bInput.bSignal) THEN
+     bMappingOk := FALSE;
+     RcuSetMessageOnce(TRcuPneuCyl_ErrMapToHWFailed, myRob.kinListInx, 1, 0, "TRcuPneuUnit.MapAndCheckBoolIn", sSvVarName);
+  ELSE   
+     sSwoName := myRob.kinematic.mName + ".handler." + sName + "." + sSwoName;
+     SwoAddBoolVariable(bInput.bSignal, sSwoName);
+     bInput.bError := MAPX(sSvVarName + "_stat");
+     IF NOT IS_MAPPED(bInput.bError) THEN
+        bMappingOk := FALSE;
+        RcuSetMessageOnce(TRcuPneuCyl_ErrMapToHWFailed, myRob.kinListInx, 2, 0, "TRcuPneuUnit.MapAndCheckBoolIn", sSvVarName + "_stat");
+     END_IF;
+  END_IF;
+    
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+//   handling of the cylinder 
+//----------------------------------------------------------------------------------------
+ROUTINE MoveCylinder() PRIVATE
+ VAR
+   i         : SINT;
+   bInPos    : BOOL;
+   bTimeOut  : BOOL;
+ END_VAR
+   
+ WHILE TRUE DO  
+   KeepCylinderUp();
+   WAIT (eOrder <> NoOrder);
+   IF bMovementRelease THEN
+      CASE eOrder OF
+        CylinderUp:    //open valves to move up
+                       IF NOT (AllFeetInBackPos() OR bMoveWithoutCheck) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrWrngPosFeet, myRob.kinListInx, 1, 0, "TRcuPneuUnit.MoveCylinder");
+                       ELSIF (NOT AllCylindersUp()) OR bMoveWithoutCheck THEN
+                          FOR i:=0 TO (iNumberOfCylinders-1) DO
+                              yCylinder[i].sHWO_MoveDown.bSignal := FALSE; 
+                              yCylinder[i].sHWO_MoveUp.bSignal   := TRUE;  
+                          END_FOR;
+                          bTimeOut := FALSE;                          
+                          SysTimerSet(cTimeToMoveCylinder, bTimeOut); 
+                       END_IF;
+                       //check if cylinder is in target pos or timeout
+                       bInPos := AllCylindersUp();                         
+                       WHILE bMovementRelease AND NOT (bInPos OR bTimeOut) DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllCylindersUp();
+                       END_WHILE;  
+                       
+                       IF NOT (AllFeetInBackPos() OR bMoveWithoutCheck) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move up feet are not in back pos");
+                       ELSIF bInPos THEN  
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder is up now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 1, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move up but bus error detected");
+                       ELSIF AllCylindersDown() THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 1, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move up but initiator feedback stays in pos down"); 
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 1, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylindes should move up but did not reach target position");                  
+                       END_IF;
+                       
+        CylinderDown:  //open valves to move down
+                       IF NOT (AllFeetInBackPos() OR bMoveWithoutCheck) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrWrngPosFeet, myRob.kinListInx, 2, 0, "TRcuPneuUnit.MoveCylinder");
+                       ELSIF (NOT AllCylindersDown()) OR bMoveWithoutCheck  THEN
+                          FOR i:=0 TO (iNumberOfCylinders-1) DO
+                              yCylinder[i].sHWO_MoveUp.bSignal   := FALSE;
+                              yCylinder[i].sHWO_MoveDown.bSignal := TRUE;   
+                          END_FOR;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMoveCylinder, bTimeOut); 
+                       END_IF;
+                       //check if cylinder is in target pos or timeout
+                       bInPos := AllCylindersDown();                         
+                       WHILE bMovementRelease AND NOT (bInPos OR bTimeOut) DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllCylindersDown();
+                       END_WHILE;  
+                       
+                       IF NOT (AllFeetInBackPos() OR bMoveWithoutCheck) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move down feet are not in back pos");
+                       ELSIF bInPos THEN  
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder is down now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 2, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move up but bus error detected");
+                       ELSIF AllCylindersUp() THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 2, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move down but initiator feedback stays in pos up"); 
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 2, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Cylinder should move down but did not reach target position");                  
+                       END_IF;
+      
+        Foot1Front:    //open valves to move foot out
+                       IF NOT (AllCylindersDown() OR bMoveWithoutCheck) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHookCylNotDown, myRob.kinListInx, 3, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move out but cylinder isn't down");
+                       ELSIF (NOT yFeet[0].sHWI_IsInFront.bSignal) OR bMoveWithoutCheck THEN
+                          yFeet[0].sHWO_MoveToBack.bSignal  := FALSE;
+                          yFeet[0].sHWO_MoveToFront.bSignal := TRUE;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if foot is in target pos or timeout
+                       WAIT (yFeet[0].sHWI_IsInFront.bSignal AND NOT yFeet[0].sHWI_IsInBack.bSignal) OR (NOT bMovementRelease) OR bTimeOut;
+                       IF (yFeet[0].sHWI_IsInFront.bSignal AND NOT yFeet[0].sHWI_IsInBack.bSignal) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 is out now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 3, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move out but bus error detected");
+                       ELSIF yFeet[0].sHWI_IsInBack.bSignal THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 3, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move out but stays in pos in");
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 3, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move out but did not reach target position");                  
+                       END_IF;
+                       
+        Foot1Back:     //open valves to move foot in
+                       IF (NOT yFeet[0].sHWI_IsInBack.bSignal) OR bMoveWithoutCheck THEN
+                          yFeet[0].sHWO_MoveToFront.bSignal := FALSE;
+                          yFeet[0].sHWO_MoveToBack.bSignal  := TRUE;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if foot is in target pos or timeout
+                       WAIT (yFeet[0].sHWI_IsInBack.bSignal AND NOT yFeet[0].sHWI_IsInFront.bSignal) OR (NOT bMovementRelease) OR bTimeOut;
+                       IF (yFeet[0].sHWI_IsInBack.bSignal AND NOT yFeet[0].sHWI_IsInFront.bSignal) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 is in now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 4, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move in but bus error detected");
+                       ELSIF yFeet[0].sHWI_IsInFront.bSignal THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 4, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move out but stays in pos in");
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 4, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot1 should move in but did not reach target position");                  
+                       END_IF;
+                       
+         Foot2Front:   //open valves to move foot out
+                       IF NOT (AllCylindersDown() OR bMoveWithoutCheck) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHookCylNotDown, myRob.kinListInx, 5, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move out but cylinder isn't down");
+                       ELSIF (NOT yFeet[1].sHWI_IsInFront.bSignal) OR bMoveWithoutCheck THEN
+                          yFeet[1].sHWO_MoveToBack.bSignal  := FALSE;
+                          yFeet[1].sHWO_MoveToFront.bSignal := TRUE;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if foot is in target pos or timeout
+                       WAIT (yFeet[1].sHWI_IsInFront.bSignal AND NOT yFeet[1].sHWI_IsInBack.bSignal) OR (NOT bMovementRelease) OR bTimeOut;
+                       IF (yFeet[1].sHWI_IsInFront.bSignal AND NOT yFeet[1].sHWI_IsInBack.bSignal) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 is out now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 5, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move out but bus error detected");
+                       ELSIF yFeet[1].sHWI_IsInBack.bSignal THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 5, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move out but stays in pos in");
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 5, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move out but did not reach target position");                  
+                       END_IF;
+                       
+        Foot2Back:     //open valves to move foot in
+                       IF (NOT yFeet[1].sHWI_IsInBack.bSignal) OR bMoveWithoutCheck THEN
+                          yFeet[1].sHWO_MoveToFront.bSignal := FALSE;
+                          yFeet[1].sHWO_MoveToBack.bSignal  := TRUE;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if foot is in target pos or timeout
+                       WAIT (yFeet[1].sHWI_IsInBack.bSignal AND NOT yFeet[1].sHWI_IsInFront.bSignal) OR (NOT bMovementRelease) OR bTimeOut;
+                       IF (yFeet[1].sHWI_IsInBack.bSignal AND NOT yFeet[1].sHWI_IsInFront.bSignal) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 is in now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 6, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move in but bus error detected");
+                       ELSIF yFeet[1].sHWI_IsInFront.bSignal THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 6, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move out but stays in pos in");
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 6, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot2 should move in but did not reach target position");                  
+                       END_IF;
+                       
+        Foot3Front:    //open valves to move foot out
+                       IF NOT (AllCylindersDown() OR bMoveWithoutCheck) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHookCylNotDown, myRob.kinListInx, 7, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move out but cylinder isn't down");
+                       ELSIF (NOT yFeet[2].sHWI_IsInFront.bSignal) OR bMoveWithoutCheck THEN
+                          yFeet[2].sHWO_MoveToBack.bSignal  := FALSE;
+                          yFeet[2].sHWO_MoveToFront.bSignal := TRUE;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if foot is in target pos or timeout
+                       WAIT (yFeet[2].sHWI_IsInFront.bSignal AND NOT yFeet[2].sHWI_IsInBack.bSignal) OR (NOT bMovementRelease) OR bTimeOut;
+                       IF (yFeet[2].sHWI_IsInFront.bSignal AND NOT yFeet[2].sHWI_IsInBack.bSignal) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 is out now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 7, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move out but bus error detected");
+                       ELSIF yFeet[2].sHWI_IsInBack.bSignal THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 7, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move out but stays in pos in");
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 7, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move out but did not reach target position");                  
+                       END_IF;
+                       
+        Foot3Back:     //open valves to move foot in
+                       IF (NOT yFeet[2].sHWI_IsInBack.bSignal) OR bMoveWithoutCheck THEN
+                          yFeet[2].sHWO_MoveToFront.bSignal := FALSE;
+                          yFeet[2].sHWO_MoveToBack.bSignal  := TRUE;
+                          bTimeOut := FALSE;
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if foot is in target pos or timeout
+                       WAIT (yFeet[2].sHWI_IsInBack.bSignal AND NOT yFeet[2].sHWI_IsInFront.bSignal) OR (NOT bMovementRelease) OR bTimeOut;
+                       IF (yFeet[2].sHWI_IsInBack.bSignal AND NOT yFeet[2].sHWI_IsInFront.bSignal) THEN
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 is in now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 8, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move in but bus error detected");
+                       ELSIF yFeet[2].sHWI_IsInFront.bSignal THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 8, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move out but stays in pos in");
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 8, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "Foot3 should move in but did not reach target position");                  
+                       END_IF;
+        AllFeetFront:  //open valves to move foot out
+                       IF NOT (AllCylindersDown() OR bMoveWithoutCheck) THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHookCylNotDown, myRob.kinListInx, 9, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move out but cylinder isn't down");
+                       ELSIF (NOT AllFeetInFrontPos()) OR bMoveWithoutCheck THEN
+                          FOR i:=0 TO (iNumberOfFeet-1) DO
+                              yFeet[i].sHWO_MoveToBack.bSignal  := FALSE;
+                              yFeet[i].sHWO_MoveToFront.bSignal := TRUE;
+                          END_FOR;
+                          bTimeOut := FALSE;                          
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if cylinder is in target pos or timeout
+                       bInPos := AllFeetInFrontPos();                         
+                       WHILE bMovementRelease AND NOT (bInPos OR bTimeOut) DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllFeetInFrontPos();
+                       END_WHILE;
+                       IF bInPos THEN  
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet are out now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 9, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move out but bus error detected");
+                       ELSIF AllFeetInBackPos() THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 9, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move out but initiator feedback stays in pos back"); 
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 9, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move out but did not reach target position");                  
+                       END_IF;
+        AllFeetBack:   //open valves to move foot out
+                       IF (NOT AllFeetInBackPos()) OR bMoveWithoutCheck THEN
+                          FOR i:=0 TO (iNumberOfFeet-1) DO
+                              yFeet[i].sHWO_MoveToBack.bSignal  := TRUE;
+                              yFeet[i].sHWO_MoveToFront.bSignal := FALSE;
+                          END_FOR;
+                          bTimeOut := FALSE;                          
+                          SysTimerSet(cTimeToMovePin, bTimeOut); 
+                       END_IF;
+                       //check if cylinder is in target pos or timeout
+                       bInPos := AllFeetInBackPos();                         
+                       WHILE bMovementRelease AND NOT (bInPos OR bTimeOut) DO 
+                          myRob.WaitMcMicroCycles(1);
+                          bInPos := AllFeetInBackPos();
+                       END_WHILE;
+                       IF bInPos THEN  
+                          eOrder := NoOrder;
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet are in now");
+                       ELSIF bHWI_SignalError THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrHwInputs, myRob.kinListInx, 10, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move in but bus error detected");
+                       ELSIF AllFeetInFrontPos() THEN
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrNoMovement, myRob.kinListInx, 10, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move in but initiator feedback stays in pos front"); 
+                       ELSIF bTimeOut THEN    
+                          RcuSetMessageOnce(TRcuPneuCyl_ErrTargetPos, myRob.kinListInx, 9, 0, "TRcuPneuUnit.MoveCylinder");
+                          myRob.logger.SetLoggerStep(myRob.handler.iLoggerNumber, "All feet should move in but did not reach target position");                  
+                       END_IF;        
+      END_CASE;
+      SysTimerClear(bTimeOut); 
+   ELSE
+      RcuSetMessageOnce(TRcuPneuCyl_ErrCondition, myRob.kinListInx, 1, 0, "TRcuPneuUnit.MoveCylinder"); 
+      eOrder := NoOrder;
+   END_IF;
+   
+   IF (eOrder <> NoOrder) THEN
+      ResetOutputs(bTeachModeRelease OR bManualRelease);
+      WAIT bMovementRelease;
+      KeepCylinderUp();
+   END_IF;
+   
+ END_WHILE;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+//   Set all valve outputs to FALSE
+//----------------------------------------------------------------------------------------
+ROUTINE ResetOutputs(deleteOrder : BOOL) PRIVATE
+ VAR 
+  i : SINT;
+ END_VAR 
+ 
+  IF deleteOrder THEN
+     eOrder := NoOrder;
+     bMoveWithoutCheck := FALSE;
+  END_IF;
+  FOR i:=0 TO (iNumberOfCylinders-1) DO    
+      yCylinder[i].sHWO_MoveUp.bSignal   := FALSE;
+      yCylinder[i].sHWO_MoveDown.bSignal := FALSE;
+  END_FOR;
+  FOR i:=0 TO (iNumberOfFeet-1) DO
+      yFeet[i].sHWO_MoveToFront.bSignal := FALSE;
+      yFeet[i].sHWO_MoveToBack.bSignal  := FALSE; 
+  END_FOR;                              
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+//   Retruns TRUE when feedback of initiator (Position Up) received from all cylinders
+//----------------------------------------------------------------------------------------
+ROUTINE AllCylindersUp() : BOOL PRIVATE
+ VAR 
+  i   : SINT;
+  ret : BOOL := TRUE;
+ END_VAR
+ 
+  FOR i:=0 TO (iNumberOfCylinders-1) DO 
+      IF (NOT yCylinder[i].sHWI_IsUp.bSignal) OR yCylinder[i].sHWI_IsDown.bSignal THEN
+         ret := FALSE;
+      END_IF;
+  END_FOR;
+  RETURN ret;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+//   Retruns TRUE when feedback of initiator (Position Down) received from all cylinders
+//----------------------------------------------------------------------------------------
+ROUTINE AllCylindersDown() : BOOL PRIVATE
+ VAR 
+  i   : SINT;
+  ret : BOOL := TRUE;
+ END_VAR
+ 
+  FOR i:=0 TO (iNumberOfCylinders-1) DO 
+      IF (NOT yCylinder[i].sHWI_IsDown.bSignal) OR yCylinder[i].sHWI_IsUp.bSignal THEN
+         ret := FALSE;
+      END_IF;
+  END_FOR;
+  RETURN ret;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+//   Retruns TRUE when feedback of initiator (Position Back) received from all feet
+//----------------------------------------------------------------------------------------
+ROUTINE AllFeetInBackPos() : BOOL PRIVATE
+ VAR 
+  i   : SINT;
+  ret : BOOL := TRUE;
+ END_VAR
+ 
+  FOR i:=0 TO (iNumberOfFeet-1) DO
+      IF (NOT yFeet[i].sHWI_IsInBack.bSignal) OR yFeet[i].sHWI_IsInFront.bSignal THEN
+         ret := FALSE;
+      END_IF;
+  END_FOR;
+  RETURN ret;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+//   Retruns TRUE when feedback of initiator (Position Front) received from all feet
+//----------------------------------------------------------------------------------------
+ROUTINE AllFeetInFrontPos() : BOOL PRIVATE
+ VAR 
+  i   : SINT;
+  ret : BOOL := TRUE;
+ END_VAR
+ 
+  FOR i:=0 TO (iNumberOfFeet-1) DO
+      IF (NOT yFeet[i].sHWI_IsInFront.bSignal) OR yFeet[i].sHWI_IsInBack.bSignal THEN
+         ret := FALSE;
+      END_IF;
+  END_FOR;
+  RETURN ret;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   interface to ecoscreen
+//------------------------------------------------------------------------------------------------------
+ROUTINE EcoScreenInterface() PRIVATE
+ VAR
+  i     : SINT;
+  iSig  : SINT;
+  bChg  : BOOL;
+  yChg  : ARRAY [cgiMaxPneuDev] OF BOOL; 
+ END_VAR
+ 
+  WAIT bEcoScreenMapped;
+  myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].mRelease := UPDATE(bManualRelease);
+  FOR i:=0 TO iNumberOfCylinders-1 DO
+      myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].yCylinder[i].bUp   := UPDATE(yCylinder[i].sHWI_IsUp.bSignal);
+      yChg[iSig] := IS_CHANGED(myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yCylinder[i].bUp);
+      iSig := iSig + 1;
+      myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].yCylinder[i].bDown := UPDATE(yCylinder[i].sHWI_IsDown.bSignal);
+      yChg[iSig] := IS_CHANGED(myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yCylinder[i].bDown);
+      iSig := iSig + 1;
+      myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].yCylinder[i].bShow := TRUE;
+  END_FOR;
+  FOR i:=0 TO iNumberOfFeet-1 DO
+      myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].yFoot[i].bFront  := UPDATE(yFeet[i].sHWI_IsInFront.bSignal);
+      yChg[iSig] := IS_CHANGED(myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[i].bFront);
+      iSig := iSig + 1;
+      myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].yFoot[i].bBack   := UPDATE(yFeet[i].sHWI_IsInBack.bSignal);
+      yChg[iSig] := IS_CHANGED(myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[i].bBack);
+      iSig := iSig + 1;
+      myRob.ecoscreen.HandlerOutputs.yPneuUnit[iUnitNr].yFoot[i].bShow := TRUE;
+  END_FOR;
+  yChg[iSig] := IS_CHANGED(myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].sAllFeet.bFront);
+  iSig := iSig + 1;
+  yChg[iSig] := IS_CHANGED(myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].sAllFeet.bBack);
+  iSig := iSig + 1;
+  
+  bChg      := IS_CHANGED(yChg);
+  WHILE TRUE DO
+    WAIT bChg;
+    FOR i:=0 TO (cgiMaxPneuDev-1) DO
+       yChg[i] := FALSE;
+    END_FOR;
+    bChg := FALSE;
+    IF bManualRelease THEN
+       IF (iNumberOfCylinders > 0) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yCylinder[0].bUp THEN
+          HmiSetOrder(CylinderUp);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yCylinder[0].bUp := FALSE;
+       ELSIF (iNumberOfCylinders > 0) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yCylinder[0].bDown THEN
+          HmiSetOrder(CylinderDown);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yCylinder[0].bDown := FALSE;
+       ELSIF (iNumberOfFeet > 0) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[0].bFront THEN  
+          HmiSetOrder(Foot1Front);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[0].bFront := FALSE;
+       ELSIF (iNumberOfFeet > 0) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[0].bBack THEN
+          HmiSetOrder(Foot1Back);
+          WAIT (eOrder = NoOrder) OR bChg;   
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[0].bBack := FALSE;
+       ELSIF (iNumberOfFeet > 1) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[1].bFront THEN  
+          HmiSetOrder(Foot2Front);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[1].bFront := FALSE;
+       ELSIF (iNumberOfFeet > 1) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[1].bBack THEN
+          HmiSetOrder(Foot2Back);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[1].bBack := FALSE; 
+       ELSIF (iNumberOfFeet > 2) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[2].bFront THEN  
+          HmiSetOrder(Foot3Front);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[2].bFront := FALSE;
+       ELSIF (iNumberOfFeet > 2) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[2].bBack THEN
+          HmiSetOrder(Foot3Back);
+          WAIT (eOrder = NoOrder) OR bChg;  
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].yFoot[2].bBack := FALSE;
+       ELSIF (iNumberOfFeet > 0) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].sAllFeet.bFront THEN  
+          HmiSetOrder(AllFeetFront);
+          WAIT (eOrder = NoOrder) OR bChg;   
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].sAllFeet.bFront := FALSE;
+       ELSIF (iNumberOfFeet > 0) AND myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].sAllFeet.bBack THEN  
+          HmiSetOrder(AllFeetBack);
+          WAIT (eOrder = NoOrder) OR bChg;
+          myRob.ecoscreen.HandlerInputs.yPneuUnit[iUnitNr].sAllFeet.bBack := FALSE;
+       END_IF;  
+       KeepCylinderUp(); 
+    END_IF;
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   systemroutine - controller bootup
+//------------------------------------------------------------------------------
+ROUTINE NEW()
+  instId        := RcuGetInstanceId(); //instance identification number (for Errors)
+END_ROUTINE

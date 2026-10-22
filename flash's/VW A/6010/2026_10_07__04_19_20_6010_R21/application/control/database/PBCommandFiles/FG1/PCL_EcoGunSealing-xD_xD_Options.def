@@ -1,0 +1,441 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 14.02.2014  | SMOH   | Encompass ExhaustUnit Option into Option12 + Delete Option6, Option17 and Option 9+ Include Temp HE_2 for PCL
+//  v2_01.03.00  | 15.04.2014  | SMOH   | Option22 converted to BoostAirSupply
+//  v2_01.04.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.05.00  | 15.12.2014  | STL    | AddOn: Nozzle exchanger
+//  v2_01.06.00  | 18.11.2015  | STL    | Change: Option26 (BAP1P) (0 -> 1)
+//  v2_01.07.00  | 10.10.2016  | RHI    | AddOn: KeStudio XML Version
+//  v2_01.08.00  | 17.10.2016  | STL    | AddOn: HelpGun as option
+//  v2_01.09.00  | 21.11.2016  | KLCH   | Change: new option OptionGun; modification of items
+//  v2_01.10.00  | 21.12.2016  | RHI    | AddOn: Option Cooling Device
+//  v2_01.11.00  | 12.01.2017  | KLCH   | Change: Option5 (BMV2PE) (0 -> 1)
+//  v2_01.12.00  | 23.08.2017  | KLCH   | Change: Option14 (Profibus -> Sercos III); TempHE (1 -> 0); EcoTempAxis1 (Not existing -> Air cooled large); EcoTempAxis3 (Not existing -> Air cooled small); ElectricalVersion(Version 1 -> Version 2)
+//  v2_01.13.00  | 12.12.2017  | KLCH   | Change: modified selection for circulation
+//  v2_01.14.00  | 20.03.2018  | KTO    | AddOn: KeStudio Version 3.20+ and RCMP / RCMP2, set "KeStudio 3.20+ and RCMP (Sercos3 drives)" as default
+//  v2_01.15.00  | 24.04.2018  | KLCH   | AddOn: OptionRobType, OptionSafetyType
+//  v2_01.16.00  | 02.10.2018  | KLCH   | Change: modified selection for renamed RobType (OptionRobType), SafetyType (OptionSafetyType)
+
+[Option1]
+Name=Option 1
+Description=Process
+Visible=1
+Enable=0
+Script=
+Type=Combobox
+Item1=EcoDose PCL|EcoDose_PCL
+Item2=EcoDose SM|EcoDose_SM
+Item3=EcoDose PM|EcoDose_PM
+Item4=EcoDose ES|EcoDose_ES
+Item5=EcoDose PCL/PCL|EcoDose_PCL_PCL
+Item6=EcoDose SM/PCL|EcoDose_SM_PCL
+Item7=EcoDose SM/SM|EcoDose_SM_SM
+DefaultValue=EcoDose PCL
+
+[Option2]
+Name=Option 2
+Description=Variant
+Visible=1
+Enable=0
+Script=
+Type=Combobox
+Item1=xD|xD
+Item2=xD LASD (HF)|xD_LASD
+Item3=MD|MD
+Item4=Swirl|Swirl
+Item5=IDS|IDS
+DefaultValue=xD
+
+[Option3]
+Name=Option 3
+Description=Sensor (BMV2TE)
+Visible=1
+Enable=1
+Script=Option3.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option4]
+Name=Option 4
+Description=Sensor (BMV2TA)
+Visible=1
+Enable=1
+Script=Option4.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option5]
+Name=Option 5
+Description=Sensor (BMV2PE)
+Visible=1
+Enable=1
+Script=Option5.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option12]
+Name=Option 12
+Description=MD Dump
+Visible=0
+Enable=0
+Script=Option12.PBcf
+Type=Combobox
+Item1=No Dump|No_Dump
+Item2=Dump|Dump
+Item3=Material Exhaust Unit|Material_Exhaust_Unit
+DefaultValue=No Dump
+
+[Option14]
+Name=Option 14
+Description=Drive system
+Visible=1
+Enable=1
+Script=Option14.PBcf
+Type=Combobox
+Item1=Profibus|Profibus
+Item2=Sercos III|SercosIII
+DefaultValue=Profibus
+
+[Option15]
+Name=Option 15
+Description=Changing system MD
+Visible=0
+Enable=0
+Script=Option15.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option18]
+Name=Option 18
+Description=Cleaning system LASD purging water auto
+Visible=1
+Enable=0
+Script=Option18.PBcf
+Type=Combobox
+Item1=No cleaning system|No_CleaningSystem
+Item2=Water quench manual|CleaningSystem_PurgeWaterManual
+Item3=Water quench auto|CleaningSystem_PurgeWaterAuto
+DefaultValue=No cleaning system
+
+[Option20]
+Name=Option 20
+Description=Shot meter single
+Visible=0
+Enable=0
+Script=Option20.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[Option21]
+Name=Option 21
+Description=Air supply cleaning blower
+Visible=1
+Enable=1
+Script=Option21.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[Option26]
+Name=Option 26
+Description=Sensor (BAP1P)
+Visible=1
+Enable=1
+Script=Option26.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[Option27]
+Name=Option 27
+Description=Sensor (BMV1T)
+Visible=1
+Enable=1
+Script=Option27.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[OptionGun]
+Name=Option Gun
+Description=Type of gun
+Visible=1
+Enable=0
+Script=OptionGun.PBcf
+Type=Combobox
+Item1=xD|Gun_xD
+Item2=MD-Air|Gun_MD_Air
+Item3=MD-El|Gun_MD_El
+Item4=Swirl-Duerr|Gun_Swirl_Duerr
+Item5=Swirl-Graco|Gun_Swirl_Graco
+Item6=IDS|Gun_IDS
+DefaultValue=xD
+
+[OptionShotMeter]
+Name=Option ShotMeter
+Description=Type of ShotMeter
+Visible=0
+Enable=0
+Script=OptionShotMeter.PBcf
+Type=Combobox
+Item1=None|None
+Item2=113 ccm|SM_113ccm
+Item3=590 ccm|SM_590ccm
+Item4=300 ccm|SM_300ccm
+Item5=600 ccm|SM_600ccm
+DefaultValue=None
+
+[BoostAirSupply]
+Name=BoostAirSupply
+Description=Booster or additional air supply
+Visible=1
+Enable=1
+Script=BoostAirSupply.PBcf
+Type=Combobox
+Item1=Not existing|No_BoostAirSupply
+Item2=Booster with BHD1|Booster_BHD1
+Item3=Valve YLV2 with BHD1|YLV2_BHD1
+DefaultValue=Not existing
+
+[TempHE]
+Name=TempHE
+Description=Temperature controller (Single) for material 1
+Visible=1
+Enable=1
+Script=TempHE.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHE_2]
+Name=TempHE_2
+Description=Temperature controller (Single) for material 2
+Visible=0
+Enable=0
+Script=TempHE_2.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone1]
+Name=Heating zone 1
+Description=Heating zone before axis 7 (zone_11)
+Visible=1
+Enable=1
+Script=TempHeatZone1.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone2]
+Name=Heating zone 2
+Description=Heating zone axis 7 (zone_12)
+Visible=1
+Enable=1
+Script=TempHeatZone2.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone3]
+Name=Heating zone 3 and 4
+Description=Heating zones pistons (zone_2a, zone_2b)
+Visible=1
+Enable=0
+Script=TempHeatZone3.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone4]
+Name=Heating zone 4
+Description=Heating zone piston 2 (zone_2b)
+Visible=0
+Enable=0
+Script=
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone5]
+Name=Heating zone 5
+Description=Heating zone axis 1/2 (zone_51)
+Visible=1
+Enable=1
+Script=TempHeatZone5.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone6]
+Name=Heating zone 6
+Description=Heating zone axis 2/3 (zone_52)
+Visible=1
+Enable=1
+Script=TempHeatZone6.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone7]
+Name=Heating zone 7
+Description=Heating zone gun (zone_7)
+Visible=1
+Enable=1
+Script=TempHeatZone7.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone8]
+Name=Heating zone 8
+Description=Heating zone water quench (zone_SW1)
+Visible=1
+Enable=0
+Script=TempHeatZone8.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[TempHeatZone9]
+Name=Heating zone 9
+Description=Heating zone ShotMeter (zone_3)
+Visible=1
+Enable=0
+Script=TempHeatZone9.PBcf
+Type=Checkbox
+DefaultValue=0
+
+[EcoTempAxis1]
+Name=Temperature controller (Peltier) axis 1
+Description=Temperature controller (Peltier) at axis 1
+Visible=1
+Enable=1
+Script=EcoTempAxis1.PBcf
+Type=Combobox
+Item1=Not existing|No_EcoTempAxis1
+Item2=Air cooled large|EcoTempAxis1_Air_large
+Item3=Air cooled small|EcoTempAxis1_Air_small
+Item4=Water cooled large|EcoTempAxis1_Water_large
+Item5=Water cooled small|EcoTempAxis1_Water_small
+DefaultValue=Air cooled large
+
+[EcoTempAxis3]
+Name=Temperature controller (Peltier) axis 3
+Description=Temperature controller (Peltier) at axis 3
+Visible=1
+Enable=1
+Script=EcoTempAxis3.PBcf
+Type=Combobox
+Item1=Not existing|No_EcoTempAxis3
+Item2=Air cooled small|EcoTempAxis3_Air_small
+Item3=Water cooled small|EcoTempAxis3_Water_small
+DefaultValue=Air cooled small
+
+[MaterialValve1]
+Name=MaterialValve1
+Description=Material valve (MV1)
+Visible=1
+Enable=1
+Script=MaterialValve1.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[NumberOfMainNeedles]
+Name=NumberOfMainNeedles
+Description=Number of MainNeedles
+Visible=1
+Enable=1
+Script=NumberOfMainNeedles.PBcf
+Type=Combobox
+Item1=1 MainNeedle|1
+Item2=2 MainNeedles|2
+Item3=3 MainNeedles|3
+DefaultValue=3 MainNeedles
+
+[NozzleExchanger]
+Name=NozzleExchanger
+Description=Type of NozzleExchanger
+Visible=1
+Enable=1
+Script=NozzleExchanger.PBcf
+Type=Combobox
+Item1=None|0
+Item2=3 Places|3
+Item3=6 Places|6
+Item4=10 Places|10
+DefaultValue=None
+
+[Circulation]
+Name=Circulation
+Description=Circulation
+Visible=1
+Enable=1
+Script=Circulation.PBcf
+Type=Combobox
+Item1=Not existing|No_Circulation
+Item2=To return line RL (Standard)|Circ_ToReturnLine
+Item3=On robot only - no RL (Small)|Circ_OnRobot_NoRL
+DefaultValue=To return line RL (Standard)
+
+[HelpGun1]
+Name=HelpGun1
+Description=Help gun (HG1)
+Visible=1
+Enable=1
+Script=HelpGun1.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[OptionCoolingDevice]
+Name=Check cooling device
+Description=Check cooling device
+Visible=1
+Enable=1
+Script=OptionCoolingDevice.PBcf
+Type=Checkbox
+DefaultValue=1
+
+[RobType]
+Name=Robot type
+Description=Robot type
+Visible=1
+Enable=1
+Script=OptionRobType.pbcf
+Type=Combobox
+Item1=No i-generation|RobType_No_iGen
+Item2=RS16i (033i)|RobType_RS16i_033i
+Item3=RS30i (033i)|RobType_RS30i_033i
+Item4=RS60i (033i)|RobType_RS60i_033i
+Item5=RS210i (033i)|RobType_RS210i_033i
+Item6=RS16i on rail (133i)|RobType_RS16i_133i
+Item7=RS30i on rail (133i)|RobType_RS30i_133i
+Item8=RS60i on rail (133i)|RobType_RS60i_133i
+Item9=RS16i on cross rail (133i)|RobType_RS16i_133i_c
+Item10=RS30i on cross rail (133i)|RobType_RS30i_133i_c
+Item11=RS60i on cross rail (133i)|RobType_RS60i_133i_c
+DefaultValue=No i-generation
+
+[SafetyType]
+Name=Safety type
+Description=Specified safety concept
+Visible=1
+Enable=1
+Script=OptionSafetyType.pbcf
+Type=Combobox
+Item1=No safety|NoSafety
+Item2=Safety|Safety
+Item3=SafeRobotics|SafeRobotics
+DefaultValue=No safety
+
+[KeStudio]
+Name=KeStudio XML Version
+Description=Version for generated HW config
+Visible=1
+Enable=1
+Script=KeStudio.PBcf
+Type=Combobox
+Item1=V3.4.4.8 / Cube|V3.4.4.8_CP36x
+Item2=V3.20+ / RCMP (Sercos III drives)|V3.20_RCMP
+Item3=V3.20+ / RCMP2 (EtherCAT drives)|V3.20_RCMP2
+DefaultValue=V3.20+ / RCMP (Sercos III drives)
+
+[ElectricalVersion]
+Name=ElectricalVersion
+Description=Electrical version
+Visible=1
+Enable=0
+Script=
+Type=Combobox
+Item1=Version 1|El_V1
+Item2=Version 2|El_V2
+DefaultValue=Version 2

@@ -1,0 +1,896 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2006 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         15.02.2007                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       TRcuBrakeCheck.tts                                          *
+*    Description: ATEX-BrakeCheck                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 
+*
+iBrakeCheckState | BrakeCheckState
+-----------------|-------------------------
+       0         | eStateInactive
+       1         | eStateCheckRunning
+       2         | eStateOK
+       3         | eStateError
+*)
+
+
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL
+  TBrakeCheckState  : (eStateInactive, eStateCheckRunning, eStateOK, eStateError);
+END_TYPE
+
+TYPE
+  TUserPageData : STRUCT  //data teach view
+    bMovementRelease         : BOOL;
+    bRequestMovementRelease  : BOOL;
+    bStartFromTV             : BOOL;  
+    bCloseBrakeFromTV        : ARRAY [cMcuMaxJ] OF BOOL;
+    bCloseAllBrakes          : BOOL;          
+  END_STRUCT;
+  
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  instId                 : DINT;                     // instance identification number
+  bOnlyPhaseOne          : BOOL;                     // check only phase 1
+  bUseTimer              : BOOL;                     // old version of brakecheck with timer to stop drives
+  bNoTimer               : BOOL := TRUE;             // old version of brakecheck with timer to stop drives
+  bDisableDrives         : BOOL;                     // disable drive start
+  sTimeNextCheck         : STRING[5] := "00:00";     // time till next check necessary to ecoscreen
+  sTimeMovementRel       : STRING[4] :=  "0:00";     // time left provisional movementrelease
+  bBrakeCheckFinished    : BOOL;                     // feedback brake check is finished
+  yCloseBrakeTeachIn     : ARRAY [cMcuMaxJ] OF BOOL; // order to close the brake from TeachIn
+  UserPageData           : TUserPageData;            // teach view
+  BrakeCheckState        : TBrakeCheckState;         // state of the brake check
+  iBrakeCheckState       : DINT;
+  yReleaseButton         : ARRAY [cMcuMaxJ] OF BOOL; //release buttons on userpage
+  autoCheckActive        : BOOL;
+  startGrindInMove       : BOOL;
+  grindingInActive       : BOOL;
+  yAutoCheckAxis         : ARRAY [cMcuMaxJ] OF BOOL;
+  bErrorAutoAxis         : BOOL;
+END_VAR
+
+//-----------------------------------------------------------------------------
+// manage brakecheck and watch for requests
+//-----------------------------------------------------------------------------
+ROUTINE ManageBrakeCheck(locRobot : TRcuRobot)
+  VAR
+    i                  : INT;
+    bDecTimeByFailure  : BOOL;
+    brakeCheckLowSpeed : MAPTO BOOL;
+    dateStr            : STRING;
+    timeStr            : STRING;
+  END_VAR
+  
+  myRobot := MAP(locRobot);
+  IF NOT IS_MAPPED(myRobot) THEN
+     RcuSetMessageOnce(TRcuBrakeCheck_ErrMappingKin, -1, 1, instId, "TRcuBrakeCheck.ManageBrakeCheck");
+     iBrakeCheckState := 3;
+     BrakeCheckState := eStateError;
+     RETURN;
+  END_IF;    
+  
+  //interface ecoscreen
+  IF NOT myRobot.ecoscreen.InterfaceBrakeCheck(myRobot) THEN
+     RETURN;
+  ELSE
+     START ProvisionalMovementRelease();
+  END_IF;
+  
+  START Interface();                //start brakecheck by BCU, Eps, TV
+  START PrintParamInfo();           //print relevant driveparam to telnet
+  START GrindBrakesTV();            //grind in brake from TeachView
+  START GrindBrakesTeachIn();       //grind in brake from TeachIn
+  START BuildButtonRelease();       //release buttons on userpage
+  START ObserveTimer();             //check timer if drives AF
+  bBrakeCheckFinished := FALSE;
+  iBrakeCheckState    := 0;
+  BrakeCheckState     := eStateInactive;
+  
+  brakeCheckLowSpeed := MAPX(cSV_BrakeCheckLowSpeed[myRobot.kinListInx]);
+  IF IS_MAPPED(brakeCheckLowSpeed) THEN
+     brakeCheckLowSpeed := TRUE;
+  END_IF;
+  
+  WHILE TRUE DO
+  
+    WAIT BrakeCheckState = eStateCheckRunning;
+    bBrakeCheckFinished := FALSE;        //only BCU needs this
+    
+    IF NOT myRobot.fixpos.RcuInBrakeCheckPos THEN    //robot in fixpos -brakecheck"
+       RcuSetMessageOnce(TRcuBrakeCheck_ErrNotInBrakePos, myRobot.kinListInx, 1, instId, "TRcuBrakeCheck.ManageBrakeCheck");
+       iBrakeCheckState := 3;
+       BrakeCheckState := eStateError;
+    ELSE
+       //start brake check on each drive
+       FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+          IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated THEN
+             myRobot.drive[i].brakeCheck.iExecState  := 1;
+             myRobot.drive[i].brakeCheck.iSymbol     := 1;
+          ELSIF NOT myRobot.drive[i].hasMotorBrake THEN   
+             myRobot.drive[i].brakeCheck.iExecState  := 1;
+             myRobot.drive[i].brakeCheck.iSymbol     := 0;
+          ELSE
+             myRobot.drive[i].brakeCheck.bCheckRunning := TRUE;
+             START myRobot.drive[i].brakeCheck.CheckSequence();
+          END_IF;
+       END_FOR;
+       //wait until check is finished on all drives
+       FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+           IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated OR NOT myRobot.drive[i].hasMotorBrake THEN
+              Sleep(500);
+           ELSE   
+              WAIT NOT myRobot.drive[i].brakeCheck.bCheckRunning;
+           END_IF;   
+       END_FOR;
+       //get result of check
+       FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+           IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated THEN
+             myRobot.drive[i].brakeCheck.iExecState  := 10;
+             myRobot.drive[i].brakeCheck.iSymbol     := 2;
+             myRobot.drive[i].brakeCheck.bSuccessful := TRUE;
+             myRobot.drive[i].brakeCheck.bFault      := FALSE;
+          ELSIF NOT myRobot.drive[i].hasMotorBrake THEN
+             myRobot.drive[i].brakeCheck.iExecState  := 1;
+             myRobot.drive[i].brakeCheck.iSymbol     := 0;
+             myRobot.drive[i].brakeCheck.bSuccessful := TRUE;
+             myRobot.drive[i].brakeCheck.bFault      := FALSE;
+          ELSE
+             START myRobot.drive[i].brakeCheck.HandleResult();
+          END_IF;
+       END_FOR;
+       
+       bErrorAutoAxis := FALSE;
+       FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+          WAIT myRobot.drive[i].brakeCheck.bFault OR myRobot.drive[i].brakeCheck.bSuccessful;
+          IF myRobot.drive[i].brakeCheck.bFault THEN
+             iBrakeCheckState := 3;
+             BrakeCheckState := eStateError;
+             myRobot.dataRecorder.RecBrakeTest(i+1, FALSE);
+             IF yAutoCheckAxis[i] THEN
+                bErrorAutoAxis := TRUE;
+             END_IF;
+             IF (myRobot.drive[i].brakeCheck.iExecState = 9) THEN // error in phase 2
+                myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Manual brake check not successful - ERROR in phase 2");
+             ELSE
+                myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Manual brake check not successful - ERROR reason=" + STR(myRobot.drive[i].brakeCheck.iExecState));
+             END_IF;
+          ELSE
+             myRobot.dataRecorder.RecBrakeTest(i+1, TRUE);
+             IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated THEN
+                myRobot.loggerDrive.UpdateInfo(myRobot.drive[i].iIecDevIndex, eBrakeTestDone);
+                myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Manual brake check finished successful - drive is simulated");
+             ELSIF NOT myRobot.drive[i].hasMotorBrake THEN
+                myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Manual brake check finished successful - motor has no brake");
+             ELSE
+                myRobot.loggerDrive.UpdateInfo(myRobot.drive[i].iIecDevIndex, eBrakeTestDone);
+                myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Manual brake check finished successful");
+             END_IF;
+          END_IF;
+          IF bUseTimer AND myRobot.drive[i].brakeCheck.bDecTimer THEN
+             bDecTimeByFailure := TRUE;
+          END_IF;
+          BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].autoCheck := FALSE;
+          IF myRobot.drive[i].hasMotorBrake THEN
+             dateStr := RcuDateTimeUtils.GetDateString();
+             timeStr := RcuDateTimeUtils.GetTimeString();
+             BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].testDate := dateStr + " " + timeStr;
+          END_IF;
+          BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].execState := myRobot.drive[i].brakeCheck.iExecState;
+       END_FOR;
+       
+       SaveBrakeTestData();
+    END_IF;
+    
+    IF BrakeCheckState = eStateError THEN     
+       IF bErrorAutoAxis THEN
+          myRobot.interfaceToSCP.SetBrakeCheckResult(FALSE); 
+       ELSE
+          myRobot.interfaceToSCP.SetBrakeCheckResult(TRUE);
+       END_IF;
+       IF bUseTimer THEN //480min = 8h
+          IF bDecTimeByFailure AND (DataATEX[myRobot.kinListInx].iSavedTimerValue > cTimeFailure) THEN
+             DataATEX[myRobot.kinListInx].iSavedTimerValue := cTimeFailure;
+             SaveAtexTimer();
+             ConvertTimerToString(DataATEX[myRobot.kinListInx].iSavedTimerValue);
+          END_IF;
+       END_IF;
+    ELSE
+       iBrakeCheckState := 2;
+       BrakeCheckState := eStateOK;
+       myRobot.fieldbusOut.CheckRequired.svBool := FALSE;
+       myRobot.interfaceToSCP.SetBrakeCheckResult(TRUE);
+       IF (myRobot.mainModeMgr.mode = ciAuto) THEN
+          bBrakeCheckFinished := TRUE;
+       END_IF;
+       IF bUseTimer THEN
+          DataATEX[myRobot.kinListInx].iSavedTimerValue := cTime48Hours;   //2880min = 48hours
+          DataATEX[myRobot.kinListInx].bCheckNecessary  := FALSE;  
+          SaveAtexTimer();
+          bDisableDrives      := FALSE;
+          ConvertTimerToString(DataATEX[myRobot.kinListInx].iSavedTimerValue);
+       END_IF;
+    END_IF;
+    
+    WAIT BrakeCheckState <> eStateCheckRunning;
+    bDecTimeByFailure := FALSE;
+    IF (myRobot.mainModeMgr.mode = ciAuto) THEN
+       START ResetFinishSignal();     //reset signal when robot is back in -home-
+    END_IF;
+    
+  END_WHILE;
+  
+END_ROUTINE  
+
+//-----------------------------------------------------------------------------
+// start brakecheck called by EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE MacroBrakeCheck()
+  
+   WAIT BrakeCheckState <> eStateCheckRunning;  //if check is running, wait until it's finished 
+   iBrakeCheckState := 1;
+   BrakeCheckState := eStateCheckRunning;       //start check
+   WAIT BrakeCheckState <> eStateCheckRunning;  //wait check is finished
+
+END_ROUTINE
+
+(*******************************************************************************
+* private members
+*)
+CONSTANT PRIVATE
+ cTime1Minute         : DINT :=  60000; // 1min =  60000ms
+ cTime48Hours         : INT  :=   2880; // 48h  =   2880min
+ cTimeMovementRelease : DINT := 300000; // 5min = 300000ms
+ cTimeBCUrequest      : INT  :=    240; // 240min until drives were stopped
+ cTimeFailure         : INT  :=    480; //  8h  = 480min
+ cLimitPostWarning    : INT  :=   1440; // 24h  =   1440min
+END_CONSTANT
+
+VAR PRIVATE
+  myRobot                  : MAPTO TRcuRobot;      // mapping to configured robot
+END_VAR
+
+//-----------------------------------------------------------------------------
+// interface to BCU , teachview , ecoscreen
+//-----------------------------------------------------------------------------
+ROUTINE Interface() PRIVATE
+  VAR
+     autoCheckOff : DINT;
+  END_VAR
+  
+  IF NOT IS_MAPPED(myRobot.RcuInterfaceToBCU.bStartBrakeCheck) THEN
+     RETURN;
+  END_IF;
+  IF NOT IS_MAPPED(myRobot.fieldbusOut.BrakeCheckRuns.svBool) THEN
+     RETURN;
+  ELSE   
+     START FeedbackToPLC();
+     IF NOT (CatalogReadInt(giRcBaseHdl, "deactivateAutoBrakeTest", autoCheckOff, TRUE) AND (autoCheckOff = 1)) OR myRobot.interfaceToSCP.bSafeRobotic
+     THEN
+        START AutomaticBrakeTest();
+     END_IF;
+  END_IF;
+  
+  UserPageData.bStartFromTV                      := FALSE;
+  myRobot.RcuInterfaceToBCU.bStartBrakeCheck     := FALSE;
+  myRobot.ecoscreen.sBrakeCheck.sIn.mStartCheck := FALSE;
+  
+  WHILE TRUE DO
+     WAIT UserPageData.bStartFromTV OR myRobot.RcuInterfaceToBCU.bStartBrakeCheck OR
+          myRobot.ecoscreen.sBrakeCheck.sIn.mStartCheck;
+     
+     IF (UserPageData.bStartFromTV AND (myRobot.mainModeMgr.mode > ciAuto)) OR
+        ((myRobot.RcuInterfaceToBCU.bStartBrakeCheck OR 
+          myRobot.ecoscreen.sBrakeCheck.sIn.mStartCheck) AND 
+                     (myRobot.mainModeMgr.mode = ciAuto)) THEN
+         iBrakeCheckState := 1;
+         BrakeCheckState := eStateCheckRunning;
+     
+     END_IF;
+     
+     UserPageData.bStartFromTV                      := FALSE;
+     myRobot.RcuInterfaceToBCU.bStartBrakeCheck     := FALSE;
+     myRobot.ecoscreen.sBrakeCheck.sIn.mStartCheck  := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// tell also the PLC that brakecheck is running
+//-----------------------------------------------------------------------------
+ROUTINE FeedbackToPLC() PRIVATE
+ VAR
+  bChgRunning : BOOL;
+ END_VAR
+ 
+  bChgRunning := IS_CHANGED(BrakeCheckState);
+  WHILE TRUE DO
+    myRobot.fieldbusOut.BrakeCheckRuns.svBool := (BrakeCheckState = eStateCheckRunning);
+    bChgRunning := FALSE;
+    WAIT bChgRunning;
+  END_WHILE;
+  
+END_ROUTINE
+
+ROUTINE AutomaticBrakeTest() PRIVATE
+   VAR
+      chgRobotMode     : BOOL;
+      i                : INT;
+      blockingTime     : DINT := 3600000; // 1h
+      blockTimeOff     : BOOL;
+      dateStr          : STRING;
+      timeStr          : STRING;
+      repeatTest       : BOOL;
+      chgHandMode      : BOOL;
+      startIndex       : INT;
+      stopIndex        : INT;
+      baseA            : REAL;
+      chgGhostNoMotion : BOOL;
+   END_VAR
+   
+   IF (myRobot.kinematic.mRobotTyp = eMcuDoorOpener) THEN
+      myRobot.DebugPrint(eTraceRcuDrive, "automatic brake test : scara");
+      RETURN;
+   END_IF;
+   
+   chgRobotMode := IS_CHANGED(myRobot.mainModeMgr.mode);
+   chgHandMode := IS_CHANGED(myRobot.fieldbusIn.ModeHand.svBool);
+   blockTimeOff := TRUE;
+   CatalogReadReal(myRobot.mcCatHdl, "baseA", baseA, FALSE);
+   chgGhostNoMotion := IS_CHANGED(myRobot.fieldbusIn.GhostNoMotion.svBool);
+   
+   FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+      IF IsPaintArm7VWrist(myRobot) THEN // RPEx43
+         myRobot.DebugPrint(eTraceRcuDrive, "automatic brake test : RPEx43");
+         IF (((i >= 0) AND (i <= 3)) OR (i >= 7)) AND myRobot.drive[i].hasMotorBrake THEN
+            yAutoCheckAxis[i] := TRUE;
+         END_IF;
+      ELSIF myRobot.interfaceToSCP.bSafeRobotic THEN // safe robot mode active
+         myRobot.DebugPrint(eTraceRcuDrive, "automatic brake test : safe robot mode");
+         IF (((i >= 0) AND (i <= 2)) OR (i >= 6)) AND myRobot.drive[i].hasMotorBrake THEN
+            yAutoCheckAxis[i] := TRUE;
+         END_IF;
+      ELSIF rAbs(baseA) > 5.0 THEN // turned robot base
+         myRobot.DebugPrint(eTraceRcuDrive, "automatic brake test : turned robot base");
+         IF (i >= 0) AND (i <= 2) AND myRobot.drive[i].hasMotorBrake THEN
+            yAutoCheckAxis[i] := TRUE;
+         END_IF;
+      ELSE
+         myRobot.DebugPrint(eTraceRcuDrive, "automatic brake test : normal robot");
+         IF (i >= 1) AND (i <= 2) AND myRobot.drive[i].hasMotorBrake THEN
+            yAutoCheckAxis[i] := TRUE;
+         END_IF;
+      END_IF;
+   END_FOR;
+   
+   WHILE TRUE DO
+      WAIT ((chgRobotMode OR chgHandMode OR chgGhostNoMotion) AND (myRobot.mainModeMgr.mode = ciAuto)) OR repeatTest;
+      chgRobotMode := FALSE;
+      chgHandMode := FALSE;
+      repeatTest := FALSE;
+      autoCheckActive := TRUE;
+      chgGhostNoMotion := FALSE;
+      WAIT myRobot.updateActive;
+      Sleep(1000);
+      IF (myRobot.mainModeMgr.mode = ciAuto) AND myRobot.fixpos.RcuInHome
+         AND NOT myRobot.bMotionActive AND blockTimeOff AND NOT myRobot.fieldbusIn.GhostNoMotion.svBool
+      THEN
+         myRobot.DebugPrint(eTraceRcuDrive, "start of automatic brake test");
+         blockTimeOff := FALSE;
+         STOP HoldWarning;
+         
+         // start brake check
+         FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+            IF yAutoCheckAxis[i] THEN
+               IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated THEN
+                  myRobot.drive[i].brakeCheck.iExecState := 1;
+                  myRobot.drive[i].brakeCheck.iSymbol := 1;
+               ELSIF NOT myRobot.drive[i].hasMotorBrake THEN   
+                  myRobot.drive[i].brakeCheck.iExecState  := 1;
+                  myRobot.drive[i].brakeCheck.iSymbol     := 0;
+               ELSE
+                  myRobot.drive[i].brakeCheck.bCheckRunning := TRUE;
+                  START myRobot.drive[i].brakeCheck.CheckSequence();
+               END_IF;
+            ELSE
+               myRobot.drive[i].brakeCheck.iExecState := 1;
+               myRobot.drive[i].brakeCheck.iSymbol := 1;
+            END_IF;
+         END_FOR;
+         
+         // wait until check is finished
+         FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+            IF yAutoCheckAxis[i] THEN
+               IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated OR NOT myRobot.drive[i].hasMotorBrake THEN
+                  Sleep(500);
+               ELSE
+                  WAIT NOT myRobot.drive[i].brakeCheck.bCheckRunning;
+               END_IF;
+            END_IF;
+         END_FOR;
+         
+         // get result of check
+         FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+            IF yAutoCheckAxis[i] THEN
+               IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated THEN
+                  myRobot.drive[i].brakeCheck.iExecState  := 10;
+                  myRobot.drive[i].brakeCheck.iSymbol     := 2;
+                  myRobot.drive[i].brakeCheck.bSuccessful := TRUE;
+                  myRobot.drive[i].brakeCheck.bFault      := FALSE;
+               ELSIF NOT myRobot.drive[i].hasMotorBrake THEN
+                  myRobot.drive[i].brakeCheck.iExecState  := 1;
+                  myRobot.drive[i].brakeCheck.iSymbol     := 0;
+                  myRobot.drive[i].brakeCheck.bSuccessful := TRUE;
+                  myRobot.drive[i].brakeCheck.bFault      := FALSE;
+               ELSE
+                  START myRobot.drive[i].brakeCheck.HandleResult();
+               END_IF;
+            END_IF;
+         END_FOR;
+         
+         // init condensed result 
+         iBrakeCheckState := 0;
+         BrakeCheckState  := eStateInactive;
+         // wait for result message
+         FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+            IF yAutoCheckAxis[i] THEN
+               WAIT myRobot.drive[i].brakeCheck.bFault OR myRobot.drive[i].brakeCheck.bSuccessful;
+
+               IF myRobot.drive[i].brakeCheck.bFault THEN
+                  IF (myRobot.drive[i].brakeCheck.iExecState = 3) THEN // drives not in AF
+                     repeatTest := TRUE;
+                  ELSIF (myRobot.drive[i].brakeCheck.iExecState = 9) THEN // error in phase 2
+                        START HoldWarning(i);
+                     myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Automatic brake check not successful - ERROR in phase 2");
+                  ELSE
+                     myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Automatic brake check not successful - ERROR reason=" + STR(myRobot.drive[i].brakeCheck.iExecState));
+                  END_IF;
+                  BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].autoCheck := TRUE;
+                  dateStr := RcuDateTimeUtils.GetDateString();
+                  timeStr := RcuDateTimeUtils.GetTimeString();
+                  BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].testDate := dateStr + " " + timeStr;
+                  BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].execState := myRobot.drive[i].brakeCheck.iExecState;
+                  iBrakeCheckState := 3;
+                  BrakeCheckState := eStateError;
+                  IF NOT repeatTest THEN
+                     myRobot.dataRecorder.RecBrakeTest(i+1, FALSE);
+                  END_IF;
+               ELSIF myRobot.drive[i].brakeCheck.bSuccessful THEN
+                  BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].autoCheck := TRUE;
+                  IF myRobot.drive[i].hasMotorBrake THEN
+                     dateStr := RcuDateTimeUtils.GetDateString();
+                     timeStr := RcuDateTimeUtils.GetTimeString();
+                     BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].testDate := dateStr + " " + timeStr;
+                     myRobot.dataRecorder.RecBrakeTest(i+1, TRUE);
+                  END_IF;
+                  IF myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated THEN
+                     myRobot.loggerDrive.UpdateInfo(myRobot.drive[i].iIecDevIndex, eBrakeTestDone);
+                     myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Automatic brake check finished successful - drive is simulated");
+                  ELSIF NOT myRobot.drive[i].hasMotorBrake THEN
+                     myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Automatic brake check finished successful - motor has no brake");
+                  ELSE
+                     myRobot.loggerDrive.UpdateInfo(myRobot.drive[i].iIecDevIndex, eBrakeTestDone);
+                     myRobot.loggerDrive.SetProtocol("TRcuBrakeCheck", myRobot.drive[i].iIecDevIndex, "Automatic brake check finished successful");
+                  END_IF;
+                  BrakeTestData[myRobot.kinListInx][myRobot.drive[i].driveNr].execState := myRobot.drive[i].brakeCheck.iExecState;
+               END_IF;
+            END_IF;
+         END_FOR;
+         
+         IF (BrakeCheckState = eStateError) AND NOT repeatTest THEN
+            myRobot.interfaceToSCP.SetBrakeCheckResult(FALSE);
+         ELSE
+            iBrakeCheckState := 2;
+            BrakeCheckState := eStateOK;
+            myRobot.interfaceToSCP.SetBrakeCheckResult(TRUE);
+         END_IF;
+         
+         SaveBrakeTestData();
+         
+         IF NOT repeatTest THEN
+            SysTimerSet(blockingTime, blockTimeOff);
+         ELSE
+            blockTimeOff := TRUE;
+         END_IF;
+         
+         myRobot.DebugPrint(eTraceRcuDrive, "end of automatic brake test");
+      END_IF;
+      
+      IF NOT repeatTest THEN
+         autoCheckActive := FALSE;
+      END_IF;
+      
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE HoldWarning(VAR_IN driveNr : INT) PRIVATE
+   
+   WHILE NOT myRobot.drive[driveNr].brakeCheck.bSuccessful DO
+      RcuSetMessageOnce(TRcuBrakeCheck_WarAutoCheckFail, myRobot.kinListInx, 1, instId, "TRcuBrakeCheck.HoldWarning", myRobot.drive[driveNr].resourceName);
+      Sleep(100);
+   END_WHILE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// print relevant parameters for brake check
+//-----------------------------------------------------------------------------
+ROUTINE ObserveTimer() PRIVATE
+ VAR
+   bOneMinLeft : BOOL;
+   iTimeLeft   : DINT;
+   iHours      : INT;
+ END_VAR
+ 
+  IF bUseTimer THEN
+     myRobot.ecoscreen.sBrakeCheck.sOut.zMoveRelTime := sTimeMovementRel;
+     IF (DataATEX[myRobot.kinListInx].iSavedTimerValue = 0) AND DataATEX[myRobot.kinListInx].bCheckNecessary THEN
+        myRobot.SetMotionMode(eRcuMMgrModeStop);
+        myRobot.StopAllDrives();
+        bDisableDrives := TRUE;
+     ELSIF (DataATEX[myRobot.kinListInx].iSavedTimerValue = 0) AND NOT DataATEX[myRobot.kinListInx].bCheckNecessary THEN
+        DataATEX[myRobot.kinListInx].iSavedTimerValue := cTime48Hours;  //2880min = 48hours
+        SaveAtexTimer();
+        bDisableDrives := FALSE;
+     END_IF;
+     
+     WHILE TRUE DO
+       //Build time string for EPS
+       ConvertTimerToString(DataATEX[myRobot.kinListInx].iSavedTimerValue);
+           
+       WAIT myRobot.allDrivesReady; //count time only if drives are in AF
+       
+       IF iTimeLeft > 0 THEN
+          SysTimerSet(iTimeLeft, bOneMinLeft);
+          iTimeLeft := 0;
+       ELSE
+          SysTimerSet(cTime1Minute, bOneMinLeft);
+       END_IF;
+       
+       WAIT NOT myRobot.allDrivesReady OR bOneMinLeft;
+       IF bOneMinLeft THEN
+          bOneMinLeft := FALSE;
+          
+          //decrease timer from save-variable
+          IF (DataATEX[myRobot.kinListInx].iSavedTimerValue > 0) THEN
+             DataATEX[myRobot.kinListInx].iSavedTimerValue := DataATEX[myRobot.kinListInx].iSavedTimerValue - 1;
+             DataATEX[myRobot.kinListInx].bCheckNecessary := FALSE;
+          END_IF;
+          
+          //Tell the PLC that we want to check brakes
+          IF IS_MAPPED(myRobot.fieldbusOut.CheckRequired.svBool) THEN
+             IF (DataATEX[myRobot.kinListInx].iSavedTimerValue <= cTimeBCUrequest) THEN 
+                 myRobot.fieldbusOut.CheckRequired.svBool := TRUE;
+             ELSE
+                 myRobot.fieldbusOut.CheckRequired.svBool := FALSE;
+             END_IF;
+          ELSE
+             RcuSetMessageOnce(TRcuBrakeCheck_ErrRequestPLC, myRobot.kinListInx, 1, instId, "TRcuBrakeCheck.ObserveTimer", cHW_SLO_mOutCheckRequired);
+          END_IF;
+          
+          IF (DataATEX[myRobot.kinListInx].iSavedTimerValue <= cLimitPostWarning) THEN
+             IF ((DataATEX[myRobot.kinListInx].iSavedTimerValue MOD 60) = 0) THEN
+                iHours := DataATEX[myRobot.kinListInx].iSavedTimerValue / 60;
+                RcuSetMessageOnce(TRcuBrakeCheck_WarCheckNeed, myRobot.kinListInx, 1, instId, "TRcuBrakeCheck.ObserveTimer", STR(iHours));
+             END_IF;
+          END_IF;
+          
+          IF (DataATEX[myRobot.kinListInx].iSavedTimerValue = 0) THEN
+             RcuSetMessageOnce(TRcuBrakeCheck_ErrTimeExpired, myRobot.kinListInx, 1, instId, "TRcuBrakeCheck.ObserveTimer");
+             myRobot.SetMotionMode(eRcuMMgrModeStop);
+             myRobot.StopAllDrives();
+             bDisableDrives := TRUE;
+             DataATEX[myRobot.kinListInx].bCheckNecessary := TRUE;
+          END_IF;
+          SaveAtexTimer();
+        ELSIF NOT DataATEX[myRobot.kinListInx].bCheckNecessary THEN
+          iTimeLeft := SysTimerClear(bOneMinLeft);
+        END_IF;
+        
+        //Build time string for EPS
+        ConvertTimerToString(DataATEX[myRobot.kinListInx].iSavedTimerValue);
+        
+        IF DataATEX[myRobot.kinListInx].bCheckNecessary THEN
+           //Wait until check is started
+           WAIT BrakeCheckState = eStateCheckRunning;
+           //Wait until check is finished
+           WAIT BrakeCheckState <> eStateCheckRunning;
+        END_IF;
+     END_WHILE;
+  ELSE
+     IF IS_MAPPED(myRobot.fieldbusOut.CheckRequired.svBool) THEN
+        myRobot.fieldbusOut.CheckRequired.svBool := FALSE;
+     END_IF;
+     bDisableDrives := FALSE;
+  END_IF;
+  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Convert timer from INT to STRING
+//-----------------------------------------------------------------------------
+ROUTINE ConvertTimerToString(iTime : INT) PRIVATE
+  VAR
+   iTemp : SINT;
+  END_VAR
+  
+  sTimeNextCheck := "";       
+  iTemp := iTime / 60;
+  IF iTemp < 10 THEN
+     sTimeNextCheck := sTimeNextCheck + "0" + STR(iTemp) + ":";;
+  ELSE
+     sTimeNextCheck := sTimeNextCheck + STR(iTemp) + ":";;
+  END_IF;
+  iTemp := iTime MOD 60;
+  IF iTemp < 10 THEN
+     sTimeNextCheck := sTimeNextCheck + "0" + STR(iTemp);
+  ELSE
+     sTimeNextCheck := sTimeNextCheck + STR(iTemp);
+  END_IF;
+  myRobot.ecoscreen.sBrakeCheck.sOut.zIntervallTime := sTimeNextCheck;
+  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reset finish signal when robot is back in homepos  
+//-----------------------------------------------------------------------------
+ROUTINE ResetFinishSignal() PRIVATE
+  WAIT myRobot.fixpos.RcuInHome;
+  bBrakeCheckFinished := FALSE;  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// check if ecoscreen or teachview gives provisional movement release    
+//-----------------------------------------------------------------------------
+ROUTINE ProvisionalMovementRelease() PRIVATE
+ VAR
+  bTimeOut : BOOL;
+ END_VAR
+   
+   myRobot.ecoscreen.sBrakeCheck.sIn.mMoveRel         := FALSE;
+   UserPageData.bMovementRelease                      := FALSE;
+   IF bUseTimer THEN   //only needed when timer stops the drives after 48h
+      myRobot.ecoscreen.sBrakeCheck.sOut.mRequestMoveRel := TRUE;
+      UserPageData.bRequestMovementRelease               := TRUE;
+   ELSE
+      myRobot.ecoscreen.sBrakeCheck.sOut.mRequestMoveRel := FALSE;
+      UserPageData.bRequestMovementRelease               := FALSE;
+      myRobot.ecoscreen.sBrakeCheck.sOut.zMoveRelTime    :=  "-:--";
+      sTimeMovementRel                                   :=  "-:--";
+      myRobot.ecoscreen.sBrakeCheck.sOut.zIntervallTime  := "--:--";
+      sTimeNextCheck                                     := "--:--";
+   END_IF;
+   
+   WHILE TRUE DO       
+      WAIT myRobot.ecoscreen.sBrakeCheck.sIn.mMoveRel OR //release from ecoscreen
+           UserPageData.bMovementRelease;                //release from teachview
+      IF bUseTimer THEN
+         IF UserPageData.bMovementRelease THEN
+            RcuSetMessageOnce(TRcuBrakeCheck_ErrInfMoveRel, myRobot.kinListInx, 1, instId, "TRcuBrakeCheck.ProvisionalMovementRelease", "TeachView");
+         ELSIF myRobot.ecoscreen.sBrakeCheck.sIn.mMoveRel THEN
+            RcuSetMessageOnce(TRcuBrakeCheck_ErrInfMoveRel, myRobot.kinListInx, 2, instId, "TRcuBrakeCheck.ProvisionalMovementRelease", "EcoScreen");
+         END_IF;
+         bDisableDrives := FALSE;                            //internal release
+         SysTimerSet(cTimeMovementRelease, bTimeOut);        //timeout 5min
+         
+         myRobot.ecoscreen.sBrakeCheck.sIn.mMoveRel         := FALSE;
+         myRobot.ecoscreen.sBrakeCheck.sOut.mRequestMoveRel := FALSE;
+         UserPageData.bRequestMovementRelease              := FALSE;
+         UserPageData.bMovementRelease                     := FALSE;
+         
+         START MovementTimerToString(bTimeOut);
+         WAIT bTimeOut OR (BrakeCheckState = eStateCheckRunning);        //5min over
+         WAIT bTimeOut OR NOT DataATEX[myRobot.kinListInx].bCheckNecessary;
+         STOP MovementTimerToString;
+         sTimeMovementRel := "0:00";
+         myRobot.ecoscreen.sBrakeCheck.sOut.zMoveRelTime := sTimeMovementRel;
+         SysTimerClear(bTimeOut);                                   //clear timer
+         bTimeOut := FALSE;                                         //init timeout
+         IF DataATEX[myRobot.kinListInx].bCheckNecessary THEN       //check necessary
+            bDisableDrives := TRUE;                                 //internal release
+            myRobot.SetMotionMode(eRcuMMgrModeStop);                //so stop motion
+            myRobot.StopAllDrives();                                //stop drives
+         END_IF;
+         UserPageData.bRequestMovementRelease               := FALSE;
+         UserPageData.bMovementRelease                      := FALSE;
+         myRobot.ecoscreen.sBrakeCheck.sOut.mRequestMoveRel := TRUE;
+         UserPageData.bRequestMovementRelease              := TRUE;
+      ELSE   
+         myRobot.ecoscreen.sBrakeCheck.sIn.mMoveRel         := FALSE;
+         UserPageData.bMovementRelease                      := FALSE;
+         myRobot.ecoscreen.sBrakeCheck.sOut.zMoveRelTime    :=  "-:--";
+         sTimeMovementRel                                   :=  "-:--";
+         myRobot.ecoscreen.sBrakeCheck.sOut.zIntervallTime  := "--:--";
+         sTimeNextCheck                                     := "--:--";
+      END_IF;   
+   END_WHILE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// provisional movement release timer to string
+//-----------------------------------------------------------------------------
+ROUTINE MovementTimerToString(bFlag : BOOL)
+ VAR 
+  iTimeLeft : DINT;
+  iTemp     : SINT;
+ END_VAR
+ 
+ Sleep(250);
+ WHILE TRUE DO
+    iTimeLeft := SysTimerClear(bFlag); 
+    SysTimerSet(iTimeLeft, bFlag);
+    iTimeLeft := iTimeLeft / 1000;
+    iTemp := iTimeLeft / 60;
+    sTimeMovementRel := "";
+    sTimeMovementRel := STR(iTemp) + ":";
+    iTemp := iTimeLeft MOD 60;
+    IF iTemp < 10 THEN
+      sTimeMovementRel := sTimeMovementRel + "0" + STR(iTemp);
+    ELSE
+      sTimeMovementRel := sTimeMovementRel + STR(iTemp);
+    END_IF;
+    myRobot.ecoscreen.sBrakeCheck.sOut.zMoveRelTime := sTimeMovementRel;
+    Sleep(250);
+ END_WHILE;
+ 
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// grind in brakes by order from teach view
+//-----------------------------------------------------------------------------
+ROUTINE GrindBrakesTV() PRIVATE
+  VAR 
+   i              : SINT;
+   yChg           : ARRAY [cMcuMaxJ] OF BOOL;
+   bChg           : BOOL;
+   bChgAll        : BOOL;
+ END_VAR
+  
+   FOR i:=0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+       yChg[i] := IS_CHANGED(UserPageData.bCloseBrakeFromTV[i]);
+   END_FOR;
+   bChg         := IS_CHANGED(yChg);
+   bChgAll      := IS_CHANGED(UserPageData.bCloseAllBrakes);
+  
+    WHILE TRUE DO
+      WAIT bChg OR bChgAll;
+      FOR i:=0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+         IF UserPageData.bCloseBrakeFromTV[i] OR UserPageData.bCloseAllBrakes THEN
+            // deactivate MCU following error monitoring
+            McuSetCheckFollowingError(myRobot.kinematicMcuId, -1, myRobot.followingErrorLimits);
+            grindingInActive := TRUE;
+            START myRobot.drive[i].brakeCheck.OpenCloseBrake(i);
+            WAIT IS_FINISHED;
+            grindingInActive := FALSE;
+            // activate MCU following error monitoring
+            McuSetCheckFollowingError(myRobot.kinematicMcuId, myRobot.followingErrorDelay, myRobot.followingErrorLimits);
+            UserPageData.bCloseBrakeFromTV[i] := FALSE;
+         END_IF;
+         yChg[i] := FALSE;
+      END_FOR;
+      UserPageData.bCloseAllBrakes := FALSE;
+      bChg                         := FALSE;
+      bChgAll                      := FALSE;
+    END_WHILE;
+
+END_ROUTINE 
+
+//-----------------------------------------------------------------------------
+// grind in brakes by order from teach view
+//-----------------------------------------------------------------------------
+ROUTINE GrindBrakesTeachIn() PRIVATE
+  VAR 
+   i              : SINT;
+   yChg           : ARRAY [cMcuMaxJ] OF BOOL;
+   bChg           : BOOL;
+ END_VAR
+  
+   FOR i:=0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+       yChg[i] := IS_CHANGED(yCloseBrakeTeachIn[i]);
+   END_FOR;
+   bChg         := IS_CHANGED(yChg);
+   
+    WHILE TRUE DO
+      WAIT bChg;
+      FOR i:=0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+         IF yCloseBrakeTeachIn[i]  THEN
+            // deactivate MCU following error monitoring
+            McuSetCheckFollowingError(myRobot.kinematicMcuId, -1, myRobot.followingErrorLimits);
+            grindingInActive := TRUE;
+            START myRobot.drive[i].brakeCheck.OpenCloseBrake(i);
+            WAIT IS_FINISHED;
+            grindingInActive := FALSE;
+            // activate MCU following error monitoring
+            McuSetCheckFollowingError(myRobot.kinematicMcuId, myRobot.followingErrorDelay, myRobot.followingErrorLimits);
+            yCloseBrakeTeachIn[i] := FALSE;
+         END_IF;
+         yChg[i] := FALSE;
+      END_FOR;
+      bChg := FALSE;
+    END_WHILE;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// print relevant parameters for brake check
+//-----------------------------------------------------------------------------
+ROUTINE PrintParamInfo() PRIVATE
+ VAR
+  i           : INT;
+ END_VAR
+ 
+   myRobot.DebugPrint(eTraceCommon, "****************** ATEX-Brake check active ******************");
+   FOR i := 0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+      myRobot.drive[i].brakeCheck.MyDrive := MAP(myRobot.drive[i]);
+      IF NOT (myRobot.drive[i].simulated OR myRobot.drive[i].ioSimulated) THEN
+         IF IS_MAPPED(myRobot.drive[i].brakeCheck.MyDrive) THEN
+            myRobot.drive[i].brakeCheck.GetParamInfo();
+            IF (myRobot.drive[i].deviceType = eRcuEcoDrive) THEN
+               myRobot.DebugPrint(eTraceRcuDrive, "Values of - " + myRobot.drive[i].resourceName + " P-0-0545 - " + 
+                        STR(myRobot.drive[i].brakeCheck.iParam_P545) + " % ---- P-0-0548 - " + 
+                        STR(myRobot.drive[i].brakeCheck.iParam_P548) + " ms ");
+            ELSIF (myRobot.drive[i].deviceType = eRcuIndraDrive) OR (myRobot.drive[i].deviceType = eRcuIndraDriveCS) THEN         
+                myRobot.DebugPrint(eTraceRcuDrive, "Values of - " + myRobot.drive[i].resourceName + " P-0-0545 - " + 
+                        STR(myRobot.drive[i].brakeCheck.iParam_P545) + " % ---- P-0-0547 - " + 
+                        STR(myRobot.drive[i].brakeCheck.iParam_P547) + " % ");
+            END_IF;   
+         END_IF;   
+      END_IF;
+   END_FOR;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// feedback of the brake state
+//------------------------------------------------------------------------------
+ROUTINE BuildButtonRelease() PRIVATE
+ VAR
+   i        : SINT;
+   bChgMode : BOOL;
+ END_VAR
+  
+ bChgMode := IS_CHANGED(myRobot.autoControl.bNoAutoExt);
+ WHILE TRUE DO
+   IF myRobot.autoControl.bNoAutoExt THEN
+     FOR i:=0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+        yReleaseButton[i]   := UPDATE(NOT myRobot.drive[i].brakeCheck.bBrakeIsClose);
+     END_FOR;
+   ELSE
+     FOR i:=0 TO myRobot.kinematic.mNrOfJoints - 1 DO
+        yReleaseButton[i]   := UPDATE(FALSE);
+     END_FOR;
+   END_IF;
+   bChgMode := FALSE;
+   WAIT bChgMode;
+ END_WHILE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// systemroutines
+//-----------------------------------------------------------------------------
+ROUTINE NEW()
+  instId              := RcuGetInstanceId(); //instance identification number (for Errors)
+END_ROUTINE

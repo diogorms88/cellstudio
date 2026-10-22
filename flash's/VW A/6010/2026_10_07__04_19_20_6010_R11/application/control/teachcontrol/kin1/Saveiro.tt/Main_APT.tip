@@ -1,0 +1,42 @@
+RSELECT("R11")
+  //
+  SETOBJECT( BASE_SAVEIRO  )
+  RECEIVE( VISION ,Data  )
+  //
+  WAIT_PROCESS_READY( )
+  //
+CALL HOME()
+//
+CALL Umori1()
+//
+CALL girder_APT()
+//
+// Colision bit R11 <--> R21
+SET( Collision1 ,High  )
+RECEIVE( Collision1 ,High  )
+//
+//Colision bit R11 <--> R12
+SET( Collision2 ,High  )
+RECEIVE( Collision2 ,High  )
+//
+CALL UBB_1_2_APT()
+//
+SET( Collision2 ,Low  )
+//
+CALL UBB_2_APT()
+//
+CALL UBB_3_APT()
+//
+SET( Collision1 ,Low  )
+//
+CALL UBB_Side_APT()
+//
+CALL WLB_APT()
+//
+CALL WLB_2_APT()
+//
+CALL Umori2()
+//
+CALL HOME()
+//
+RDESELECT("R11")

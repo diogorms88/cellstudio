@@ -1,0 +1,452 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 14.02.2014  | SMOH   | Remove Option6
+//  v2_01.03.00  | 10.04.2014  | PZB    | Enable time program group 73 (release overpressure)
+//  v2_01.04.00  | 15.04.2014  | SMOH   | Change: Option22 script converted to BoostAirSupply 
+//  v2_01.05.00  | 20.01.2015  | STL    | AddOn: Enable seam check
+//  v2_01.06.00  | 23.10.2015  | RHI    | Change: LV1 and LV2 from family Valve to family MainValve (needed for new BMK convention)
+//  v2_01.07.00  | 17.10.2016  | STL    | Change: new PCL
+//  v2_01.08.00  | 21.11.2016  | KLCH   | Change: redesign; new options OptionGun, ElectricalVersion
+//  v2_01.09.00  | 21.12.2016  | RHI    | AddOn: Option Cooling Device to build process
+//  v2_01.10.00  | 28.08.2017  | KLCH   | AddOn: export of brush and override definition file
+//  v2_01.11.00  | 27.09.2017  | KLCH   | Change: move Common_Sealing_ConfigureBCUCfg, Common_Sealing_ConfigureSCUCfg to Common-script
+//  v2_01.12.00  | 10.10.2017  | KLCH   | AddOn: generate time programs
+//  v2_01.13.00  | 06.04.2018  | KTO    | AddOn: Option KeStudio
+//  v2_01.14.00  | 24.04.2018  | KLCH   | AddOn: OptionRobType; OptionSafetyType
+//  v2_01.15.00  | 02.10.2018  | KLCH   | Change: rename option (OptionRobType -> RobType)
+
+// Script generates complete standard process
+// depending on all relevant options configured
+// by SAP variant configurator
+
+Imports Common Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option21 Option26 Option27 BoostAirSupply EcoTempAxis1 EcoTempAxis3 MaterialValve1 NumberOfMainNeedles TempHE TempHE_2 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9 NozzleExchanger Circulation OptionGun HelpGun1 OptionCoolingDevice KeStudio OptionRobType OptionSafetyType
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion BoostAirSupply EcoTempAxis1 EcoTempAxis3 TempHE TempHE_2 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9 OptionCoolingDevice KeStudio RobType SafetyType
+
+Call Main_BuildProcess
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_BuildProcess
+	// ***** General information *****
+	LoadDeviceTypeDB ..\..\EcoRPCDeviceTypes.dtc
+	
+	SelectNode RPC1
+	// ***** Set RPC1 parameters *****
+	//SelectTab [Properties]
+	Description Ecopaint Sealing
+	FifoSize 6
+	GoHomeCheck 1 0 0 0 0 0 0
+	BMKConvention 1
+	PLCInterfaceIn 96
+	PLCInterfaceOut 64
+	SelectNode RPC1.R11
+	Delete
+	SelectNode RPC1
+	AddFG R11
+	// ***** Set function group parameters *****
+	SelectNode RPC1.R11
+	SelectTab [Properties]
+	Description Ecopaint Robot EcoRS
+	Master 1
+	// ***** Set function unit BCU1 parameters *****
+	SelectNode RPC1.R11.BCU1
+	Description Body control unit
+	// ***** Set function unit RCU1 parameters *****
+	SelectNode RPC1.R11.RCU1
+	RCUNumber 1
+	Description Robot control unit
+	KinematicType KinControlTypeRPC
+	//Parameter1:	- NoKinematic
+	//		- KinControlTypeRPC
+	//		- KinControlTypeKRC
+	//		- KinControlTypeVKRC
+	// ***** Add process control unit *****
+	SelectNode RPC1.R11
+	AddPCU
+	SelectNode RPC1.R11.PCU1
+	// ***** Set process control unit parameters *****
+	PCUNumber 1
+	ProcessType EcoDosePCL
+	
+	// ***** Call all common standard properties *****
+	Call Common_Description_PCU
+	Call Common_Sealing_ConfigureFixpositions
+	Call Common_Sealing_ConfigureTriggerBrush
+	
+	Call PCL_ChannelsAndDevices_AirSupply
+	Call PCL_ChannelsAndDevices_MainChannel
+	Call PCL_ChannelsAndDevices_Material1_PCL
+	
+	Call PCL_ActivateTimeProgGroups
+	Call PCL_ConfigureChannelInfluence
+	Call PCL_ConfigureResetChannelStates_MainChannel
+	Call PCL_ConfigureResetChannelStates_Material1
+	Call PCL_ConfigureLogChannels_MainChannel
+	Call PCL_ConfigureLogChannels_MainChannel_Material1
+	Call PCL_ConfigureLogChannels_Material1
+	Call PCL_ConfigureTriggerBrush
+	
+	// ***** Check process *****
+	SelectCase Option1
+		Case EcoDose_PCL
+		Case EcoDose_PCL_PCL
+			Call PCL_ConfigureResetChannelStates_Material2
+			Call PCL_ConfigureLogChannels_MainChannel_Material2
+			Call PCL_ConfigureLogChannels_Material2
+		CaseElse
+			Message Wrong process type !! Only EcoDose PCL supported
+	EndSelect
+	
+	Call Main_BoostAirSupply
+	Call Main_HelpGun1
+	Call Main_Option18
+	Call Main_Circulation
+	Call Main_Option14
+	Call Main_OptionCoolingDevice
+	Call Main_KeStudio
+	Call Main_OptionRobType
+	
+	Call PCL_ConfigurePCUCfg
+	Call Common_Sealing_ConfigureBCUCfg
+	Call Common_Sealing_ConfigureSCUCfg
+	
+	SelectNode RPC1
+	
+	LoadEplanData ..\..\..\..\ManagerProject\ASC
+	
+	ExportBrushDefFiles 1
+	ExportOverrideDefFiles 1
+	
+	SaveAs ..\..\ecorpc_ecodose_pcl.pb
+	
+	Call Common_Sealing_GenerateTimeProg
+Return
+
+SubRoutine PCL_ChannelsAndDevices_AirSupply
+	//******** Add AirSupply channel ************
+	Call Common_AddChannel_AirSupply
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].AirSupply
+	Call Common_AddDeviceSealing_YLV1_Main
+Return
+
+SubRoutine PCL_ChannelsAndDevices_MainChannel
+	//******** Add Main channel************
+	Call Common_AddChannel_MainChannel
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_AModesInterface
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_AFIXPOS
+Return
+
+SubRoutine PCL_ChannelsAndDevices_Material1_PCL
+	//******** Add Material1************
+	Call Common_AddChannel_Material1
+	// add control devices
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_AMV2FC
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+	SelectTab [CfgParameter]
+	SelectCfg AMV2FC.DeviceNames.FlowSensor
+	OptionalUsed 1
+	Value "MV2F"
+	SelectCfg AMV2FC.DeviceNames.PressureSensor
+	OptionalUsed 1
+	Value "AP1P"
+	SelectCfg AMV2FC.DeviceNames.PressureSensorOutput
+	OptionalUsed 1
+	Value "MV2PA"
+	SelectCfg AMV2FC.DeviceNames.CirculationValve
+	OptionalUsed 1
+	Value "AVR1"
+	SelectCfg AMV2FC.CirculationControl
+	OptionalUsed 1
+	SelectCfg AMV2FC.InitialPressureControl
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TimeStartAddInitPressChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TimeStartAddInitPressure
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TnHoseComp
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle1.TnHoseCompBrushChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TimeStartAddInitPressChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TimeStartAddInitPressure
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TnHoseComp
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle2.TnHoseCompBrushChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TimeStartAddInitPressChange
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TimeStartAddInitPressure
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TnHoseComp
+	OptionalUsed 1
+	SelectCfg AMV2FC.Nozzle3.TnHoseCompBrushChange
+	OptionalUsed 1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	Call Common_AddDevice_AMatManager1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+	SelectTab [CfgParameter]
+	SelectCfg AMatManager1.Characteristics
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.PressureSensor
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.TemperatureSensor
+	OptionalUsed 1
+	SelectCfg AMatManager1.DeviceNames.SetPressureCtrlDevice
+	OptionalUsed 1
+	Value "AMV2FC.SetPressure"
+	SelectCfg AMatManager1.DeviceNames.SetFlowCtrlDevice
+	OptionalUsed 1
+	Value "AMV2FC.SetFlow"
+	SelectCfg AMatManager1.DeviceNames.PressureSensorOutput
+	OptionalUsed 1
+	Value "MV2PA"
+	SelectCfg AMatManager1.DeviceNames.ActValueCtrlDevice
+	OptionalUsed 1
+	Value "BMV2.Set"
+	SelectCfg AMatManager1.Adaption
+	OptionalUsed 1
+	SelectCfg AMatManager1.Adaption.MaxFlow
+	Value 40
+	SelectCfg AMatManager1.Characteristics.CheckIncreasing
+	OptionalUsed 1
+	SelectCfg AMatManager1.Characteristics.ExponentialCalib
+	OptionalUsed 1
+	Value 0
+	SelectCfg AMatManager1.Characteristics.MinPressureDiff
+	OptionalUsed 1
+Return
+
+//**************Start routines to set PCL specific PCU properties*************
+
+SubRoutine PCL_ActivateTimeProgGroups
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	//*** Activate time program groups and set "used"/"unused" in reset channel state for states "aborted" and "ready" ***
+	// time program group 0 (undefined)
+	ActivateTimeProgramGroup 0 1
+	SetResetStateAborted 0 unused
+	SetResetStateReady 0 unused
+	// time program group 2 (painting)
+	ActivateTimeProgramGroup 2 1
+	SetResetStateAborted 2 used
+	SetResetStateReady 2 used
+	// time program group 24 (Purge atomizer)
+	ActivateTimeProgramGroup 24 1
+	SetResetStateAborted 24 unused
+	SetResetStateReady 24 unused
+	// time program group 57 (release pressure)
+	ActivateTimeProgramGroup 57 1
+	SetResetStateAborted 57 unused
+	SetResetStateReady 57 unused
+	// time program group 60 (circulation)
+	ActivateTimeProgramGroup 60 1
+	SetResetStateAborted 60 unused
+	SetResetStateReady 60 unused
+	// time program group 62 (calibration)
+	ActivateTimeProgramGroup 62 1
+	SetResetStateAborted 62 unused
+	SetResetStateReady 62 unused
+	// time program group 73 (release overpressure)
+	ActivateTimeProgramGroup 73 1
+	SetResetStateAborted 73 used
+	SetResetStateReady 73 used
+Return
+
+SubRoutine PCL_ConfigureResetChannelStates_MainChannel
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	SelectTab [ResetChannelStates]
+	ResetChannelState 2r 73a 1
+	ResetChannelState 2r 73r 1
+Return
+
+SubRoutine PCL_ConfigureResetChannelStates_Material1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectTab [ResetChannelStates]
+	ResetChannelState 2r 73a 1
+	ResetChannelState 2r 73r 1
+Return
+
+SubRoutine PCL_ConfigureResetChannelStates_Material2
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectTab [ResetChannelStates]
+	ResetChannelState 2r 73a 1
+	ResetChannelState 2r 73r 1
+Return
+
+SubRoutine PCL_ConfigureChannelInfluence
+	SelectNode RPC1.R11.PCU1
+	SelectTab [ChannelInfluence]
+	
+	//SelectInfluenceDevice YF.Set
+	//SetChannelInfluencePurged MainChannel 1
+	//SetChannelInfluenceOthers MainChannel 1
+Return
+
+SubRoutine PCL_ConfigureLogChannels_MainChannel
+	//Add logical main channel
+	//*********** Logic Main channel***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	AddLogChannel LogMainChannel
+	LogChannelDescription Logical main channel
+	LogChannelPropertyPaintRelevant 1
+	LogChannelPropertyMixedMaterial 0
+	
+	//Add physical channels to logical main channel
+	//*********** Add physical MainChannel***************
+	SelectLogChannel PCU1.LogMainChannel
+	LogChannelAddPhysChannel MainChannel
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 1
+	LogChannelPropertyOverallStateRelevant 1
+	
+	//Add all supply groups
+	//*********** Add supply group for StockPaint components***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectSupplyGroup PCU1
+	AddSupplyGroup SGR_Material
+	SupplyGroupDescription Supply group for material
+	SupplyGroupPropertyDosingVariant OnlyOneChannel
+	//Parameter 1: Selection dosing variant
+	//-	Continue
+	//-	DiscontinueSingle
+	//-	DiscontinueSeveral
+	//-	OnlyOneChannel
+	//***** Add logical channel for preparation (and for paint) to supply group AllColors*******
+	SelectSupplyGroup PCU1.SGR_Material
+	SupplyGroupAddLogChannel LogMainChannel
+Return
+
+SubRoutine PCL_ConfigureLogChannels_MainChannel_Material1
+	//Add physical channels to logical main channel
+	//*********** Add physical Material1*****************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1.LogMainChannel
+	LogChannelAddPhysChannel Material1
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 0
+Return
+
+SubRoutine PCL_ConfigureLogChannels_MainChannel_Material2
+	//Add physical channels to logical main channel
+	//*********** Add physical Material2*****************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1.LogMainChannel
+	LogChannelAddPhysChannel Material2
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 0
+Return
+
+SubRoutine PCL_ConfigureLogChannels_Material1
+	//Add logical channels
+	//*********** Logic Material1***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	AddLogChannel LogMaterial1
+	LogChannelDescription Logical channel for material 1
+	LogChannelPropertyPaintRelevant 0
+	LogChannelPropertyMixedMaterial 0
+	//*********** Add physical Material1************************
+	SelectLogChannel PCU1.LogMaterial1
+	LogChannelAddPhysChannel Material1
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 1
+Return
+
+SubRoutine PCL_ConfigureLogChannels_Material2
+	//Add logical channels
+	//*********** Logic Material2***************
+	SelectNode RPC1.R11.PCU1
+	SelectTab [LogicChannelsSupplyGroups]
+	SelectLogChannel PCU1
+	AddLogChannel LogMaterial2
+	LogChannelDescription Logical channel for material 2
+	LogChannelPropertyPaintRelevant 0
+	LogChannelPropertyMixedMaterial 0
+	//*********** Add physical Material2************************
+	SelectLogChannel PCU1.LogMaterial2
+	LogChannelAddPhysChannel Material2
+	//Parameter 1: Channelgroup or Channelgroup.Channel
+	LogChannelPropertyLogMainChannel 0
+	LogChannelPropertyOverallStateRelevant 1
+Return
+
+SubRoutine PCL_ConfigureTriggerBrush
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	// ************Set paint relevant devices for PCL*************
+//	SelectTab [BrushTriggerSetValuesPaintRelDevices]
+	// Set boolean signals for paint relevant devices
+	// ************Set trigger devices for PCL*************
+	SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+	// Set analog signals for paint relevant devices
+	NotResetBrushAtEnd AMV2FC.ControlType 0
+	BrushSource AMV2FC.ControlType ControlType1
+	NotResetBrushAtEnd AMV2FC.SetFlow 0
+	BrushSource AMV2FC.SetFlow PaintFlow1
+	IdleBrush1Enable AMV2FC.SetFlow 1
+	IdleBrush1Value AMV2FC.SetFlow 5
+	IdleBrush2Enable AMV2FC.SetFlow 1
+	IdleBrush2Value AMV2FC.SetFlow 5
+	OverrideEnable AMV2FC.SetFlow 1
+	NotResetBrushAtEnd AMV2FC.SetPressure 0
+	BrushSource AMV2FC.SetPressure PaintPressure1
+	IdleBrush1Enable AMV2FC.SetPressure 1
+	IdleBrush1Value AMV2FC.SetPressure 20
+	IdleBrush2Enable AMV2FC.SetPressure 1
+	IdleBrush2Value AMV2FC.SetPressure 20
+	OverrideEnable AMV2FC.SetPressure 1
+	NotResetBrushAtEnd AMV2FC.SetPressureOffsetAirFlow 0
+	BrushSource AMV2FC.SetPressureOffsetAirFlow OffsetInitialPressure1
+	// Set boolean signals for trigger devices (AMV2FC)
+	NotResetTriggerAtEnd AMV2FC.OrderSet 0
+	SetInverseTrigger AMV2FC.OrderSet 0
+Return
+
+SubRoutine PCL_ConfigurePCUCfg
+	SelectNode RPC1.R11.PCU1
+	// Select tab cfg parameter 
+	SelectTab [CfgParameter]
+	//************* Enable PotTime cfg group ********************
+	// Enable optional cfg group PotTime
+	SelectCfg PCU1.PotTime
+	OptionalUsed 1
+	SelectCfg PCU1.PotTime.Enable
+	Value 1
+	SelectCfg PCU1.PotTime.UsePcaTimeout
+	Value 0
+	SelectCfg PCU1.PotTime.AlarmTime
+	OptionalUsed 1
+	SelectCfg PCU1.PotTime.WarnTime
+	OptionalUsed 1
+	SelectCfg PCU1.Trigger_Brush.Global.BrushConcept
+	Value 1
+	SelectCfg PCU1.Releases
+	OptionalUsed 1
+	// Enable optional cfg group Statistics
+	SelectCfg PCU1.Statistics
+	OptionalUsed 1
+	SelectCfg PCU1.Statistics.DefaultSeamTolerance
+	Value 20
+	SelectCfg PCU1.Statistics.EnableModulName
+	OptionalUsed 1
+Return
+
+//**************End routines to set PCL specific PCU properties*************

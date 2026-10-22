@@ -1,0 +1,101 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Schöll                                                      *
+*   E-Mail      : Bjoern.Schoell@durr.com                                     *
+*                                                                             *
+*   Modul       : TRcuNozzleChange.tts                                        *
+*   Description : nozzle change functionality                                 *
+*-----------------------------------------------------------------------------*
+* 
+*)
+
+
+TYPE
+   TNozzleChangerPlace : STRUCT
+      iForNozzleNr : INT;
+      mValveAct    : BOOL;
+      mValveSet    : BOOL;
+      mOccupied    : BOOL;
+      mOK          : BOOL;
+      iNozzleNr    : INT;
+      mPlaceFree   : BOOL;
+   END_STRUCT;
+   
+   TNozzleMainNeedle : STRUCT
+      mDoorOpened : BOOL;
+      mOccupied   : BOOL;
+      mOK         : BOOL;
+      iNozzleNr   : INT;
+   END_STRUCT;
+END_TYPE
+
+
+VAR
+   myRobot              : MAPTO TRcuRobot;
+   hasNozzleChanger     : BOOL;
+   svChangerPlaces      : MAPTO ARRAY [1..20] OF TNozzleChangerPlace;
+   svMainNeedles        : MAPTO ARRAY [1..cgiMaxGuns] OF TNozzleMainNeedle;
+   svNrOfPlaces         : MAPTO INT;
+   svNozzleGun          : MAPTO INT;
+   svSetBlowAir         : MAPTO BOOL;
+   svPurgeRequired      : MAPTO BOOL;
+   svEntranceRequest    : MAPTO BOOL;
+   svAckEntranceRequest : MAPTO BOOL;
+   nextMainNeedle       : INT;
+   nextNozzleNr         : DINT;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//check if operator wants to open the cabine door while robot is in WAIT_CONV, WAIT_PAINTPOS
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckEntranceRequest()
+   WHILE TRUE DO
+     WAIT myRobot.bWaitingTrackingPos;
+     WAIT svEntranceRequest OR NOT myRobot.bWaitingTrackingPos;
+     svAckEntranceRequest := TRUE;
+     WAIT NOT (svEntranceRequest AND myRobot.bWaitingTrackingPos);
+     svAckEntranceRequest := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// create mapping to iec part of nozzle 
+//------------------------------------------------------------------------------------------------------
+ROUTINE Init(locRobot : TRcuRobot)
+ VAR
+  nozzleChangeActive : MAPTO BOOL;
+ END_VAR
+   
+   myRobot := MAP(locRobot);
+   nozzleChangeActive := MAPX(cSV_sNozzleChangerUsed[myRobot.kinListInx]);
+   IF IS_MAPPED(nozzleChangeActive) AND nozzleChangeActive THEN
+      hasNozzleChanger := TRUE;
+      svChangerPlaces := MAPX(cSV_sChangerPlaces[myRobot.kinListInx]);
+      svMainNeedles := MAPX(cSV_sMainNeedles[myRobot.kinListInx]);
+      svNrOfPlaces := MAPX(cSV_iNrOfPlaces[myRobot.kinListInx]);
+      svNozzleGun := MAPX(cSV_iNozzleGun[myRobot.kinListInx]);
+      svSetBlowAir := MAPX(cSV_mSetBlowAir[myRobot.kinListInx]);
+      svPurgeRequired := MAPX(cSV_mPurge[myRobot.kinListInx]);
+      svEntranceRequest := MAPX(cSV_mEntranceRequest[myRobot.kinListInx]);
+      svAckEntranceRequest := MAPX(cSV_mAckEntranceRequest[myRobot.kinListInx]);
+      IF gbIsTrackingStation AND IS_MAPPED(svEntranceRequest) AND IS_MAPPED(svAckEntranceRequest) THEN
+         START CheckEntranceRequest();
+      END_IF;
+   ELSIF gbIsTrackingStation THEN
+      svEntranceRequest := MAPX(cSV_mEntranceRequest[myRobot.kinListInx]);
+      svAckEntranceRequest := MAPX(cSV_mAckEntranceRequest[myRobot.kinListInx]);
+      IF IS_MAPPED(svEntranceRequest) AND IS_MAPPED(svAckEntranceRequest) THEN
+         START CheckEntranceRequest();
+      END_IF;
+   END_IF;
+   
+END_ROUTINE

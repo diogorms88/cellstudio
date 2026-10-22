@@ -1,0 +1,1453 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Carl-Benz-Str. 34                                                         *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2016 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Bitzer                                                      *
+*   E-Mail      : sven.bitzer@durr.com                                        *
+*                                                                             *
+*   Modul       : TRcuInterfaceToSCP.tts                                      *
+*   Description : Interface to safety controller                              *
+*-----------------------------------------------------------------------------*)
+
+
+VAR
+ svSCP_RCU          : MAPTO tsInterfaceSCP_RCU;
+ bFullSpeedAllowed  : BOOL := TRUE;
+ bNoMovementRelease : BOOL;
+ bVeloMonitoring    : BOOL;
+ bSafeRobotic       : BOOL;
+ bScpActive         : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+// Startup of interface to safety controller -- called from equipment.ttp
+//------------------------------------------------------------------------------------------------------
+ROUTINE Init(locRobot : TRcuRobot)
+ VAR
+   bErr       : BOOL;
+   sTxt       : STRING;
+   sMapName   : STRING;
+   cfgHandle  : DINT;
+   bTimeOut   : BOOL;
+   iCntMapVar : SINT;
+ END_VAR
+
+  myRobot := MAP(locRobot);
+  
+  //----------- have a look to keba catalog and check if SafetyControl exists  ---------------------------------------------------------------------------
+  sTxt := "IO/ONBOARD/SCPBUS:0/SCP:0";
+  IF NOT CatalogGetHandle(sTxt, cfgHandle) THEN   
+     myRobot.DebugPrint(eTraceEquipment, "Interface to SCP is disabled - No SCP controller found in IO-System (" + sTxt + ") --------------------------------");
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "---------------  Interface to SCP is disabled - No SCP controller found in IO-System (" + sTxt + ") --------------------------------");
+     bScpActive        := FALSE;
+     bFullSpeedAllowed := TRUE;
+     RETURN;
+  ELSE
+     myRobot.DebugPrint(eTraceEquipment, "SCP controller found in IO-System (" + sTxt + ") --------------------------------");
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "---------------  SCP controller found in IO-System (" + sTxt + ") --------------------------------");
+     bScpActive := TRUE;
+  END_IF;
+  
+  //----------- InterfaceSCP_RCU  ----------------------------------------------------------------------------------------------------------------------------- 
+  iCntMapVar := iCntMapVar + 1;
+  sMapName := cSV_sInterfaceSCP_RCU + "[" + STR(myRobot.kinListInx+1) + "]";
+  svSCP_RCU := MAPX(sMapName);
+  IF NOT IS_MAPPED(svSCP_RCU) THEN
+     RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+     RETURN;
+  END_IF;
+  svSCP_RCU.sRcuToScp.bDoorOpener := (myRobot.kinematic.mRobotTyp = eMcuDoorOpener);
+  
+  //----------- Safe robotic used  -----------------------------------------------------------------------------------------------------------------------
+  SysTimerSet(cTimeOutOptions, bTimeOut);
+  WAIT svSCP_RCU.sScpToRcu.bOptionsReady OR bTimeOut;  
+  WHILE bTimeOut AND NOT svSCP_RCU.sScpToRcu.bOptionsReady DO
+     RcuSetMessageOnce(TRcuInterfaceToSCP_ErrWaitInfo, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.Init"); 
+     myRobot.WaitMcMainCycles(2);
+  END_WHILE;
+  SysTimerClear(bTimeOut);
+  bTimeOut := FALSE;
+         
+  IF svSCP_RCU.sScpToRcu.bSafeRobotic THEN
+     bSafeRobotic    := TRUE;
+     bVeloMonitoring := TRUE;  //later this option will be received from VirtualIO-SCP 
+     myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP ---------------  Interface to SCP with safe robotic is started -----------------------------");
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "---------------  Interface to SCP with safe robotic is started -----------------------------");
+  ELSE
+     bSafeRobotic      := FALSE;
+     bVeloMonitoring   := FALSE;  //later this option will be received from VirtualIO-SCP 
+     bFullSpeedAllowed := TRUE;
+     myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP ---------------  Interface to SCP - Safe robotic isn't used --------------------------------");
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "---------------  Interface to SCP - Safe robotic isn't used --------------------------------");
+  END_IF; 
+      
+  //----------- HMI signals  ----------------------------------------------------------------------------------------------------------------------------- 
+  iCntMapVar := iCntMapVar + 1;
+  sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_State;
+  sHMI.sOut.siState := MAPX(sMapName);
+  IF NOT IS_MAPPED(sHMI.sOut.siState) THEN
+     RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+     RETURN;
+  END_IF;
+  
+  IF bSafeRobotic OR bVeloMonitoring THEN
+  
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiIn_SetRef;
+     sHMI.sIn.mSetReference := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sIn.mSetReference) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+        
+     iCntMapVar := iCntMapVar + 1;   
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_RelSetRef;
+     sHMI.sOut.mReleaseSetReference := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mReleaseSetReference) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1; 
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_InRefPos;
+     sHMI.sOut.mInReferencePos := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mInReferencePos) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_InSyncPos;
+     sHMI.sOut.mInSyncPos := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mInSyncPos) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_SyncIni;
+     sHMI.sOut.mSyncIni := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mSyncIni) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_RefOk;
+     sHMI.sOut.mReferenceOk := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mReferenceOk) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_SyncOK;
+     sHMI.sOut.mSyncOK := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mSyncOK) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_BrakeChkTimer;
+     sHMI.sOut.sBrakeChkTimer := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.sBrakeChkTimer) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_BrakeChkOK;
+     sHMI.sOut.mBrakeChkOK := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mBrakeChkOK) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_BrakeChkInfo;
+     sHMI.sOut.mBrakeChkInfo := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mBrakeChkInfo) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_BrakeChkWarn;
+     sHMI.sOut.mBrakeChkWarn := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mBrakeChkWarn) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+     
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sScpHmiOut_BrakeChkErr;
+     sHMI.sOut.mBrakeChkErr := MAPX(sMapName);
+     IF NOT IS_MAPPED(sHMI.sOut.mBrakeChkErr) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;   
+     
+  END_IF; 
+  //----------- RETAIN data  ----------------------------------------------------------------------------------------------------------------------------- 
+  IF bSafeRobotic OR bVeloMonitoring THEN
+     iCntMapVar := iCntMapVar + 1;
+     sMapName := "RCU" + STR(myRobot.kinListInx+1) + "." + cSV_sSCP_Retain;
+     svSCP_Retain := MAPX(sMapName);
+     IF NOT IS_MAPPED(svSCP_Retain) THEN
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, myRobot.kinListInx, iCntMapVar, 0, "TRcuInterfaceToSCP.Init", sMapName);
+        RETURN;
+     END_IF;
+  END_IF;    
+  //----------- Hardware options to SCP  ------------------------------------------------------------------------------------------------------------------
+  WAIT gbEquipmentReady;  
+  IF myRobot.bHasProcess THEN
+     SysTimerSet(5000, bTimeOut);
+     WAIT (myRobot.RcuInterfaceToProcess.svHtExists > eWaitInitDone) OR bTimeOut;
+     IF bTimeOut THEN
+        RcuSetMessageOnce(TRcuInterfaceToSCP_FaMapSysVar, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.Init");
+        RETURN;
+     ELSIF (myRobot.RcuInterfaceToProcess.svHtExists = eUsed) THEN
+        svSCP_RCU.sRcuToScp.bHTUsed := TRUE; //high tension used  
+        svSCP_RCU.sRcuToScp.bOptionsReady    := TRUE; 
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Option high tension used sent to SCP ");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Interface to SCP - Option high tension used sent to SCP");
+     ELSE
+        svSCP_RCU.sRcuToScp.bHTUsed := FALSE; //no high tension
+        svSCP_RCU.sRcuToScp.bOptionsReady    := TRUE;
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Option NO high tension used sent to SCP ");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Interface to SCP - Option NO high tension used sent to SCP");
+     END_IF; 
+  ELSE
+     svSCP_RCU.sRcuToScp.bHTUsed := FALSE; //no process --> no high tension
+     svSCP_RCU.sRcuToScp.bOptionsReady    := TRUE;
+     myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Option NO high tension used sent to SCP because NoProcess configured");
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Interface to SCP - Option NO high tension used sent to SCP because NoProcess configured");
+  END_IF;
+  
+  bNoMovementRelease := UPDATE(bNoMovementRel OR NOT svSCP_RCU.sScpToRcu.mMovementRel);
+  START ObserveStateWord();
+  START ProtocolInterface();
+  
+  IF bSafeRobotic OR bVeloMonitoring THEN
+     START UserInterface();
+     START ObserveSyncPos();
+     START ObserveBrakeCheck();
+     START SysTimeToRetain();
+     START ObserveFullSpeedFlag();
+     START MasterIniRailToSCP();
+     IF gbRcuSimulateStationPLC THEN
+        START SimulateSCP();
+     END_IF;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// handover the result of the auto brake check to SCP
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetBrakeCheckResult(successful : BOOL)
+  IF bSafeRobotic THEN
+     svSCP_Retain.bBrakeCheckOk           := successful;
+     svSCP_Retain.bBrakeCheckFailure      := NOT successful; 
+     svSCP_RCU.sRcuToScp.bBrakeChkOk      := successful;  
+     svSCP_RCU.sRcuToScp.bBrakeChkFail    := NOT successful;
+     myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - State of brake check OK=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkOk) + " Failure=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkFail));
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "State of brake check OK=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkOk) + " Failure=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkFail));
+  END_IF;
+END_ROUTINE
+
+//******************************************************************************
+// private
+CONSTANT PRIVATE   
+   cSV_sScpHmiIn_SetRef         : STRING := "SV_RCU2HMI.tScp.sIn.mSetReference";
+   cSV_sScpHmiOut_RelSetRef     : STRING := "SV_RCU2HMI.tScp.sOut.mReleaseSetReference";
+   cSV_sScpHmiOut_InRefPos      : STRING := "SV_RCU2HMI.tScp.sOut.mInReferencePos";
+   cSV_sScpHmiOut_InSyncPos     : STRING := "SV_RCU2HMI.tScp.sOut.mInSyncPos";
+   cSV_sScpHmiOut_SyncIni       : STRING := "SV_RCU2HMI.tScp.sOut.mSyncIni";
+   cSV_sScpHmiOut_RefOk         : STRING := "SV_RCU2HMI.tScp.sOut.mReferenceOk";
+   cSV_sScpHmiOut_SyncOK        : STRING := "SV_RCU2HMI.tScp.sOut.mSyncOK";
+   cSV_sScpHmiOut_State         : STRING := "SV_RCU2HMI.tScp.sOut.siState";
+   cSV_sScpHmiOut_BrakeChkTimer : STRING := "SV_RCU2HMI.tScp.sOut.zBrakeChkTimer";
+   cSV_sScpHmiOut_BrakeChkOK    : STRING := "SV_RCU2HMI.tScp.sOut.mBrakeChkOK";
+   cSV_sScpHmiOut_BrakeChkInfo  : STRING := "SV_RCU2HMI.tScp.sOut.mBrakeChkInfo";
+   cSV_sScpHmiOut_BrakeChkWarn  : STRING := "SV_RCU2HMI.tScp.sOut.mBrakeChkWarn";
+   cSV_sScpHmiOut_BrakeChkErr   : STRING := "SV_RCU2HMI.tScp.sOut.mBrakeChkErr";
+   
+   cSV_sSCP_Retain              : STRING := "SV_SCP_Retain";
+   cSV_sInterfaceSCP_RCU        : STRING := "system.SV_yInterfaceSCP_RCU";
+   
+   cNrVirtual_In                : INT  := 21;           //Amount of virtual inputs which are written to logfile
+   cNrVirtual_Out               : INT  := 11;           //Amount of virtual outputs which are written to logfile
+   cTimeOutSCP                  : DINT := 1000;         //1000ms timeout for handshake with SCP
+   cTimeOutSyncIni              : DINT := 5000;         //5000ms until ini signal should be received when fixpos reached
+   cTimeLimitCpOff              : LINT := 1800000000;   //30min --> 1800sec --> 1800000ms --> 1800000000us controller is longer switched of --> sync request
+   cMaxTimeTestMode             : DINT := 1800000;      //30min --> 1800sec --> 1800000ms --> Maximum duration of TestMode
+   cTimeOutOptions              : DINT := 60000;        //SCP has 60sec to set the options on the interface
+   cMaxVeloZones                : SINT := 6;            //SCP is able to handle up to 6 velocity zones
+   cTime8h                      : LINT := 28800000000;  //  8h = 28800000000 us
+   cTime6h                      : LINT := 21600000000;  //  6h = 21600000000 us
+   cTime4h                      : LINT := 14400000000;  //  4h = 14400000000 us
+   cTime2h                      : LINT :=  7200000000;  //  2h =  7200000000 us
+   cTime15m                     : LINT :=   900000000;  // 15m =   900000000 us
+   cTime0h                      : LINT :=           0;  //  0h =           0 us
+END_CONSTANT
+
+TYPE PRIVATE
+  tsScpStates : STRUCT
+     mStartUp     : BOOL;
+     mSendConfig  : BOOL;
+     mStartUpBus  : BOOL;
+     mRun         : BOOL;
+     mStop        : BOOL;
+     mFatalErr    : BOOL;
+     mAlarm       : BOOL;
+     mRunInternal : BOOL;
+  END_STRUCT;
+  tsScpInHMI : STRUCT
+     mSetReference : MAPTO BOOL;
+  END_STRUCT;
+  tsScpOutHMI : STRUCT
+     mReleaseSetReference : MAPTO BOOL;
+     mInReferencePos      : MAPTO BOOL;
+     mInSyncPos           : MAPTO BOOL;
+     mSyncIni             : MAPTO BOOL;
+     mReferenceOk         : MAPTO BOOL;
+     mSyncOK              : MAPTO BOOL;
+     siState              : MAPTO SINT;
+     sBrakeChkTimer       : MAPTO STRING;
+     mBrakeChkOK          : MAPTO BOOL;
+     mBrakeChkInfo        : MAPTO BOOL;
+     mBrakeChkWarn        : MAPTO BOOL;
+     mBrakeChkErr         : MAPTO BOOL;
+  END_STRUCT; 
+  tsScpHMI : STRUCT
+    sIn  : tsScpInHMI;
+    sOut : tsScpOutHMI;
+  END_STRUCT;
+  tsScpInTV : STRUCT
+     mSetReference   : BOOL;
+     mResetReference : BOOL;
+     mStartTestMode  : BOOL;
+  END_STRUCT;
+  tsTestMode : STRUCT
+    bActive : BOOL;
+    bStop   : BOOL;
+  END_STRUCT;
+  tsTestModeVeloZone : STRUCT
+    iNr           : SINT;
+    bBoundReached : BOOL;
+    rPosX         : REAL;
+    rPosY         : REAL;
+    rPosZ         : REAL;
+  END_STRUCT;
+  tsScpOutTV : STRUCT
+     mReleaseSetReference : BOOL;
+     mReleaseResetRef     : BOOL;
+     mInReferencePos      : BOOL;
+     mInSyncPos           : BOOL;
+     mSyncIni             : BOOL;
+     mReferenceOk         : BOOL;
+     mSyncOK              : BOOL;
+     siState              : SINT;
+     mBrakeChkOK          : BOOL;
+     mBrakeChk2h          : BOOL;
+     mBrakeChk15m         : BOOL;
+     mBrakeChkErr         : BOOL;
+     sBrakeChkTimer       : STRING;
+     sTestMode            : tsTestMode;
+     yTestModeVeloZone    : ARRAY [cMaxVeloZones] OF tsTestModeVeloZone;
+  END_STRUCT; 
+  tsScpTV : STRUCT
+    sIn  : tsScpInTV;
+    sOut : tsScpOutTV;
+  END_STRUCT;
+  
+  tsScpout : STRUCT
+     mOptionsReady      : MAPTO BOOL;
+     mHighTensionUsed   : MAPTO BOOL;
+     mResetRef          : MAPTO BOOL;
+     mExecuteCmdRef     : MAPTO BOOL;
+     mSetReference      : MAPTO BOOL;
+     mRefChkPos1        : MAPTO BOOL;
+     mRefChkPos2        : MAPTO BOOL;
+     mExecuteCmdSync    : MAPTO BOOL;
+     mEncoderMutingAll  : MAPTO BOOL;
+     mBrakeChkFailure   : MAPTO BOOL;
+     mBrakeChkOk        : MAPTO BOOL;
+     mRequestSync       : MAPTO BOOL;
+  END_STRUCT;
+  tsSCPRetain : STRUCT
+    liShutdownTime     : LINT;
+    bBrakeCheckOk      : BOOL;
+    bBrakeCheckFailure : BOOL;
+  END_STRUCT;
+  
+  tsScpToRcu : STRUCT
+    byHwState      : BYTE;
+    bRefInvalid    : BOOL;
+    bRefSet        : BOOL;
+    bSyncIni       : BOOL;
+    bSyncOK        : BOOL;
+    mMovementRel   : BOOL;
+    bSTO_MotionOn  : BOOL;
+    bAlarmOutOfWZ  : BOOL;
+    bAlarmSpeedMon : BOOL;
+    bBrakeChkRequ  : BOOL;
+    bBrakeChk6h    : BOOL;
+    bBrakeChk4h    : BOOL;
+    bBrakeChk2h    : BOOL;
+    bBrakeChk15m   : BOOL;
+    bBrakeChkEnd   : BOOL;
+    bNotRedSpeed   : BOOL;
+    bSMM12Alarm    : BOOL;
+    yVeloZoneOk    : ARRAY [cMaxVeloZones] OF BOOL;
+    bOptionsReady  : BOOL;
+    bSafeRobotic   : BOOL;
+  END_STRUCT;
+  tsRcuToScp : STRUCT
+    bOptionsReady  : BOOL;
+    bHTUsed        : BOOL;
+    bDoorOpener    : BOOL;
+    bResetRef      : BOOL;
+    bExecCmdRef    : BOOL;
+    bSetRef        : BOOL;
+    bRefChkPos1    : BOOL;
+    bRefChkPos2    : BOOL;
+    bExecCmdSync   : BOOL;
+    bEncMutingAll  : BOOL;
+    bBrakeChkFail  : BOOL;
+    bBrakeChkOk    : BOOL;
+    bRequestSync   : BOOL;
+    bMasterIniRail : BOOL;
+  END_STRUCT;
+  tsInterfaceSCP_RCU : STRUCT
+    sScpToRcu : tsScpToRcu;
+    sRcuToScp : tsRcuToScp;
+  END_STRUCT;
+  
+END_TYPE
+
+VAR PRIVATE
+  myRobot             : MAPTO TRcuRobot;
+  sHMI                : tsScpHMI;
+  sTV                 : tsScpTV;
+  sScpStates          : tsScpStates;
+  svSCP_Retain        : MAPTO tsSCPRetain;
+  liTimeShutdown      : LINT;
+  bWarnBrakeChk       : BOOL;
+  bStopEndCarBrakeChk : BOOL;
+  bErrBrake           : BOOL;
+  bNoMovementRel      : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+// robot is sync position --> set this position valid in SCP
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveSyncPos() PRIVATE
+ VAR
+   bSyncPosSet : BOOL;
+   bTimeOut    : BOOL;
+   iTime       : LINT;
+ END_VAR
+ 
+   WHILE TRUE DO
+      WAIT myRobot.fixpos.RcuInScpSyncPos AND myRobot.isNotMovingOnPath;  //wait until robot has stopped in sync fixpos
+      
+      IF NOT svSCP_RCU.sScpToRcu.bRefSet THEN  
+         RcuSetMessageOnce(TRcuInterfaceToSCP_ErrSynNotRef, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ObserveSyncPos");
+      ELSE
+         //wait for initiator signal
+         bSyncPosSet := FALSE;
+         SysTimerSet(cTimeOutSyncIni, bTimeOut);
+         WAIT bTimeOut OR svSCP_RCU.sScpToRcu.bSyncIni; 
+         IF bTimeOut AND NOT svSCP_RCU.sScpToRcu.bSyncIni THEN
+            RcuSetMessageOnce(TRcuInterfaceToSCP_ErrSnycIni, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ObserveSyncPos");
+         END_IF;
+         SysTimerClear(bTimeOut);
+         bTimeOut    := FALSE;  
+         
+         WHILE myRobot.fixpos.RcuInScpSyncPos AND svSCP_RCU.sScpToRcu.bSyncIni AND NOT bSyncPosSet DO
+            //sync ok is still set --> request new synchronisation to delete existing syncOK 
+            IF svSCP_RCU.sScpToRcu.bSyncOK THEN 
+               svSCP_RCU.sRcuToScp.bRequestSync := TRUE; 
+               myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Robot is sync pos and signal form initiator - set RequestSync to delete existing syncOK");
+               myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Robot is sync pos and signal form initiator - set RequestSync to delete existing syncOK");
+               SysTimerSet(cTimeOutSyncIni, bTimeOut);
+               WAIT bTimeOut OR NOT svSCP_RCU.sScpToRcu.bSyncOK;
+               IF bTimeOut THEN
+                  RcuSetMessageOnce(TRcuInterfaceToSCP_ErrTimeout, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ObserveSyncPos", "REQUEST SYNC");
+               ELSE
+                  svSCP_RCU.sRcuToScp.bRequestSync := FALSE;
+               END_IF;   
+               SysTimerClear(bTimeOut);
+               bTimeOut    := FALSE;   
+            ELSE
+               myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Robot is sync pos and signal form initiator - set check reference to SCP");
+               myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Robot is sync pos and signal form initiator - set check reference to SCP");
+            END_IF;   
+            //sync ok not set --> new synchronisation
+            IF NOT svSCP_RCU.sScpToRcu.bSyncOK THEN   
+               svSCP_RCU.sRcuToScp.bRefChkPos1  := TRUE;  
+               svSCP_RCU.sRcuToScp.bExecCmdSync := TRUE; 
+               SysTimerSet(cTimeOutSCP, bTimeOut);
+               WAIT bTimeOut OR svSCP_RCU.sScpToRcu.bSyncOK;
+               IF bTimeOut THEN
+                  RcuSetMessageOnce(TRcuInterfaceToSCP_ErrTimeout, myRobot.kinListInx, 2, 0, "TRcuInterfaceToSCP.ObserveSyncPos", "CHECK SYNC");
+                  myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - ERROR - Timeout CHECK SYNC");
+                  myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "ERROR - Timeout CHECK SYNC");
+               ELSE
+                  svSCP_RCU.sRcuToScp.bRequestSync := FALSE;
+                  myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - INFO - SCP reference checked successful!");
+                  myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "INFO - SCP reference checked successful!");
+               END_IF;
+               SysTimerClear(bTimeOut);
+               bTimeOut    := FALSE; 
+               bSyncPosSet := TRUE;
+            END_IF;
+         END_WHILE;
+         svSCP_RCU.sRcuToScp.bRefChkPos1     := FALSE;
+         svSCP_RCU.sRcuToScp.bExecCmdSync := FALSE;
+      END_IF;
+      WAIT NOT (myRobot.fixpos.RcuInScpSyncPos OR svSCP_RCU.sScpToRcu.bSyncIni);
+   END_WHILE;
+ 
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// interface to ecoscreen and teachview - robot is in reference position --> set this position valid in SCP
+//---------------------------------------------------------------------------------------------------------
+ROUTINE UserInterface() PRIVATE
+ VAR
+   bChgSetRefHMI  : BOOL;
+   bChgSetRefTV   : BOOL;
+   bChgResetRefTV : BOOL;
+   bChgStartTest  : BOOL;
+   bSetRef        : BOOL;
+   bResetRef      : BOOL;
+ END_VAR
+ 
+   sHMI.sOut.mReleaseSetReference := UPDATE(myRobot.fixpos.RcuInScpRefPos AND (myRobot.mainModeMgr.mode = ciT1));
+   sHMI.sOut.mInReferencePos      := UPDATE(myRobot.fixpos.RcuInScpRefPos);
+   sHMI.sOut.mInSyncPos           := UPDATE(myRobot.fixpos.RcuInScpSyncPos);
+   sHMI.sOut.mSyncIni             := UPDATE(svSCP_RCU.sScpToRcu.bSyncIni);
+   sHMI.sOut.mReferenceOk         := UPDATE(svSCP_RCU.sScpToRcu.bRefSet AND NOT svSCP_RCU.sScpToRcu.bRefInvalid); 
+   sHMI.sOut.mSyncOK              := UPDATE(svSCP_RCU.sScpToRcu.bSyncOK);
+   sHMI.sOut.mBrakeChkOK          := UPDATE(NOT (bErrBrake OR bWarnBrakeChk OR bStopEndCarBrakeChk));
+   sHMI.sOut.mBrakeChkInfo        := UPDATE(bWarnBrakeChk);
+   sHMI.sOut.mBrakeChkWarn        := UPDATE(bStopEndCarBrakeChk);
+   sHMI.sOut.mBrakeChkErr         := UPDATE(bErrBrake);
+   
+   sTV.sOut.mReleaseSetReference  := UPDATE(myRobot.fixpos.RcuInScpRefPos AND myRobot.isNotMovingOnPath);
+   sTV.sOut.mReleaseResetRef      := UPDATE(myRobot.isNotMovingOnPath);
+   sTV.sOut.mInReferencePos       := UPDATE(myRobot.fixpos.RcuInScpRefPos);
+   sTV.sOut.mInSyncPos            := UPDATE(myRobot.fixpos.RcuInScpSyncPos);
+   sTV.sOut.mSyncIni              := UPDATE(svSCP_RCU.sScpToRcu.bSyncIni);
+   sTV.sOut.mReferenceOk          := UPDATE(svSCP_RCU.sScpToRcu.bRefSet AND NOT svSCP_RCU.sScpToRcu.bRefInvalid);
+   sTV.sOut.mSyncOK               := UPDATE(svSCP_RCU.sScpToRcu.bSyncOK);
+   sTV.sOut.mBrakeChkOK           := UPDATE(NOT (bErrBrake OR bWarnBrakeChk OR bStopEndCarBrakeChk));
+   sTV.sOut.mBrakeChk2h           := UPDATE(bWarnBrakeChk);
+   sTV.sOut.mBrakeChk15m          := UPDATE(bStopEndCarBrakeChk);
+   sTV.sOut.mBrakeChkErr          := UPDATE(bErrBrake);
+
+   bChgSetRefHMI                  := IS_CHANGED(sHMI.sIn.mSetReference);
+   bChgSetRefTV                   := IS_CHANGED(sTV.sIn.mSetReference);
+   bChgResetRefTV                 := IS_CHANGED(sTV.sIn.mResetReference);
+   bChgStartTest                  := IS_CHANGED(sTV.sIn.mStartTestMode);
+   
+   WHILE TRUE DO
+     bSetRef   := FALSE;
+     bResetRef := FALSE;
+     WAIT bChgSetRefHMI OR bChgSetRefTV OR bChgResetRefTV OR bChgStartTest;
+     
+     IF myRobot.fixpos.RcuInScpRefPos AND
+        (bChgSetRefHMI AND sHMI.sIn.mSetReference) OR (bChgSetRefTV AND sTV.sIn.mSetReference) OR (bChgResetRefTV AND sTV.sIn.mResetReference) THEN
+        bResetRef := TRUE;
+        IF NOT sTV.sIn.mResetReference THEN
+           bSetRef := TRUE;
+        END_IF;
+     END_IF;
+     //start TestMode --> MCU velo zones and virtual wall are deactivated (commissioning)
+     IF sTV.sIn.mStartTestMode AND bChgStartTest AND NOT (sTV.sOut.sTestMode.bActive OR sTV.sOut.sTestMode.bStop) THEN
+        START CommissioningTest(); 
+     ELSIF sTV.sIn.mStartTestMode AND bChgStartTest AND sTV.sOut.sTestMode.bActive AND NOT sTV.sOut.sTestMode.bStop THEN
+        sTV.sOut.sTestMode.bStop := TRUE;
+     END_IF;
+     
+     bChgSetRefHMI           := FALSE;
+     bChgSetRefTV            := FALSE;
+     bChgResetRefTV          := FALSE;
+     bChgStartTest           := FALSE;
+     sHMI.sIn.mSetReference  := FALSE;
+     sTV.sIn.mSetReference   := FALSE;
+     sTV.sIn.mResetReference := FALSE;
+     sTV.sIn.mStartTestMode  := FALSE;
+     
+     IF bResetRef THEN
+        IF NOT ResetReference() THEN
+           bSetRef := FALSE;
+        END_IF;
+     END_IF;  
+        
+     IF bSetRef THEN
+        SetReference();
+     END_IF;
+
+   END_WHILE;
+ 
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// Delete reference of SCP if existing
+//---------------------------------------------------------------------------------------------------------
+ROUTINE ResetReference() : BOOL
+ VAR
+   bTimeOut : BOOL;
+ END_VAR
+ 
+  IF NOT bSafeRobotic THEN
+     RETURN TRUE;
+  ELSE
+     myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Start resetting reference to SCP");
+     myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Start resetting reference to SCP");
+     IF svSCP_RCU.sScpToRcu.bRefSet OR svSCP_RCU.sScpToRcu.bRefInvalid THEN
+        //switch off drives to set new reference, otherwise missing STO switches off drives with EStop
+        bNoMovementRel := TRUE;
+        WAIT myRobot.isNotMovingOnPath AND NOT myRobot.allDrivesReady;
+        //delete existing reference
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Delete existing reference in SCP");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Delete existing reference in SCP");
+        svSCP_RCU.sRcuToScp.bResetRef := TRUE;  
+        SysTimerSet(cTimeOutSCP, bTimeOut);
+        WAIT bTimeOut OR NOT (svSCP_RCU.sScpToRcu.bRefSet OR svSCP_RCU.sScpToRcu.bRefInvalid);
+        svSCP_RCU.sRcuToScp.bResetRef := FALSE;
+        IF bTimeOut THEN
+           RcuSetMessageOnce(TRcuInterfaceToSCP_ErrTimeout, myRobot.kinListInx, 2, 0, "TRcuInterfaceToSCP.ResetReference", "DELETE REFERENCE");
+           SysTimerClear(bTimeOut);
+           bTimeOut := FALSE;
+           bNoMovementRel := FALSE;
+           RETURN FALSE;
+        ELSE
+           myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Reference successful deleted in SCP - set new reference");
+           myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Reference successful deleted in SCP - set new reference");
+           bNoMovementRel := FALSE;
+           RETURN TRUE;
+        END_IF;
+     ELSE
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - No reference existing in SCP");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "No reference existing in SCP");
+        RETURN TRUE;
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// Set new reference to SCP
+//---------------------------------------------------------------------------------------------------------
+ROUTINE SetReference() PRIVATE
+ VAR
+   bTimeOut : BOOL;
+ END_VAR
+ 
+  IF NOT bSafeRobotic THEN
+     RETURN;
+  ELSE
+     //switch off drives to set new reference, otherwise missing STO switches off drives with EStop
+     bNoMovementRel := TRUE;
+     WAIT myRobot.isNotMovingOnPath AND NOT myRobot.allDrivesReady;
+     //set new reference
+     svSCP_RCU.sRcuToScp.bSetRef     := TRUE;  
+     svSCP_RCU.sRcuToScp.bExecCmdRef := TRUE; 
+     SysTimerSet(cTimeOutSCP, bTimeOut);
+     WAIT bTimeOut OR (svSCP_RCU.sScpToRcu.bRefSet AND NOT svSCP_RCU.sScpToRcu.bRefInvalid); 
+     IF bTimeOut THEN
+        RcuSetMessageOnce(TRcuInterfaceToSCP_ErrTimeout, myRobot.kinListInx, 4, 0, "TRcuInterfaceToSCP.SetReference", "SET REFERENCE");
+     ELSIF svSCP_RCU.sScpToRcu.bRefInvalid THEN
+        RcuSetMessageOnce(TRcuInterfaceToSCP_ErrTimeout, myRobot.kinListInx, 5, 0, "TRcuInterfaceToSCP.SetReference", "SET REFERENCE");
+     ELSIF NOT svSCP_RCU.sScpToRcu.bRefSet THEN
+        RcuSetMessageOnce(TRcuInterfaceToSCP_ErrTimeout, myRobot.kinListInx, 6, 0, "TRcuInterfaceToSCP.SetReference", "SET REFERENCE");
+     ELSE
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - New reference successful set in SCP");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "New reference successful set in SCP");
+     END_IF;
+     svSCP_RCU.sRcuToScp.bSetRef      := FALSE;
+     svSCP_RCU.sRcuToScp.bExecCmdRef  := FALSE;
+     SysTimerClear(bTimeOut);
+     bTimeOut := FALSE;
+     bNoMovementRel := FALSE;
+  END_IF;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// TestMode --> MCU velo zones and virtual wall are deactivated to reach bounds of SCP (commissioning)
+//---------------------------------------------------------------------------------------------------------
+ROUTINE CommissioningTest() PRIVATE
+ VAR
+   bTimeExpired : BOOL;
+   i            : SINT;
+ END_VAR
+ 
+   sTV.sOut.sTestMode.bActive := TRUE;
+   sTV.sOut.sTestMode.bStop   := FALSE;
+   myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Start of Testmode");
+   myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Start of Testmode");
+   SysTimerSet(cMaxTimeTestMode, bTimeExpired);
+   FOR i:=0 TO cMaxVeloZones-1 DO
+       sTV.sOut.yTestModeVeloZone[i].iNr           := 0;
+       sTV.sOut.yTestModeVeloZone[i].bBoundReached := FALSE;
+       sTV.sOut.yTestModeVeloZone[i].rPosX         := 0.0;
+       sTV.sOut.yTestModeVeloZone[i].rPosY         := 0.0;
+       sTV.sOut.yTestModeVeloZone[i].rPosZ         := 0.0;
+   END_FOR;
+   //deactivate VirtualWalls
+   FOR i:=0 TO myRobot.nrOfWallBlocks DO
+       IF myRobot.VirtualWall[i].cfgActive THEN
+          IF myRobot.VirtualWall[i].Deactivate() THEN
+             myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode VirtualWall=" + myRobot.VirtualWall[i].areaName + " deactivated");
+             myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode VirtualWall=" + myRobot.VirtualWall[i].areaName + " deactivated");
+          ELSE
+             RcuSetMessageOnce(TRcuKinematic_ErrAreaActivate, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.CommissioningTest", myRobot.VirtualWall[i].areaName);
+          END_IF;
+       END_IF;
+   END_FOR;
+   //deactivate VelocityZones
+   FOR i:=0 TO myRobot.nrOfVelocityZones DO
+       IF myRobot.VelocityZone[i].cfgActive THEN
+          IF myRobot.VelocityZone[i].Deactivate() THEN
+             myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode VelocityZone=" + myRobot.VelocityZone[i].areaData.mName + " deactivated");
+             myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode VelocityZone=" + myRobot.VelocityZone[i].areaData.mName + " deactivated");
+          ELSE
+             RcuSetMessageOnce(TRcuKinematic_ErrAreaActivate, myRobot.kinListInx, 2, 0, "TRcuInterfaceToSCP.CommissioningTest", myRobot.VelocityZone[i].areaData.mName);
+          END_IF;
+       END_IF;
+   END_FOR;
+   //deactivate general velocity limitation
+   McuActivateMonitoring(myRobot.cartDynLimitID, FALSE);
+   
+   FOR i:=0 TO cMaxVeloZones-1 DO
+       START ObserveVeloZoneBound(i);
+   END_FOR;
+   WAIT bTimeExpired OR sTV.sOut.sTestMode.bStop OR (myRobot.mainModeMgr.mode = ciAuto); 
+   STOP ObserveVeloZoneBound;      
+   
+   IF bTimeExpired THEN
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode end - time expired");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode end - time expired");
+   ELSIF sTV.sOut.sTestMode.bStop THEN
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode end - stop from teach pendant");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode end - stop from teach pendant");
+   ELSIF (myRobot.mainModeMgr.mode = ciAuto) THEN
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode end - changed to automatic");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode end - changed to automatic");
+   END_IF;
+
+   //activate VirtualWalls
+   FOR i:=0 TO myRobot.nrOfWallBlocks DO
+       IF myRobot.VirtualWall[i].cfgActive THEN
+          IF (myRobot.VirtualWall[i].cfgSpecial <> 1) THEN
+             IF myRobot.VirtualWall[i].Activate() THEN
+                myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode VirtualWall=" + myRobot.VirtualWall[i].areaName + " activated");
+                myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode VirtualWall=" + myRobot.VirtualWall[i].areaName + " activated");
+             ELSE
+                RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.CommissioningTest", "McuActivateArea");
+             END_IF;
+          ELSIF (myRobot.mainModeMgr.fullSpeed AND bFullSpeedAllowed) THEN
+             IF myRobot.VirtualWall[i].Activate() THEN
+                myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode VirtualWall=" + myRobot.VirtualWall[i].areaName + " activated");
+                myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode VirtualWall=" + myRobot.VirtualWall[i].areaName + " activated");
+             ELSE
+                RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, myRobot.kinListInx, 2, 0, "TRcuInterfaceToSCP.CommissioningTest", "McuActivateArea");
+             END_IF;
+          END_IF;
+       END_IF; 
+   END_FOR;
+   //activate VelocityZones
+   FOR i:=0 TO myRobot.nrOfVelocityZones DO
+       IF myRobot.VelocityZone[i].cfgActive THEN
+          IF myRobot.VelocityZone[i].Activate() THEN
+             myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode VelocityZone=" + myRobot.VelocityZone[i].areaData.mName + " activated");
+             myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode VelocityZone=" + myRobot.VelocityZone[i].areaData.mName + " activated");
+          ELSE
+             RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, myRobot.kinListInx, 3, 0, "TRcuInterfaceToSCP.CommissioningTest", "McuActivateArea");
+          END_IF;
+       END_IF;
+   END_FOR;
+   //activate general velocity limitation
+   McuActivateMonitoring(myRobot.cartDynLimitID, TRUE);
+   
+   sTV.sOut.sTestMode.bActive := FALSE;
+   sTV.sOut.sTestMode.bStop   := FALSE;  
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// observe when SCP signals that velozone is reached --> store coordinates for user page
+//---------------------------------------------------------------------------------------------------------
+ROUTINE ObserveVeloZoneBound(idx : SINT) PRIVATE
+ VAR
+  index  : SINT;
+  chg    : BOOL;
+  inZone : BOOL;
+  pos    : TMcuFrame;
+  sLog   : STRING;
+ END_VAR
+ 
+   index  := idx;
+   sTV.sOut.yTestModeVeloZone[index].iNr := index+1;
+   inZone := svSCP_RCU.sScpToRcu.yVeloZoneOk[index];
+   myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode robot in VelocityZone " + STR(index+1) + " = " + STR(inZone));
+   myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode robot in VelocityZone " + STR(index+1) + " = " + STR(inZone));
+   chg := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[index]);
+   WHILE TRUE DO
+     IF inZone AND NOT svSCP_RCU.sScpToRcu.yVeloZoneOk[index] THEN
+        IF NOT sTV.sOut.yTestModeVeloZone[index].bBoundReached THEN
+           sTV.sOut.yTestModeVeloZone[index].bBoundReached := TRUE;
+           myRobot.ActPosInWorldCoord(pos);
+           sTV.sOut.yTestModeVeloZone[index].rPosX := pos.mPos.mValues[0];
+           sTV.sOut.yTestModeVeloZone[index].rPosY := pos.mPos.mValues[1];
+           sTV.sOut.yTestModeVeloZone[index].rPosZ := pos.mPos.mValues[2];           
+           //Would be better but MCU updates values only if drives are switched off/on
+           //sTV.sOut.yTestModeVeloZone[index].rPosX         := myRobot.IOWorldPos.mFrame.mPos.mValues[0];
+           //sTV.sOut.yTestModeVeloZone[index].rPosY         := myRobot.IOWorldPos.mFrame.mPos.mValues[1];
+           //sTV.sOut.yTestModeVeloZone[index].rPosZ         := myRobot.IOWorldPos.mFrame.mPos.mValues[2];
+           sLog := "Testmode VelocityZone " + STR(index+1) + "  [ " + RealToStr(sTV.sOut.yTestModeVeloZone[index].rPosX, 7) + " " + 
+                                                                      RealToStr(sTV.sOut.yTestModeVeloZone[index].rPosY, 7) + " " + 
+                                                                      RealToStr(sTV.sOut.yTestModeVeloZone[index].rPosZ,7) + " ] ";
+           myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - " + sLog);
+           myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", sLog);
+        ELSE
+           myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode robot in VelocityZone " + STR(index+1) + " = " + STR(inZone));
+           myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode robot in VelocityZone " + STR(index+1) + " = " + STR(inZone));
+        END_IF;
+     ELSIF (NOT inZone) AND svSCP_RCU.sScpToRcu.yVeloZoneOk[index] THEN
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Testmode robot in VelocityZone " + STR(index+1) + " = " + STR(inZone));
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Testmode robot in VelocityZone " + STR(index+1) + " = " + STR(inZone));
+     END_IF;
+     inZone := svSCP_RCU.sScpToRcu.yVeloZoneOk[index];
+     WAIT chg;
+     chg := FALSE;         
+   END_WHILE;   
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// use only bit 0..3 of stateword --> these bit are representing the state of SCP
+//---------------------------------------------------------------------------------------------------------
+ROUTINE ObserveStateWord() PRIVATE
+ VAR
+   byMask    : BYTE := 16#0F;
+   bChgState : BOOL;
+ END_VAR
+  
+  sScpStates.mStartUp      := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#01) = 16#01);
+  sScpStates.mSendConfig   := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#02) = 16#02);   
+  sScpStates.mStartUpBus   := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#03) = 16#03);
+  sScpStates.mRun          := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#04) = 16#04);
+  sScpStates.mStop         := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#05) = 16#05);
+  sScpStates.mFatalErr     := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#06) = 16#06);
+  sScpStates.mAlarm        := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#07) = 16#07);
+  sScpStates.mRunInternal  := UPDATE((svSCP_RCU.sScpToRcu.byHwState AND 16#08) = 16#08);
+ 
+  bChgState := IS_CHANGED(sScpStates);
+  WHILE TRUE DO
+    sHMI.sOut.siState := svSCP_RCU.sScpToRcu.byHwState AND byMask;
+    sTV.sOut.siState  := svSCP_RCU.sScpToRcu.byHwState AND byMask;
+    WAIT bChgState;
+    bChgState := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// copy system time to RETAIN to have the downtime after restart --> bigger than 30min. SYNC is request
+//---------------------------------------------------------------------------------------------------------
+ROUTINE SysTimeToRetain() PRIVATE
+ VAR
+   iTime    : LINT;
+   bTimeOut : BOOL;
+ END_VAR
+
+   SysTimerGetUs(iTime);
+   myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Current time=" + STR(iTime) + " - RETAIN time last shutdown=" + STR(svSCP_Retain.liShutdownTime));
+   myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Current time=" + STR(iTime) + " - RETAIN time last shutdown=" + STR(svSCP_Retain.liShutdownTime));
+   iTime := iTime - svSCP_Retain.liShutdownTime;
+   IF (iTime > cTimeLimitCpOff) THEN
+      svSCP_RCU.sRcuToScp.bRequestSync := TRUE;
+      START MsgDowntimeExpired();
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Time=" + STR(iTime) + " elapased since last  - SYNC requested");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Time=" + STR(iTime) + " elapased since last  - SYNC requested");
+   ELSE   
+      svSCP_RCU.sRcuToScp.bRequestSync := FALSE;
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Time=" + STR(iTime) + " elapased since last  - SYNC NOT requested");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Time=" + STR(iTime) + " elapased since last  - SYNC NOT requested");
+   END_IF; 
+ 
+   WHILE TRUE DO
+     SysTimerGetUs(iTime);
+     svSCP_Retain.liShutdownTime := iTime;
+     liTimeShutdown              := iTime;
+     bTimeOut := FALSE;
+     SysTimerSet(60000, bTimeOut);  //Update every minute
+     WAIT bTimeOut;
+     SysTimerClear(bTimeOut);
+   END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// set cyclic message that downtime was bigger than 30min.
+//---------------------------------------------------------------------------------------------------------
+ROUTINE MsgDowntimeExpired() PRIVATE
+  //mRequestSync is set --> wait until SCP has reset mSyncOK
+  WAIT NOT svSCP_RCU.sScpToRcu.bSyncOK;
+  WHILE svSCP_RCU.sScpToRcu.bRefSet AND NOT svSCP_RCU.sScpToRcu.bSyncOK DO
+     RcuSetMessageOnce(TRcuInterfaceToSCP_WarScpSync, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.MsgDowntimeExpired");
+     myRobot.WaitMcMainCycles(10);
+  END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// simulation of SCP
+//---------------------------------------------------------------------------------------------------------
+ROUTINE SimulateSCP() PRIVATE
+ VAR
+  chgSyncPos  : BOOL;
+  chgMovRel   : BOOL;
+ END_VAR
+
+   chgSyncPos  := IS_CHANGED(myRobot.fixpos.RcuInScpSyncPos);
+   chgMovRel   := IS_CHANGED(myRobot.autoControl.bPLCRelease);
+   WHILE TRUE DO
+     svSCP_RCU.sScpToRcu.bSyncIni      := myRobot.fixpos.RcuInScpSyncPos;
+     svSCP_RCU.sScpToRcu.bSTO_MotionOn := myRobot.autoControl.bPLCRelease; 
+     chgSyncPos  := FALSE;
+     chgMovRel   := FALSE;
+     WAIT chgSyncPos OR chgMovRel;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// limit TCP speed to 250mm/s if SCP doesn't allow full speed movement
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveFullSpeedFlag() PRIVATE
+ VAR
+  chg : BOOL;
+ END_VAR
+ 
+   WAIT sScpStates.mRun;
+   chg := IS_CHANGED(svSCP_RCU.sScpToRcu.bNotRedSpeed);
+   WHILE TRUE DO
+     bFullSpeedAllowed := svSCP_RCU.sScpToRcu.bNotRedSpeed;
+     WAIT chg;         
+     chg := FALSE;    
+     IF svSCP_RCU.sScpToRcu.bNotRedSpeed AND (NOT bFullSpeedAllowed) AND IS_MAPPED(myRobot.mainModeMgr.actMainModeDef) AND myRobot.mainModeMgr.actMainModeDef.actions.fullSpeed THEN
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - FullSpeed from SCP but currently reduced speed --> set FullSpeed");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "FullSpeed from SCP but currently reduced speed --> set FullSpeed");
+        //RcuSetMessageOnce(Dummy_Error, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ObserveFullSpeedFlag", "FullSpeed von SCP aber derzeit reduziert --> setze FullSpeed!");
+        bNoMovementRel := TRUE;
+        WAIT myRobot.isNotMovingOnPath AND NOT myRobot.allDrivesReady;
+        bFullSpeedAllowed := svSCP_RCU.sScpToRcu.bNotRedSpeed;
+     ELSIF (NOT svSCP_RCU.sScpToRcu.bNotRedSpeed) AND bFullSpeedAllowed AND IS_MAPPED(myRobot.mainModeMgr.actMainModeDef) AND myRobot.mainModeMgr.actMainModeDef.actions.fullSpeed THEN
+        myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - FullSpeed not allowed from SCP but currently FullSpeed --> set reduced speed");
+        myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "FullSpeed not allowed from SCP but currently FullSpeed --> set reduced speed");
+        //RcuSetMessageOnce(Dummy_Error, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ObserveFullSpeedFlag", "Kein FullSpeed von SCP aber derzeit FullSpeed --> setze SpeedLimit!");
+        bNoMovementRel := TRUE;
+        WAIT myRobot.isNotMovingOnPath AND NOT myRobot.allDrivesReady;
+        bFullSpeedAllowed := svSCP_RCU.sScpToRcu.bNotRedSpeed;  
+     END_IF;
+     bNoMovementRel := FALSE;
+   END_WHILE; 
+END_ROUTINE
+
+//-----------------------------------------------------.-------------------------------------------------
+// brake check states in RETAIN memory and timer for HMI
+//------------------------------------------------------------------------------------------------------   
+ROUTINE ObserveBrakeCheck() PRIVATE
+ VAR
+  chg8h           : BOOL;
+  chg6h           : BOOL;
+  chg4h           : BOOL;
+  chg2h           : BOOL;
+  chg15m          : BOOL;
+  chg0h           : BOOL;
+  liTime          : LINT;
+  bOneMinLeft     : BOOL;
+  liExpiringTime  : LINT;
+  liRemainingTime : LINT;
+ END_VAR
+    
+   //send last state of brake check to SCP
+   svSCP_RCU.sRcuToScp.bBrakeChkFail := svSCP_Retain.bBrakeCheckFailure;
+   svSCP_RCU.sRcuToScp.bBrakeChkOk      := svSCP_Retain.bBrakeCheckOk;
+   myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - RETAIN - Last state of brake check OK=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkOk) + " Failure=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkFail));
+   myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "RETAIN - Last state of brake check OK=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkOk) + " Failure=" + STR(svSCP_RCU.sRcuToScp.bBrakeChkFail));
+   //wait until SCP is running before reading interface
+   WAIT NOT sScpStates.mRunInternal;
+   //observe SCP inputs
+   chg8h   := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChkRequ); 
+   chg6h   := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk6h);
+   chg4h   := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk4h);
+   chg2h   := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk2h);
+   chg15m  := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk15m);
+   chg0h   := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChkEnd); 
+   
+   SysTimerGetUs(liTime);                          //get current system time 
+   IF svSCP_RCU.sScpToRcu.bBrakeChkEnd THEN              //8h are already expired
+      START ErrorBrakeCheck();
+      liExpiringTime := liTime + cTime0h; 
+      TimerToHmi(cTime0h); 
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer expired- Time=0h");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer expired- Time=0h");
+   ELSIF svSCP_RCU.sScpToRcu.bBrakeChk15m THEN          //15min until timer expires
+      START ErrorBrakeCheckEndOfCar();
+      liExpiringTime := liTime + cTime15m;
+      TimerToHmi(cTime15m);
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=15min");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=15min");
+   ELSIF svSCP_RCU.sScpToRcu.bBrakeChk2h THEN           //2h until timer expires
+      START ErrorBrakeCheckEndOfCar();
+      liExpiringTime := liTime + cTime2h;
+      TimerToHmi(cTime2h);
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=2h");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=2h");
+   ELSIF svSCP_RCU.sScpToRcu.bBrakeChk4h THEN           //4h until timer expires
+      START ErrorBrakeCheckEndOfCar();
+      liExpiringTime := liTime + cTime4h;
+      TimerToHmi(cTime4h);
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=4h");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=4h");
+   ELSIF svSCP_RCU.sScpToRcu.bBrakeChk6h THEN           //6h until timer expires
+      START WarningBrakeCheck();
+      liExpiringTime := liTime + cTime6h;
+      TimerToHmi(cTime6h);
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=6h");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=6h");
+   ELSIF svSCP_RCU.sScpToRcu.bBrakeChkRequ THEN           //8h until timer expires
+      START WarningBrakeCheck();
+      liExpiringTime := liTime + cTime8h; 
+      TimerToHmi(cTime8h);
+      myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer is started - Time=8h");
+      myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer is started - Time=8h");
+   ELSE                                            //Brake check ok --> timer not started
+      liExpiringTime := 0;
+      TimerToHmi(-1);
+   END_IF;
+   
+   WHILE TRUE DO
+   
+      //if brake check caused an error the timer in SCP is started which allows movement only for 8h with unsuccessful brake check
+      IF NOT sScpStates.mRunInternal AND
+         svSCP_RCU.sScpToRcu.bBrakeChkRequ OR svSCP_RCU.sScpToRcu.bBrakeChk6h OR svSCP_RCU.sScpToRcu.bBrakeChk4h OR svSCP_RCU.sScpToRcu.bBrakeChk2h OR svSCP_RCU.sScpToRcu.bBrakeChk15m OR svSCP_RCU.sScpToRcu.bBrakeChkEnd THEN     
+         SysTimerClear(bOneMinLeft);                         //init interval (1min) timer
+         bOneMinLeft := FALSE;
+         SysTimerGetUs(liTime);                              //get current system time
+         //set remaining time according inputs from SCP
+         IF svSCP_RCU.sScpToRcu.bBrakeChkEnd THEN
+            IF chg0h OR ((liExpiringTime - liTime) > cTime0h) THEN                                                //8h are already expired
+               liExpiringTime := liTime + cTime0h;
+               myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer expired- Time=0h");
+               myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer expired- Time=0h");
+            END_IF;
+            IF bWarnBrakeChk THEN
+               STOP WarningBrakeCheck;
+               bWarnBrakeChk := FALSE;
+            END_IF;
+            IF bStopEndCarBrakeChk THEN
+               STOP ErrorBrakeCheckEndOfCar;
+               bStopEndCarBrakeChk := FALSE;
+            END_IF;
+            IF NOT bErrBrake THEN
+               START ErrorBrakeCheck();
+            END_IF;
+            
+         ELSIF svSCP_RCU.sScpToRcu.bBrakeChk15m THEN
+            IF chg15m OR ((liExpiringTime - liTime) > cTime15m) THEN   //15min until timer expires
+               liExpiringTime := liTime + cTime15m;
+               myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=15min");
+               myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=15min");                                          
+            END_IF;
+            IF bWarnBrakeChk THEN
+               STOP WarningBrakeCheck;
+               bWarnBrakeChk := FALSE;
+            END_IF;
+            IF NOT bStopEndCarBrakeChk THEN
+               START ErrorBrakeCheckEndOfCar();
+            END_IF;
+            IF bErrBrake THEN
+               STOP ErrorBrakeCheck;
+               bErrBrake := FALSE;
+            END_IF;
+            
+         ELSIF svSCP_RCU.sScpToRcu.bBrakeChk2h THEN
+            IF chg2h OR ((liExpiringTime - liTime) < cTime15m) OR ((liExpiringTime - liTime) > cTime2h) THEN     //2h until timer expires
+               IF ((liExpiringTime - liTime) < cTime15m) THEN
+                  liExpiringTime := liTime + cTime15m;
+               ELSE
+                  liExpiringTime := liTime + cTime2h;
+                  myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=2h");
+                  myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=2h");
+               END_IF;
+            END_IF;    
+            IF bWarnBrakeChk THEN
+               STOP WarningBrakeCheck;
+               bWarnBrakeChk := FALSE;
+            END_IF;
+            IF NOT bStopEndCarBrakeChk THEN
+               START ErrorBrakeCheckEndOfCar();
+            END_IF;
+            IF bErrBrake THEN
+               STOP ErrorBrakeCheck;
+               bErrBrake := FALSE;
+            END_IF;
+            
+         ELSIF svSCP_RCU.sScpToRcu.bBrakeChk4h THEN
+            IF chg4h OR ((liExpiringTime - liTime) < cTime2h) OR ((liExpiringTime - liTime) > cTime4h) THEN     //4h until timer expires
+               IF ((liExpiringTime - liTime) < cTime2h) THEN
+                  liExpiringTime := liTime + cTime2h;
+               ELSE
+                  liExpiringTime := liTime + cTime4h;
+                  myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=4h");
+                  myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=4h");
+               END_IF;
+            END_IF;
+            IF bWarnBrakeChk THEN
+               STOP WarningBrakeCheck;
+               bWarnBrakeChk := FALSE;
+            END_IF;
+            IF NOT bStopEndCarBrakeChk THEN
+               START ErrorBrakeCheckEndOfCar();
+            END_IF;
+            IF bErrBrake THEN
+               STOP ErrorBrakeCheck;
+               bErrBrake := FALSE;
+            END_IF;
+            
+         ELSIF svSCP_RCU.sScpToRcu.bBrakeChk6h THEN
+            IF chg6h OR ((liExpiringTime - liTime) < cTime4h) OR ((liExpiringTime - liTime) > cTime6h) THEN     //6h until timer expires
+               IF ((liExpiringTime - liTime) < cTime4h) THEN
+                  liExpiringTime := liTime + cTime4h;
+               ELSE
+                  liExpiringTime := liTime + cTime6h;
+                  myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer - Time=6h");
+                  myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer - Time=6h");
+               END_IF;
+            END_IF;
+            IF NOT bWarnBrakeChk THEN
+               START WarningBrakeCheck();
+            END_IF;
+            IF bStopEndCarBrakeChk THEN
+               STOP ErrorBrakeCheckEndOfCar;
+               bStopEndCarBrakeChk := FALSE;
+            END_IF;
+            IF bErrBrake THEN
+               STOP ErrorBrakeCheck;
+               bErrBrake := FALSE;
+            END_IF;
+            
+         ELSIF svSCP_RCU.sScpToRcu.bBrakeChkRequ THEN
+            IF chg8h OR ((liExpiringTime - liTime) < cTime6h) OR ((liExpiringTime - liTime) > cTime8h) THEN     //8h until timer expires
+               IF ((liExpiringTime - liTime) > cTime4h) AND ((liExpiringTime - liTime) < cTime6h) THEN
+                  liExpiringTime := liTime + cTime6h;
+               ELSE
+                  liExpiringTime := liTime + cTime8h;
+                  myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - Brake check timer is started - Time=8h");
+                  myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "Brake check timer is started - Time=8h");
+               END_IF;
+            END_IF;
+            IF NOT bWarnBrakeChk THEN
+               START WarningBrakeCheck();
+            END_IF;
+            IF bStopEndCarBrakeChk THEN
+               STOP ErrorBrakeCheckEndOfCar;
+               bStopEndCarBrakeChk := FALSE;
+            END_IF;
+            IF bErrBrake THEN
+               STOP ErrorBrakeCheck;
+               bErrBrake := FALSE;
+            END_IF;
+         END_IF;
+         liRemainingTime := liExpiringTime - liTime;         //calculate remaining time for HMI and TV
+         TimerToHmi(liRemainingTime);
+         SysTimerSet(60000, bOneMinLeft);                    //start interval (1min) timer
+      //brake check ok --> timer isn't running
+      ELSE
+         SysTimerClear(bOneMinLeft);
+         bOneMinLeft := FALSE;
+         TimerToHmi(-1);                                     //set "--:--" as time to HMI and TV
+         IF bWarnBrakeChk THEN
+            STOP WarningBrakeCheck;
+            bWarnBrakeChk := FALSE;
+         END_IF;
+         IF bStopEndCarBrakeChk THEN
+            STOP ErrorBrakeCheckEndOfCar;
+            bStopEndCarBrakeChk := FALSE;
+         END_IF;
+         IF bErrBrake THEN
+            STOP ErrorBrakeCheck;
+            bErrBrake := FALSE;
+         END_IF;  
+      END_IF;        
+      chg8h  := FALSE;
+      chg6h  := FALSE;
+      chg4h  := FALSE;
+      chg2h  := FALSE;
+      chg15m := FALSE;
+      chg0h  := FALSE;   
+      WAIT (chg8h OR chg6h OR chg4h OR chg2h OR chg15m OR chg0h OR bOneMinLeft) AND NOT sScpStates.mRunInternal;
+
+   END_WHILE;
+   
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// set cyclic messages about not executed brake check
+//---------------------------------------------------------------------------------------------------------
+ROUTINE WarningBrakeCheck() PRIVATE
+ VAR 
+  chg : BOOL;
+ END_VAR
+
+   chg := IS_CHANGED(sHMI.sOut.sBrakeChkTimer);
+   bWarnBrakeChk := TRUE;
+   WHILE TRUE DO
+      IF chg THEN
+         chg := FALSE;
+         RcuResetMessage(TRcuInterfaceToSCP_WarBrakeChk, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.WarningBrakeCheck", sHMI.sOut.sBrakeChkTimer);
+      ELSE
+         RcuSetMessageOnce(TRcuInterfaceToSCP_WarBrakeChk, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.WarningBrakeCheck", sHMI.sOut.sBrakeChkTimer);
+      END_IF;      
+      myRobot.WaitMcMainCycles(10);
+   END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// set cyclic messages about brake check expired at the end of car
+//---------------------------------------------------------------------------------------------------------
+ROUTINE ErrorBrakeCheckEndOfCar() PRIVATE
+ VAR
+  chgFlow : BOOL;
+ END_VAR
+
+   bStopEndCarBrakeChk := TRUE;
+   chgFlow := IS_CHANGED(myRobot.selectingFlow.present);
+   
+   WHILE TRUE DO
+      IF (myRobot.mainModeMgr.mode = ciAuto) AND (NOT myRobot.RcuInterfaceToBCU.bFixposActive) AND (NOT myRobot.selectingFlow.present) THEN
+         RcuSetMessageOnce(TRcuInterfaceToSCP_ErrBrakeCh, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ErrorBrakeCheckEndOfCar", sHMI.sOut.sBrakeChkTimer);
+      END_IF;
+      WAIT chgFlow;
+      chgFlow := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------
+// set cyclic messages about brake check expired but allow moving robot to home position in Hand
+//---------------------------------------------------------------------------------------------------------
+ROUTINE ErrorBrakeCheck() PRIVATE
+ VAR
+  chgFlow : BOOL;
+  chgErr  : BOOL;
+  chgMode : BOOL;
+  idWarn  : DINT;
+ END_VAR
+
+   bErrBrake := TRUE;
+   chgFlow   := IS_CHANGED(myRobot.selectingFlow.present);
+   chgErr    := IS_CHANGED(myRobot.svMotionAllowed);
+   chgMode   := IS_CHANGED(myRobot.RcuInterfaceToBCU.nStationMode);
+   idWarn    := RcuConvertMessageClass(TRcuInterfaceToSCP_ErrBrakeChEx, cgiMsgClassWarning);
+   
+   WHILE TRUE DO
+      IF (myRobot.RcuInterfaceToBCU.nStationMode = eAuto) AND NOT myRobot.selectingFlow.present THEN
+         RcuSetMessageOnce(TRcuInterfaceToSCP_ErrBrakeChEx, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ErrorBrakeCheck");
+         WAIT NOT myRobot.svMotionAllowed;
+      ELSE
+         RcuSetMessageOnce(idWarn, myRobot.kinListInx, 1, 0, "TRcuInterfaceToSCP.ErrorBrakeCheck");
+      END_IF;
+      WAIT chgFlow OR chgErr OR chgMode;
+      chgFlow := FALSE;
+      chgErr  := FALSE;
+      chgMode := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Convert timer from INT to STRING for HMI
+//-----------------------------------------------------------------------------
+ROUTINE TimerToHmi(liTime : LINT) PRIVATE
+ VAR
+   iTime : INT;
+   iTemp : SINT;
+   s     : STRING;
+ END_VAR
+  
+  IF (liTime = -1) THEN
+     iTime := -1;
+  ELSIF (liTime < 0) THEN
+     iTime := 0;
+  ELSIF (liTime > 32767000000) THEN
+     iTime := 32767;
+  ELSE
+     iTime := liTime/1000000;
+  END_IF; 
+  
+  IF (iTime = -1) THEN
+     s := "--:--";
+  ELSE
+     s := "";   
+     //hours
+     iTemp := iTime / 3600;
+     IF iTemp < 10 THEN
+        s := s + "0" + STR(iTemp) + ":";
+     ELSE
+        s := s + STR(iTemp) + ":";
+     END_IF;
+     //minutes
+     iTime := iTime - (iTemp * 3600);
+     iTemp := iTime / 60; 
+     IF iTemp < 10 THEN
+        s := s + "0" + STR(iTemp);
+     ELSE
+        s := s + STR(iTemp);
+     END_IF;
+  END_IF;
+  sHMI.sOut.sBrakeChkTimer := s;
+  sTV.sOut.sBrakeChkTimer  := s;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Mirror signal of rail master initiator to SCP
+//-----------------------------------------------------------------------------
+ROUTINE MasterIniRailToSCP() PRIVATE
+ VAR
+  i : INT;
+ END_VAR
+  
+  WAIT myRobot.masterProg.bSensorsMapped;
+  IF (myRobot.nrOfAuxJoints > 0) THEN  //robot has any aux joints --> rail is always a aux joint
+     FOR i:=myRobot.nrOfMainJoints TO myRobot.nrOfJoints-1 DO
+         IF (myRobot.kinematic.mJoints[i].mDHParam.mTyp = eMcuJointLin) THEN  //aux joint is linear --> this is the rail
+            IF myRobot.drive[i].masteringExist AND (myRobot.drive[i].masteringType = eDuerr) THEN
+               svSCP_RCU.sRcuToScp.bMasterIniRail := UPDATE((myRobot.masterProg.bSensorSignal_duerr[i] = 2));
+               myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", "UPDATE - Mastersensor of axis=" + STR(i) + " to SCP");
+            END_IF;
+         END_IF;
+     END_FOR;
+  END_IF;  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Write interface of virtual IOs to logfile
+//-----------------------------------------------------------------------------
+ROUTINE ProtocolInterface() PRIVATE
+ VAR
+  yChgIn  : ARRAY [cNrVirtual_In] OF BOOL;
+  yChgOut : ARRAY [cNrVirtual_Out] OF BOOL;
+  bChgIn  : BOOL;
+  bChgOut : BOOL;
+  i       : INT;
+  sLog    : STRING;
+ END_VAR 
+  
+  yChgIn[0]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bRefInvalid); 
+  yChgIn[1]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bRefSet);
+  yChgIn[2]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bSyncIni);
+  yChgIn[3]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bSyncOK);
+  yChgIn[4]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bSTO_MotionOn);
+  yChgIn[5]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bAlarmOutOfWZ);
+  yChgIn[6]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bAlarmSpeedMon);
+  yChgIn[7]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChkRequ);
+  yChgIn[8]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk6h);
+  yChgIn[9]  := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk4h);
+  yChgIn[10] := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk2h);
+  yChgIn[11] := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChk15m);
+  yChgIn[12] := IS_CHANGED(svSCP_RCU.sScpToRcu.bBrakeChkEnd);
+  yChgIn[13] := IS_CHANGED(svSCP_RCU.sScpToRcu.bNotRedSpeed);
+  yChgIn[14] := IS_CHANGED(svSCP_RCU.sScpToRcu.bSMM12Alarm);
+  yChgIn[15] := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[0]);
+  yChgIn[16] := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[1]);
+  yChgIn[17] := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[2]);
+  yChgIn[18] := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[3]);
+  yChgIn[19] := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[4]);
+  yChgIn[20] := IS_CHANGED(svSCP_RCU.sScpToRcu.yVeloZoneOk[5]);
+  bChgIn := IS_CHANGED(yChgIn);
+
+  yChgOut[0]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bResetRef);
+  yChgOut[1]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bExecCmdRef);
+  yChgOut[2]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bSetRef);
+  yChgOut[3]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bRefChkPos1);
+  yChgOut[4]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bRefChkPos2); 
+  yChgOut[5]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bExecCmdSync);
+  yChgOut[6]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bEncMutingAll); 
+  yChgOut[7]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bBrakeChkFail);
+  yChgOut[8]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bBrakeChkOk);
+  yChgOut[9]  := IS_CHANGED(svSCP_RCU.sRcuToScp.bRequestSync);
+  yChgOut[10] := IS_CHANGED(svSCP_RCU.sRcuToScp.bMasterIniRail);
+  bChgOut := IS_CHANGED(yChgOut);
+  
+  WHILE TRUE DO
+    WAIT bChgIn OR bChgOut;
+    IF bChgIn THEN
+       sLog := "IN:";
+       IF svSCP_RCU.sScpToRcu.bRefInvalid            THEN      sLog := sLog + " RefI=1";       ELSE sLog := sLog + " RefI=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bRefSet                THEN      sLog := sLog + " RefS=1";       ELSE sLog := sLog + " RefS=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bSyncIni               THEN      sLog := sLog + " SynI=1";       ELSE sLog := sLog + " SynI=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bSyncOK                THEN      sLog := sLog + " SynO=1";       ELSE sLog := sLog + " SynO=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bSTO_MotionOn          THEN      sLog := sLog + " StoM=1";       ELSE sLog := sLog + " StoM=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bAlarmOutOfWZ          THEN      sLog := sLog + " OuWz=1";       ELSE sLog := sLog + " OuWz=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bAlarmSpeedMon         THEN      sLog := sLog + " SpWz=1";       ELSE sLog := sLog + " SpWz=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bBrakeChkRequ          THEN      sLog := sLog + " BC8=1";        ELSE sLog := sLog + " BC8=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.bBrakeChk6h            THEN      sLog := sLog + " BC6=1";        ELSE sLog := sLog + " BC6=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.bBrakeChk4h            THEN      sLog := sLog + " BC4=1";        ELSE sLog := sLog + " BC4=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.bBrakeChk2h            THEN      sLog := sLog + " BC2=1";        ELSE sLog := sLog + " BC2=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.bBrakeChk15m           THEN      sLog := sLog + " BC15=1";       ELSE sLog := sLog + " BC15=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bBrakeChkEnd           THEN      sLog := sLog + " BC0=1";        ELSE sLog := sLog + " BC0=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.bNotRedSpeed           THEN      sLog := sLog + " FulS=1";       ELSE sLog := sLog + " FulS=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.bSMM12Alarm            THEN      sLog := sLog + " EncA=1";       ELSE sLog := sLog + " EncA=0";      END_IF;
+       IF svSCP_RCU.sScpToRcu.yVeloZoneOk[0]         THEN      sLog := sLog + " Vz1=1";        ELSE sLog := sLog + " Vz1=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.yVeloZoneOk[1]         THEN      sLog := sLog + " Vz2=1";        ELSE sLog := sLog + " Vz2=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.yVeloZoneOk[2]         THEN      sLog := sLog + " Vz3=1";        ELSE sLog := sLog + " Vz3=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.yVeloZoneOk[3]         THEN      sLog := sLog + " Vz4=1";        ELSE sLog := sLog + " Vz4=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.yVeloZoneOk[4]         THEN      sLog := sLog + " Vz5=1";        ELSE sLog := sLog + " Vz5=0";       END_IF;
+       IF svSCP_RCU.sScpToRcu.yVeloZoneOk[5]         THEN      sLog := sLog + " Vz6=1";        ELSE sLog := sLog + " Vz6=0";       END_IF;
+       myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - " + sLog);
+       myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", sLog);
+       FOR i:=0 TO cNrVirtual_In - 1 DO
+           yChgIn[i] := FALSE;
+       END_FOR;
+       bChgIn := FALSE;
+    END_IF;
+    IF bChgOut THEN
+       sLog := "OUT:";
+       IF svSCP_RCU.sRcuToScp.bResetRef              THEN      sLog := sLog + " RRef=1";       ELSE sLog := sLog + " RRef=0";      END_IF;
+       IF svSCP_RCU.sRcuToScp.bExecCmdRef            THEN      sLog := sLog + " ExR=1";        ELSE sLog := sLog + " ExR=0";       END_IF;
+       IF svSCP_RCU.sRcuToScp.bSetRef                THEN      sLog := sLog + " SetR=1";       ELSE sLog := sLog + " SetR=0";      END_IF;
+       IF svSCP_RCU.sRcuToScp.bRefChkPos1            THEN      sLog := sLog + " Rp1=1";        ELSE sLog := sLog + " Rp1=0";       END_IF;
+       IF svSCP_RCU.sRcuToScp.bRefChkPos2            THEN      sLog := sLog + " Rp2=1";        ELSE sLog := sLog + " Rp2=0";       END_IF;
+       IF svSCP_RCU.sRcuToScp.bExecCmdSync           THEN      sLog := sLog + " ExS=1";        ELSE sLog := sLog + " ExS=0";       END_IF;
+       IF svSCP_RCU.sRcuToScp.bEncMutingAll          THEN      sLog := sLog + " EncM=1";       ELSE sLog := sLog + " EncM=0";      END_IF;
+       IF svSCP_RCU.sRcuToScp.bBrakeChkFail          THEN      sLog := sLog + " BcEr=1";       ELSE sLog := sLog + " BcEr=0";      END_IF;
+       IF svSCP_RCU.sRcuToScp.bBrakeChkOk            THEN      sLog := sLog + " BcOk=1";       ELSE sLog := sLog + " BcOk=0";      END_IF;
+       IF svSCP_RCU.sRcuToScp.bRequestSync           THEN      sLog := sLog + " ReqS=1";       ELSE sLog := sLog + " ReqS=0";      END_IF;
+       IF svSCP_RCU.sRcuToScp.bMasterIniRail         THEN      sLog := sLog + " A7Ini=1";      ELSE sLog := sLog + " A7Ini=0";     END_IF;
+       myRobot.DebugPrint(eTraceEquipment, "InterfaceToSCP - " + sLog);
+       myRobot.logger.SetProtocolText("TRcuInterfaceToSCP", sLog);
+       FOR i:=0 TO cNrVirtual_Out - 1 DO
+           yChgOut[i] := FALSE;
+       END_FOR;
+       bChgOut := FALSE;
+    END_IF;
+  END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------.-------------------------------------------------
+// systemroutines
+//------------------------------------------------------------------------------------------------------
+ROUTINE EXIT()
+  PRINT("InterfaceToSCP - ROUTINE EXIT - Time of shutdown=" + STR(liTimeShutdown));
+END_ROUTINE

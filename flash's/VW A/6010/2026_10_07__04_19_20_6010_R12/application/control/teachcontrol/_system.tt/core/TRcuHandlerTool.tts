@@ -1,0 +1,1277 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuHandlerTool.tts                                          *
+*   Description: Macrofunctions of the Handlersensors- and switches           *
+*-----------------------------------------------------------------------------*
+*  
+* 30.11.05 BMA: WAIT MAIN_RUN replaced by MAINRUN()
+*)
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT GLOBAL
+   cgiMaxUnits        : SINT := 5;    //Max units per handler
+   cgiMaxSwitches     : SINT := 4;    //Max switches per handler
+   cgiMaxCylSystem    : SINT := 2;    //Max cylinders per pneumatic system
+   cgiMaxFeetSystem   : SINT := 6;    //Max feet per pneumatic system
+   cMaxEpsInPneuUnits : SINT := 10;   //cgiMaxFeet*2 + cgiMaxCylinders*2
+   cMaxPneuUnits      : SINT := 2;    //Max pneu units per handler
+   cMaxSensors        : SINT := 1;    //Max sensors per handler
+   cMaxPneuTools      : SINT := 1;    //Max pneu tools per handler
+END_CONSTANT
+
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL
+  TRcuUnitType   : (eTypeUndef, eTypeSwitch, eTypeSensor, eTypePneuUnit, eTypePneuTool);
+  TRcuCheckState : (ePartError, ePartNotPresent, ePartPresent, ePartMoveBack, ePartRedo);
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  UnitType             : TRcuUnitType;  //Hardware type of a unit
+  iCountUnits          : DINT;
+  yUnit                : ARRAY [cgiMaxUnits]    OF tUnit;
+  ySensor              : ARRAY [cMaxSensors]    OF TRcuSensor;
+  ySwitch              : ARRAY [cgiMaxSwitches] OF TRcuSwitch;
+  yPneuUnit            : ARRAY [cMaxPneuUnits]  OF TRcuPneuUnit;
+  yPneuTool            : ARRAY [cMaxPneuTools]  OF TRcuPneuTool;
+  bEnabled             : BOOL;
+  bInitDone            : BOOL;
+  usedParts            : ARRAY [cgiMaxNumOfParts] OF BOOL;
+  iPartToHandle        : SINT;
+  sKinShift            : SSHIFT; 
+  sPartShift           : SSHIFT;
+  bInBypass            : BOOL := TRUE;
+  bLastBackwardMove    : BOOL;
+  bReleaseMovementCtrl : BOOL;          //markers for backward movement
+  anyPneuUnitUsed      : BOOL;          //any pneu unit is used
+  anyPneuToolUsed      : BOOL;          //any pneu unit is used
+  iUsedCylPneuUnit     : SINT;          //amount of cylinders used in system
+  iUsedFeetPneuUnit    : SINT;          //amount of feet used in system
+  sAirSupply           : tAirSupply;    //air supply for pneu unit
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//  read values from the catalog    
+//------------------------------------------------------------------------------------------------------
+ROUTINE init(locRobot : TRcuRobot)
+ VAR
+    catHdlGeneral   : DINT;            // handle of the configuration directory
+    catHdlUnit      : DINT;            // handle of the configuration directory
+    catHdlDevice    : DINT;            // handle of the configuration directory
+    i               : SINT;            // loopcounter
+    anyDevFound     : BOOL;            // any device found for unit
+    anySwitchUsed   : BOOL;            // any switch is used
+    buffer          : STRING;          // string bufffer
+    tmp             : DINT;            // temp catalogvalue
+    iDeviceCount    : SINT;            // Loopcounter of devices
+    iDeviceNo       : DINT;            // hardwaredevice number
+    iDeviceType     : DINT;            // kind of the device
+    useMovementCtrl : BOOL;            // partcontrol of sensor and switch are using backward movement
+ END_VAR
+ 
+ instId := RcuGetInstanceId(); //instance identification number (for alarms)
+ myRobot := MAP(locRobot);
+ IF NOT IS_MAPPED(myRobot) THEN
+    RcuSetMessageOnce(TRcuHandlerTool_ErrHandInstFail, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.init");
+    RETURN;
+ END_IF;
+ 
+ //check if handler is working with these parts 1...4
+ IF myRobot.handler.partPosPerHandler THEN
+    FOR i:=1 TO myRobot.handler.iNumberOfParts-1 DO
+        IF myRobot.handler.partMap[i] = 1 THEN
+            usedParts[i] := TRUE;
+        END_IF;
+    END_FOR;
+ ELSE
+    FOR i:=0 TO cgiMaxNumOfParts-1 DO
+        usedParts[i] := TRUE;
+    END_FOR;
+ END_IF;
+ 
+ buffer := "KINEMATIC:" + STR(myRobot.kinListInx) + ".PartCheck.General";
+ IF NOT CatalogGetHandleRelative(giRcBaseHdl, buffer, catHdlGeneral) THEN
+    RETURN;
+ END_IF;
+ IF NOT CatalogReadIntRange(catHdlGeneral, "Enable", tmp, 0, 1, FALSE) THEN
+    bEnabled := FALSE;                      //Parameter not in config -> not valid
+    RETURN;
+ ELSIF (tmp <> 1) THEN
+    bEnabled := FALSE;                     //Handlertool is not enabled
+    RETURN;
+ ELSE
+    bEnabled := TRUE;                      //Handlertool is  enabled
+    buffer := myRobot.kinematic.mName + ".handler.ActShift.X";
+    SwoAddRealVariable(myRobot.ActShift.X_mm, buffer);
+    buffer := myRobot.kinematic.mName + ".handler.ActShift.Y";
+    SwoAddRealVariable(myRobot.ActShift.Y_mm, buffer);
+    buffer := myRobot.kinematic.mName + ".handler.ActShift.Z";
+    SwoAddRealVariable(myRobot.ActShift.Z_mm, buffer);
+    buffer := myRobot.kinematic.mName + ".handler.ActShift.A7";
+    SwoAddRealVariable(myRobot.ActShift.A7_mm, buffer);
+    bInBypass := UPDATE(TRUE);
+ END_IF;
+ 
+ IF NOT CatalogReadIntRange(catHdlGeneral, "CountUnits", iCountUnits, 1, cgiMaxUnits, FALSE) THEN
+    iCountUnits := 0;                      
+    bEnabled    := FALSE;                     
+    RETURN;
+ END_IF;
+ 
+ //config of units
+ FOR i:=0 TO (iCountUnits-1) DO
+     buffer := "KINEMATIC:" + STR(myRobot.kinListInx) + ".PartCheck.Unit" + STR(i+1);
+     //get catalog handle of each unit
+     IF CatalogGetHandleRelative(giRcBaseHdl, buffer, catHdlUnit) THEN
+        //find devices of this unit
+        FOR iDeviceCount:=1 TO cMaxDevices DO                       
+            buffer := "Device_" + STR(iDeviceCount);
+            IF CatalogReadIntRange(catHdlUnit, buffer, iDeviceNo, 1, cMaxDevices, TRUE) THEN
+               buffer := "KINEMATIC:" + STR(myRobot.kinListInx) + ".PartCheck.Device" + STR(iDeviceNo);
+               //get catalog handle of device
+               IF CatalogGetHandleRelative(giRcBaseHdl, buffer, catHdlDevice) THEN
+                  IF CatalogReadIntRange(catHdlDevice, "Type", iDeviceType, eTypeSwitch, eTypePneuTool, FALSE) THEN
+                     IF (iDeviceType = eTypeSwitch) THEN
+                        anySwitchUsed   := TRUE;
+                        useMovementCtrl := TRUE;
+                     ELSIF (iDeviceType = eTypeSensor) THEN
+                        useMovementCtrl := TRUE;
+                     ELSIF (iDeviceType = eTypePneuUnit) THEN
+                        anyPneuUnitUsed := TRUE;
+                     ELSIF (iDeviceType = eTypePneuTool) THEN
+                        anyPneuToolUsed := TRUE;
+                     END_IF;
+                  END_IF;   
+               END_IF;
+            END_IF;   
+        END_FOR;
+     END_IF;
+ END_FOR;
+
+ FOR i:=0 TO (iCountUnits-1) DO
+     buffer := "KINEMATIC:" + STR(myRobot.kinListInx) + ".PartCheck.Unit" + STR(i+1);
+     //get catalog handle of each unit
+     IF NOT CatalogGetHandleRelative(giRcBaseHdl, buffer, catHdlUnit) THEN
+        RcuSetMessageOnce(TRcuHandlerTool_ErrNoCatHandle, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.ReadConfig", STR(buffer));
+        iCountUnits := 0;
+        bEnabled    := FALSE;                     
+        RETURN;
+     ELSE
+        //read name of unit
+        IF NOT CatalogReadString(catHdlUnit, "Name", yUnit[i].sName, FALSE) THEN
+           yUnit[i].sName   := "Unit " + STR(i+1);
+        END_IF;
+        //find devices of this unit 
+        anyDevFound := FALSE;
+        FOR iDeviceCount:=1 TO cMaxDevices DO                       
+            buffer := "Device_" + STR(iDeviceCount);
+            IF CatalogReadIntRange(catHdlUnit, buffer, iDeviceNo, 1, cMaxDevices, TRUE) THEN
+               buffer := "KINEMATIC:" + STR(myRobot.kinListInx) + ".PartCheck.Device" + STR(iDeviceNo);
+               //get catalog handle of device
+               IF NOT CatalogGetHandleRelative(giRcBaseHdl, buffer, catHdlDevice) THEN
+                  RcuSetMessageOnce(TRcuHandlerTool_ErrNoCatHandle, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.ReadConfig", STR(buffer));
+                  iCountUnits := 0;
+                  bEnabled    := FALSE;                     
+                  RETURN;
+               END_IF;
+               IF NOT CatalogReadIntRange(catHdlDevice, "Type", iDeviceType, eTypeSwitch, eTypePneuTool, FALSE) THEN    //Kind of device
+                  iCountUnits := 0;
+                  bEnabled    := FALSE;                     
+                  RETURN;
+               END_IF;
+               anyDevFound := TRUE;
+               IF NOT AddDeviceToUnit(catHdlDevice, iDeviceType, i) THEN
+                  iCountUnits := 0;
+                  bEnabled    := FALSE;                     
+                  RETURN;
+               END_IF;
+            END_IF;
+        END_FOR; //FOR iDeviceCount:=1 TO cMaxDevices DO
+        IF NOT anyDevFound THEN
+           RcuSetMessageOnce(TRcuHandlerTool_ErrNoCatHandle, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.ReadConfig", "Devices - Unit"+STR(i+1));
+           iCountUnits := 0;
+           bEnabled    := FALSE;                     
+           RETURN;
+        END_IF;
+     END_IF;  
+ END_FOR; //FOR i:=0 TO (iCountUnits-1) DO
+ 
+ // partcontrol of sensor and switch are using backward movement
+ IF useMovementCtrl THEN
+    START CtrlMovement();
+ END_IF;
+ IF anySwitchUsed THEN
+    START EcoScreenInterfaceSwitch();
+ END_IF;
+ IF anyPneuUnitUsed THEN
+    IF myRobot.ecoscreen.HandlerInterfacePneu(myRobot) THEN
+       FOR i:=0 TO cMaxPneuUnits-1 DO
+           yPneuUnit[i].bEcoScreenMapped := TRUE;
+       END_FOR;
+    ELSE
+       myRobot.DebugPrint(eTraceRcuHandler, "Interface to EcoScreen for handler pneuUnit is not running");
+    END_IF;
+ END_IF;
+ 
+ 
+ IF CatalogReadString(giSysBaseHdl, "applPath", buffer, TRUE) THEN
+    buffer := buffer + "application\control\teachcontrol\_system.tt\core\TRcuUnit.tts";
+    IF FileDelete(buffer) THEN
+       PRINT("File - " + buffer + " deleted because it's no longer needed !!!");
+    END_IF;
+ END_IF;
+    
+ bInitDone := TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// EcoTalk: Macro to calibrate DMS
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroCalibrateSensor(inUnit : UNIT)
+ VAR
+  i : SINT;
+ END_VAR
+ 
+  STOPPOINT();
+  IF NOT IsUnitOk(inUnit, "MacroCalibrateSensor") THEN
+     RETURN;
+  ELSIF ReactivateNextPart(inUnit, iPartToHandle, "MacroCalibrateSensor") THEN   
+     RETURN;
+  ELSIF(yUnit[inUnit].eType <> eTypeSensor) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrNSensThisUni, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.MacroCalibrateSensor", yUnit[inUnit].sName, "Calibrate");
+     myRobot.ErrorReaction(TRUE);
+     RETURN;
+  ELSE   
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) THEN
+            IF NOT ySensor[i].Calibrate() THEN
+               myRobot.ErrorReaction(TRUE);
+            END_IF;
+         END_IF;
+     END_FOR;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// EcoTalk: Macro to set gain to DMS
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroSetSensorGain(inUnit : UNIT; CONST inGain : GAIN)
+ VAR
+   i     : SINT;
+   iGain : GAIN;
+ END_VAR
+ 
+  STOPPOINT();
+  IF NOT IsUnitOk(inUnit, "MacroSetSensorGain") THEN
+     RETURN;
+  ELSIF ReactivateNextPart(inUnit, iPartToHandle, "MacroSetSensorGain") THEN   
+     RETURN;
+  ELSIF(yUnit[inUnit].eType <> eTypeSensor) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrNSensThisUni, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.MacroSetSensorGain", yUnit[inUnit].sName, "Gain");
+     myRobot.ErrorReaction(TRUE);
+     RETURN;
+  END_IF;
+   
+  //modify internal value from fine-->30kg, hard-->60kg 
+  IF (inGain = cHard) THEN
+     iGain := c60_0;
+  ELSIF (inGain = cFine) THEN
+     iGain := c30_0;   
+  ELSE
+     iGain := inGain;
+  END_IF;
+  
+  FOR i:=0 TO cMaxSensors-1 DO
+      IF (ySensor[i].iUnitNr = inUnit) THEN
+         START ySensor[i].SetGain(FALSE, iGain); //synchron to MainRun
+      END_IF;
+  END_FOR;   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// EcoTalk: Macro to set the number of searchcycles
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroSetSearchCycles(inUnit : UNIT; iCycles : SINT)
+  VAR
+    i : SINT;
+  END_VAR
+  
+  WAIT MAIN_RUN;
+  IF NOT IsUnitOk(inUnit, "MacroSetSearchCycles") THEN
+     RETURN;  
+  ELSIF ReactivateNextPart(inUnit, iPartToHandle, "MacroSetSearchCycles") THEN 
+     RETURN;
+  END_IF;   
+  IF (yUnit[inUnit].eType = eTypeSensor) THEN
+     //store current shift of kinematic
+     sKinShift := myRobot.ActShift;
+     ShiftToLogger(sKinShift, "KinShift");
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) THEN
+             ySensor[i].SetSearchCycles(iCycles);
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     //store current shift of kinematic
+     sKinShift := myRobot.ActShift;
+     ShiftToLogger(sKinShift, "KinShift");
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) THEN
+            ySwitch[i].SetSearchCycles(iCycles);
+         END_IF;
+     END_FOR;
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 0, instId, "TRcuHandlerTool.MacroSetSearchCycles");
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  start or stop maxlimit observation called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroStartStopMaxCheck(inUnit : UNIT; OPTIONAL VAR_IN inVal : SENSORVALUE; inState : BOOL)
+  VAR 
+    i : SINT;
+  END_VAR
+  
+  WAIT MAIN_RUN;
+  IF NOT IsUnitOk(inUnit, "MacroStartStopMaxCheck") THEN
+     RETURN;
+  END_IF;
+  IF (yUnit[inUnit].eType = eTypeSensor) THEN
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) THEN
+            ySensor[i].SetMaxLimit(inState, inVal);
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) THEN
+            ySwitch[i].SetMaxLimit(inState);
+         END_IF;
+     END_FOR;
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.MacroStartStopMaxCheck");
+  END_IF;  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  start or stop minlimit observation called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroStartStopMinCheck(inUnit : UNIT; OPTIONAL VAR_IN inVal : SENSORVALUE; inState : BOOL)
+  VAR 
+    i : SINT;
+  END_VAR
+  
+  WAIT MAIN_RUN;
+  IF NOT IsUnitOk(inUnit, "MacroStartStopMinCheck") THEN
+     RETURN;
+  END_IF;
+  IF (yUnit[inUnit].eType = eTypeSensor) THEN
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) THEN
+            ySensor[i].SetMinLimit(inState, inVal);
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) THEN
+            ySwitch[i].SetMinLimit(inState);
+         END_IF;
+     END_FOR; 
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.MacroStartStopMinCheck");
+  END_IF;    
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  start the acquisition of forcevalue for partcontrol called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroStartCheckPart(inUnit : UNIT; OPTIONAL VAR_IN inVal : SENSORVALUE)
+  VAR 
+    i : SINT;
+  END_VAR
+ 
+  WAIT MAIN_RUN;
+  IF NOT IsUnitOk(inUnit, "MacroStartCheckPart") THEN
+     RETURN;  
+  ELSIF ReactivateNextPart(inUnit, iPartToHandle, "MacroStartCheckPart") THEN
+     RETURN;
+  END_IF;
+     
+  IF (yUnit[inUnit].eType = eTypeSensor) THEN   
+     myRobot.StoreHandlerBackPos();           //save current path pos as target for further movement
+     myRobot.DebugPrint(eTraceBackward, "Direction: Backward movement position for -Partcheck- stored");
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) THEN
+            ySensor[i].SetPartCheck(inVal);
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     myRobot.StoreHandlerBackPos();           //save current path pos as target for further movement
+     myRobot.DebugPrint(eTraceBackward, "Direction: Backward movement position for -Partcheck- stored");
+     myRobot.ecoscreen.HandlerOutputs.bSwitchInactive := FALSE;
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) THEN
+            ySwitch[i].SetPartCheck();
+         END_IF;
+     END_FOR;
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 3, instId, "TRcuHandlerTool.MacroStartCheckPart");
+  END_IF;  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Interpretation of gathered forcevalues for partcontrol called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroGetPartPresent(inUnit : UNIT; inVal : SENSORVALUE; line : DINT) : BOOL
+ VAR
+   Val          : tMacroValue;
+   i            : SINT;
+   bAppLateUsed : BOOL;
+   devFound     : BOOL;
+   ret          : BOOL;
+   progLine     : DINT;
+ END_VAR
+ 
+  //PreRun
+  progLine := line;
+  IF gbIsTrackingStation THEN 
+     RcuSetMessageOnce(TRcuHandlerTool_ErrMacroStopGo, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.MacroGetPartPresent", STR(progLine), "GET_PART(..,CheckPart ,..)");
+     myRobot.ErrorReaction(TRUE);
+     RETURN FALSE;
+  ELSIF myRobot.fieldbusIn.IgnorePartControl.svBool AND NOT gbSimulationOS THEN
+     RETURN TRUE;
+  ELSIF NOT IsUnitOk(inUnit, "MacroGetPartPresent") THEN
+     STOPPOINT();
+     RETURN FALSE;
+  END_IF;   
+  
+  IF (yUnit[inUnit].eType = eTypeSensor) THEN
+     RETURN ySensor[0].GetPartPresent(inVal);
+  //switch is inactive --> switch off observation
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     // A P P E N D  L A T E
+     IF myRobot.progPath.bAppendLate THEN
+        ret := FALSE;
+        FOR i:=0 TO cgiMaxSwitches-1 DO
+            IF (ySwitch[i].iUnitNr = inUnit) THEN
+               ret := ret OR ySwitch[i].GetPartPresent(TRUE);
+            END_IF;
+        END_FOR;
+        IF ret THEN
+           RETURN TRUE; //Part already present
+        END_IF;
+     END_IF;
+     // M A I N R U N
+     STOPPOINT();
+     ret := FALSE;
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) THEN
+            ret := ret OR ySwitch[i].GetPartPresent(FALSE);
+         END_IF;
+     END_FOR;
+     RETURN ret;
+  ELSE
+     STOPPOINT();
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 4, instId, "TRcuHandlerTool.MacroGetPartPresent");
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+     RETURN FALSE;
+  END_IF; 
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Stopps partcontrol with switches called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroStopPartCheck(inUnit : UNIT; line : DINT)
+  VAR 
+    i        : SINT;
+    progLine : DINT;
+  END_VAR
+  
+  progLine := line;
+  MAINRUN();
+  IF NOT IsUnitOk(inUnit, "MacroStopPartCheck") THEN
+     RETURN;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) THEN
+            ySwitch[i].StopPartCheck();
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSensor) AND gbIsTrackingStation THEN
+     IF gbIsTrackingStation THEN
+        FOR i:=0 TO cMaxSensors-1 DO
+            IF (ySensor[i].iUnitNr = inUnit) THEN
+               IF ySensor[i].bPartShiftUsed THEN       
+                  RcuSetMessageOnce(TRcuHandlerTool_ErrCmdSearch, myRobot.kinListInx, 1, instId, "TRcuSwitch.StopPartCheck", "GET_PART(..,Stop,..)");
+                  RETURN;
+               END_IF;
+               ySensor[i].bPartShiftUsed := FALSE;
+               ySensor[i].bDoPartCheck   := FALSE;
+            END_IF;
+        END_FOR;
+     ELSE
+        RcuSetMessageOnce(TRcuHandlerTool_ErrMacroTrack, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.MacroGetPartPresent", STR(progLine), "GET_PART(..,Stop ,..)");
+        myRobot.ErrorReaction(TRUE);
+        RETURN;
+     END_IF;
+  ELSE
+     RcuSetMessageOnce(TRcuHandlerTool_ErrNSensThisUni, myRobot.kinListInx, 3, instId, "TRcuHandlerTool.MacroStopPartCheck", yUnit[inUnit].sName, "MacroStopPartCheck");
+     RETURN;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Get the number search cycles of current partcontrol called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroGetSearchCnt(inUnit : UNIT) : DINT
+  VAR 
+    i : SINT;
+  END_VAR
+  
+  STOPPOINT();
+  IF NOT IsUnitOk(inUnit, "MacroGetSearchCnt") THEN
+     RETURN 0;
+  END_IF;
+  
+  IF (yUnit[inUnit].eType = eTypeSensor) THEN   
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) AND ySensor[i].bDoPartCheck AND NOT ySensor[i].bInactive THEN
+            RETURN ySensor[i].iSearchCounter;
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) AND ySwitch[i].bDoPartCheck AND NOT ySwitch[i].bInactive THEN
+            RETURN ySwitch[i].iSearchCounter;
+         END_IF;
+     END_FOR;
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 5, instId, "TRcuHandlerTool.MacroGetSearchCnt");
+     RETURN 0;
+  END_IF;
+  RETURN 0;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Check if manual learning for sensor is activated on this unit
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetManualLearningActive(CONST inUnit : UNIT) : BOOL
+  VAR 
+    i : SINT;
+  END_VAR
+  
+  IF NOT bEnabled THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrToolNotInst, myRobot.kinListInx, 9, instId, "TRcuHandlerTool.GetManualLearningActive");
+     RETURN FALSE;
+  ELSIF (iCountUnits < 0) OR (inUnit >= iCountUnits) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrHndUnitNInst, myRobot.kinListInx, 12, instId, "TRcuHandlerTool.GetManualLearningActive");
+     RETURN FALSE;
+  ELSIF (yUnit[inUnit].eType = eTypeSensor) THEN   
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) THEN
+            RETURN ySensor[i].bLearnMan;
+         END_IF;
+     END_FOR;
+  ELSE
+     RETURN FALSE;
+  END_IF;  
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Set part shift active to unit but only if part check is active, not on reshift
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetPartShiftActive(CONST inUnit : UNIT; shift : SSHIFT)
+ VAR
+  i : SINT;
+ END_VAR
+ 
+  IF NOT bEnabled THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrToolNotInst, myRobot.kinListInx, 10, instId, "TRcuHandlerTool.SetPartShiftActive");
+     RETURN;
+  ELSIF (iCountUnits < 0) OR (inUnit >= iCountUnits) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrHndUnitNInst, myRobot.kinListInx, 13, instId, "TRcuHandlerTool.SetPartShiftActive");
+     RETURN;
+  ELSIF (yUnit[inUnit].eType = eTypeSensor) THEN   
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = inUnit) AND ySensor[i].bDoPartCheck THEN
+            ySensor[i].bPartShiftUsed := TRUE;
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[inUnit].eType = eTypeSwitch) THEN
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = inUnit) AND ySwitch[i].bDoPartCheck THEN
+            ySwitch[i].bPartShiftUsed := TRUE;
+         END_IF;
+     END_FOR;
+  ELSE  
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 5, instId, "TRcuHandlerTool.MacroGetSearchCnt");
+  END_IF;   
+  sPartShift := shift; 
+  ShiftToLogger(shift, "PartShift");
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Quit errors
+//------------------------------------------------------------------------------------------------------
+ROUTINE QuitError()
+ VAR
+   i : SINT;
+ END_VAR
+ 
+ IF bEnabled THEN
+    FOR i:=0 TO cMaxSensors-1 DO
+      ySensor[i].bCableBroken := FALSE;
+      ySensor[i].bValueExceeded := FALSE;
+    END_FOR;
+ END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   reset all commends and initialise units
+//------------------------------------------------------------------------------------------------------
+ROUTINE ResetStates(bBeginAuto : BOOL)
+  VAR
+    i : SINT;
+  END_VAR
+  
+  IF bEnabled THEN
+     FOR i:=0 TO cMaxSensors-1 DO
+         ySensor[i].bInactive         := FALSE;
+         ySensor[i].iInactive         := 1;
+         ySensor[i].bSetPartPresent   := FALSE;
+         ySensor[i].bResetPart        := FALSE;
+         ySensor[i].iForcedPartState  := 0;
+         ySensor[i].bDoMeasure        := TRUE;
+         IF bBeginAuto THEN
+            ySensor[i].bCalibrated    := FALSE;
+            ySensor[i].bGainSet       := FALSE;
+            ySensor[i].iGain          := cUndef;
+            ySensor[i].bPartPresent   := FALSE;
+            ySensor[i].bDoMaxCheck    := FALSE;
+            ySensor[i].bDoMinCheck    := FALSE;
+            ySensor[i].bDoPartCheck   := FALSE;
+            ySensor[i].bLearnMan      := FALSE;
+            ySensor[i].iSearchCounter := 1;
+            ySensor[i].iSeachCycles   := 0;
+            ySensor[i].bPartShiftUsed := FALSE;
+            ySensor[i].bSearchActive  := FALSE;
+            ySensor[i].UserInfo       := 7;
+         END_IF;
+     END_FOR;
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         ySwitch[i].bInactive        := FALSE;
+         ySwitch[i].iInactive        := 1;
+         ySwitch[i].bSetPartPresent  := FALSE;
+         ySwitch[i].bResetPart       := FALSE;
+         ySwitch[i].iForcedPartState := 0;
+         IF bBeginAuto THEN
+            ySwitch[i].bDoMaxCheck    := FALSE;
+            ySwitch[i].bDoMinCheck    := FALSE;
+            ySwitch[i].bDoPartCheck   := FALSE;
+            ySwitch[i].bPartPresent   := FALSE;
+            ySwitch[i].iSearchCounter := 1;
+            ySwitch[i].iSeachCycles   := 0;
+            ySwitch[i].bPartShiftUsed := FALSE;
+            ySwitch[i].bSearchActive  := FALSE;
+            ySwitch[i].UserInfo       := 7;
+         END_IF;
+     END_FOR;
+     FOR i:=0 TO cMaxPneuUnits-1 DO
+         IF yPneuUnit[i].iUnitNr > -1 THEN
+            yPneuUnit[i].MacroSetOrder(NoOrder);
+         END_IF;
+     END_FOR;
+     IF bBeginAuto THEN
+        bLastBackwardMove              := FALSE;
+        myRobot.bHandlerDoBackwardMove := FALSE;
+        myRobot.bHandlerAbortBackMove  := FALSE; 
+        myRobot.bHandlerBlockContinue  := FALSE;
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Tell the sensor that we have a new typelist (autolearning)
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetTypelistEntry(progNr : INT; projName : STRING) 
+  VAR
+    i : SINT;
+  END_VAR
+  
+  FOR i:=0 TO cMaxSensors-1 DO
+     IF (projName <> "") AND (ySensor[i].iUnitNr > -1) THEN
+        ySensor[i].NewTypelistEntry(progNr, projName);
+     END_IF;
+  END_FOR;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Get unitnumber and sensornumber form TV
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetSensorUnitNrForTV(unitNr : SINT; sensorNr : SINT) : BOOL
+ VAR
+  i : SINT;
+ END_VAR
+ 
+ FOR i:=0 TO cMaxSensors-1 DO
+    IF ySensor[i].iUnitNr > -1 THEN
+       unitNr := ySensor[i].iUnitNr;
+       sensorNr := i;
+       RETURN TRUE;
+    END_IF;
+ END_FOR;
+ RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Get unit number and pneu number for TV
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetPneuUnitNrForTV(unitNr : SINT; pneuNr : SINT) : BOOL
+ VAR
+  i : SINT;
+ END_VAR
+ 
+ FOR i:=0 TO cMaxPneuUnits-1 DO
+    IF yPneuUnit[i].iUnitNr > -1 THEN
+       unitNr := yPneuUnit[i].iUnitNr;
+       pneuNr := i;
+       RETURN TRUE;
+    END_IF;
+ END_FOR;
+ RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Orders for pneumatic cylinder called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroOrderPneuUnit(inUnit : UNIT; inOrder : PNEUORDER)
+ VAR
+  i : SINT;
+ END_VAR
+ 
+  WAIT MAIN_RUN;
+  IF NOT IsUnitOk(inUnit, "MacroOrderPneuUnit") THEN
+     RETURN;
+  ELSIF (yUnit[inUnit].eType = eTypePneuUnit) THEN
+     FOR i:=0 TO cMaxPneuUnits-1 DO
+         IF yPneuUnit[i].iUnitNr = inUnit THEN
+            yPneuUnit[i].MacroSetOrder(inOrder);
+         END_IF;
+     END_FOR;
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 10, instId, "TRcuHandlerTool.MacroOrderPneuUnit");
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Get states of pneumatic cylinder called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroReceivePneuPos(inUnit : UNIT; inPos : PNEUORDER) : BOOL
+ VAR
+  i   : SINT;
+  ret : BOOL;
+ END_VAR
+ 
+  IF NOT IsUnitOk(inUnit, "MacroReceiveCylinder") THEN
+     RETURN FALSE;
+  ELSIF (yUnit[inUnit].eType = eTypePneuUnit) THEN
+     ret := TRUE;
+     FOR i:=0 TO cMaxPneuUnits-1 DO
+         IF yPneuUnit[i].iUnitNr = inUnit THEN
+            ret := ret AND yPneuUnit[i].ReceivePosition(inPos);
+         END_IF;
+     END_FOR;
+     RETURN ret;
+  ELSE
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 11, instId, "TRcuHandlerTool.MacroReceivePneuPos");
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Orders for pneumatic handler toll called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroMoveTool(inUnit : UNIT; inPos : PNEUORDER)
+ VAR
+  i : SINT;
+ END_VAR
+ 
+  IF NOT bEnabled  THEN
+     RcuSetMessageOnce(TRcuUnit_ErrToolNotInst, myRobot.kinListInx, 13, instId, "TRcuHandlerTool.MacroMoveTool");
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+     RETURN;
+  ELSIF ((iCountUnits < 0) OR (inUnit >= iCountUnits)) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrHndUnitNInst, myRobot.kinListInx, 6, instId, "TRcuHandlerTool.MacroMoveTool", yUnit[inUnit].sName);
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+     RETURN;
+  ELSIF NOT anyPneuToolUsed THEN    
+     RcuSetMessageOnce(TRcuHandlerTool_ErrNoPneuTool, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.MacroMoveTool");
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+     RETURN;
+  ELSIF (yUnit[inUnit].eType = eTypePneuTool) THEN
+     FOR i:=0 TO cMaxPneuTools-1 DO
+         IF yPneuTool[i].iUnitNr = inUnit THEN
+            IF (inPos = HomePosPinDown) THEN
+               START yPneuTool[i].MacroSetToolOrder(nToolCentre);
+            ELSIF (inPos = HomePosPinUp) THEN
+               START yPneuTool[i].MacroSetToolOrder(nToolUp);   
+            ELSIF (inPos = CleaningPos) THEN
+               START yPneuTool[i].MacroSetToolOrder(nToolDown);
+            ELSE
+               myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "PneuTool: MacroMoveTool - Invalid order=" + STR(inPos) + " from EcoTalk");
+            END_IF;            
+         END_IF;
+     END_FOR;
+  END_IF;
+END_ROUTINE
+    
+//------------------------------------------------------------------------------------------------------
+//  Wait until pneumatic handler toll has reached requested position called from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE MacroReceiveToolPos(inUnit : UNIT; inPos : PNEUORDER) : BOOL
+ VAR
+  i   : SINT;
+  ret : BOOL;
+ END_VAR
+ 
+  IF NOT bEnabled  THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrToolNotInst, myRobot.kinListInx, 14, instId, "TRcuHandlerTool.MacroReceiveToolPos");
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+  ELSIF ((iCountUnits < 0) OR (inUnit >= iCountUnits)) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrHndUnitNInst, myRobot.kinListInx, 7, instId, "TRcuHandlerTool.MacroReceiveToolPos", yUnit[inUnit].sName);
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+  ELSIF NOT anyPneuToolUsed THEN    
+     RcuSetMessageOnce(TRcuHandlerTool_ErrNoPneuTool, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.MacroReceiveToolPos");
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+  ELSIF (yUnit[inUnit].eType = eTypePneuTool) THEN
+     ret := TRUE;
+     FOR i:=0 TO cMaxPneuTools-1 DO
+         IF yPneuTool[i].iUnitNr = inUnit THEN
+            ret := ret AND yPneuTool[i].MacroReceivePos(inPos);
+         END_IF;
+     END_FOR;
+     RETURN ret;
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//***********************************************************************************************************
+// private
+CONSTANT PRIVATE
+   cMaxDevices      : SINT := 5;    //Max devices per handler
+END_CONSTANT
+
+TYPE PRIVATE
+  tUnit : STRUCT
+    sName          : STRING := "not active"; // Name of the unit from cfg
+    eType          : TRcuUnitType;
+    iCountSwitch   : SINT;
+    iCountSensor   : SINT;
+    iCountPneuUnit : SINT;
+    iCountPneuTool : SINT;
+  END_STRUCT;
+  tAirSupply : STRUCT
+    bUsed   : BOOL;
+    bInput  : MAPTO BOOL;  //pressure switch of air supply   
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  instId               : DINT;  // instance identification number
+  iLastHandledPart     : SINT;
+  myRobot              : MAPTO TRcuRobot;
+END_VAR
+
+
+//------------------------------------------------------------------------------------------------------
+//   interface to ecoscreen for switch
+//------------------------------------------------------------------------------------------------------
+ROUTINE EcoScreenInterfaceSwitch() PRIVATE
+ VAR
+  i        : SINT;
+  yChg     : ARRAY [cgiMaxSwitches] OF BOOL;
+  chg      : BOOL;
+  inactive : BOOL;
+ END_VAR
+  
+  //get access to OPC variables
+  IF NOT myRobot.ecoscreen.HandlerInterfaceSwitch(myRobot) THEN
+     RETURN;
+  END_IF;
+  
+  FOR i:=0 TO cgiMaxSwitches-1 DO
+      IF ySwitch[i].bUsePresSensor THEN
+         myRobot.ecoscreen.HandlerOutputs.ySwitchSignal[i] := UPDATE(ySwitch[i].bPartPresent);
+      ELSE
+         myRobot.ecoscreen.HandlerOutputs.ySwitchSignal[i] := UPDATE(ySwitch[i].bState);
+      END_IF;
+      yChg[i] := IS_CHANGED(ySwitch[i].bInactive);
+  END_FOR;
+  myRobot.ecoscreen.HandlerOutputs.bIgnorePartCtrl := UPDATE(myRobot.fieldbusIn.IgnorePartControl.svBool AND NOT gbSimulationOS);
+  
+  chg := IS_CHANGED(yChg);
+  WHILE TRUE DO
+     WAIT myRobot.ecoscreen.HandlerInputs.bDeactivateSwitch OR chg;
+     chg := FALSE;
+     //user has deactivated switches
+     IF myRobot.ecoscreen.HandlerInputs.bDeactivateSwitch THEN
+        myRobot.ecoscreen.HandlerInputs.bDeactivateSwitch := FALSE;
+        FOR i:=0 TO cgiMaxSwitches-1 DO
+            ySwitch[i].bInactive        := TRUE;
+            ySwitch[i].iInactive        := 0;
+            ySwitch[i].bSetPartPresent  := FALSE;
+            ySwitch[i].bResetPart       := FALSE;
+            ySwitch[i].iForcedPartState := 0;
+            ySwitch[i].bDoMaxCheck      := FALSE;
+            ySwitch[i].bDoMinCheck      := FALSE;
+            ySwitch[i].bDoPartCheck     := FALSE;
+            ySwitch[i].bPartPresent     := FALSE;
+            ySwitch[i].iSearchCounter   := 1;
+            ySwitch[i].iSeachCycles     := 0;
+            ySwitch[i].bPartShiftUsed   := FALSE;
+            ySwitch[i].bSearchActive    := FALSE;
+            ySwitch[i].UserInfo         := 7;
+            myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "Order to deactivate switch from EcoScreen");
+        END_FOR; 
+     END_IF;
+     //feedback to ecoscreen
+     inactive := FALSE;
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+        yChg[i] := FALSE;
+        IF ySwitch[i].bInactive THEN
+           inactive := TRUE;
+        END_IF;
+     END_FOR;
+     myRobot.ecoscreen.HandlerOutputs.bSwitchInactive := inactive; 
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Control the movement direction
+//------------------------------------------------------------------------------------------------------
+ROUTINE CtrlMovement() PRIVATE
+ 
+ WHILE TRUE DO
+   WAIT bReleaseMovementCtrl;                           //wait till MacroGetPartPresent set me
+   bReleaseMovementCtrl := FALSE;                       //reset the release
+  
+   CASE myRobot.mainModeMgr.mode OF 
+   
+   ciT1:    myRobot.SetMotionMode(eRcuMMgrModeStop);            // stop robot on path
+            WAIT myRobot.isNotMovingOnPath;         //wait till it has stopped
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler stopped on path");
+            IF (myRobot.movementDirection = eDirNormal) THEN                
+                myRobot.SetMovementDirection(eDirBack);
+            END_IF;
+            
+   ciT2:    myRobot.SetMotionMode(eRcuMMgrModeStop);            // stop robot on path
+            WAIT myRobot.isNotMovingOnPath;         //wait till it has stopped
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler stopped on path");
+            IF (myRobot.movementDirection = eDirNormal) THEN                
+                myRobot.SetMovementDirection(eDirBack);
+            END_IF;       
+      
+   ciAuto:  IF bLastBackwardMove THEN
+               myRobot.bHandlerBlockContinue     := TRUE;
+            END_IF;                  
+            myRobot.bHandlerDoBackwardMove    := TRUE;         //order to AutoControl move back!
+            myRobot.bHandlerAbortBackMove     := FALSE;        //init error flag
+            myRobot.SetMotionMode(eRcuMMgrModeStop);            // stop robot on path
+            WAIT myRobot.isNotMovingOnPath;         //wait till it has stopped
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler stopped on path");
+            WAIT NOT myRobot.isNotMovingOnPath;
+            myRobot.bHandlerBlockContinue     := FALSE;
+            WAIT NOT myRobot.bHandlerDoBackwardMove OR myRobot.bHandlerAbortBackMove; 
+            IF myRobot.bHandlerAbortBackMove THEN
+                myRobot.DebugPrint(eTraceRcuHandler, "HandlerBackwardMove was aborted by the kinematic");
+                myRobot.bHandlerDoBackwardMove := FALSE;
+                RcuSetMessageOnce(TRcuHandlerTool_ErrBackWMovFail, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.CtrlMovement", INSTANCE_NAME());
+            ELSE
+              IF bLastBackwardMove THEN
+                 WAIT myRobot.movementDirection = eDirNormal;
+                 RcuSetMessageOnce(TRcuHandlerTool_ErrPartNPresent, myRobot.kinListInx, 3, instId, "TRcuHandlerTool.CtrlMovement");
+                 myRobot.bHandlerBlockContinue     := FALSE;
+              END_IF;
+            END_IF;
+   END_CASE;
+   bLastBackwardMove := FALSE;
+ END_WHILE;             
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   add device to unit
+//------------------------------------------------------------------------------------------------------
+ROUTINE AddDeviceToUnit(hdl : DINT; devtype : DINT; unitNr : SINT) : BOOL PRIVATE
+ VAR
+  i        : SINT;
+  devFound : BOOL;
+ END_VAR
+ 
+  CASE devtype OF
+   eTypeSwitch:   IF (yUnit[unitNr].eType = eTypeSensor) OR (yUnit[unitNr].eType = eTypePneuUnit) OR (yUnit[unitNr].eType = eTypePneuTool) THEN
+                     RcuSetMessageOnce(TRcuHandlerTool_ErrUnitUsedOth, myRobot.kinListInx, 1, instId, "TRcuHandlerTool.ReadConfig", STR(yUnit[unitNr].sName));                   
+                     RETURN FALSE;
+                  ELSE
+                     //find next unused switch
+                     devFound := FALSE;
+                     i := 0;  
+                     REPEAT 
+                       IF (ySwitch[i].iUnitNr = -1) AND NOT devFound THEN
+                          ySwitch[i].iUnitNr := unitNr;
+                          devFound := TRUE;
+                       ELSE
+                          i := i + 1;
+                       END_IF;
+                     UNTIL devFound OR (i > cgiMaxSwitches);
+                     IF NOT devFound THEN
+                        PRINT("ERROR - No free switch - Unit " + STR(unitNr));   
+                        RcuSetMessageOnce(TRcuHandlerTool_ErrHandInstFail, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.init");
+                        RETURN FALSE; 
+                     ELSE
+                        yUnit[unitNr].eType := eTypeSwitch;
+                        yUnit[unitNr].iCountSwitch := yUnit[unitNr].iCountSwitch + 1;
+                        IF NOT ySwitch[i].init(myRobot, hdl, i) THEN    
+                           myRobot.DebugPrint(eTraceRcuHandler, "Error installation HandlerSwitch - " + ySwitch[i].sName);  
+                           RETURN FALSE;  
+                        END_IF;       
+                     END_IF;
+                  END_IF;
+                  
+   eTypeSensor:   IF (yUnit[unitNr].eType = eTypeSwitch) OR (yUnit[unitNr].eType = eTypeSensor) OR (yUnit[unitNr].eType = eTypePneuUnit) OR (yUnit[unitNr].eType = eTypePneuTool) THEN
+                     RcuSetMessageOnce(TRcuHandlerTool_ErrUnitUsedOth, myRobot.kinListInx, 2, instId, "TRcuHandlerTool.ReadConfig", STR(yUnit[unitNr].sName));
+                     RETURN FALSE; 
+                  ELSE
+                     //find next unused sensor
+                     devFound := FALSE;
+                     i := 0;
+                     REPEAT 
+                       IF (ySensor[i].iUnitNr = -1) AND NOT devFound THEN
+                          ySensor[i].iUnitNr := unitNr;
+                          devFound := TRUE;
+                       ELSE
+                          i := i + 1;
+                       END_IF;
+                     UNTIL devFound OR (i > cMaxSensors);
+                     IF NOT devFound THEN
+                        PRINT("ERROR - No free sensor - Unit " + STR(unitNr));
+                        RcuSetMessageOnce(TRcuHandlerTool_ErrHandInstFail, myRobot.kinListInx, 3, instId, "TRcuHandlerTool.init");
+                        RETURN FALSE; 
+                     ELSE
+                        yUnit[unitNr].eType := eTypeSensor;
+                        yUnit[unitNr].iCountSensor := yUnit[unitNr].iCountSensor + 1;
+                        IF NOT ySensor[i].init(myRobot, hdl) THEN 
+                           myRobot.DebugPrint(eTraceRcuHandler, "Error installation HandlerSensor - " + ySensor[i].sName);     
+                           RETURN FALSE;  
+                        END_IF;  
+                     END_IF; 
+                  END_IF;
+                  
+   eTypePneuUnit: IF (yUnit[unitNr].eType = eTypeSwitch) OR (yUnit[unitNr].eType = eTypeSensor) OR (yUnit[unitNr].eType = eTypePneuUnit) OR (yUnit[unitNr].eType = eTypePneuTool) THEN
+                     RcuSetMessageOnce(TRcuHandlerTool_ErrUnitUsedOth, myRobot.kinListInx, 3, instId, "TRcuHandlerTool.ReadConfig", STR(yUnit[unitNr].sName));
+                     RETURN FALSE;
+                  ELSE
+                     //find next unused pneu unit
+                     devFound := FALSE;
+                     i := 0;
+                     REPEAT 
+                       IF (yPneuUnit[i].iUnitNr = -1) AND NOT devFound THEN
+                          yPneuUnit[i].iUnitNr := unitNr;
+                          devFound := TRUE;
+                       ELSE
+                          i := i + 1;
+                       END_IF;
+                     UNTIL devFound OR (i > cMaxPneuUnits);
+                     IF NOT devFound THEN
+                        PRINT("ERROR - No free pneu unit - Unit " + STR(unitNr));
+                        RcuSetMessageOnce(TRcuHandlerTool_ErrHandInstFail, myRobot.kinListInx, 4, instId, "TRcuHandlerTool.init");
+                        RETURN FALSE;
+                     ELSE
+                        yUnit[unitNr].eType := eTypePneuUnit;
+                        yUnit[unitNr].iCountPneuUnit := yUnit[unitNr].iCountPneuUnit + 1;
+                        IF yPneuUnit[i].init(myRobot, hdl) THEN 
+                           bInBypass := UPDATE(THIS AND yPneuUnit[i].bInBypass);
+                        ELSE
+                           RETURN FALSE;
+                        END_IF;    
+                     END_IF; 
+                  END_IF;
+                  
+   eTypePneuTool: IF (yUnit[unitNr].eType = eTypeSwitch) OR (yUnit[unitNr].eType = eTypeSensor) OR (yUnit[unitNr].eType = eTypePneuUnit) OR (yUnit[unitNr].eType = eTypePneuTool) THEN
+                     RcuSetMessageOnce(TRcuHandlerTool_ErrUnitUsedOth, myRobot.kinListInx, 3, instId, "TRcuHandlerTool.ReadConfig", STR(yUnit[unitNr].sName));
+                     RETURN FALSE;
+                  ELSE
+                     //find next unused pneu tool
+                     devFound := FALSE;
+                     i := 0;
+                     REPEAT 
+                       IF (yPneuTool[i].iUnitNr = -1) AND NOT devFound THEN
+                          yPneuTool[i].iUnitNr := unitNr;
+                          devFound := TRUE;
+                       ELSE
+                          i := i + 1;
+                       END_IF;
+                     UNTIL devFound OR (i > cMaxPneuTools);
+                     IF NOT devFound THEN
+                        PRINT("ERROR - No free pneu tool - Unit " + STR(unitNr));
+                        RcuSetMessageOnce(TRcuHandlerTool_ErrHandInstFail, myRobot.kinListInx, 5, instId, "TRcuHandlerTool.init");
+                        RETURN FALSE;
+                     ELSE
+                        yUnit[unitNr].eType := eTypePneuTool;
+                        yUnit[unitNr].iCountPneuTool := yUnit[unitNr].iCountPneuTool + 1;
+                        IF NOT yPneuTool[i].init(myRobot, hdl) THEN 
+                           myRobot.DebugPrint(eTraceRcuHandler, "Error installation pneumatic tool - " + yPneuTool[i].sName);  
+                           RETURN FALSE;
+                        END_IF;    
+                     END_IF;
+                  END_IF;   
+  END_CASE;
+  RETURN TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   tool and unit are enabled, PLC doesn't send ignore --> all o.k.
+//------------------------------------------------------------------------------------------------------
+ROUTINE IsUnitOk(unitNr : UNIT; location : STRING) : BOOL PRIVATE
+
+  IF NOT bEnabled THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrToolNotInst, myRobot.kinListInx, 4, instId, "TRcuHandlerTool." + location);
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+     RETURN FALSE;
+  ELSIF myRobot.fieldbusIn.IgnorePartControl.svBool AND NOT gbSimulationOS THEN
+     RETURN FALSE;
+  ELSIF ((iCountUnits < 0) OR (unitNr >= iCountUnits)) THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrHndUnitNInst, myRobot.kinListInx, 7, instId, "TRcuHandlerTool." + location, yUnit[unitNr].sName);
+     myRobot.bNoContinue := TRUE;
+     myRobot.ErrorReaction(TRUE);
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   tool deactiveted for last part, activate it again for this part
+//------------------------------------------------------------------------------------------------------
+ROUTINE ReactivateNextPart(unitNr : UNIT; part : SINT; location : STRING) : BOOL PRIVATE
+ VAR
+  i   : SINT;
+  ret : BOOL;
+  s   : STRING;
+ END_VAR
+
+  //check if any device of this unit is deactivated
+  IF (yUnit[unitNr].eType = eTypeSensor) THEN   
+     FOR i:=0 TO cMaxSensors-1 DO
+         IF (ySensor[i].iUnitNr = unitNr) AND ySensor[i].bInactive THEN
+            ret := TRUE;
+         END_IF;
+     END_FOR;
+  ELSIF (yUnit[unitNr].eType = eTypeSwitch) THEN
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+         IF (ySwitch[i].iUnitNr = unitNr) AND ySwitch[i].bInactive THEN
+            ret := TRUE;
+         END_IF;
+     END_FOR;
+  END_IF;
+  //not all devices of this unit are active --> return false
+  IF ret THEN
+     //In teach mode --> user input wins
+     IF NOT myRobot.mainModeMgr.externControl THEN
+        ret := TRUE;
+     //not first part of the car & new part is handled
+     ELSIF ((iLastHandledPart > 0) AND (part <> iLastHandledPart)) THEN
+        FOR i:=0 TO cgiMaxSwitches-1 DO
+            IF ySwitch[i].bInactive THEN
+               s := "ReactivateNextPart: Switch=" + ySwitch[i].sName + " activated from " + location;
+               myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, s);
+            END_IF;
+            ySwitch[i].bInactive := FALSE;  
+        END_FOR;
+        FOR i:=0 TO cMaxSensors-1 DO
+           IF ySensor[i].bInactive THEN
+               s := "ReactivateNextPart: Sensor=" + ySensor[i].sName + " activated from " + location;
+               myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, s);
+            END_IF;
+            ySensor[i].bInactive := FALSE;
+        END_FOR;
+        ret := FALSE;
+     ELSE
+        ret := TRUE;
+     END_IF;
+  END_IF;
+  iLastHandledPart := iPartToHandle;
+  RETURN ret;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   print shift values to logger
+//------------------------------------------------------------------------------------------------------
+ROUTINE ShiftToLogger(shift : SSHIFT; sKind : STRING) PRIVATE
+ VAR
+  s : STRING := " saved -";
+  i : DINT;
+ END_VAR
+ 
+   s := sKind + s;
+   i := DINT(shift.X_mm);
+   s := s + " X=" + STR(i);
+   i := DINT(shift.Y_mm);
+   s := s + " Y=" + STR(i);
+   i := DINT(shift.Z_mm);
+   s := s + " Z=" + STR(i);
+   i := DINT(shift.A7_mm);
+   s := s + " A7=" + STR(i);
+   myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, s); 
+END_ROUTINE 
+
+//------------------------------------------------------------------------------
+//   systemroutine - main teachprogramm is started --> set all to init values
+//------------------------------------------------------------------------------
+ROUTINE RESERVE()
+  IF IS_MAPPED(myRobot) THEN
+     IF myRobot.mainModeMgr.externControl AND NOT myRobot.bReleaseBlockedByHandler THEN
+        ResetStates(TRUE);
+        iLastHandledPart := 0;
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   systemroutine - main teachprogramm is finished --> set all to init values
+//------------------------------------------------------------------------------
+ROUTINE RELEASE() 
+  IF IS_MAPPED(myRobot) THEN
+     IF myRobot.mainModeMgr.externControl AND NOT (myRobot.bReleaseBlockedByHandler OR myRobot.homing.bHomingRun) THEN
+        ResetStates(TRUE);
+        iLastHandledPart := 0;
+     END_IF;
+  END_IF;
+END_ROUTINE

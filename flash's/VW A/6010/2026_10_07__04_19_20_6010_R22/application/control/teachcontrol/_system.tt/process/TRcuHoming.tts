@@ -1,0 +1,2470 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date :       17.03.2011                                                  *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       TRcuHoming.tts                                              *
+*    Description:                                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------
+
+
+(*------------------------------------------------------------------------------
+* globals
+*)
+
+
+CONSTANT
+   MC_EPS1    : REAL := 0.00001;
+   MC_EPS     : REAL := 0.0000001;
+   MAX_RADIUS : REAL := 1000000.0;  // maximal erlaubter Kreisradius
+   MC_PI      : REAL := 3.14159265358979323846;
+   GRAD_RAD   : REAL := 180.0/MC_PI;
+END_CONSTANT
+
+
+TYPE GLOBAL
+   THomingRetain : STRUCT
+      callStack             : TUserProgStackInfo;
+      sHandlerModule        : STRING[255];
+      sHandlerMainProg      : STRING[255];
+      sActModuleName        : STRING[255];
+      Tool                  : TMcuFrame;
+      Object                : TMcuFrame;
+      VisionRel             : TMcuFrame;  // actual Frame set in RcuRefSystemVisionRel
+      VisionAbs             : TMcuFrame;  // actual Frame set in RcuRefSystemVisionAbs
+      CamAbsData            : TMcuFrame;  // Displacement values from vision system
+      CamRelData            : TMcuFrame;  // Displacement values from vision system
+      bCamAbsDataValid      : BOOL;
+      bCamRelDataValid      : BOOL;
+      bSelectingFlowPresent : BOOL;
+      bSelectingFlowRunning : BOOL;
+      bAuto                 : BOOL;
+      bHandlerJobRunning    : BOOL;
+      bInPrePosition        : BOOL;
+      state                 : TPartVecTPosVec;  
+      actualPart            : TPartVecBool;
+      order                 : TPartVecTPosVec;
+      bTrackingActive       : BOOL;
+      bIsTrackingObj        : BOOL;
+      bRailTrackingAct      : BOOL;
+      rRailValue            : REAL;
+      rObjectValue          : REAL;
+   END_STRUCT; 
+   THomingType : (eNotActice, eStandard, eSafeToHome);
+   TMainMode   : (eInitialize, eSleep, eHand, eAuto);
+END_TYPE
+
+(*------------------------------------------------------------------------------
+* members
+*)
+
+VAR
+   // Parameter
+   bEnableHoming               : BOOL;
+   bEnablePreHoming            : BOOL;
+   bEnableHomingAfterRestart   : BOOL;
+   bEnableGoDirectHome         : BOOL;
+   rOverride                   : REAL;
+   sProgExt                    : STRING;
+   sPreProgExt                 : STRING;
+   iModuleLevel                : INT;
+   bShowUserPage               : BOOL;
+   tType                       : THomingType;
+   // internal
+   bHomingRun                  : BOOL;
+   bPreHomingRun               : BOOL;
+   bPreHomingDone              : BOOL; // prehoming executed
+   bPreHomingSucc              : BOOL; // prehoming successfully finished
+   bStopAtEndOfModule          : BOOL;
+   bSigAtEndOfModule           : BOOL;
+   bEndOfModule                : BOOL;
+   bGoDirectHomeActive         : BOOL;
+   bHomingAfterRestartPossible : BOOL;
+   bSimulateModule             : BOOL;
+   bSimulateModErr             : BOOL;
+   bNoHandlerModule            : BOOL;
+   bHomingOnCirc               : BOOL;
+   iLineNumber                 : INT;
+   sActModuleName              : STRING; // modulename is set in UpdateProgInfo()
+   sModuleName                 : STRING; // modulename for macro HOMING
+   sProgramName                : STRING; // programname 
+   callStack                   : TUserProgStackInfo;
+   sHandlerModule              : STRING;
+   hdl                         : DINT;
+   rStoredOvr                  : REAL;
+   sv_Homing                   : MAPTO THomingRetain;
+   oldRetainData               : THomingRetain;
+   bShutDownPending            : BOOL;
+   iPathNumber                 : INT;  //only SafeToHome
+   // Interface to plc
+   bStartHoming                : BOOL;
+   bStartPreHoming             : BOOL;
+   // Interface to TeachView
+   TeachViewRetain             : MAPTO THomingRetain;
+   iInfo                       : DINT;
+   iInfoRetain1                : DINT;
+   iInfoRetain2                : DINT;
+   iInfoRetain3                : DINT;
+   bVisibleHomingRetain1       : BOOL;
+   bVisibleHomingRetain2       : BOOL;
+   bVisibleHomingRetain3       : BOOL;
+   instId                      : DINT;         // instance identification number (for errors)
+   // for simulate module
+   bLastTargetValid            : BOOL;
+   lastTarget                  : TMcuPosition;
+   refLastTarget               : TRcuReferenceSystem;
+   lastToolFrame               : TMcuFrame;
+   lastToolName                : STRING;
+   
+   HomingStartCirc             : POINT;
+   HomingHelpPoint             : POINT;
+END_VAR
+
+
+//------------------------------------------------------------------------
+// Called from equipment
+//------------------------------------------------------------------------
+ROUTINE Init(locRobot : TRcuRobot)
+   
+   instId := RcuGetInstanceId();
+   myRobot := MAP(locRobot);  
+   IF NOT bEnableHoming THEN
+      myRobot.DebugPrint(eTraceHoming, "HOMING not enabled");
+      RETURN;
+   END_IF;
+   WAIT PaintRobot[myRobot.kinListInx].initRobComplete;
+   bShowUserPage := (tType = eStandard);
+   iLoggerNumber := myRobot.autoControl.iLoggerNumber; // use logger from AutoControl
+   IF (iLoggerNumber = 0) THEN
+      myRobot.DebugPrint(eTraceHoming, "HOMING: LOG Kein Token fuer AutoControl-Logger erhalten");
+   END_IF;
+   IF bEnableHomingAfterRestart AND (tType = eStandard) THEN
+      ReadRetainData();
+   END_IF;
+   START ObserveHomingBitsFromPLC();
+   START ObserveAbortHoming();
+   IF bEnableHomingAfterRestart AND (tType = eStandard) THEN
+      bVisibleHomingRetain1 := TRUE;
+      bVisibleHomingRetain2 := TRUE;
+      START ObserveShutDown();
+      START StoreRetainData();
+      IF myRobot.vision.bCfgDataRead THEN
+         START ObserveVisionData();
+         bVisibleHomingRetain3 := TRUE;
+      END_IF;
+      sv_Homing.bHandlerJobRunning    := UPDATE(myRobot.handler.bJobRunning);
+      sv_Homing.bSelectingFlowRunning := UPDATE(myRobot.selectingFlow.running);
+      sv_Homing.bSelectingFlowPresent := UPDATE(myRobot.selectingFlow.present);
+      sv_Homing.bAuto                 := UPDATE(myRobot.autoControl.bBitAutoExt);
+      sv_Homing.bInPrePosition        := UPDATE(myRobot.bInPreposition);
+      IF myRobot.lineTracking THEN
+         sv_Homing.bTrackingActive    := UPDATE(myRobot.trackingActive);
+         sv_Homing.bIsTrackingObj     := UPDATE(myRobot.tracking.bIsTrackingObject);
+         START ObserveTracking();
+      END_IF;
+      IF myRobot.railTracking THEN
+         sv_Homing.bRailTrackingAct   := UPDATE(myRobot.railTrackingActive);
+      END_IF;
+   ELSIF (tType = eSafeToHome) THEN
+      START SignalsToEPS();   
+   END_IF;
+   iInfo := 0;
+   
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Called from EcoTalk. 
+//------------------------------------------------------------------------
+ROUTINE SimulateMacro(sMacro : STRING) : BOOL
+   VAR
+      iLine : INT;
+      info  : TUserProgStackInfo;
+      s     : STRING;
+   END_VAR
+   
+   IF bSimulateModule THEN
+      IF GetUserProgCallStackInfo(0, info) THEN
+         IF info.depth > 0 THEN
+          iLine := info.lineNrs[info.depth-1]; 
+         ELSE
+          iLine := info.lineNrs[0]; 
+         END_IF;
+      END_IF;
+      IF iLineNumber > iLine THEN
+         myRobot.DebugPrint(eTraceHoming, "LINE " + STR(iLine) + " " + sMacro + " ignored in Homing Simulation");
+         RETURN TRUE;
+      ELSE // point of interrupt reached
+         // check conditions of continuing modul
+         s := "LINE " + STR(iLine) + " " + sMacro + " END of Homing Simulation";
+         myRobot.DebugPrint(eTraceHoming, s);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+         
+         IF sMacro = "CIRC" THEN
+            myRobot.DebugPrint(eTraceHoming, "Homing on CIRC");
+            bHomingOnCirc := TRUE;
+         ELSIF (sMacro = "SPLINE") OR (sMacro = "SPLINE_START_TANG") OR (sMacro = "SPLINE_END") OR (sMacro = "SPLINE_END_TANG") OR (sMacro = "SPLINE_START") THEN
+            myRobot.DebugPrint(eTraceHoming, "Homing not possible on SPLINE segment");
+            RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 1, instId, "TRcuHoming.SimulateMacro");
+            bSimulateModErr := TRUE;
+         END_IF;
+         
+         IF myRobot.actObject <> oldRetainData.Object THEN
+            myRobot.DebugPrint(eTraceHoming, "WARNING different Objects");
+            myRobot.SetObject("HomingObj", oldRetainData.Object);
+         END_IF;
+         IF lastToolFrame <> oldRetainData.Tool THEN
+            myRobot.DebugPrint(eTraceHoming, "WARNING different Tools");
+            myRobot.Tool("HomingTool", oldRetainData.Tool);
+         ELSE
+            myRobot.Tool(lastToolName, lastToolFrame);
+         END_IF;
+         IF myRobot.vision.bCfgDataRead THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Restore vision data and coordinate systems");
+            myRobot.DebugPrint(eTraceHoming, "restore RefSystemVisionAbs");
+            RcuRefSysSetKardan(myRobot.RcuRefSystemVisionRel, oldRetainData.VisionAbs, myRobot.RcuRefSystemVisionAbs, FALSE, "VisionRel");
+            myRobot.DebugPrint(eTraceHoming, "restore RefSystemVisionRel");
+            RcuRefSysSetKardan(myRobot.RcuRefSystemObject, oldRetainData.VisionRel, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+            myRobot.vision.CalcActualObject(); // show it in teachview
+            IF oldRetainData.bCamAbsDataValid THEN
+               myRobot.DebugPrint(eTraceHoming, "restore camera data");
+               myRobot.vision.objectCamAbsData := oldRetainData.CamAbsData;
+               IF NOT myRobot.vision.CheckDataRange(myRobot.vision.objectCamAbsData, FALSE) THEN
+                  myRobot.vision.SetVisionDataToTeachview(myRobot.vision.objectCamAbsData, FALSE);
+               ELSE    
+                  myRobot.vision.SaveDataGlobalFrame(myRobot.vision.objectCamAbsData, FALSE);
+                  myRobot.vision.SetVisionDataToTeachview(myRobot.vision.objectCamAbsData, FALSE);
+                  myRobot.vision.bCameraAbsDataOk := TRUE;
+                  myRobot.vision.bDataAbsSetByCamera := TRUE;
+               END_IF;
+            END_IF;
+            IF oldRetainData.bCamRelDataValid THEN
+               myRobot.vision.objectCamRelData := oldRetainData.CamRelData;
+               IF NOT myRobot.vision.CheckDataRange(myRobot.vision.objectCamRelData, TRUE) THEN
+                  myRobot.vision.SetVisionDataToTeachview(myRobot.vision.objectCamRelData, TRUE);
+               ELSE    
+                  myRobot.vision.SaveDataGlobalFrame(myRobot.vision.objectCamRelData, TRUE);
+                  myRobot.vision.SetVisionDataToTeachview(myRobot.vision.objectCamRelData, TRUE);
+                  myRobot.vision.bCameraRelDataOk := TRUE;
+                  myRobot.vision.bDataRelSetByCamera := TRUE;
+               END_IF;
+            END_IF;
+         END_IF;
+         IF NOT bHomingOnCirc THEN
+            bSimulateModule := FALSE;
+         END_IF;
+         
+         IF oldRetainData.bTrackingActive AND oldRetainData.bIsTrackingObj THEN
+            // Homing in tracking
+            gyRcuTrackingFrame[myRobot.RcuRefSystemConveyor].mPos.mValues[2] := oldRetainData.rObjectValue;
+            myRobot.tracking.bIsTrackingObject := oldRetainData.bIsTrackingObj;
+            myRobot.trackingActive             := oldRetainData.bTrackingActive;
+            myRobot.railTrackingActive         := oldRetainData.bRailTrackingAct;         
+            IF myRobot.railTrackingActive THEN
+               myRobot.railAxisVector.mValues[myRobot.railAxisNr] := oldRetainData.rRailValue;
+            END_IF;  
+            myRobot.WaitMcMainCycles(10); // ????????
+         END_IF;
+         
+      END_IF;
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE SetLastTarget(p : TRcuPosition)
+   p.GetMcuPos(lastTarget, myRobot);
+   refLastTarget := p.GetReferenceSystem(myRobot);
+   bLastTargetValid := TRUE;
+END_ROUTINE
+
+// Wird aus dem Ablauf (EcoTalk) aufgerufen 
+// wird aufgerufen, wenn die Unterbrechungsstelle auf einem Kreis liegt
+// nur beim Aufräumen nach Steuerungsneustart
+ROUTINE MoveCirc(helpPoint : POINT; point : POINT)
+VAR
+   P1            : TMcuVector3;
+   P2            : TMcuVector3;
+   P3            : TMcuVector3;
+   P4            : TMcuVector3;
+   P4new         : TMcuVector3;
+   P5            : TMcuVector3;
+   M             : TMcuVector3;
+   MP1           : TMcuVector3;
+   MP2           : TMcuVector3;
+   MP3           : TMcuVector3;
+   MP4           : TMcuVector3;
+   MP5           : TMcuVector3;
+   MH2           : TMcuVector3;
+   H1            : TMcuVector3;
+   H2            : TMcuVector3;
+   N             : TMcuVector3;
+   w             : REAL;
+   radius        : REAL;
+   w12           : REAL;
+   w23           : REAL;
+   len5          : REAL;
+   d             : REAL;
+   h1            : REAL;
+   TG            : TMcuVector3;
+   pos           : TMcuPosition;
+   tcp           : TMcuFrame;
+   cartPos       : TMcuPosCart;
+   b             : BOOL;
+   bReposCirc    : BOOL;
+   bNewHelpPoint : BOOL;
+END_VAR
+
+   // P1 = Startpunkt des Kreises in Objektkoordinaten umrechnen
+   // Startpunkt des Kreises = Endpunkt des letzten Fahrbefehls vor dem CIRC
+   IF NOT bLastTargetValid THEN
+      bSimulateModErr := TRUE;
+      myRobot.DebugPrint(eTraceHoming, "Startpunkt des Kreises existiert nicht");
+      RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 16, instId, "TRcuHoming.MoveCirc");
+      bSimulateModule := FALSE;
+      RETURN;
+   END_IF;
+   IF (lastTarget.mPosTyp = eMcuPosJoints) THEN
+      // ForwardTrafo
+      b := RcuTransformPosToCart(lastTarget, cartPos, myRobot.RcuRefSystemObject, 
+                                 myRobot.kinematicMcuId, myRobot.progPath.segHdl.mRobotToolID);
+      IF b THEN
+         P1.mValues := cartPos.mFrame.mPos.mValues;
+      ELSE
+         bSimulateModErr := TRUE;
+         myRobot.DebugPrint(eTraceHoming, "Fehler bei Startpunkt des Kreises: JOINTS -> OBJECT");
+         RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 2, instId, "TRcuHoming.MoveCirc");
+         bSimulateModule := FALSE;
+         RETURN;
+      END_IF;
+   ELSIF (lastTarget.mPosTyp = eMcuPosCart) THEN
+      IF (refLastTarget = myRobot.RcuRefSystemObject) THEN
+         // Rechnung in OBJECT
+         P1.mValues := lastTarget.mPosCart.mFrame.mPos.mValues;
+      ELSIF (refLastTarget = eRcuRefSystemWorld) THEN
+         // Transformation in OBJECT
+         b := RcuTransformPosToCart(lastTarget, cartPos, myRobot.RcuRefSystemObject, 
+                                    myRobot.kinematicMcuId, myRobot.progPath.segHdl.mRobotToolID);
+         IF b THEN
+            P1.mValues := cartPos.mFrame.mPos.mValues;
+         ELSE
+            bSimulateModErr := TRUE;
+            myRobot.DebugPrint(eTraceHoming, "Fehler bei Startpunkt des Kreises: WORLD -> OBJECT");
+            RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 3, instId, "TRcuHoming.MoveCirc");
+            bSimulateModule := FALSE;
+            RETURN;
+         END_IF;
+      ELSE   
+         bSimulateModErr := TRUE;
+         myRobot.DebugPrint(eTraceHoming, "Fehler bei Startpunkt des Kreises: Koordinatensystem = "+STR(refLastTarget));
+         RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 4, instId, "TRcuHoming.MoveCirc");
+         bSimulateModule := FALSE;
+         RETURN;
+      END_IF;
+   ELSE
+      bSimulateModErr := TRUE;
+      myRobot.DebugPrint(eTraceHoming, "Fehler bei Startpunkt des Kreises: Punkttype = "+STR(lastTarget.mPosTyp));
+      RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 5, instId, "TRcuHoming.MoveCirc");
+      bSimulateModule := FALSE;
+      RETURN;
+   END_IF;
+   
+   // P4 = aktuelle Position des TCP in Objektkoordinaten
+   myRobot.WaitMcMainCycles(5); // da sonst TOOL bei Koordinaten nicht berücksichtigt!!!
+   tcp := myRobot.readBackObjectPos;
+   P4.mValues := tcp.mPos.mValues;
+   
+   // P2 = helpPoint in Objektkoordinaten umrechnen
+   helpPoint.GetMcuPos(pos, myRobot);
+   
+   IF (pos.mPosTyp = eMcuPosJoints) THEN
+      // ForwardTrafo
+      b := RcuTransformPosToCart(pos, cartPos, myRobot.RcuRefSystemObject, 
+                                 myRobot.kinematicMcuId, myRobot.progPath.segHdl.mRobotToolID);
+      IF b THEN
+         P2.mValues := cartPos.mFrame.mPos.mValues;
+      ELSE
+         bSimulateModErr := TRUE;
+         myRobot.DebugPrint(eTraceHoming, "Fehler bei Zwischenpunkt des Kreises: JOINTS -> OBJECT");
+         RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 6, instId, "TRcuHoming.MoveCirc");
+         bSimulateModule := FALSE;
+         RETURN;
+      END_IF;
+   ELSIF (pos.mPosTyp = eMcuPosCart) THEN
+      IF (helpPoint.Coord = Object) THEN
+         // Rechnung in OBJECT
+         P2.mValues := pos.mPosCart.mFrame.mPos.mValues;
+      ELSIF (helpPoint.Coord = World) THEN
+         // Transformation in OBJECT
+         b := RcuTransformPosToCart(pos, cartPos, myRobot.RcuRefSystemObject, 
+                                    myRobot.kinematicMcuId, myRobot.progPath.segHdl.mRobotToolID);
+         IF b THEN
+            P2.mValues := cartPos.mFrame.mPos.mValues;
+         ELSE
+            bSimulateModErr := TRUE;
+            myRobot.DebugPrint(eTraceHoming, "Fehler bei Zwischenpunkt des Kreises: WORLD -> OBJECT");
+            RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 7, instId, "TRcuHoming.MoveCirc");
+            bSimulateModule := FALSE;
+            RETURN;
+         END_IF;
+      ELSE   
+         bSimulateModErr := TRUE;
+         myRobot.DebugPrint(eTraceHoming, "Fehler bei Zwischenpunkt des Kreises: Koordinatensystem = "+STR(helpPoint.Coord));
+         RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 8, instId, "TRcuHoming.MoveCirc");
+         bSimulateModule := FALSE;
+         RETURN;
+      END_IF;
+   ELSE
+      bSimulateModErr := TRUE;
+      myRobot.DebugPrint(eTraceHoming, "Fehler bei Zwischenpunkt des Kreises: Punkttype = "+STR(pos.mPosTyp));
+      RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 9, instId, "TRcuHoming.MoveCirc");
+      bSimulateModule := FALSE;
+      RETURN;
+   END_IF;
+      
+   // P3 = point in Objektkoordinaten
+   point.GetMcuPos(pos, myRobot);
+   
+   IF (pos.mPosTyp = eMcuPosJoints) THEN
+      // ForwardTrafo
+      b := RcuTransformPosToCart(pos, cartPos, myRobot.RcuRefSystemObject, 
+                                 myRobot.kinematicMcuId, myRobot.progPath.segHdl.mRobotToolID);
+      IF b THEN
+         P3.mValues := cartPos.mFrame.mPos.mValues;
+      ELSE
+         bSimulateModErr := TRUE;
+         myRobot.DebugPrint(eTraceHoming, "Fehler bei Endpunkt des Kreises: JOINTS -> OBJECT");
+         RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 10, instId, "TRcuHoming.MoveCirc");
+         bSimulateModule := FALSE;
+         RETURN;
+      END_IF;
+   ELSIF (pos.mPosTyp = eMcuPosCart) THEN
+      IF (point.Coord = Object) THEN
+         // Rechnung in OBJECT
+         P3.mValues := pos.mPosCart.mFrame.mPos.mValues;
+      ELSIF (point.Coord = World) THEN
+         // Transformation in OBJECT
+         b := RcuTransformPosToCart(pos, cartPos, myRobot.RcuRefSystemObject, 
+                                    myRobot.kinematicMcuId, myRobot.progPath.segHdl.mRobotToolID);
+         IF b THEN
+            P3.mValues := cartPos.mFrame.mPos.mValues;
+         ELSE
+            bSimulateModErr := TRUE;
+            myRobot.DebugPrint(eTraceHoming, "Fehler bei Endpunkt des Kreises: WORLD -> OBJECT");
+            RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 11, instId, "TRcuHoming.MoveCirc");
+            bSimulateModule := FALSE;
+            RETURN;
+         END_IF;
+      ELSE   
+         bSimulateModErr := TRUE;
+         myRobot.DebugPrint(eTraceHoming, "Fehler bei Endpunkt des Kreises: Koordinatensystem = "+STR(point.Coord));
+         RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 12, instId, "TRcuHoming.MoveCirc");
+         bSimulateModule := FALSE;
+         RETURN;
+      END_IF;
+   ELSE
+      bSimulateModErr := TRUE;
+      myRobot.DebugPrint(eTraceHoming, "Fehler bei Endpunkt des Kreises: Punkttype = "+STR(pos.mPosTyp));
+      RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 13, instId, "TRcuHoming.MoveCirc");
+      bSimulateModule := FALSE;
+      RETURN;
+   END_IF;
+   
+   CenterOfCircle (P1, P2, P3, M, radius, w12, w23, TG);
+   myRobot.DebugPrint(eTraceHoming, "Kreisberechnung:");
+   myRobot.DebugPrint(eTraceHoming, "Startpunkt    P1 X = " + STR(P1.mValues[0]) + " Y = " + STR(P1.mValues[1]) + " Z = " + STR(P1.mValues[2])); 
+   myRobot.DebugPrint(eTraceHoming, "Zwischenpunkt P2 X = " + STR(P2.mValues[0]) + " Y = " + STR(P2.mValues[1]) + " Z = " + STR(P2.mValues[2])); 
+   myRobot.DebugPrint(eTraceHoming, "Endpunkt      P3 X = " + STR(P3.mValues[0]) + " Y = " + STR(P3.mValues[1]) + " Z = " + STR(P3.mValues[2])); 
+   myRobot.DebugPrint(eTraceHoming, "Mittelpunkt      X = " + STR(M.mValues[0]) + " Y = " + STR(M.mValues[1]) + " Z = " + STR(M.mValues[2])); 
+   myRobot.DebugPrint(eTraceHoming, "Radius = " + STR(radius));
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Anfangspunkt zum Hilfspunkt = " + STR(w12*GRAD_RAD));
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Hilfspunkt zum Endpunkt     = " + STR(w23*GRAD_RAD));
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Anfangspunkt zum Endpunkt   = " + STR((w12+w23)*GRAD_RAD));
+   // Bestimme (Vektor von Mittelpunkt zu Kreispunkten)
+   McuSubVector3(MP1, P1, M); // Anfangspunkt
+   McuSubVector3(MP2, P2, M); // Hilfspunkt
+   McuSubVector3(MP3, P3, M); // Endpunkt
+   McuSubVector3(MP4, P4, M); // Testpunkt = aktueller TCP
+
+   myRobot.DebugPrint(eTraceHoming, "TCP Punkt     P4 X = " + STR(P4.mValues[0]) + " Y = " + STR(P4.mValues[1]) + " Z = " + STR(P4.mValues[2])); 
+   d := McuLenVector3(MP4); // Abstand Mittelpunkt zu Testpunkt
+   myRobot.DebugPrint(eTraceHoming, "Abstand TCP vom Mittelpunkt = " + STR(d));
+   
+   IF d > 2*radius THEN
+      bSimulateModErr := TRUE;
+      myRobot.DebugPrint(eTraceHoming, "Fehler: Abstand des aktuellen TCP vom Kreis zu groß");
+      RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 14, instId, "TRcuHoming.MoveCirc");
+      bSimulateModule := FALSE;
+      RETURN;
+   END_IF;
+   IF (rAbs(radius-d) > 10*MC_EPS1*radius) THEN // Testpunkt liegt nicht auf Kreis
+      myRobot.DebugPrint(eTraceHoming, "aktueller TCP liegt nicht direkt auf Kreis");
+      // Punkt konstruieren, der den Testpunkt auf den Kreis abbildet
+      // 1) Testpunkt auf die Kreisebene projizieren
+      // Normalenvektor zur Kreisebene berechnen (Punkte P1, P3, M -> Ebene)
+      // N =(P1-M) x (p3 – M)
+      McuSubVector3(H1, P1, M);
+      McuSubVector3(H2, P3, M);
+      McuCrossProductVec3(N, H1, H2);
+      // Projektion
+      McuSubVector3(H1, P4, M);
+      h1 := McuDotProductVec3(H1, N);
+      h1 := h1 / McuLenVector3(N); // Abstand von P4 zur Ebene
+      h1 := h1 / McuLenVector3(N);
+      McuMultiplyScalarVec3(H2, N, h1);
+      McuSubVector3(H2, P4, H2); // H2 = Ergebnis
+      // 2) Punkt auf die Kreisbahn verschieben
+      McuSubVector3(MH2, H2, M);
+      d := McuLenVector3(MH2);
+      McuMultiplyScalarVec3(MH2, MH2, radius/d);
+      McuAddVector3(P4new, M, MH2);
+      myRobot.DebugPrint(eTraceHoming, "Neuer Startpunkt auf Kreis X = " + STR(P4new.mValues[0]) + " Y = " + STR(P4new.mValues[1]) + " Z = " + STR(P4new.mValues[2])); 
+      // vom aktuellen TCP muss man zum Punkt P4new fahren, um wieder auf dem Kreis zu sein!!!!!
+      bReposCirc := TRUE;
+   ELSE
+      myRobot.DebugPrint(eTraceHoming, "aktueller TCP liegt auf Kreis");
+      P4new := P4;
+   END_IF;
+   McuSubVector3(MP4, P4new, M); // neuer Startpunkt
+   w := Vector_angle(MP1, MP4);
+   IF (Vector_angle(TG,MP4) > MC_PI/2) THEN
+        w := (2 * MC_PI - w);
+   END_IF;
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Anfangspunkt zum neuen Startpunkt  = " + STR(w*GRAD_RAD));
+   IF (w > w12) AND (w < (w12 +w23)) THEN
+      myRobot.DebugPrint(eTraceHoming, "Neuer Startpunkt ist zwischen P2 und P3");
+      myRobot.DebugPrint(eTraceHoming, "neuen Zwischenpunkt berechnen!");
+      //McuAddVector3(P5, P4, P3);
+//      McuSubVector3(P5, P4, P3);
+      McuSubVector3(P5, P3, P4new);
+      McuMultiplyScalarVec3(P5, P5, 0.5);
+      McuAddVector3(P5, P4new, P5);
+      McuSubVector3(MP5, P5, M); 
+      len5 := McuLenVector3(MP5);
+      IF len5 < MC_EPS1*radius THEN // P5 = M anderen Punkt wählen 
+         McuSubVector3(P5, M, MP2);
+         McuSubVector3(MP5, P5, M); 
+         len5 := McuLenVector3(MP5);
+      END_IF;
+      IF ((w12+w23-w) < MC_PI) THEN
+         McuMultiplyScalarVec3(MP5, MP5, radius/len5);
+      ELSE   
+         McuMultiplyScalarVec3(MP5, MP5, -radius/len5);
+      END_IF;
+      McuAddVector3(P5, M, MP5);
+      myRobot.DebugPrint(eTraceHoming, "Neuer Zwischenpunkt X = " + STR(P5.mValues[0]) + " Y = " + STR(P5.mValues[1]) + " Z = " + STR(P5.mValues[2])); 
+      bNewHelpPoint := TRUE;
+   ELSIF w < w12 THEN
+      myRobot.DebugPrint(eTraceHoming, "Neuer Startpunkt ist zwischen P1 und P2. Alten Zwischenpunkt verwenden");
+      P5 := P2; // alten Hilfspunkt verwenden
+   ELSE
+      bSimulateModErr := TRUE;
+      myRobot.DebugPrint(eTraceHoming, "Fehler: Neuer Startpunkt ist nicht auf Kreisbogen");
+      RcuSetMessageOnce(TRcuHoming_ErrCircNotPoss, myRobot.kinListInx, 15, instId, "TRcuHoming.MoveCirc");
+      bSimulateModule := FALSE;
+      RETURN;
+   END_IF;
+
+   // nur Überprüfung der Rechnung
+   CenterOfCircle (P4new, P5, P3, M, radius, w12, w23, TG);
+   myRobot.DebugPrint(eTraceHoming, "Prüfung Kreisberechnung mit neuem Start- und Zwischenpunkt");
+   myRobot.DebugPrint(eTraceHoming, "Mittelpunkt X = " + STR(M.mValues[0]) + " Y = " + STR(M.mValues[1]) + "Z = " + STR(M.mValues[2])); 
+   myRobot.DebugPrint(eTraceHoming, "Radius = " + STR(radius));
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Anfangspunkt zum Hilfspunkt = " + STR(w12*GRAD_RAD));
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Hilfspunkt zum Endpunkt     = " + STR(w23*GRAD_RAD));
+   myRobot.DebugPrint(eTraceHoming, "Winkel von Anfangspunkt zum Endpunkt   = " + STR((w12+w23)*GRAD_RAD));
+   
+   IF bReposCirc THEN //Repositionieren auf Kreis
+      HomingStartCirc.A := P4new.mValues[0]; // Position aus neuem Startpunkt
+      HomingStartCirc.B := P4new.mValues[1];
+      HomingStartCirc.C := P4new.mValues[2];
+      HomingStartCirc.D := tcp.mOri.mValues[0]; // Rest aus aktueller Position
+      HomingStartCirc.E := tcp.mOri.mValues[1];
+      HomingStartCirc.F := tcp.mOri.mValues[2];
+      HomingStartCirc.Aux1 := myRobot.readBackVals.mJoints.mAuxJoints.mValues[0];
+      HomingStartCirc.Aux2 := myRobot.readBackVals.mJoints.mAuxJoints.mValues[1];
+      HomingStartCirc.Aux3 := myRobot.readBackVals.mJoints.mAuxJoints.mValues[2];
+      HomingStartCirc.Coord := Object;
+      myRobot.progPath.Lin(HomingStartCirc);
+   END_IF;
+   HomingHelpPoint := helpPoint;
+   IF bNewHelpPoint THEN // CIRC mit neuem Zwischenpunkt
+      IF HomingHelpPoint.Coord = Object THEN
+         HomingHelpPoint.A := P5.mValues[0];
+         HomingHelpPoint.B := P5.mValues[1];
+         HomingHelpPoint.C := P5.mValues[2];
+      ELSIF helpPoint.Coord = World THEN   
+         HomingHelpPoint.A := P5.mValues[0];
+         HomingHelpPoint.B := P5.mValues[1];
+         HomingHelpPoint.C := P5.mValues[2];
+         HomingHelpPoint.Coord := Object;
+      ELSIF helpPoint.Coord = Axis  THEN
+         HomingHelpPoint.A := P5.mValues[0];
+         HomingHelpPoint.B := P5.mValues[1];
+         HomingHelpPoint.C := P5.mValues[2];
+         HomingHelpPoint.Coord := Object;
+      END_IF;
+   END_IF;
+   myRobot.progPath.Circ(HomingHelpPoint, point);
+   bHomingOnCirc := FALSE; 
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Called whenever RcuRefSysSet(RcuRefSystemVisionRel ... or
+// RcuRefSysSet(RcuRefSystemObject, are called
+//------------------------------------------------------------------------
+ROUTINE StoreRefSystemVision(Abs : BOOL; frame : TMcuFrame)
+
+   IF NOT bEnableHoming THEN
+      RETURN;
+   END_IF;
+   IF NOT bEnableHomingAfterRestart THEN
+      RETURN;
+   END_IF;
+   IF NOT IS_MAPPED(sv_Homing) THEN
+      RETURN;
+   END_IF;
+   IF Abs THEN
+      sv_Homing.VisionAbs := frame;
+   ELSE
+      sv_Homing.VisionRel := frame;
+   END_IF;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Called whenever a Teachprogram is started from AutoControl
+//------------------------------------------------------------------------
+ROUTINE ClearCallStack()
+VAR
+   i : INT;
+END_VAR
+
+   FOR i:=0 TO callStack.depth-1 DO
+      callStack.progNames[i] := "";
+      callStack.lineNrs[i] := 0;
+   END_FOR;
+   callStack.depth := 0;
+   IF IS_MAPPED(sv_Homing) THEN
+      sv_Homing.callStack := callStack;
+   END_IF;
+   sActModuleName := "";
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* private members
+*)
+TYPE PRIVATE
+  tsEpsDataOut : STRUCT
+    bRelease      : BOOL;
+    iPathProgress : INT;
+    zModuleName   : STRING;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   myRobot                 : MAPTO TRcuRobot;
+   iLoggerNumber           : INT;        //token for the logger
+   sEpsDataOut             : MAPTO tsEpsDataOut;
+END_VAR
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ObserveHomingBitsFromPLC() PRIVATE
+VAR
+   bChgHoming        : BOOL;
+   bChgPreHoming     : BOOL;
+END_VAR
+
+   bChgHoming        := IS_CHANGED(myRobot.fieldbusIn.StartHoming.svBool);
+   IF (tType = eStandard) THEN
+   bChgPreHoming     := IS_CHANGED(myRobot.fieldbusIn.StartPreHoming.svBool);
+   END_IF;
+   
+   WHILE TRUE DO
+      
+      IF (NOT bStartHoming) AND myRobot.fieldbusIn.StartHoming.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Start Homing received from PLC");
+         START StartHomingProc();
+      ELSIF bStartHoming AND (NOT myRobot.fieldbusIn.StartHoming.svBool) THEN
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "Reset Homing received from PLC");
+      END_IF;
+      bStartHoming := myRobot.fieldbusIn.StartHoming.svBool;
+      IF (tType = eStandard) THEN
+         IF (NOT bStartPreHoming) AND myRobot.fieldbusIn.StartPreHoming.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Start PreHoming received from PLC");
+            START StartPreHomingProc();
+         ELSIF bStartPreHoming AND (NOT myRobot.fieldbusIn.StartPreHoming.svBool) THEN
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "Reset PreHoming received from PLC");
+         END_IF;
+         bStartPreHoming := myRobot.fieldbusIn.StartPreHoming.svBool;
+      END_IF;      
+            
+      WAIT bChgHoming OR bChgPreHoming;       
+           
+      bChgHoming        := FALSE;
+      bChgPreHoming     := FALSE;
+      
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ReadRetainData() PRIVATE
+   sv_Homing := MAPX(cSV_HomingRetain[myRobot.kinListInx]);
+   IF IS_MAPPED(sv_Homing) THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Read retain data");
+      oldRetainData := sv_Homing; // save retain data
+      InitRetainData(); // clear retain data
+      IF oldRetainData.bAuto AND oldRetainData.bSelectingFlowPresent THEN
+         bHomingAfterRestartPossible := TRUE;
+         TeachViewRetain := MAP(oldRetainData);
+         iInfoRetain3 := 1;
+         iInfoRetain2 := 1;
+         iInfoRetain1 := 1;
+         START ObserveValidCondition();
+      ELSE
+         bHomingAfterRestartPossible := FALSE;
+         iInfoRetain1 := 0;
+         iInfoRetain2 := 0;
+         iInfoRetain3 := 0;
+         TeachViewRetain := MAP(sv_Homing);
+      END_IF;
+   ELSE
+      // myRobot.DebugPrint(eTraceHoming, "ERROR Cannot read retain data. Variable "+cSV_HomingRetain[myRobot.kinListInx]+ " not mapped");
+      RcuSetMessageOnce(TRcuHoming_ErrVarNotMapped, myRobot.kinListInx, 1, instId, "TRcuHoming.ReadRetainData", cSV_HomingRetain[myRobot.kinListInx]);
+      bEnableHomingAfterRestart := FALSE;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ObserveValidCondition() PRIVATE
+   WAIT NOT myRobot.isStopped OR myRobot.selectingFlow.running;
+   IF NOT myRobot.isStopped THEN
+      myRobot.DebugPrint(eTraceHoming, "Robot is moving. Homing after restart no longer possible");
+   ELSE   
+      myRobot.DebugPrint(eTraceHoming, "Program is running. Homing after restart no longer possible");
+   END_IF;
+   bHomingAfterRestartPossible := FALSE;
+   iInfoRetain1 := 0;
+   iInfoRetain2 := 0;
+   iInfoRetain3 := 0;
+   TeachViewRetain := MAP(sv_Homing);
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE InitRetainData() PRIVATE
+VAR
+   i : INT;
+END_VAR
+
+   // callstack
+   sv_Homing.callStack.depth := 0;
+   FOR i := 0 TO 4 DO
+      sv_Homing.callStack.lineNrs[i] := 0;
+      sv_Homing.callStack.progNames[i] := "";
+   END_FOR;
+   // camera and coordinate systems
+   sv_Homing.CamAbsData.mFrameTyp := eMcuFrameKardan;
+   FOR i := 0 TO 2 DO
+      sv_Homing.CamAbsData.mPos.mValues[i] := 0.0;
+      sv_Homing.CamAbsData.mOri.mValues[i] := 0.0;
+   END_FOR;
+   sv_Homing.CamRelData.mFrameTyp := eMcuFrameKardan;
+   FOR i := 0 TO 2 DO
+      sv_Homing.CamRelData.mPos.mValues[i] := 0.0;
+      sv_Homing.CamRelData.mOri.mValues[i] := 0.0;
+   END_FOR;
+   sv_Homing.VisionAbs.mFrameTyp := eMcuFrameKardan;
+   FOR i := 0 TO 2 DO
+      sv_Homing.VisionAbs.mPos.mValues[i] := 0.0;
+      sv_Homing.VisionAbs.mOri.mValues[i] := 0.0;
+   END_FOR;
+   sv_Homing.VisionRel.mFrameTyp := eMcuFrameKardan;
+   FOR i := 0 TO 2 DO
+      sv_Homing.VisionRel.mPos.mValues[i] := 0.0;
+      sv_Homing.VisionRel.mOri.mValues[i] := 0.0;
+   END_FOR;
+   sv_Homing.Object.mFrameTyp := eMcuFrameKardan;
+   FOR i := 0 TO 2 DO
+      sv_Homing.Object.mPos.mValues[i] := 0.0;
+      sv_Homing.Object.mOri.mValues[i] := 0.0;
+   END_FOR;
+   sv_Homing.Tool.mFrameTyp := eMcuFrameKardan;
+   FOR i := 0 TO 2 DO
+      sv_Homing.Tool.mPos.mValues[i] := 0.0;
+      sv_Homing.Tool.mOri.mValues[i] := 0.0;
+   END_FOR;
+   // others
+   sv_Homing.sHandlerModule   := "";
+   sv_Homing.sHandlerMainProg := "";
+   sv_Homing.sActModuleName   := "";
+   sv_Homing.bCamAbsDataValid := FALSE;
+   sv_Homing.bCamRelDataValid := FALSE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE StartHomingProc() PRIVATE
+  
+// Zum Aufräumen müssen die Antriebe des Roboters eingeschaltet sein, 
+// es darf kein Fehler anstehen, der Roboter muß in Betriebsart Automatik sein 
+// und er muß eine Verfahrfreigabe haben.
+(*   
+   IF NOT myRobot.autoControl.bBitAutoExt OR NOT myRobot.updateActive THEN
+      //myRobot.DebugPrint(eTraceHoming, " ERROR StartHoming: not in AUTO or not updateActive"); // Fehler
+      RcuSetMessageOnce(TRcuHoming_ErrStartNotPoss, myRobot.kinListInx, 1, instId, "TRcuHoming.StartHomingProc");
+      RETURN;
+   END_IF;
+*)   
+   IF NOT bEnableHoming THEN
+      //myRobot.DebugPrint(eTraceHoming, " ERROR StartHoming without homing enabled!!!!!"); // Fehler
+      RcuSetMessageOnce(TRcuHoming_ErrNotEnabled, myRobot.kinListInx, 1, instId, "TRcuHoming.StartHomingProc");
+      RETURN;
+   END_IF;
+   
+   IF myRobot.fieldbusIn.StartPreHoming.svBool THEN
+      //myRobot.DebugPrint(eTraceHoming, "ERROR Homing not possible. PreHoming  is set");
+      RcuSetMessageOnce(TRcuHoming_ErrPrehomSet, myRobot.kinListInx, 1, instId, "TRcuHoming.StartHomingProc");
+      RETURN;
+   END_IF;
+   IF bPreHomingRun THEN
+      //myRobot.DebugPrint(eTraceHoming, "ERROR Start Homing but prehoming already running");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Start Homing but prehoming already running");
+      RcuSetMessageOnce(TRcuHoming_ErrPreHomRun, myRobot.kinListInx, 1, instId, "TRcuHoming.StartHomingProc");
+      RETURN;
+   END_IF;
+
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "START HOMING");
+   myRobot.DebugPrint(eTraceHoming, "S T A R T   H O M I N G");
+   IF tType = eStandard THEN
+      rStoredOvr := REAL(myRobot.override)/1000.0;
+      myRobot.SetTimeOverride(rOverride);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Set " + STR(rOverride*100.0) + "% override for Homing");
+   END_IF;
+   bHomingRun := TRUE;
+   //close all mainneedles, it's not allowed to paint while homing
+   myRobot.RcuInterfaceToProcess.CloseAllNeedles();
+   IF bHomingAfterRestartPossible THEN
+      HomingAfterRestart();
+   ELSIF tType = eStandard THEN
+      HomingNormal();
+   ELSE
+      SafeToHome();
+   END_IF;
+   
+   myRobot.DebugPrint(eTraceHoming, "Homing END");
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: finished");
+   IF tType = eStandard THEN
+      myRobot.SetTimeOverride(rStoredOvr);
+   END_IF;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Restored " + STR(rStoredOvr*100.0) + "% override after Homing");
+   myRobot.fieldbusOut.HomingFinished.svBool := TRUE; // to plc
+   WAIT NOT myRobot.fieldbusIn.StartHoming.svBool;
+   myRobot.fieldbusOut.HomingActive.svBool := FALSE; // to plc
+   myRobot.fieldbusOut.HomingFinished.svBool := FALSE; // to plc
+   sModuleName := "";
+   iPathNumber := 0;
+   IF (tType = eSafeToHome) THEN
+       bEndOfModule := FALSE;
+   END_IF;
+   callStack.progNames[iModuleLevel] := "";
+   sHandlerModule := "";
+   bHomingRun := FALSE;
+   bPreHomingDone := FALSE;
+   bPreHomingSucc := FALSE;
+   bGoDirectHomeActive := FALSE;
+
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE SafeToHome() PRIVATE
+ VAR
+   info : TUserProgStackInfo;
+ END_VAR
+  
+   info := callStack;
+
+   IF info.depth = 0 THEN // no teachprogram active
+      RcuSetMessageOnce(TRcuHoming_ErrNoTeachprog, myRobot.kinListInx, 3, instId, "TRcuHoming.SafeToHome");
+      myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+      myRobot.WaitMcMainCycles(40);
+   ELSIF myRobot.fixpos.RcuInHome THEN
+       myRobot.DebugPrint(eTraceHoming, "SafeToHome: Robot already in home position");
+      // Abort actual program
+      myRobot.autoControl.PLCStopProgram();
+      myRobot.DebugPrint(eTraceHoming, "SafeToHome: Abort actual program - waiting NOT selectingFlow.running");
+      WAIT NOT myRobot.selectingFlow.running;
+   ELSE        
+      myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+      //check if SafeToHome programm already started?
+      IF (sModuleName = "") THEN
+         RcuSetMessageOnce(TRcuHoming_ErrHomNoProg, myRobot.kinListInx, 1, instId, "TRcuHoming.SafeToHome");
+         // Abort homing program
+         myRobot.autoControl.PLCStopProgram();
+         myRobot.DebugPrint(eTraceHoming, "SafeToHome: No homing program set, start not possible");
+         myRobot.WaitMcMainCycles(40);
+      ELSE   
+         bEndOfModule := TRUE;                   //in RELEASE of kinematic the trakcing frame is not reset
+         myRobot.autoControl.PLCStopProgram();   //abort actual program
+         myRobot.DebugPrint(eTraceHoming, "SafeToHome: Abort actual program - waiting NOT selectingFlow.present");
+         myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sModuleName;
+         WAIT NOT myRobot.selectingFlow.present;
+         bEndOfModule := FALSE;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.DebugPrint(eTraceHoming, "SafeToHome: Start program " + myRobot.autoControl.sNewProg + " - waiting selectingFlow.running");      
+         WAIT myRobot.selectingFlow.running;     // SafeToHome program running
+         myRobot.DebugPrint(eTraceHoming, "SafeToHome: Program running - waiting program finished");
+         WAIT NOT myRobot.selectingFlow.present; // SafeToHome program finished
+      END_IF;      
+      
+   END_IF;       
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE HomingNormal() PRIVATE
+VAR
+   info       : TUserProgStackInfo;
+END_VAR
+  
+   info := callStack;
+   IF NOT bPreHomingDone THEN
+      IF myRobot.handler.bJobRunning THEN
+         IF info.progNames[0] = myRobot.handler.mainProg THEN
+            myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Handler-Modul");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no handlermodule to continue"); 
+            sProgramName := ExtractProgName(info.progNames[0]);
+            sModuleName := ExtractProgName(sHandlerModule); // Letztes Handlermodul???????????
+            myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+         END_IF;
+         sProgramName := ExtractProgName(myRobot.handler.mainProg);
+         sModuleName := ExtractProgName(info.progNames[0]);
+      ELSE
+         sProgramName := ExtractProgName(info.progNames[0]);
+         IF (iModuleLevel = (info.depth-1)) THEN
+            sModuleName := ExtractProgName(info.progNames[iModuleLevel]);
+         ELSE  
+            sModuleName := ExtractProgName(sActModuleName); // last executed module
+         END_IF;
+      END_IF;
+      myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+
+      IF info.depth = 0 THEN // no teachprogram active
+         //myRobot.DebugPrint(eTraceHoming, "ERROR Homing not possible. No teachprogram running");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: No teachprogram running");
+         RcuSetMessageOnce(TRcuHoming_ErrNoTeachprog, myRobot.kinListInx, 1, instId, "TRcuHoming.HomingNormal");
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         myRobot.WaitMcMainCycles(40);
+      ELSIF myRobot.fixpos.RcuInHome THEN
+         myRobot.DebugPrint(eTraceHoming, "Homing. Robot already in home position");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot already in home position");
+         // Abort actual program
+         myRobot.autoControl.PLCStopProgram();
+         WAIT NOT myRobot.selectingFlow.running;
+      ELSIF myRobot.bInPreposition AND bEnableGoDirectHome THEN
+         myRobot.DebugPrint(eTraceHoming, "Homing. Robot in preposition and EnableGoDirectHome");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot in preposition and EnableGoDirectHome");
+         // Abort actual program
+         myRobot.autoControl.PLCStopProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+         myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+         myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+         WAIT NOT myRobot.selectingFlow.present;
+         iInfo := 3;
+         bEndOfModule := FALSE;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT myRobot.selectingFlow.running;     // homing program running
+         WAIT NOT myRobot.selectingFlow.present; // homing program finished
+         iInfo := 5;
+      ELSE 
+         IF (sProgramName <> "") AND NOT myRobot.handler.bJobRunning THEN
+            iInfo := 1;
+            FinishActProgram();
+            // Start homing program
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+            myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+            myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+            WAIT NOT myRobot.selectingFlow.present;
+            iInfo := 3;
+            bEndOfModule := FALSE;
+            myRobot.autoControl.PLCStartProgram();
+            myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+            WAIT myRobot.selectingFlow.running;
+            WAIT NOT myRobot.selectingFlow.present;
+            iInfo := 5;
+         ELSE
+            // wait until normal program finished
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: wait until normal program ends ");
+            WAIT NOT myRobot.selectingFlow.present; // program finished
+         END_IF;
+      END_IF;
+   ELSE // prehoming already done
+      IF NOT bPreHomingSucc THEN
+         //myRobot.DebugPrint(eTraceHoming, "ERROR Homing. Prehoming was not successfull");
+         RcuSetMessageOnce(TRcuHoming_ErrPreHomSucc, myRobot.kinListInx, 1, instId, "TRcuHoming.HomingNormal");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Prehoming was not successfull");
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         myRobot.WaitMcMainCycles(40);
+      //ELSIF myRobot.fixpos.RcuInHome THEN
+      //   myRobot.DebugPrint(eTraceHoming, "Homing. Robot already in home position");
+      //   myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot already in home position");
+      //   myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+      //   myRobot.WaitMcMainCycles(40);
+      ELSIF bGoDirectHomeActive THEN
+         myRobot.DebugPrint(eTraceHoming, "Homing. Robot in preposition and GoDirectHome");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot in preposition and GoDirectHome");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+         myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+         myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+         WAIT NOT myRobot.selectingFlow.present;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT myRobot.selectingFlow.running;     // homing program running
+         WAIT NOT myRobot.selectingFlow.present; // homing program finished
+      ELSIF (sProgramName <> "") AND NOT myRobot.handler.bJobRunning THEN
+         IF myRobot.fixpos.RcuInHome THEN
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName + " , even robot is in home");
+             myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName + " , even robot is in home");
+         END_IF;
+         // Start homing program
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+         myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+         myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+         iInfo := 3;
+         bEndOfModule := FALSE;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT myRobot.selectingFlow.running;     // homing program running
+         WAIT NOT myRobot.selectingFlow.present; // homing program finished
+         iInfo := 5;
+      ELSE
+         // wait until normal program finished
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: wait until normal program ends ");
+         WAIT NOT myRobot.selectingFlow.present; // program finished
+      END_IF;
+   END_IF;
+
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE HomingAfterRestart() PRIVATE
+VAR
+   info       : TUserProgStackInfo;
+END_VAR
+  
+   info := oldRetainData.callStack;
+   IF NOT bPreHomingDone THEN
+      IF oldRetainData.bHandlerJobRunning THEN
+         IF info.progNames[0] = oldRetainData.sHandlerMainProg THEN
+            myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Handler-Modul");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no handlermodule to continue"); 
+            sProgramName := ExtractProgName(info.progNames[0]);
+            sModuleName := ExtractProgName(oldRetainData.sHandlerModule); // Letztes Handlermodul???????????
+            myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+         END_IF;
+         sProgramName := ExtractProgName(oldRetainData.sHandlerMainProg);
+         sModuleName := ExtractProgName(info.progNames[0]);
+      ELSE
+         sProgramName := ExtractProgName(info.progNames[0]);
+         IF (iModuleLevel = (info.depth-1)) THEN
+            sModuleName := ExtractProgName(info.progNames[iModuleLevel]);
+         ELSE  
+            sModuleName := ExtractProgName(oldRetainData.sActModuleName);
+         END_IF;
+      END_IF;
+      myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+
+      IF myRobot.fixpos.RcuInHome THEN
+         myRobot.DebugPrint(eTraceHoming, "Homing. Robot already in home position");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot already in home position");
+      ELSIF oldRetainData.bInPrePosition AND bEnableGoDirectHome THEN
+         myRobot.DebugPrint(eTraceHoming, "Homing. Robot in preposition and EnableGoDirectHome");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot in preposition and EnableGoDirectHome");
+         bGoDirectHomeActive := TRUE;
+         IF NOT ReloadProject() THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+            myRobot.DebugPrint(eTraceHoming, " Start PreHoming main program "+sProgExt + sProgramName);
+            myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+            WAIT NOT myRobot.selectingFlow.present;
+            myRobot.autoControl.PLCStartProgram();
+            WAIT myRobot.selectingFlow.running;     // homing program running
+            WAIT NOT myRobot.selectingFlow.present; // homing program finished
+         END_IF;
+      ELSE 
+         IF HomingAfterRestartActions() THEN
+            // Start homing program
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+            myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+            myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+            WAIT NOT myRobot.selectingFlow.present;
+            iInfo := 3;
+            bEndOfModule := FALSE;
+            myRobot.autoControl.PLCStartProgram();
+            WAIT myRobot.selectingFlow.running;
+            WAIT NOT myRobot.selectingFlow.present;
+            iInfo := 5;
+         ELSE
+            RcuSetMessageOnce(TRcuHoming_ErrProjNotLoad, myRobot.kinListInx, 1, instId, "TRcuHoming.HomingAfterRestart");
+            myRobot.DebugPrint(eTraceHoming, "ERROR Homing after restart not possible ");
+         END_IF;
+      END_IF;
+      bHomingAfterRestartPossible := FALSE;
+      iInfoRetain1 := 0;
+      iInfoRetain2 := 0;
+      iInfoRetain3 := 0;
+      TeachViewRetain := MAP(sv_Homing);
+   ELSE // prehoming already done
+      IF NOT bPreHomingSucc THEN
+         //myRobot.DebugPrint(eTraceHoming, "ERROR Homing. Prehoming was not successfull");
+         RcuSetMessageOnce(TRcuHoming_ErrPreHomSucc2, myRobot.kinListInx, 1, instId, "TRcuHoming.HomingAfterRestart");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Prehoming was not successfull");
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         myRobot.WaitMcMainCycles(40);
+      //ELSIF myRobot.fixpos.RcuInHome THEN
+      //   myRobot.DebugPrint(eTraceHoming, "Homing. Robot already in home position");
+      //   myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot already in home position");
+      //   myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+      //   myRobot.WaitMcMainCycles(40);
+      ELSIF bGoDirectHomeActive THEN
+         // das vor Unterbrechung geladene Projekt wieder laden
+         IF NOT ReloadProject() THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+         ELSE
+            myRobot.DebugPrint(eTraceHoming, "Homing. Robot in preposition and GoDirectHome");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Robot in preposition and GoDirectHome");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+            myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+            myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+            WAIT NOT myRobot.selectingFlow.present;
+            iInfo := 3;
+            bEndOfModule := FALSE;
+            myRobot.autoControl.PLCStartProgram();
+            WAIT myRobot.selectingFlow.running;     // homing program running
+            WAIT NOT myRobot.selectingFlow.present; // homing program finished
+            iInfo := 5;
+         END_IF;
+      ELSIF (sProgramName <> "") AND NOT myRobot.handler.bJobRunning THEN
+         IF myRobot.fixpos.RcuInHome THEN
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName + " , even robot is in home");
+             myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName + " , even robot is in home");
+         END_IF;
+         // Start homing program
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: start "+sProgExt + sProgramName);
+         myRobot.DebugPrint(eTraceHoming, " Start Homing main program "+sProgExt + sProgramName);
+         myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sProgExt + sProgramName;
+         iInfo := 3;
+         bEndOfModule := FALSE;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT myRobot.selectingFlow.running;     // homing program running
+         WAIT NOT myRobot.selectingFlow.present; // homing program finished
+         iInfo := 5;
+      ELSE
+         // wait until normal program finished
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: wait until normal program ends ");
+         WAIT NOT myRobot.selectingFlow.present; // program finished
+      END_IF;
+   END_IF;
+   // unload project
+   myRobot.autoControl.CloseProject(0, myRobot.autoControl.sActProject);
+   bHomingAfterRestartPossible := FALSE;
+   iInfoRetain1 := 0;
+   iInfoRetain2 := 0;
+   iInfoRetain3 := 0;
+   TeachViewRetain := MAP(sv_Homing);
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE StartPreHomingProc() PRIVATE
+(*
+   IF NOT myRobot.autoControl.bBitAutoExt OR NOT myRobot.updateActive THEN
+      //myRobot.DebugPrint(eTraceHoming, " ERROR StartPreHoming: not in AUTO or not updateActive"); // Fehler
+      RcuSetMessageOnce(TRcuHoming_ErrStartNotPoss, myRobot.kinListInx, 2, instId, "TRcuHoming.StartPreHomingProc");
+      RETURN;
+   END_IF;
+*)   
+   IF NOT bEnableHoming THEN
+//      myRobot.DebugPrint(eTraceHoming, " ERROR StartPreHoming without homing enabled!!!!!"); // Fehler
+      RcuSetMessageOnce(TRcuHoming_ErrNotEnabled, myRobot.kinListInx, 2, instId, "TRcuHoming.StartPreHomingProc");
+      RETURN;
+   END_IF;
+   
+   IF bHomingRun THEN
+      //myRobot.DebugPrint(eTraceHoming, "ERROR StartPreHoming but homing already running");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "StartPreHoming but homing already running");
+      RcuSetMessageOnce(TRcuHoming_ErrHomRunning, myRobot.kinListInx, 1, instId, "TRcuHoming.StartPreHomingProc");
+      // Fehlermeldung !!!
+      RETURN;
+   END_IF;
+   bPreHomingDone := FALSE;
+   bPreHomingSucc := FALSE;
+   myRobot.DebugPrint(eTraceHoming, "S T A R T   P R E H O M I N G");
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "START PREHOMING");
+
+   rStoredOvr := REAL(myRobot.override)/1000.0;
+   myRobot.SetTimeOverride(rOverride);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Set " + STR(rOverride*100.0) + "% override for Homing");
+   bPreHomingRun := TRUE;
+   bHomingRun := TRUE;
+   //close all mainneedles, it's not allowed to paint while homing
+   myRobot.RcuInterfaceToProcess.CloseAllNeedles();
+   IF bHomingAfterRestartPossible THEN
+      PreHomingAfterRestart();
+   ELSE
+      PreHomingNormal();
+   END_IF;
+   
+   myRobot.SetTimeOverride(rStoredOvr);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Restored " + STR(rStoredOvr*100.0) + "% override after PreHoming");
+   myRobot.DebugPrint(eTraceHoming, "PreHoming END");
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: finished");
+   myRobot.fieldbusOut.HomingFinished.svBool := TRUE; // to plc
+   WAIT NOT myRobot.fieldbusIn.StartPreHoming.svBool;
+   myRobot.fieldbusOut.HomingActive.svBool := FALSE; // to plc
+   myRobot.fieldbusOut.HomingFinished.svBool := FALSE; // to plc
+   bPreHomingRun := FALSE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE PreHomingNormal() PRIVATE
+VAR
+   info       : TUserProgStackInfo;
+END_VAR
+
+   info := callStack;
+   IF myRobot.handler.bJobRunning THEN
+      IF info.progNames[0] = myRobot.handler.mainProg THEN
+         myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Handler-Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no handlermodule to continue"); 
+         sProgramName := ExtractProgName(info.progNames[0]);
+         sModuleName := ExtractProgName(sHandlerModule); // Letztes Handlermodul???????????
+         myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+      END_IF;
+      sProgramName := ExtractProgName(myRobot.handler.mainProg);
+      sModuleName := ExtractProgName(info.progNames[0]);
+   ELSE
+      sProgramName := ExtractProgName(info.progNames[0]);
+      IF (iModuleLevel = (info.depth-1)) THEN
+         sModuleName := ExtractProgName(info.progNames[iModuleLevel]);
+      ELSE  
+         sModuleName := ExtractProgName(sActModuleName); // last executed module
+      END_IF;
+   END_IF;
+   myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+
+   bPreHomingSucc := TRUE;
+   IF info.depth = 0 THEN // no teachprogram active
+      //myRobot.DebugPrint(eTraceHoming, "ERROR PreHoming not possible. No teachprogram running");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: No teachprogram running");
+      bPreHomingSucc := FALSE;
+      RcuSetMessageOnce(TRcuHoming_ErrNoTeachprog, myRobot.kinListInx, 2, instId, "TRcuHoming.PreHomingNormal");
+      myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+      myRobot.WaitMcMainCycles(40);
+      bPreHomingDone := TRUE;
+   ELSIF myRobot.fixpos.RcuInHome THEN
+      myRobot.DebugPrint(eTraceHoming, "PreHoming. Robot already in home position");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: Robot already in home position");
+      // Abort actual program
+      myRobot.autoControl.PLCStopProgram();
+      WAIT NOT myRobot.selectingFlow.running;
+      bPreHomingDone := TRUE;
+   ELSIF myRobot.bInPreposition AND bEnableGoDirectHome THEN
+      myRobot.DebugPrint(eTraceHoming, "PreHoming. Robot in preposition and EnableGoDirectHome");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: Robot in preposition and EnableGoDirectHome");
+      // Abort actual program
+      myRobot.autoControl.PLCStopProgram();
+      bGoDirectHomeActive := TRUE;
+      IF bEnablePreHoming THEN
+         IF sPreProgExt <> "" THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: start "+sPreProgExt + sProgramName);
+            myRobot.DebugPrint(eTraceHoming, " Start PreHoming main program "+sPreProgExt + sProgramName);
+            myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sPreProgExt + sProgramName;
+            WAIT NOT myRobot.selectingFlow.present;
+            myRobot.autoControl.PLCStartProgram();
+            WAIT myRobot.selectingFlow.running;     // Prehoming program running
+            WAIT NOT myRobot.selectingFlow.present; // Prehoming program finished
+         END_IF;
+      END_IF;
+      bPreHomingDone := TRUE;
+   ELSE 
+      iInfo := 1;
+      IF bEnablePreHoming THEN
+         IF sPreProgExt <> "" THEN
+            FinishActProgram();
+            // Start prehoming program
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: start "+sPreProgExt + sProgramName);
+            myRobot.DebugPrint(eTraceHoming, " Start PreHoming main program "+sPreProgExt + sProgramName);
+            iInfo := 2;
+            myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sPreProgExt + sProgramName;
+            WAIT NOT myRobot.selectingFlow.present;
+            bEndOfModule := FALSE;
+            myRobot.autoControl.PLCStartProgram();
+            WAIT myRobot.selectingFlow.running;     // Prehoming program running
+            WAIT NOT myRobot.selectingFlow.present; // Prehoming program finished
+         ELSE
+            FinishActModule();
+         END_IF;
+      ELSE
+         IF (sProgExt <> "") AND NOT myRobot.handler.bJobRunning  THEN
+            FinishActProgram();
+         ELSE
+            FinishActModule();
+         END_IF;
+      END_IF;
+      bPreHomingDone := TRUE;
+   END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE PreHomingAfterRestart() PRIVATE
+VAR
+   bSuccess   : BOOL;
+   info       : TUserProgStackInfo;
+END_VAR
+
+   info := oldRetainData.callStack;
+   IF oldRetainData.bHandlerJobRunning THEN
+      IF info.progNames[0] = oldRetainData.sHandlerMainProg THEN
+         myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Handler-Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no handlermodule to continue");
+         bNoHandlerModule := TRUE;
+         sProgramName := ExtractProgName(info.progNames[0]);
+         sModuleName := ExtractProgName(oldRetainData.sHandlerModule); // Letztes Handlermodul???????????
+         myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+      END_IF;
+      sProgramName := ExtractProgName(oldRetainData.sHandlerMainProg);
+      sModuleName := ExtractProgName(info.progNames[0]);
+   ELSE
+      sProgramName := ExtractProgName(info.progNames[0]);
+      IF (iModuleLevel = (info.depth-1)) THEN
+         sModuleName := ExtractProgName(info.progNames[iModuleLevel]);
+      ELSE  
+         sModuleName := ExtractProgName(oldRetainData.sActModuleName);
+      END_IF;
+   END_IF;
+   myRobot.DebugPrint(eTraceHoming, "Modulname gespeichert: " + sModuleName);
+   
+   bPreHomingSucc := TRUE;
+   IF myRobot.fixpos.RcuInHome THEN
+      myRobot.DebugPrint(eTraceHoming, "PreHoming. Robot already in home position");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: Robot already in home position");
+      bPreHomingDone := TRUE;
+   ELSIF oldRetainData.bInPrePosition AND bEnableGoDirectHome THEN
+      myRobot.DebugPrint(eTraceHoming, "PreHoming. Robot in preposition and EnableGoDirectHome");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: Robot in preposition and EnableGoDirectHome");
+      bGoDirectHomeActive := TRUE;
+      IF bEnablePreHoming THEN
+         IF sPreProgExt <> "" THEN
+            IF NOT ReloadProject() THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+            ELSE
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: start "+sPreProgExt + sProgramName);
+               myRobot.DebugPrint(eTraceHoming, " Start PreHoming main program "+sPreProgExt + sProgramName);
+               myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sPreProgExt + sProgramName;
+               WAIT NOT myRobot.selectingFlow.present;
+               myRobot.autoControl.PLCStartProgram();
+               WAIT myRobot.selectingFlow.running;     // Prehoming program running
+               WAIT NOT myRobot.selectingFlow.present; // Prehoming program finished
+            END_IF;
+         END_IF;
+      END_IF;
+      bPreHomingDone := TRUE;
+   ELSE 
+      bSuccess := HomingAfterRestartActions();
+      IF bEnablePreHoming THEN
+         IF sPreProgExt <> "" THEN
+            IF bSuccess THEN
+               // Start prehoming program
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "PreHoming: start "+sPreProgExt + sProgramName);
+               myRobot.DebugPrint(eTraceHoming, " Start PreHoming main program "+sPreProgExt + sProgramName);
+               myRobot.autoControl.sNewProg := myRobot.autoControl.sActProject + "." + sPreProgExt;
+               WAIT NOT myRobot.selectingFlow.present;
+               iInfo := 2;
+               bEndOfModule := FALSE;
+               myRobot.autoControl.PLCStartProgram();
+               WAIT myRobot.selectingFlow.running;     // Prehoming program running
+               WAIT NOT myRobot.selectingFlow.present; // Prehoming program finished
+            ELSE
+               RcuSetMessageOnce(TRcuHoming_ErrProjNotLoad, myRobot.kinListInx, 2, instId, "TRcuHoming.PreHomingAfterRestart");
+               //myRobot.DebugPrint(eTraceHoming, "ERROR Homing after restart not possible ");
+               bPreHomingSucc := FALSE;
+            END_IF;
+         END_IF;
+      ELSE
+         IF NOT bSuccess THEN
+            RcuSetMessageOnce(TRcuHoming_ErrProjNotLoad, myRobot.kinListInx, 3, instId, "TRcuHoming.PreHomingAfterRestart");
+            //myRobot.DebugPrint(eTraceHoming, "ERROR Homing after restart not possible ");
+            bPreHomingSucc := FALSE;
+         END_IF;
+      END_IF;
+      bPreHomingDone := TRUE;
+   END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE HomingAfterRestartActions() : BOOL PRIVATE
+VAR
+   info             : TUserProgStackInfo;
+   program          : STRING;
+   error            : BOOL;
+END_VAR
+   
+   info := oldRetainData.callStack;
+   // das vor Unterbrechung geladene Projekt wieder laden
+   IF NOT ReloadProject() THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+      RETURN FALSE;
+   END_IF;
+   
+   STOP ObserveValidCondition;
+   
+      
+   // das abgebrochene Modul neu starten
+   IF oldRetainData.bHandlerJobRunning THEN
+      IF info.progNames[0] = oldRetainData.sHandlerMainProg THEN
+         myRobot.DebugPrint(eTraceHoming, "HomingAfterRestart: Unterbrechungsstelle bei Handler nicht im Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Handler no module to continue"); 
+      ELSE
+         program := ExtractProgName(info.progNames[0]);
+         sModuleName := program;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "HomingAfterRestart: Start Handler module in simulation "+program);
+         bSimulateModule := TRUE;
+         bLastTargetValid := FALSE;
+         bSimulateModErr := FALSE;
+         iLineNumber := info.lineNrs[0];
+         myRobot.autoControl.sNewProg := info.progNames[0];
+         iInfo := 1;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT myRobot.selectingFlow.running;
+         WAIT NOT bSimulateModule;
+         IF bSimulateModErr THEN
+            myRobot.autoControl.PLCStopProgram();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" simulation with error");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+            WAIT NOT myRobot.selectingFlow.present;
+            RETURN FALSE;
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" simulation finished");
+            WAIT NOT myRobot.selectingFlow.present;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" finished");
+         END_IF;
+      END_IF;      
+      sProgramName :=  ExtractProgName(oldRetainData.sHandlerMainProg);
+   ELSE
+      IF (info.depth - 1) = iModuleLevel THEN
+         program := ExtractProgName(info.progNames[info.depth-1]);
+         sModuleName := program;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "HomingAfterRestart: Start module in simulation "+program);
+         bSimulateModule := TRUE;
+         bLastTargetValid := FALSE;
+         bSimulateModErr := FALSE;
+         iLineNumber := info.lineNrs[info.depth-1];
+         myRobot.autoControl.sNewProg := info.progNames[info.depth-1];
+         iInfo := 1;
+         myRobot.autoControl.PLCStartProgram();
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT myRobot.selectingFlow.running;
+         WAIT NOT bSimulateModule;
+         IF bSimulateModErr THEN
+            myRobot.autoControl.PLCStopProgram();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" simulation with error");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+            WAIT NOT myRobot.selectingFlow.present;
+            RETURN FALSE;
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" simulation finished");
+            WAIT NOT myRobot.selectingFlow.present;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" finished");
+         END_IF;
+      ELSE // das Homing-programm starten
+         myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no module to continue"); 
+      END_IF;
+      sProgramName := ExtractProgName(info.progNames[0]);
+   END_IF;
+   RETURN TRUE;
+   
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ReloadProject() : BOOL PRIVATE
+VAR
+   info             : TUserProgStackInfo;
+   project          : STRING;
+   flag             : BOOL;
+   projectWithSlash : STRING;
+   pos              : DINT;
+   build            : BOOL;
+   error            : BOOL;
+   projectState     : TProjectState;
+END_VAR
+   
+   info := oldRetainData.callStack;
+   // das vor Unterbrechung geladene Projekt wieder laden
+   project := ExtractProjectName(info.progNames[0]);
+   pos := StrFind(project, ".");
+   projectWithSlash := StrReplace(project, "/", 1, pos); 
+
+   projectState := myRobot.autoControl.GetProjectStateFast(project);
+   IF projectState = eProjectUnknown THEN
+      myRobot.DebugPrint(eTraceHoming, "Project = " + project + 
+          " does not exist");
+      error := TRUE;
+   ELSIF projectState = eProjectNotBuilt THEN
+      build := TRUE;
+   END_IF;
+
+   IF error THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+      RETURN FALSE;
+   END_IF;
+
+   // project must be recompiled
+   IF build THEN
+      IF NOT BuildProject(projectWithSlash) THEN
+         myRobot.DebugPrint(eTraceHoming, "Project = " + projectWithSlash + 
+            " not compiled");
+         error := TRUE;
+      ELSE
+         myRobot.DebugPrint(eTraceHoming, "Project = " + projectWithSlash + 
+            " compiled");
+      END_IF;
+   END_IF;
+         
+   IF error THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+      RETURN FALSE;
+   END_IF;
+   
+   projectState := myRobot.autoControl.GetProjectStateFast(project);
+   IF (projectState <> eProjectOperational) THEN
+      flag := FALSE;
+      build := LoadProject(project, flag);
+      IF NOT build THEN
+         myRobot.DebugPrint(eTraceHoming, "Project = " + project + 
+            " LoadProject returns FALSE");
+         error := TRUE;
+      ELSE
+         WAIT flag;
+      END_IF;
+   END_IF;
+         
+   IF error THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: aborted");
+      RETURN FALSE;
+   END_IF;
+   
+   myRobot.autoControl.sActProject := project;
+   RETURN TRUE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE FinishActProgram() PRIVATE
+VAR
+   info             : TUserProgStackInfo;
+   lineNr           : DINT;
+END_VAR
+
+   info := callStack;
+   
+   IF myRobot.handler.bJobRunning THEN
+      IF info.progNames[0] = myRobot.handler.mainProg THEN
+         bSigAtEndOfModule := FALSE;
+         // Abort actual program
+         myRobot.autoControl.PLCStopProgram();
+         WAIT NOT myRobot.selectingFlow.running;
+      ELSE
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Handler Continue module "+sModuleName);
+         bEndOfModule := FALSE;
+         bStopAtEndOfModule := TRUE;
+         CheckCircleSegment();
+         myRobot.DebugPrint(eTraceHoming, "SetInstructionPointer: Handler " + sModuleName + " Line " + STR(info.lineNrs[0]));
+         SetInstructionPointer(hdl, info.lineNrs[0]); // clear prerun
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT bEndOfModule;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Handler module "+sModuleName+" finished");
+         bLastTargetValid := FALSE;
+         bStopAtEndOfModule := FALSE;
+      END_IF;
+   ELSE
+      IF (info.depth - 1) = iModuleLevel THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Continue module "+sModuleName);
+         bEndOfModule := FALSE;
+         bStopAtEndOfModule := TRUE;
+         CheckCircleSegment();
+         myRobot.DebugPrint(eTraceHoming, "SetInstructionPointer: " + sModuleName + " Line " + STR(info.lineNrs[info.depth-1]));
+         SetInstructionPointer(hdl, info.lineNrs[info.depth-1]); // clear prerun
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT bEndOfModule;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" finished");
+         bLastTargetValid := FALSE;
+         bStopAtEndOfModule := FALSE;
+      ELSE
+         myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no module to continue"); 
+         // Abort actual program
+         myRobot.autoControl.PLCStopProgram();
+         WAIT NOT myRobot.selectingFlow.running;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE FinishActModule() PRIVATE
+VAR
+   info       : TUserProgStackInfo;
+   lineNr     : DINT;
+END_VAR
+
+   info := callStack;
+   
+   IF myRobot.handler.bJobRunning THEN
+      IF info.progNames[0] = myRobot.handler.mainProg THEN
+         myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle bei Handler nicht im Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Handler no module to continue"); 
+         bSigAtEndOfModule := FALSE;
+      ELSE
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Continue Handler module "+sModuleName);
+         bEndOfModule := FALSE;
+         bSigAtEndOfModule := TRUE;
+         CheckCircleSegment();
+         myRobot.DebugPrint(eTraceHoming, "SetInstructionPointer: " + sModuleName + " Line " + STR(info.lineNrs[0]));
+         SetInstructionPointer(hdl, info.lineNrs[0]); // clear prerun
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT bEndOfModule;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Handler module "+sModuleName+" finished");
+         bLastTargetValid := FALSE;
+         bSigAtEndOfModule := FALSE;
+      END_IF;
+   ELSE
+      IF (info.depth - 1) = iModuleLevel THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Continue module "+sModuleName);
+         bEndOfModule := FALSE;
+         bSigAtEndOfModule := TRUE;
+         CheckCircleSegment();
+         myRobot.DebugPrint(eTraceHoming, "SetInstructionPointer: " + sModuleName + " Line " + STR(info.lineNrs[info.depth-1]));
+         SetInstructionPointer(hdl, info.lineNrs[info.depth-1]); // clear prerun
+         myRobot.fieldbusOut.HomingActive.svBool := TRUE; // to plc
+         WAIT bEndOfModule;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: module "+sModuleName+" finished");
+         bLastTargetValid := FALSE;
+         bSigAtEndOfModule := FALSE;
+      ELSE
+         myRobot.DebugPrint(eTraceHoming, "Unterbrechungsstelle nicht im Modul");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: no module to continue"); 
+         bSigAtEndOfModule := FALSE;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE CheckCircleSegment() PRIVATE
+VAR
+   tmpSegHdl        : TMcuSegHdl;
+   tmpSeg           : TMcuSegment;
+   refSysObjMcuId   : TMcuDbObjID;
+   refSysWorldMcuId : TMcuDbObjID;
+END_VAR
+
+   
+   McuReadSegHdl(myRobot.progPath.segmentMcuId, tmpSegHdl);
+   McuReadSegment(tmpSegHdl.mSegmentID, tmpSeg);
+   IF tmpSeg.mSegTyp = eMcuCirc THEN
+      McuReadPosition(tmpSeg.mPosStart, lastTarget);
+      bLastTargetValid := TRUE;
+      IF lastTarget.mPosTyp = eMcuPosCart THEN
+         RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, refSysObjMcuId);
+         RcuRefSysGetMcuId(eRcuRefSystemWorld, refSysWorldMcuId);
+         IF lastTarget.mPosCart.mRefSysID = refSysObjMcuId THEN
+            refLastTarget := myRobot.RcuRefSystemObject;
+         ELSIF lastTarget.mPosCart.mRefSysID = refSysWorldMcuId  THEN
+            refLastTarget := eRcuRefSystemWorld;
+         ELSE
+            myRobot.DebugPrint(eTraceHoming, "Error in CheckCircleSegment. Wrong RcuRefSystem");
+            refLastTarget := eRcuRefSystemInvalid;
+         END_IF;
+      END_IF;
+      bHomingOnCirc := TRUE;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ObserveAbortHoming() PRIVATE
+VAR
+   bChgCtrl   : BOOL;
+   bChgRobRel : BOOL;
+END_VAR
+   
+   IF NOT bEnableHoming THEN
+      RETURN;
+   END_IF;
+   
+   bChgCtrl   := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   bChgRobRel := IS_CHANGED(myRobot.fieldbusIn.ReleaseRobot.svBool);
+   WHILE TRUE DO
+      WAIT bChgCtrl OR bChgRobRel;
+      bChgCtrl   := FALSE;
+      bChgRobRel := FALSE;
+      IF NOT (myRobot.mainModeMgr.externControl AND myRobot.fieldbusIn.ReleaseRobot.svBool) THEN
+         AbortHoming();
+      END_IF;      
+   END_WHILE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE StoreRetainData() PRIVATE
+VAR
+   bChg1     : BOOL;
+   bChg2     : BOOL;
+   bChg3     : BOOL;
+   bChg4     : BOOL;
+   bChg5     : BOOL;
+   bChg6     : BOOL;
+END_VAR   
+
+
+   IF NOT IS_MAPPED(sv_Homing) THEN
+      RETURN;
+   END_IF;
+   IF NOT bEnableHoming THEN
+      RETURN;
+   END_IF;
+   bChg1 := IS_CHANGED(myRobot.handler.mainProg);
+   bChg2 := IS_CHANGED(myRobot.actTool);
+   bChg3 := IS_CHANGED(myRobot.actObject);
+   bChg4 := IS_CHANGED(myRobot.handler.state);
+   bChg5 := IS_CHANGED(myRobot.handler.actualPart);
+   bChg6 := IS_CHANGED(myRobot.handler.order);
+   WHILE TRUE DO
+      IF NOT bShutDownPending THEN
+         sv_Homing.sHandlerMainProg := myRobot.handler.mainProg;
+         sv_Homing.Tool             := myRobot.actTool;
+         sv_Homing.Object           := myRobot.actObject;
+         sv_Homing.state            := myRobot.handler.state;
+         sv_Homing.actualPart       := myRobot.handler.actualPart;
+         sv_Homing.order            := myRobot.handler.order;
+      END_IF;
+      WAIT bChg1 OR bChg2 OR bChg3 OR bChg4 OR bChg5 OR bChg6;
+      bChg1 := FALSE;
+      bChg2 := FALSE;
+      bChg3 := FALSE;
+      bChg4 := FALSE;
+      bChg5 := FALSE;
+      bChg6 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ObserveShutDown() PRIVATE
+VAR
+   bSupplyUpsOk : MAPTO BOOL;
+   bChg         : BOOL;
+END_VAR   
+
+
+   bSupplyUpsOk := MAPX("system.HWI_mG24V_Supply_UPS_OK");
+   IF NOT IS_MAPPED(bSupplyUpsOk) THEN
+      RETURN;
+   END_IF;
+   bChg := IS_CHANGED(bSupplyUpsOk);
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF NOT bSupplyUpsOk THEN 
+         Sleep(2500);
+         IF NOT bSupplyUpsOk AND NOT bShutDownPending THEN
+            bShutDownPending := TRUE;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Shutdown pending");            
+            //sv_Homing.bHandlerJobRunning    := (myRobot.handler.bJobRunning);
+            IF myRobot.handler.bJobRunning THEN
+               sv_Homing.bHandlerJobRunning := UPDATE(TRUE);
+            ELSE
+               sv_Homing.bHandlerJobRunning := UPDATE(FALSE);
+            END_IF;
+            //sv_Homing.bSelectingFlowRunning := (myRobot.selectingFlow.running);
+            IF myRobot.selectingFlow.running THEN
+               sv_Homing.bSelectingFlowRunning := UPDATE(TRUE);
+            ELSE
+               sv_Homing.bSelectingFlowRunning := UPDATE(FALSE);
+            END_IF;
+            //sv_Homing.bSelectingFlowPresent := (myRobot.selectingFlow.present);
+            IF myRobot.selectingFlow.present THEN
+               sv_Homing.bSelectingFlowPresent := UPDATE(TRUE);
+            ELSE
+               sv_Homing.bSelectingFlowPresent := UPDATE(FALSE);
+            END_IF;
+            //sv_Homing.bAuto                 := (myRobot.autoControl.bBitAutoExt);
+            IF myRobot.autoControl.bBitAutoExt THEN
+               sv_Homing.bAuto := UPDATE(TRUE);
+            ELSE
+               sv_Homing.bAuto := UPDATE(FALSE);
+            END_IF;
+            //sv_Homing.bInPrePosition        := (myRobot.bInPreposition);
+            IF myRobot.bInPreposition THEN
+               sv_Homing.bInPrePosition := UPDATE(TRUE);
+            ELSE
+               sv_Homing.bInPrePosition := UPDATE(FALSE);
+            END_IF;
+            IF myRobot.lineTracking THEN
+               //sv_Homing.bTrackingActive    := (myRobot.trackingActive);
+               IF myRobot.trackingActive THEN
+                  sv_Homing.bTrackingActive := UPDATE(TRUE);
+               ELSE
+                  sv_Homing.bTrackingActive := UPDATE(FALSE);
+               END_IF;
+               //sv_Homing.bIsTrackingObj     := (myRobot.tracking.bIsTrackingObject);
+               IF myRobot.tracking.bIsTrackingObject THEN
+                  sv_Homing.bIsTrackingObj := UPDATE(TRUE);
+               ELSE
+                  sv_Homing.bIsTrackingObj := UPDATE(FALSE);
+               END_IF;
+            END_IF;
+            IF myRobot.railTracking THEN
+               //sv_Homing.bRailTrackingAct   := (myRobot.railTrackingActive);
+               IF myRobot.railTrackingActive THEN
+                  sv_Homing.bRailTrackingAct := UPDATE(TRUE);
+               ELSE
+                  sv_Homing.bRailTrackingAct := UPDATE(FALSE);
+               END_IF;
+            END_IF;
+         END_IF;
+      ELSE
+         IF bShutDownPending THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing: Shutdown pending aborted");            
+            bShutDownPending := FALSE;
+            sv_Homing.bHandlerJobRunning    := UPDATE(myRobot.handler.bJobRunning);
+            sv_Homing.bSelectingFlowRunning := UPDATE(myRobot.selectingFlow.running);
+            sv_Homing.bSelectingFlowPresent := UPDATE(myRobot.selectingFlow.present);
+            sv_Homing.bAuto                 := UPDATE(myRobot.autoControl.bBitAutoExt);
+            sv_Homing.bInPrePosition        := UPDATE(myRobot.bInPreposition);
+            IF myRobot.lineTracking THEN
+               sv_Homing.bTrackingActive    := UPDATE(myRobot.trackingActive);
+               sv_Homing.bIsTrackingObj     := UPDATE(myRobot.tracking.bIsTrackingObject);
+            END_IF;
+            IF myRobot.railTracking THEN
+               sv_Homing.bRailTrackingAct   := UPDATE(myRobot.railTrackingActive);
+            END_IF;
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ObserveVisionData() PRIVATE
+VAR
+   bChg1     : BOOL;
+   bChg2     : BOOL;
+   bChg3     : BOOL;
+   bChg4     : BOOL;
+END_VAR   
+
+
+   IF NOT IS_MAPPED(sv_Homing) THEN
+      RETURN;
+   END_IF;
+   IF NOT bEnableHoming THEN
+      RETURN;
+   END_IF;
+   bChg1 := IS_CHANGED(myRobot.vision.bCameraAbsDataOk);
+   bChg2 := IS_CHANGED(myRobot.vision.bCameraRelDataOk);
+   WHILE TRUE DO
+      WAIT bChg1 OR bChg2;
+      IF NOT bShutDownPending THEN
+         IF bChg1 THEN
+            IF myRobot.vision.bCameraAbsDataOk THEN
+               sv_Homing.bCamAbsDataValid := TRUE;
+               sv_Homing.CamAbsData := myRobot.vision.objectCamAbsData;
+            ELSE
+               sv_Homing.bCamAbsDataValid := FALSE;
+            END_IF;
+         END_IF;
+         IF bChg2 THEN
+            IF myRobot.vision.bCameraRelDataOk THEN
+               sv_Homing.bCamRelDataValid := TRUE;
+               sv_Homing.CamRelData := myRobot.vision.objectCamRelData;
+            ELSE
+               sv_Homing.bCamRelDataValid := FALSE;
+            END_IF;
+         END_IF;
+      END_IF;
+      bChg1 := FALSE;
+      bChg2 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ObserveTracking()
+VAR
+   bChg     : BOOL;
+END_VAR   
+
+
+   IF NOT IS_MAPPED(sv_Homing) THEN
+      RETURN;
+   END_IF;
+   IF NOT bEnableHoming THEN
+      RETURN;
+   END_IF;
+   bChg := IS_CHANGED(myRobot.tracking.updateConveyor);
+   WHILE TRUE DO
+      WAIT bChg;
+      IF NOT bShutDownPending THEN
+         sv_Homing.rObjectValue       :=gyRcuTrackingFrame[myRobot.RcuRefSystemConveyor].mPos.mValues[2];
+         IF myRobot.railTracking THEN
+            sv_Homing.rRailValue      := myRobot.railAxisVector.mValues[myRobot.railAxisNr];
+         END_IF;
+      END_IF;
+      bChg := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ExtractProgName(progStr : STRING) : STRING PRIVATE
+VAR
+   dotCharNr  : DINT;
+   dotFound   : BOOL;
+   str        : STRING; 
+END_VAR
+   
+   str := progStr;
+   dotCharNr := StrFind(progStr, ".");
+   dotFound := dotCharNr > 0;
+   IF dotFound THEN // "." found --> TC>=2.96
+      str := StrDelete(progStr, dotCharNr, 0); // clear program name from project name + "."
+      dotCharNr := StrFind(str, ".");
+      dotFound := dotCharNr > 0;
+      IF dotFound THEN // "." found --> TC>=2.96
+         str := StrDelete(str, dotCharNr, 0); // clear program name from project name + "."
+      END_IF;
+   ELSE // no "." found --> TC<2.96
+      str := progStr;
+   END_IF;
+   RETURN str;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE ExtractProjectName(progStr : STRING) : STRING PRIVATE
+VAR
+   dotCharNr  : DINT;
+   dotFound   : BOOL;
+   str        : STRING;
+   len        : DINT;
+END_VAR
+   
+   str := progStr;
+   dotCharNr := StrFindRight(progStr, ".");
+   dotFound := dotCharNr > 0;
+   IF dotFound THEN // "." found --> TC>=2.96
+      len := StrLen(str);
+      str := StrDelete(str, len-dotCharNr+1, dotCharNr); // clear program name from project name + "."
+   ELSE // no "." found --> TC<2.96
+      str := progStr;
+   END_IF;
+   RETURN str;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE AbortHoming() PRIVATE
+   IF bHomingRun THEN
+      IF bPreHomingRun  THEN
+         STOP StartPreHomingProc;
+         bPreHomingRun := FALSE;
+         myRobot.DebugPrint(eTraceHoming, "Abort PreHoming");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Abort PreHoming");
+         myRobot.fieldbusOut.HomingFinished.svBool := TRUE; // to plc
+         WAIT NOT myRobot.fieldbusIn.StartPreHoming.svBool;
+      ELSE
+         STOP StartHomingProc;
+         myRobot.DebugPrint(eTraceHoming, "Abort Homing");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Abort Homing");
+         myRobot.fieldbusOut.HomingFinished.svBool := TRUE; // to plc
+         WAIT NOT myRobot.fieldbusIn.StartHoming.svBool;
+      END_IF;
+      myRobot.fieldbusOut.HomingActive.svBool := FALSE; // to plc
+      myRobot.fieldbusOut.HomingFinished.svBool := FALSE; // to plc
+      bHomingRun := FALSE; 
+      IF tType = eSafeToHome THEN
+         sModuleName  := "";
+         iPathNumber  := 0;
+         bEndOfModule := FALSE;
+      ELSE
+         myRobot.SetTimeOverride(rStoredOvr);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Restored " + STR(rStoredOvr*100.0) + "% override after Homing");
+         bStopAtEndOfModule := FALSE;
+         callStack.progNames[iModuleLevel] := "";
+         sHandlerModule := "";
+         bGoDirectHomeActive := FALSE;
+         bHomingAfterRestartPossible := FALSE;
+         bEndOfModule := FALSE;
+         bPreHomingDone := FALSE;
+         bPreHomingSucc := FALSE;
+         bHomingOnCirc := FALSE; 
+         bSimulateModErr := FALSE;
+         iInfo := 4;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Information from Homing to Ecopaint Screen
+//------------------------------------------------------------------------
+ROUTINE SignalsToEPS() PRIVATE
+ VAR
+  s           : STRING;
+  chgModName  : BOOL;
+  chgPathNr   : BOOL;
+  tMainMode   : MAPTO TMainMode;
+ END_VAR
+
+  sEpsDataOut := MAPX(cSV_EPSOutHoming[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sEpsDataOut) THEN
+     RcuSetMessageOnce(TRcuHoming_ErrMapEpsVar, myRobot.kinListInx, 1, instId, "TRcuHoming.SignalsToEPS", cSV_EPSOutHoming[myRobot.kinListInx]);
+     RETURN;
+  END_IF; 
+  s := "BCU" + STR(gyiNrBcu[myRobot.kinListInx]) + ".SV_sModes.nMainState";
+  tMainMode := MAPX(s);
+  IF NOT IS_MAPPED(tMainMode) THEN
+     RcuSetMessageOnce(TRcuHoming_WarSysVarNotMapped, myRobot.kinListInx, 1, instId, "TRcuHoming.SignalsToEPS", s);
+     sEpsDataOut.bRelease := UPDATE((sModuleName <> "") AND myRobot.selectingFlow.present AND NOT bHomingRun); 
+  ELSE
+     sEpsDataOut.bRelease := UPDATE((sModuleName <> "") AND myRobot.selectingFlow.present AND (tMainMode = eHand) AND NOT bHomingRun);
+  END_IF;
+  chgModName := IS_CHANGED(sModuleName);
+  chgPathNr  := IS_CHANGED(iPathNumber);
+  WHILE TRUE DO
+    sEpsDataOut.zModuleName   := sModuleName;
+    sEpsDataOut.iPathProgress := iPathNumber;
+    WAIT chgModName OR chgPathNr;
+    chgModName := FALSE;
+    chgPathNr  := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+
+ROUTINE MC_MAX(CONST x : REAL; CONST y : REAL) : REAL PRIVATE
+   IF x > y THEN
+      RETURN x;
+   ELSE
+      RETURN y;
+   END_IF;
+END_ROUTINE
+
+(*
+/*=============================================================================
+*   Solve_system
+*
+*   Solve equationsystem with Gaussian elimination
+*
+*   Input:  3x3 Matrix a
+*           3-vector rhs
+*   Output: solution x of a*x = b 
+*
+*   returns FALSE if matrix is singular.
+*============================================================================*/
+*)
+ROUTINE Solve_system (x : TMcuVector3; a : TMcuMatrix3; rhs : TMcuVector3) : BOOL PRIVATE
+VAR
+   A : TMcuMatrix3;
+   b : TMcuVector3;
+   sol : TMcuVector3;
+   max : REAL;
+   i   : INT;
+   j   : INT;
+   k   : INT;
+   pivotline : INT;
+   pivotcolumn : INT;
+   h   : INT;
+   perm : ARRAY[3] OF INT;
+END_VAR
+
+   McuCopyMatrix3(A, a);
+   McuCopyVec3(b, rhs);
+   FOR i:=0 TO 2 DO
+      perm[i] := i;
+   END_FOR;
+
+   // Gaussian Elimination
+   FOR i:=0 TO 1 DO
+      // search for pivot element (maximum)
+      max := 0;
+      pivotline := i;
+      pivotcolumn := i;
+      FOR j:=i TO 2 DO
+         FOR k:=i TO 2 DO
+            IF (rAbs(A.mValues[j][k]) > max) THEN
+                max := rAbs(A.mValues[j][k]);
+                pivotline := j; 
+                pivotcolumn := k;
+            END_IF;
+         END_FOR;
+      END_FOR;
+        
+      // singular matrix -> stop
+      IF (rAbs(A.mValues[pivotline][pivotcolumn]) < MC_EPS) THEN
+         RETURN FALSE;
+      END_IF;
+      
+      // swap pivot lines in A and b
+      FOR j:=i TO 2 DO
+         Swap(A.mValues[i][j], A.mValues[pivotline][j]);
+      END_FOR;
+
+      Swap(b.mValues[i], b.mValues[pivotline]);
+
+      // swap pivot columns in A and perm 
+      FOR j:=0 TO 2 DO
+         Swap(A.mValues[j][i], A.mValues[j][pivotcolumn]);
+      END_FOR;
+
+      h := perm[i];
+      perm[i] := perm[pivotcolumn];
+      perm[pivotcolumn] := h;
+        
+      // elimination in A and b
+      FOR j:=i+1 TO 2 DO
+         FOR k:=i+1 TO 2 DO
+             A.mValues[j][k] := A.mValues[j][k] - A.mValues[i][k] * A.mValues[j][i] / A.mValues[i][i];
+         END_FOR;
+         b.mValues[j] := b.mValues[j] - b.mValues[i] * A.mValues[j][i] / A.mValues[i][i];
+         A.mValues[j][i] := 0;
+      END_FOR;
+   END_FOR;
+
+   // Backward Substitution
+   FOR i:=0 TO 2 DO
+      IF (rAbs(A.mValues[2-i][2-i]) < MC_EPS) THEN
+         RETURN FALSE;
+      END_IF;
+      sol.mValues[2-i] := b.mValues[2-i];
+      FOR j:=2-i+1 TO 2 DO
+         sol.mValues[2-i] := sol.mValues[2-i] - sol.mValues[j] * A.mValues[2-i][j];
+      END_FOR;
+      sol.mValues[2-i] := sol.mValues[2-i] / A.mValues[2-i][2-i];
+   END_FOR;
+
+   // compute solution from permutation
+   FOR i:=0 TO 2 DO
+      x.mValues[perm[i]] := sol.mValues[i];
+   END_FOR;
+
+   RETURN TRUE;
+END_ROUTINE
+(*
+/*----------------------------------------------------------------------------
+*   Swap
+*
+*   swaps a and b
+*----------------------------------------------------------------------------*/
+*)
+ROUTINE Swap (a : REAL; b : REAL) PRIVATE
+VAR
+   h : REAL;
+END_VAR
+
+    h := a;
+    a := b;
+    b := h;
+END_ROUTINE
+
+(*
+/*=============================================================================
+*   Vector_angle
+*
+*   return angle between two vectors
+*============================================================================*/
+*)
+
+ROUTINE Vector_angle(a : TMcuVector3; b:  TMcuVector3) : REAL PRIVATE
+VAR
+   c : TMcuVector3;
+   y : REAL;
+   x : REAL;
+END_VAR 
+
+    McuCrossProductVec3(c,a,b);
+    y := McuLenVector3(c);
+    x := McuDotProductVec3(a,b);
+    RETURN ArcTan2(y, x);
+END_ROUTINE
+
+
+(*
+/*=============================================================================
+*   
+*   CircleParams
+*   
+*   Funktion:     Kreisparameter aus drei Punkten auf dem Kreis
+*   
+*   Parameter:    
+*   Returnwert:   TRUE  wenn Berechnung erfolgreich
+*                 FALSE wenn Kreis unfahrbar
+*   Systemfehler: -
+*
+*   Beschreibung: Berechnung der Kreisparameter aus 
+*       der Startposition P1, der Endposition P3 und einem Zwischenpunkt P2
+*       
+*   
+*============================================================================*/
+*)
+ROUTINE CenterOfCircle (VAR_IN P1 : TMcuVector3; VAR_IN P2 : TMcuVector3; VAR_IN P3 : TMcuVector3; 
+                      M : TMcuVector3; r : REAL; w12 : REAL; w23 : REAL; tangent : TMcuVector3) : BOOL PRIVATE
+(*                      
+    T_MC_VECTOR b;
+    
+    T_MC_MATRIX A;
+    T_MC_VECTOR x1, x2, tangent;
+    T_MC_VECTOR c, d, e, f, cent;
+    FLOAT32 h, len, eps, lc, ld, le, lx1, lx2, lcomp, radius, temp;
+    UINT i;
+*)
+VAR
+   lx1 : REAL;
+   lx2 : REAL;
+   lx3 : REAL;
+   eps : REAL;
+   lc  : REAL;
+   ld  : REAL;
+   le  : REAL;
+   r1  : REAL;
+   r2  : REAL;
+   len : REAL;
+   w   : REAL;
+   h   : REAL;
+   i   : INT;
+   d   : TMcuVector3;
+   b   : TMcuVector3;
+   c   : TMcuVector3;
+   e   : TMcuVector3;
+   f   : TMcuVector3;
+   x1  : TMcuVector3;
+   x2  : TMcuVector3;
+   x3  : TMcuVector3;
+   cent : TMcuVector3;
+   MPStart  : TMcuVector3;
+   MPEnd    : TMcuVector3;
+   MPHilf   : TMcuVector3;
+   
+   A   : TMcuMatrix3;
+END_VAR
+
+   x1 := P1; // Startpunkt
+   x2 := P3; // Endpunkt
+   x3 := P2; // Hilfspunkt
+   
+   // berechne skaliertes Epsilon
+   lx1 := McuLenVector3(P1);
+   lx2 := McuLenVector3(P2);
+   lx3 := McuLenVector3(P3);
+   eps := MC_EPS1 * MC_MAX (1.0, MC_MAX (lx1, MC_MAX (lx2, lx3)));
+
+   (* Startpunkt gleich Endpunkt? *)
+   McuSubVector3(d, x2, x1);            (* d = x2 - x1 *)
+   IF (McuLenVector3(d) < eps) THEN      (* x2 = x1 --> Keine Bewegung *)
+        // par->len = 0;
+        RETURN FALSE;
+   END_IF;
+   (* Stelle Gleichungssystem A*x=b zur Kreismittelpunktberechnung auf *)
+   // Dritter Punkt
+
+   b.mValues[0] := McuSqrLenVec3(x2) - McuSqrLenVec3(x1);
+   b.mValues[1] := McuSqrLenVec3(x3) - McuSqrLenVec3(x1);
+   McuCrossProductVec3(c, x2, x3);
+   b.mValues[2] := McuDotProductVec3(x1, c);       // b[2] = x1*(x2 x x3)
+
+   McuSubVector3(c, x2, x1);      // c = x2 - x1
+   McuSubVector3(d, x3, x1);      // d = x3 - x1
+   McuSubVector3(e, x3, x2);      // e = x3 - x2 
+
+   lc := McuLenVector3(c);
+   ld := McuLenVector3(d);
+   le := McuLenVector3(e);
+
+   IF (ld < eps) OR (le < eps) THEN
+                                      // Kreis ist Gerade
+      //Copy_vector (par->v_si, c);
+      //par->len = Vector_length (par->v_si);
+      RETURN FALSE;
+   END_IF;
+
+   McuCrossProductVec3(e, c, d);            // e = (x2-x1) x (cc->comp-x1)
+   IF (McuLenVector3(e) < eps) THEN
+      IF (ld > (lc * (1+MC_EPS))) OR (le > (lc * (1+MC_EPS))) THEN
+         RETURN FALSE;               // unfahrbarer Kreis
+      END_IF;
+      // Copy_vector (par->v_si, c);     /* Kreis ist Gerade */
+      // par->len = Vector_length (par->v_si);
+      RETURN FALSE;
+   END_IF;
+
+   McuUnitMatrix3(A);
+   FOR i := 0 TO 2 DO
+      A.mValues[0][i] := 2 * c.mValues[i];
+      A.mValues[1][i] := 2 * d.mValues[i];
+      A.mValues[2][i] := e.mValues[i];
+   END_FOR;
+
+   // Berechne Kreismittelpunkt aus linearem Gleichungssystem *)
+   IF NOT Solve_system(cent, A, b) THEN
+      // keine eindeutige Lösung -> Gerade */
+      //  Copy_vector (par->v_si, c);
+      //  par->len = Vector_length (par->v_si);
+      RETURN FALSE;
+   END_IF;
+   M := cent;
+
+   // Bestimme (Vektor von Mittelpunkt zu Startpunkt)
+   McuSubVector3(MPStart, x1, M); // v_co = x1 - cent 
+   McuSubVector3(MPEnd, x2, M);   // e = x2 - cent 
+   McuSubVector3(MPHilf, x3, M);   // e = x2 - cent 
+   r1 := McuLenVector3(MPStart);
+   r2 := McuLenVector3(MPEnd);
+
+   IF rAbs(r2-r1) > 0.1 THEN
+      // kein Kreis
+      RETURN FALSE;
+   ELSE
+      r := r1;
+   END_IF;
+   // Kreis zu gross -> Gerade 
+   IF (r > MAX_RADIUS) OR (r < MC_EPS) THEN
+      //Null_vector (par->v_co);
+      //Copy_vector (par->v_si, c);
+      //par->len = Vector_length (par->v_si);
+      RETURN FALSE;
+   END_IF;
+
+   // berechne Tangente an Kreis im Startpunkt
+   McuCrossProductVec3(e, MPStart, MPHilf);
+   McuCrossProductVec3(tangent, e, MPStart);
+   McuSubVector3(f, x3, M); // f = cc->comp - cent
+
+   // Berechne Tangente aus (x2-cent) als Normale auf (x1- cent)
+   // in der Bahnebene (Orthogonalisierung)
+   McuMultiplyScalarVec3(tangent, MPStart, McuDotProductVec3(MPStart, MPEnd)/(r*r));
+   McuSubVector3(tangent, MPEnd, tangent);
+
+   // Berechne Tangente aus (comp-cent) als Normale auf (x1- cent)        
+   // in der Bahnebene (Orthogonalisierung)         
+   McuMultiplyScalarVec3(d, MPStart, McuDotProductVec3(MPStart, f)/(r*r));
+   McuSubVector3(d, f, d);
+
+   // Nimm größere (genauere) Tangente
+   IF (McuLenVector3 (tangent) < McuLenVector3 (d)) THEN
+      tangent := d;
+      // Tangentenrichtung zum Endpunkt orientieren */
+      IF (McuDotProductVec3 (tangent, MPEnd) < 0) THEN
+         McuMultiplyScalarVec3(tangent, tangent, -1);
+      END_IF;
+   END_IF;
+
+   IF (McuLenVector3(tangent) < eps) THEN   
+      // Tangente nicht ermittelbar -> Gerade
+      //   Null_vector (par->v_co);
+      //    Copy_vector (par->v_si, c);
+      //    par->len = Vector_length (par->v_si);
+      RETURN FALSE;
+   END_IF;
+
+   // Kehre Richtung um, falls Zusatzpunkt nicht zwischen x1, x2
+   h := Vector_angle(MPStart, MPEnd);       // Winkel zw. (x1-cent),(x2-cent)
+   IF ((Vector_angle(MPStart, MPHilf) > h) OR (McuDotProductVec3(tangent, MPHilf) < 0)) THEN
+      McuMultiplyScalarVec3(tangent, tangent, -1);           
+   END_IF;
+   
+   // Bestimme v_si aus Tangente
+   // Unify_vector (d, tangent);                  // d = tangent/|tangent| 
+   // Multiply_vector (par->v_si, d , radius);    // v_si = d * |v_co| */
+                                                
+   // Bestimme Bogenlänge der Bewegung 
+   len := Vector_angle(MPStart, MPEnd);
+   IF (Vector_angle(tangent,MPEnd) > MC_PI/2) THEN
+        len := (2 * MC_PI - len);
+   END_IF;
+   
+   w12 := Vector_angle(MPStart, MPHilf);
+   IF (Vector_angle(tangent,MPHilf) > MC_PI/2) THEN
+        w12 := (2 * MC_PI - w12);
+   END_IF;
+   w23 := len - w12;
+   // par->len = Vector_length (par->v_si) * len;
+   w   := GRAD_RAD * len;
+
+   RETURN TRUE;
+END_ROUTINE
+

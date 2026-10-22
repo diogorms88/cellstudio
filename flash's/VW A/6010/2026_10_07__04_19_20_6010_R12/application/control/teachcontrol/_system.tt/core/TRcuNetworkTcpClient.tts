@@ -1,0 +1,168 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 20012 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component : KNetwork
+*  Module    : TKNetworkTcpClient.tts
+*  Erstautor : pen
+*  Datum     : 19.11.2012
+*------------------------------------------------------------------------------
+*  Module-description:
+*
+*  Block representing a Tcp-Client.
+*------------------------------------------------------------------------------
+*)
+
+
+TYPE GLOBAL
+   TTcpConnectionState: (
+      stateSckClosed,
+      stateSckClosing,
+      stateSckConnected,
+      stateSckConnecting,
+      stateSckError
+   );
+END_TYPE
+
+
+VAR
+   ipAddress : DWORD READONLY;
+   port : WORD READONLY;
+   tcpConnectionState : TTcpConnectionState := stateSckClosed;
+END_VAR
+
+
+// Establish a new Tcp-Connection
+ROUTINE Open(
+   CONST remoteIpAddress : DWORD;   // [in]  remote IP address to open (in network byte order)
+   CONST remotePort : WORD          // [in]  remote port to open
+   ) : DINT                         // [ret] 0: OK, ... (compare KNetworkTcpInit/Close)
+   VAR
+      rv : DINT;
+   END_VAR
+
+   rv := Close();
+   IF rv = 0 THEN
+      sigHdl := InternalHandle(signal); // signal = notification for received data
+      rv := KNetworkTcpClientInitAsync(remoteIpAddress, remotePort, eNotification_Event, sigHdl, tcpHdl);
+      IF rv = 0 THEN
+         ipAddress := remoteIpAddress;
+         port := remotePort;
+      ELSE
+         Close();
+      END_IF;
+   END_IF;
+   RETURN rv;
+END_ROUTINE  
+
+// Establish a new Tcp-Connection
+ROUTINE GetIPaddressAndOpen(
+   CONST strIpAddress : STRING;     // [in]  remote IP address to open (in network byte order)
+   CONST remotePort : WORD          // [in]  remote port to open
+   ) : DINT                         // [ret] 0: OK, ... (compare KNetworkTcpInit/Close)
+   VAR
+      rv : DINT;
+      remoteIpAddress : DWORD;
+   END_VAR
+
+   IF KNetworkGetIpAddress(strIpAddress, remoteIpAddress) = 0 THEN
+      rv := Close();
+      IF rv = 0 THEN
+         sigHdl := InternalHandle(signal);
+         rv := KNetworkTcpClientInitAsync(remoteIpAddress, remotePort, eNotification_Event, sigHdl, tcpHdl);
+         IF rv = 0 THEN
+            ipAddress := remoteIpAddress;
+            port := remotePort;
+         ELSE
+            Close();
+         END_IF;
+      END_IF;
+   ELSE
+      rv := 16;
+   END_IF;
+
+   RETURN rv;
+END_ROUTINE  
+
+
+// Close the Tcp-Connection
+ROUTINE Close() : DINT // [ret] 0: OK, ... (compare KNetworkTcpClose)
+   VAR
+      rv : DINT;
+   END_VAR
+
+   IF sigHdl <> 0 THEN
+      DisconnectVar(signal);
+      signal := FALSE;
+      sigHdl := 0;
+   END_IF;
+   IF tcpHdl <> -1 THEN
+      rv := KNetworkTcpClientCloseAsync(tcpHdl);
+      IF rv = 0 THEN
+         ipAddress := 0;
+         port := 0;
+         tcpHdl := -1;
+      END_IF;
+   END_IF;
+   RETURN rv;
+END_ROUTINE
+
+
+// Send data 
+ROUTINE Send(
+   CONST dataLen : DINT;   // [in]  length of data to send (-1: whole buffer)
+   CONST data : ANY        // [in]  data buffer
+   ) : DINT                // [ret] 0: OK, ... (compare KNetworkTcpSend)
+
+   RETURN KNetworkTcpClientSendAsync(tcpHdl, dataLen, data);
+   RETURN 0;
+END_ROUTINE
+
+
+// Receive data. 
+ROUTINE Receive(
+   CONST dataBufferLen : DINT;   // [in]  max. length of data to receive (-1: whole buffer)
+         dataBuffer : ANY;       // [out] data buffer for data received (max. 2 kB)
+         bytesReceived : DINT;   // [out] bytes received
+   OPTIONAL CONST timeout : DINT // [in]  timeout in ms, default: -1 (wait forever)
+   ) : DINT                      // [ret] 0: OK, ... (compare KNetworkTcpRecieve)
+   VAR
+      rv : DINT;
+      exitFlag : BOOL;
+   END_VAR
+   
+   IF IS_USED(timeout) THEN
+      IF timeout = -1 THEN
+         ; // wait forever
+      ELSIF timeout = 0 THEN
+         exitFlag := TRUE;
+      ELSE
+         SysTimerSet(timeout, exitFlag);
+      END_IF;
+   END_IF;
+
+   REPEAT
+      rv := KNetworkTcpClientReceiveAsync(tcpHdl, dataBufferLen, dataBuffer, bytesReceived);
+      IF rv <> 0 THEN
+         exitFlag := TRUE;
+      ELSIF bytesReceived > 0 THEN
+         exitFlag := TRUE;
+      ELSE
+         WAIT signal OR exitFlag;
+         signal := FALSE;
+      END_IF;
+   UNTIL exitFlag;
+   RETURN rv;
+END_ROUTINE
+
+
+VAR PRIVATE
+   tcpHdl : DINT := -1;
+   signal : BOOL;
+   sigHdl : DINT;   
+END_VAR
+
+ROUTINE DELETE()
+   Close();   
+END_ROUTINE

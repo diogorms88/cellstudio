@@ -1,0 +1,40 @@
+RSELECT("R12")
+  //
+  VEL(V1500)
+  ACC(A5500)
+  OVERLAP(NODEC50)
+  //
+  PTP(RHOME)
+  //
+  SET_PROCESS_ORDER(RunCircAllMaterials, MainRun)
+  IF NOT GET_BOOL_SYSTEMVAR(PCUx, "SV_PLC2PCU.tReleases.mReleaseProcess", High) THEN
+    //
+    RECEIVE_PROCESS_STATE(RunCircAllMaterials, MainRun)
+    //
+  END_IF
+  //
+  SET(Collision16, High)
+  RECEIVE(Collision16, High)
+  //
+  SET_PROCESS_ORDER(Reset, MainRun)
+  RECEIVE_PROCESS_STATE(Reset, MainRun)
+  //
+  SET(Collision1, Low)
+  SET(Collision2, Low)
+  SET(Collision3, Low)
+  SET(Collision4, Low)
+  SET(Collision5, Low)
+  SET(Collision6, Low)
+  SET(Collision7, Low)
+  SET(Collision8, Low)
+  //
+  SET(Collision9, Low)
+  SET(Collision10, Low)
+  SET(Collision11, Low)
+  SET(Collision12, Low)
+  SET(Collision13, Low)
+  SET(Collision14, Low)
+  SET(Collision15, Low)
+  SET(Collision16, Low)
+  //
+RDESELECT("R12")

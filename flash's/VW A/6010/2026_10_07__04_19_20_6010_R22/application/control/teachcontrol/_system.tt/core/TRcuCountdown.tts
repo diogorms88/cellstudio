@@ -1,0 +1,95 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuCountdown.tts
+*  First Author : pen
+*  Date         : 12.9.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  countdown to an alarm
+*------------------------------------------------------------------------------
+*)
+
+(*******************************************************************************
+* members
+*)
+
+VAR
+   // indicator for expired countdown
+   alarm : BOOL;
+END_VAR
+
+
+// start a countdown for time ms
+ROUTINE Go(time : DINT)
+
+   IF running THEN // first Go wins
+      RETURN;
+   ELSE
+      alarm := FALSE;
+      SysTimerSet(time, alarm);
+      running := TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// cancel the countdown
+ROUTINE Cancel()
+
+   IF running THEN
+      SysTimerClear(alarm);
+      running := FALSE;
+   END_IF;
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+
+VAR PRIVATE
+   running : BOOL;
+   timeLeft : DINT;
+END_VAR
+
+
+// reset running indicator when countdown expires
+ROUTINE Listen AT alarm PRIVATE
+
+   running := FALSE;
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   START Listen;
+END_ROUTINE
+
+(* 
+ROUTINE INTERRUPT()
+
+   IF running THEN
+      timeLeft := SysTimerClear(alarm);
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE CONTINUE()
+
+   IF running THEN
+      SysTimerSet(timeLeft, alarm);
+   END_IF;
+END_ROUTINE
+*)
+
+ROUTINE RELEASE()
+
+   Cancel();
+END_ROUTINE

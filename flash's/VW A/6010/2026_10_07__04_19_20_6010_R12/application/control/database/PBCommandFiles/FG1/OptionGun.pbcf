@@ -1,0 +1,212 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 21.11.2016  | KLCH   | First release
+//  v2_01.01.00  | 27.09.2017  | KLCH   | Change: OptionGun_MD_El; OptionGun_ConfigureTriggerBrush_MD -> OptionGun_ConfigureTriggerBrush_MD_BBL1 + OptionGun_ConfigureTriggerBrush_MD_AMD99
+
+Imports Common Option12 Option15 NozzleExchanger
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion
+
+Call Main_OptionGun
+Call Common_Description_PCU
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_OptionGun
+	Call OptionGun_ResetAll
+	
+	SelectCase OptionGun
+		Case Gun_xD
+			Call Main_NozzleExchanger
+		Case Gun_MD_Air
+			Call OptionGun_MD_Air
+			Call OptionGun_AddDeviceToMainChannel_BBL1
+			Call OptionGun_ConfigureTriggerBrush_MD_BBL1
+			Call Main_Option12
+			Call Main_Option15
+		Case Gun_MD_El
+			Call OptionGun_MD_El
+			Call OptionGun_AddDeviceToMainChannel_BBL1
+			Call OptionGun_ConfigureTriggerBrush_MD_BBL1
+			Call OptionGun_ConfigureTriggerBrush_MD_AMD99
+		Case Gun_Swirl_Duerr
+			Call OptionGun_Swirl_Duerr
+		Case Gun_Swirl_Graco
+			Call OptionGun_Swirl_Graco
+		Case Gun_IDS
+		CaseElse
+			Message Gun type not supported !! (Main_OptionGun)
+	EndSelect
+Return
+
+SubRoutine OptionGun_ResetAll
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YLA1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.YLA1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BDRU1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BDRU1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD99
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD99
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.ASWL1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.ASWL1
+		Delete
+	Endif
+	
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL
+			FSCopy ..\SpecialOptions\MD\Servo\mfb.cfg ..\..\..\..\..\application\control\config
+			
+			FSDeleteFile ..\..\..\..\..\application\control\config\mfb.cfg
+		Case EcoDose_PCL_PCL
+			FSCopy ..\SpecialOptions\MD\Servo\mfb.cfg ..\..\..\..\..\application\control\config
+			
+			FSDeleteFile ..\..\..\..\..\application\control\config\mfb.cfg
+	EndSelect
+Return
+
+SubRoutine OptionGun_MD_Air
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_YLA1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_BDRU1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_AMD1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD1
+	SelectTab [CfgParameter]
+	SelectCfg AMD1.NameBlowAir
+	Value "BBL1.Set"
+Return
+
+SubRoutine OptionGun_MD_El
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_AMD99
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.AMD99
+	SelectTab [CfgParameter]
+	SelectCfg AMD99.NameBlowAir
+	Value "BBL1.Set"
+	
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL
+			FSCopy ..\SpecialOptions\MD\Servo\mfb.cfg ..\..\..\..\..\application\control\config
+		Case EcoDose_PCL_PCL
+			FSCopy ..\SpecialOptions\MD\Servo\mfb.cfg ..\..\..\..\..\application\control\config
+	EndSelect
+Return
+
+SubRoutine OptionGun_Swirl_Duerr
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_ASWL1_Duerr
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.ASWL1
+	SelectTab [CfgParameter]
+Return
+
+SubRoutine OptionGun_Swirl_Graco
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_ASWL1_Graco
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.ASWL1
+	SelectTab [CfgParameter]
+Return
+
+SubRoutine OptionGun_AddDeviceToMainChannel_BBL1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BBL1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BBL1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel
+	Call Common_AddDevice_BBL1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BBL1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MainChannel.BBL1
+		SelectCase Option14 // Variant of bus master
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBBL1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog input current - 6ES7 134-4GB61-0AB0
+				SelectHWSignal HWO_wBBL1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    2 //Analog output current - 6ES7135-4GB01-0AB0
+	  			SelectHWSignal HWI_bBBL1_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_bBBL1_HSK
+	  			Export 0
+	  			SelectHWSignal HWO_wBBL1_PD
+	  			Export 0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBBL1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog input current/voltage - IB IL AI 2/SF-PAC
+						SelectHWSignal HWO_wBBL1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    1 //Analog output current - 28 61 31 5
+						SelectHWSignal HWI_bBBL1_HSK
+						Export 0
+						SelectHWSignal HWO_bBBL1_HSK
+						Export 0
+						SelectHWSignal HWO_wBBL1_PD
+						Export 0
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBBL1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    4 //Proportional valve (CPX, 10bar)
+						SelectHWSignal HWO_wBBL1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    3 //Proportional valve (CPX, 10bar)
+					CaseElse
+						Message ElectricalVersion not supported !! (OptionGun_AddDeviceToMainChannel_BBL1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (OptionGun_AddDeviceToMainChannel_BBL1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine OptionGun_ConfigureTriggerBrush_MD_BBL1
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	SelectTab [BrushTriggerConfiguration]
+	BrushSourceEnabled ProcessAir1 1
+	SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+	NotResetBrushAtEnd BBL1.Set 0
+	BrushSource BBL1.Set ProcessAir1
+	IdleBrush1Enable BBL1.Set 0
+	IdleBrush1Value BBL1.Set 0
+	IdleBrush2Enable BBL1.Set 0
+	IdleBrush2Value BBL1.Set 0
+	OverrideEnable BBL1.Set 0
+Return
+
+SubRoutine OptionGun_ConfigureTriggerBrush_MD_AMD99
+	SelectNode RPC1.R11.PCU1
+	SelectTab [BrushTrigger]
+	SelectTab [BrushTriggerConfiguration]
+	BrushSourceEnabled SpeedMD1 1
+	SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+	NotResetBrushAtEnd AMD99.SetVelocity 0
+	BrushSource AMD99.SetVelocity SpeedMD1
+	IdleBrush1Enable AMD99.SetVelocity 0
+	IdleBrush1Value AMD99.SetVelocity 0
+	IdleBrush2Enable AMD99.SetVelocity 0
+	IdleBrush2Value AMD99.SetVelocity 0
+	OverrideEnable AMD99.SetVelocity 0
+Return

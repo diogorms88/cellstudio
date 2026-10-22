@@ -1,0 +1,231 @@
+CONSTANT GLOBAL
+   cPacFilmThicknessNotValid : REAL := 9999.0;
+END_CONSTANT
+
+CONSTANT PRIVATE
+   cET200sMinValue        : REAL := 0.0;
+   cET200sMaxValue        : REAL := 27648.0;
+   cET200sCableBroken     : REAL := 32768.0;
+END_CONSTANT
+
+TYPE
+   TRcuPacPhototermAnalogValueCfg : STRUCT
+      bEnabled      : BOOL := FALSE;
+      rMin          : REAL;
+      rMax          : REAL;
+      rFactor       : REAL;
+      sSymbolicName : STRING;
+   END_STRUCT;
+END_TYPE
+
+VAR
+   bCfgDataRead          : BOOL;
+
+   Config      : TRcuPacPhototermAnalogValueCfg;
+   
+   iRawValue   : TInOutWord;
+END_VAR
+
+VAR PRIVATE
+   myRobot         : MAPTO TRcuRobot;
+   instId          : DINT; 
+   
+   bMappingOk      : BOOL;
+END_VAR
+
+ROUTINE Init()
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                         myRobot.kinListInx, 
+                         1, 
+                         instId, 
+                         "TRcuPacPhototermAnalogValue.Init");
+      RETURN;
+   END_IF; 
+
+   IF NOT bCfgDataRead THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC: Error in initialization, RobotControlCfg is not read!");
+
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        2, 
+                        instId, 
+                        "TRcuPacPhototermAnalogValue.Init");
+      RETURN;
+   END_IF;
+      
+   WAIT myRobot.initKinComplete;
+
+END_ROUTINE
+
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+   VAR
+      bError      : BOOL := FALSE;
+      iCatalogHdl : DINT; 
+      i           : DINT;
+      r           : REAL;
+   END_VAR
+    
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId();
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuPaintChecker_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        3, 
+                        instId, 
+                        "TRcuPacPhototermAnalogValue.ReadConfig");
+      bError := TRUE;
+   ELSE
+      IF CatalogGetHandleRelative(myRobot.rcCatHdl, "PaintChecker.Phototerm.FilmThickenssAnalogValue", iCatalogHdl) THEN
+         IF NOT CatalogReadIntRange(iCatalogHdl, "Enabled", i, 0, 1, FALSE) THEN
+            Config.bEnabled := FALSE;
+         ELSE
+            Config.bEnabled := (i=1);
+         END_IF;
+         
+         myRobot.DebugPrint(eTracePaintChecker, "PAC: Film thickness value is read from analog input: " + STR(Config.bEnabled));
+
+         IF Config.bEnabled  THEN
+            IF CatalogReadRealRange(iCatalogHdl, "Min", r, 0, 100.0, TRUE) THEN
+               Config.rMin := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, myRobot.kinListInx, 1, 0, "TRcuPacPhototermAnalogValue.ReadConfig", "[RC] / [RC.KINEMATIC:" + STR(myRobot.kinListInx) + ".PaintChecker.Phototerm.FilmThickenssAnalogValue] Param: Min");
+               gbBootupError := TRUE; 
+               bError := TRUE;
+            END_IF;
+
+            IF CatalogReadRealRange(iCatalogHdl, "Max", r, 0, 100.0, TRUE) THEN
+               Config.rMax := r;
+            ELSE
+               RcuSetMessageOnce(_RcuConfiguration_FaErrNoInConf, myRobot.kinListInx, 1, 0, "TRcuPacPhototermAnalogValue.ReadConfig", "[RC] / [RC.KINEMATIC:" + STR(myRobot.kinListInx) + ".PaintChecker.Phototerm.FilmThickenssAnalogValue] Param: Max");
+               gbBootupError := TRUE; 
+               bError := TRUE;
+            END_IF;
+            
+            IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", iCatalogHdl) THEN
+               IF NOT CatalogReadString(iCatalogHdl, "Sym_InPACFilmThicknAnalogValue", Config.sSymbolicName, TRUE) THEN
+                  RcuSetMessageOnce(_systemvars_ErrCnfSymbolName, -1, 1, 0, "TRcuPacPhototermAnalogValue.ReadConfig", "[RC.Symbols] Param: Sym_InPACFilmThicknAnalogValue");
+                  gbBootupError := TRUE; 
+                  bError := TRUE;
+               END_IF;
+            ELSE
+               gbBootupError := TRUE; 
+               bError := TRUE;
+            END_IF;
+
+            IF NOT bError THEN
+               myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC: Film thickness value is read from analog input '" + Config.sSymbolicName + 
+                            "'; Min = " + STR(Config.rMin) + " - Max = " + STR(Config.rMax));
+                            
+               Config.rFactor := (Config.rMax - Config.rMin)/(cET200sMaxValue - cET200sMinValue);
+               
+               //Map In-/Out-Signals from PB-Master
+               MapPhototermSignalsPB(myRobot.kinListInx);
+
+               //Map In/Out signals from IEC
+               MapPhototermSignalsIEC(myRobot.kinListInx);
+
+               bError := NOT bMappingOk;
+            END_IF;            
+         END_IF;   
+      END_IF;
+   END_IF;
+   
+   IF bError THEN 
+      myRobot.DebugPrint(eTracePaintChecker,  "PAC PTP AnalogValue: Boot-up Phototerm PS Online failed");
+      
+      RcuSetMessageOnce(TRcuPacPhototerm_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        2, 
+                        instId, 
+                        "TRcuPacPhototermAnalogValue.ReadConfig");
+
+      RETURN bError;
+   ELSE
+      bCfgDataRead := TRUE;
+   END_IF;
+
+   RETURN bError;
+END_ROUTINE
+
+ROUTINE MapPhototermSignalsPB(CONST iRobot : DINT) 
+                             PRIVATE
+   bMappingOk := TRUE;
+     
+   MapAndCheckWord(iRobot, iRawValue,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + Config.sSymbolicName);
+
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPacPhototermAnalogValue.MapPhototermSignalsPB");
+   END_IF;   
+END_ROUTINE
+
+ROUTINE MapPhototermSignalsIEC(CONST iRobot : DINT) 
+                              PRIVATE
+   bMappingOk := TRUE;
+     
+   //MapAndCheckWord(iRobot, HMISignals.In.iPTPAnalogValue,          cSV_iPacFromPTPErrorNo[iRobot]);
+
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPacPhototermAnalogValue.MapPhototermSignalsIEC");
+   END_IF;   
+END_ROUTINE
+
+ROUTINE MapAndCheckWord(CONST iRobot : DINT; 
+                        bOutput : TInOutWord; 
+                        sSvVarName : STRING) 
+                       PRIVATE
+
+    bOutput.svWord := MAPX(sSvVarName);    
+    IF NOT IS_MAPPED(bOutput.svWord) THEN
+       bMappingOk := FALSE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutWord, 
+                         myRobot.kinListInx, 
+                         1, 
+                         0, 
+                         "TRcuPacPhototermAnalogValue.MapAndCheckWordOut", 
+                         sSvVarName);
+    END_IF;  
+
+END_ROUTINE
+
+ROUTINE GetValue() : REAL
+   VAR 
+      rResult : REAL := cPacFilmThicknessNotValid;
+      iValue  : DINT;
+   END_VAR
+   
+   IF IS_MAPPED(iRawValue.svWord) THEN
+      iValue  := iRawValue.svWord;
+      rResult := REAL(iValue);
+
+      myRobot.DebugPrint(eTracePaintChecker, "PAC PTP: Analog raw value : " + STR(rResult)); 
+
+      IF rResult >= cET200sCableBroken THEN
+         RcuSetMessageOnce(TRcuSensor_ErrSensCableBrk, 
+                           myRobot.kinListInx, 
+                           1, 
+                           instId, 
+                           "TRcuPacPhototermAnalogValue.GetValue", 
+                           Config.sSymbolicName);
+      ELSE
+         rResult := Config.rMin + rResult * Config.rFactor;
+
+         myRobot.DebugPrint(eTracePaintChecker, "PAC PTP: Analog value calculated : " + STR(rResult)); 
+      END_IF;   
+   END_IF;
+   
+   RETURN rResult;
+END_ROUTINE
+

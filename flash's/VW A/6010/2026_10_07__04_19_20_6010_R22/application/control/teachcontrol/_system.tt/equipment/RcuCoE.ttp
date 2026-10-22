@@ -1,0 +1,60 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2006 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         19.10.2014                                                  *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuCoE.ttp                                               *
+*    Description: Functions for CanOpen over Ethercat(CoE)                    *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 
+*)
+
+CONSTANT PRIVATE
+END_CONSTANT
+
+// einzelne REAL Variable lesen
+ROUTINE ReadSdoReal(CONST copDeviceHdl : DINT; CONST index : DINT;
+   CONST subindex : DINT; data : REAL; CONST cnfTimout : DINT) : DINT GLOBAL
+   VAR
+      buf : TIoDataVariant;
+      len : DINT;
+   END_VAR
+
+   buf.dataType := eDataTypeArray;
+   len := ReadSdo(copDeviceHdl, index, subindex, buf.dataArray, 4, cnfTimout);
+   buf.dataType := eDataTypeReal;
+   data := buf.dataReal;
+   RETURN len;
+END_ROUTINE
+
+
+// einzelne REAL Variable schreiben
+ROUTINE WriteSdoReal(CONST copDeviceHdl : DINT; CONST index : DINT;
+   CONST subindex : DINT; CONST data : REAL; CONST cnfTimout : DINT) : DINT GLOBAL
+   VAR
+      buf : TIoDataVariant;
+      len : DINT;
+   END_VAR
+
+   buf.dataType := eDataTypeReal;
+   buf.dataReal := data;
+   buf.dataType := eDataTypeArray;
+   len := WriteSdo(copDeviceHdl, index, subindex, buf.dataArray, 4, cnfTimout);
+   RETURN len;
+END_ROUTINE
+
+
+
+

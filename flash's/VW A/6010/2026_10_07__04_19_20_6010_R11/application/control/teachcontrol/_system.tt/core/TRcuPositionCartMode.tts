@@ -1,0 +1,135 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuPositionCartMode.tts
+*  First Author : pen
+*  Date         : 11.1.2002
+*-----------------------------------------------------------------------------
+*  Description:
+*
+*  Cartesian-Position
+*-----------------------------------------------------------------------------
+*)
+
+
+INHERIT TRcuPosition;
+
+
+// data describing the current position
+VAR
+   // reference system for this position
+   refSys : TRcuReferenceSystem;
+
+   // Eulerframe
+   frame : TMcuFrame;
+
+   // mode for this position
+   mode : TMcuRobotMode;
+
+   // auxiliary joints
+   nrAuxJoints : DINT;
+   auxJoints : ARRAY [cgiRcuMaxAuxJoints] OF REAL;
+END_VAR
+
+
+ROUTINE GetReferenceSystem(CONST kin : TRcuKinematic) : TRcuReferenceSystem
+   RETURN refSys;
+END_ROUTINE
+
+// Fill a Mcu-Position with values corresponding to the current position
+ROUTINE GetMcuPos(pos : TMcuPosition; CONST kin : TRcuKinematic) : BOOL
+   VAR
+      i   : DINT;
+   END_VAR
+
+   IF NOT RcuRefSysGetMcuId(refSys, pos.mPosCart.mRefSysID) THEN
+      RETURN FALSE;
+   END_IF;
+   pos.mDBObjTyp := eMcuPermanent;
+   pos.mName := INSTANCE_NAME();
+   pos.mPosTyp := eMcuPosCart;
+   pos.mPosCart.mFrame := frame;
+   pos.mPosCart.mMode := mode;
+
+   IF frame.mFrameTyp <> gMcuFrameTyp THEN
+      // not possible on teached positions!!!!
+      RcuSetMessageOnce(TRcuPosCartMode_ErrWrgTypFrame, -1, 1, 0, "TRcuPositionCartMode.GetMcuPos", STR(frame.mFrameTyp));
+   END_IF;
+   pos.mAuxJoints.mValidLen := nrAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      pos.mAuxJoints.mValues[i] := auxJoints[i];
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Fill the current position with values from the current Kinematic. Can be
+// called from e.g. the Dialogue-system.
+ROUTINE TEACH(pos : TRcuPositionCartMode) : BOOL
+   VAR
+      i : DINT;
+      calcFrame : TMcuFrame;
+      tmpRefSys : TRcuReferenceSystem;
+      kin : MAPTO TRcuKinematic;
+   END_VAR
+
+	IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+   
+   // check kinematic focus
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      RcuSetMessageOnce(TRcuPosCartMode_ErrNoKinSelect, -1, 1, instId, "TRcuPositionCartMode.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   ELSE
+      kin := MAP(gRcuFocusedKinematic);
+   END_IF;
+
+   // check whether kinematic is ready for teaching
+   IF NOT(kin.updateActive AND kin.allDrivesReferenced) THEN
+      RcuSetMessageOnce(TRcuPosCartMode_ErrKinNotReady, kin.kinListInx, 1, instId, "TRcuPositionCartMode.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+
+   (*
+   // if gRcuTeachRefSystem is set then use it, otherwise use actual refSys
+   IF gRcuTeachRefSystem <> eRcuRefSystemInvalid THEN
+      tmpRefSys := gRcuTeachRefSystem;
+   ELSE
+      tmpRefSys := refSys;
+   END_IF;
+   *)
+   // if refSys is set then use it, otherwise use gRcuTeachRefSystem
+   IF refSys <> eRcuRefSystemInvalid THEN
+      tmpRefSys := refSys;
+   ELSE
+      tmpRefSys := gRcuTeachRefSystem;
+   END_IF;
+
+   // read actual values and transform to the specified reference system
+   IF NOT RcuReadTransformedActPos(kin, tmpRefSys, calcFrame) THEN
+      RcuSetMessageOnce(TRcuPosCartMode_ErrTrafoNoSucc, kin.kinListInx, 1, instId, "TRcuPositionCartMode.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+
+   // write values
+   refSys := tmpRefSys;
+   frame := calcFrame;
+   mode := kin.actCartVals.mRobotMode;
+   mode.mIsValid := TRUE;
+
+   nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE NEW()
+   frame.mFrameTyp := gMcuFrameTyp;
+END_ROUTINE
+

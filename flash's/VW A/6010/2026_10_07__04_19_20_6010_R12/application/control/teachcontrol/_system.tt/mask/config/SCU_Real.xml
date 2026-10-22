@@ -1,0 +1,602 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2014 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         11.04.2014                                                  *
+*    Author :     Friese                                                      *
+*    E-Mail:      heiko.Friese@durr.com                                       *
+*                                                                             *
+*    Modul:       SCU_Real.xml                                                *
+*    Description: Simulation of real data and conveyor  for SCU               *
+*    Changes:     -                                                           *
+*************************************************************************** -->
+
+
+<VIEW>
+	<MASKDEF key="TeachView.mask.SCU_Real" textfile="userTx" height="4000" >  
+ 		<GROUP key="SCU_Real.Headline" rows="294" columns="2" row="1" col="1" halign="stretch" valign="stretch">      
+       		
+			
+			
+			<GROUP key="SCU_Real.DataOverview" columns="40" rows="15" col="1" row="1" rspan="30" cspan="2" halign="stretch" valign="stretch">
+			
+				<LABEL key="SCU_Real.LockInlet" col="4" row="1" cspan="12" halign="left"/>  
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tStation.i_mLockConvInlet" vartype="SV" col="1" row="1" enabled="true" cspan="3"/>
+
+				<LABEL key="SCU_Real.LockOutlet" col="4" row="2" cspan="12" halign="left" 									    visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>  
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tStation.i_mLockConvOutlet" vartype="SV" col="1" row="2" enabled="true" cspan="3" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				
+				<BUTTON                rspan="1" col="25"  row="1"  cspan="14" valign="stretch"  maskkey="TeachView.mask.SCU_Inlet"						   key="SCU_Fifos.Reselection" />
+				<BUTTON   vartype="SV" rspan="1" col="25"  row="2"  cspan="14" valign="stretch"  var="SCU.SV_SCU2HMI.tStation.i_mStartAppl"                key="SCU_Fifos.RestartAppl"       enablevar="SCU.SV_SCU2HMI.tStation.o_mRelStartAppl"    enablevartype="SV"  visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+								
+								
+				<LABEL  key="BodyID"    col="3"  row="3"  cspan="6"                                      halign="center"/>
+				<LABEL  key="Conv"      col="9"  row="3"  cspan="4"                                      halign="center"/>
+				<LABEL  key="TypeNo"    col="13" row="3"  cspan="4"                                      halign="center"/>
+				<LABEL  key="ColNo"     col="17" row="3"  cspan="4"                                      halign="center"/>
+				<LABEL  key="Type"      col="21" row="3"  cspan="5"                                      halign="center"/>
+				<LABEL  key="Color"     col="26" row="3"  cspan="5"                                      halign="center"/>
+				<LABEL  key="NP"        col="31" row="3"  cspan="3"                                      halign="center"/>
+				<LABEL  key="ERR"       col="33" row="3"  cspan="3"                                      halign="center"/>
+				<LABEL  key="GH"        col="35" row="3"  cspan="3"                                      halign="center"/>
+				<LABEL  key="R"         col="37" row="3"  cspan="3"                                      halign="center"/>
+				
+				<LABEL  key="SCU_Real.Inlet" col="1"  row="4"  cspan="6"                                 halign="center"/>
+				
+				
+				<LABEL  key="1"          col="1"  row="5"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="5"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="5"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="5"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="5"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="5"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="5"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="5"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="5"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="5"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="5"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tInlet.yData[1].mHmiReselect"  enabled="false"  />
+				
+				<LABEL  key="SCU_Real.Zone" col="1"  row="6"  cspan="6"                                      halign="center"/>
+								
+					
+				<LABEL  key="8"          col="1"  row="7"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="7"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="7"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="7"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="7"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="7"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="7"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="7"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="7"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="7"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="7"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[8].mHmiReselect"  enabled="false"  />
+					
+				
+				<LABEL  key="7"          col="1"  row="8"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="8"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="8"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="8"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="8"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="8"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="8"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="8"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="8"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="8"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="8"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[7].mHmiReselect"  enabled="false"  />
+				
+				
+				<LABEL  key="6"          col="1"  row="9"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="9"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="9"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="9"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="9"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="9"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="9"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="9"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="9"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="9"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="9"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[6].mHmiReselect"  enabled="false"  />
+				
+				<LABEL  key="5"          col="1"  row="10"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="10"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="10"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="10"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="10"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="10"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="10"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="10"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="10"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="10"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="10"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[5].mHmiReselect"  enabled="false"  />
+				
+				<LABEL  key="4"          col="1"  row="11"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="11"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="11"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="11"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="11"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="11"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="11"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="11"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="11"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="11"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="11"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[4].mHmiReselect"  enabled="false"  />
+				
+				<LABEL  key="3"          col="1"  row="12"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="12"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="12"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="12"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="12"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="12"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="12"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="12"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="12"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="12"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="12"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[3].mHmiReselect"  enabled="false"  />
+				
+				<LABEL  key="2"          col="1"  row="13"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="13"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="13"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="13"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="13"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="13"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="13"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="13"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="13"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="13"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="13"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[2].mHmiReselect"  enabled="false"  />
+				
+				<LABEL  key="1"          col="1"  row="14"  cspan="3"                                      halign="center"/>
+				<NUMFIELD  vartype="SV"  col="3"  row="14"  cspan="6"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].dBodyID"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="9"  row="14"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].iConvPos"      enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="13" row="14"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].iTypeNo"       enabled="false"  />
+				<NUMFIELD  vartype="SV"  col="17" row="14"  cspan="4"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].iColorNo"      enabled="false"  />
+				<TEXTFIELD vartype="SV"  col="21" row="14"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].yExtTypeCode"  enabled="false"  />	
+				<TEXTFIELD vartype="SV"  col="26" row="14"  cspan="5"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].yExtColorCode" enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="31" row="14"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].mNoPaint"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="33" row="14"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].mInvalid"      enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="35" row="14"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].mGhost"        enabled="false"  />
+				<CHECKBOX  vartype="SV"  col="37" row="14"  cspan="3"  var="SCU.SV_SCU2HMI.tFifos.tZone.yData[1].mHmiReselect"  enabled="false"  />				
+				
+				
+			
+			</GROUP>
+			
+			<GROUP key="SCU_Real.ConveyorSim" rows="10" columns="38" row="31" col="1" rspan="20" cspan="2"  halign="stretch" valign="stretch">    
+			
+				<NUMFIELD  vartype="SV"           col="1"  row="1" cspan="4"  var="SCU.SV_SimInterface.tRealConv.i_iTimeConvInlet"      enabled="true"  visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				<LABEL key="SCU_Real.ConvTime"    col="6"  row="1" cspan="12" halign="left"                                                             visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				
+				<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_sManual.sForce.mBodyBeforeZone" 	vartype="SV" col="1" row="3" enabled="true" cspan="3" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"   />
+				<LABEL key="SCU_Real.BodyBeforeZone"											  			 col="4" row="3" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"   />
+				<LABEL key="SCU_Real.Datacheck"											  			         col="4" row="3" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_Tracking"    visiblevartype="SV" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"   />
+								
+				<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_sManual.sForce.mBodyIncoming" 	vartype="SV" col="1" row="4" enabled="true" cspan="3" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"/>
+				<LABEL key="SCU_Real.BodyIncoming"											  			     col="4" row="4" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				<LABEL key="SCU_Real.ZoneStart"											  			         col="4" row="4" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_Tracking"    visiblevartype="SV"/>
+				
+				<CHECKBOX var="SCU.SV_SCU2HMI.tConvDiag.o_sToConv.mRelTransferZone" 			vartype="SV" col="18" row="4" cspan="3" enabled="false"/>
+				<LABEL key="SCU_Real.RelTransferZone"											  			 col="21" row="4" cspan="12" halign="left" />
+				
+				<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_sManual.sForce.mBodyInPosition" 	vartype="SV" col="1"  row="5" enabled="true" cspan="3" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"/>
+				<LABEL key="SCU_Real.BodyInPosition"											  			 col="4"  row="5" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				
+				<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_sManual.sForce.mBodyFixed" 		vartype="SV" col="1"  row="6" enabled="true" cspan="3" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"/>
+				<LABEL key="SCU_Real.BodyFixed"											  			         col="4"  row="6" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				
+				<CHECKBOX var="SCU.SV_SCU2HMI.tConvDiag.o_sToConv.mOpenFixation" 				vartype="SV" col="18" row="6" cspan="3" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" enabled="false"/>
+				<LABEL key="SCU_Real.OpenFixation"											  			     col="21" row="6" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				
+				<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_sManual.sForce.mBodyLeaving" 	vartype="SV" col="1"  row="7" enabled="true" cspan="3" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" enablevar="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce"    enablevartype="SV"/>
+				<LABEL key="SCU_Real.BodyLeaving"											  			     col="4"  row="7" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" />
+				
+				<CHECKBOX var="SCU.SV_SCU2HMI.tConvDiag.o_sToConv.mRelExitZone" 				vartype="SV" col="18" row="7" cspan="3" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV" enabled="false"/>
+				<LABEL key="SCU_Real.RelExitZone"											  			     col="21"  row="7" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+
+				<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_sManual.mEnableForce" vartype="SV" col="1" row="9" enabled="true" cspan="3"/>
+				<LABEL key="SCU_Real.EnConvForce"												  col="4" row="9" cspan="12" halign="left"/>
+				<!--<LABEL key="SCU_Real.WarnConvForce"												  col="4" row="10" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>-->
+				
+				
+				
+    		</GROUP>
+
+			<GROUP key="SCU_Real.ReaderSim" rows="4" columns="38" row="53" col="1" rspan="10" cspan="2"  halign="stretch" valign="stretch">    
+			
+        		<BUTTON key="SCU_Real.Ctrl_Start" rspan="1" cspan="8" valign="stretch" var="SCU.SV_SimInterface.tRealConv.i_mStart" vartype="SV" col="1"  row="1"  /> 
+         		<BUTTON key="SCU_Real.Ctrl_Stop"  rspan="1" cspan="8" valign="stretch" var="SCU.SV_SimInterface.tRealConv.i_mStop"  vartype="SV" col="1"  row="2" />
+				
+				<LABEL key="SCU_Real.Ringbuffer" col="14" row="1" cspan="12" halign="left"/>  
+	        	<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_mRingbuffer"  halign="left" vartype="SV" col="10" row="1" enabled="true" cspan="3" />
+			
+				<LABEL key="SCU_Real.SimRunning" col="14" row="2" cspan="12" halign="left"/>  
+	        	<CHECKBOX var="SCU.SV_SimInterface.tRealConv.o_mRunning"     halign="left" vartype="SV" col="10" row="2" enabled="false" cspan="3"/>
+				
+				<NUMFIELD  vartype="SV"           col="10" row="3" cspan="4"  var="SCU.SV_SimInterface.tRealConv.o_iRemainingGap"       enabled="false"  />
+				<LABEL key="SCU_Real.SecToNxtObj" col="14" row="3" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+				<LABEL key="SCU_Real.CmToNxtObj"  col="14" row="3" cspan="12" halign="left" visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_Tracking"    visiblevartype="SV"/>
+				
+    		</GROUP>
+			
+			
+	 		<GROUP key="Bodydata" rows="80" columns="40" row="63" col="1" rspan="135" cspan="2" halign="stretch" valign="stretch">   
+	    
+	    		<GROUP key="Bodydata1" rows="40" columns="80" row="1" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">                      	
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[1].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[1].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[1].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[1].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[1].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[1]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+               		
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[1].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata2" rows="40" columns="80" row="11" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[2].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[2].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[2].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[2].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[2].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[2]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[2].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+				</GROUP>  
+        
+	    		<GROUP key="Bodydata3" rows="40" columns="80" row="21" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[3].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[3].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[3].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[3].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[3].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[3]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[3].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata4" rows="40" columns="80" row="31" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[4].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[4].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[4].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[4].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[4].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[4]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[4].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata5" rows="40" columns="80" row="41" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[5].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[5].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[5].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[5].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[5].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[5]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[5].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata6" rows="40" columns="80" row="51" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[6].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[6].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[6].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[6].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[6].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[6]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[6].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata7" rows="40" columns="80" row="61" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[7].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[7].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[7].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[7].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[7].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[7]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[7].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata8" rows="40" columns="80" row="71" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[8].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[8].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[8].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[8].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SimInterface.tRealConv.ySimData[8].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.i_ySelectedObjects[8]" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SimInterface.tRealConv.ySimData[8].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        	</GROUP> 
+			
+	    </GROUP>		  
+   </MASKDEF>
+</VIEW>
+

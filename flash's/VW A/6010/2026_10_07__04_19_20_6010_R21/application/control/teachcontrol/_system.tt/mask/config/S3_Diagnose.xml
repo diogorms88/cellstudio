@@ -1,0 +1,2182 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       S3_Diagnose.xml                                             *
+*    Description: Overview of sercos 3 fieldbus and diagnostic info           *
+*    Changes:     12.12.2014 - Add: new pictures for Festo CPX, Feller, VMT   *
+*************************************************************************** -->
+
+
+<VIEW>
+
+   <MASKDEF maskkey="TeachView.mask.S3Diagnose" textdef="userTx" permissiondef="userMenuPermission"
+            columns="572" height="4000" rows="1360" top="1" bottom="1" left="1" right="1"> 
+
+      <GROUP key="S3Diagnose.group.master" col="1" row="1" columns="290" rows="35" cspan="290" rspan="35" top="1" bottom="1" left="1" right="1">
+                <IMAGE file="S3_Sercos64x64.gif" row="3" col="20"/>
+                <LABEL key="S3Diagnose.label.topo" row="3" col="110" cspan="30" halign="stretch" rspan="6" valign="stretch"/> 
+                        <LABEL key="S3Diagnose.label.topoStates" row="3" col="200" cspan="30" halign="stretch" rspan="6" valign="stretch"
+                               var="system.SV_System2HMI.sS3_Diagnose.sMaster.iTopology" vartype="SV"/>
+                        <LABEL key="S3Diagnose.label.phase" row="13" col="110" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <LABEL var="system.SV_S3ControlPanel.sPhaseSwitch.zActPhase" vartype="SV" row="13" col="200" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+                   
+      </GROUP>
+
+      <GROUP key=" " col="291" row="1" columns="84" rows="35" cspan="84" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="!system.SV_System2HMI.sS3_Diagnose.sMaster.mShowExControl" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iState" vartype="SV" halign="left" col="10" row="3"
+                              visiblevar="!system.SV_System2HMI.sS3_Diagnose.sMaster.mSimulated" visiblevartype="SV">
+                        <SYMBOL value="0" file="S3_Undef.gif"/>
+                        <SYMBOL value="1" file="S3_Undef.gif"/>
+                        <SYMBOL value="2" file="S3_OK.gif"/>
+                        <SYMBOL value="4" file="S3_Error.gif"/> 
+                        <SYMBOL value="8" file="S3_Warning.gif"/>
+                   </VARSYMBOL>
+             <IMAGE file="S3_Sim.gif" col="10" row="3" visiblevar="system.SV_System2HMI.sS3_Diagnose.sMaster.mSimulated" visiblevartype="SV"/>
+      </GROUP>
+
+      <GROUP key="  " col="291" row="1" columns="84" rows="35" cspan="84" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.sMaster.mShowExControl" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateExControl" vartype="SV" halign="left" col="10" row="3">
+                  <SYMBOL value="1" file="S3_ExCtrl.gif"/>
+                  <SYMBOL value="2" file="S3_Ping.gif"/>
+             </VARSYMBOL>
+      </GROUP>
+
+      <GROUP key="S3Diagnose.group.bus" col="376" row="1" columns="197" rows="35" cspan="197" rspan="35" top="1" bottom="1" left="1" right="1">
+	        <BUTTON key="S3Diagnose.button.restart" row="3" col="5" cspan="150" halign="stretch" rspan="10" valign="stretch"
+                        var="system.SV_System2HMI.sS3_Diagnose.sMaster.mRestartSercos" vartype="SV" 
+                        enablevar="system.SV_System2HMI.sS3_Diagnose.sMaster.mReleaseRestartSercos" enablevartype="SV"/>
+                <LABEL key="S3Diagnose.label.busfault" row="20" col="5" cspan="30" halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.sMaster.mAnyBusFault" visiblevartype="SV"/>		
+                <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.sMaster.mAnyBusFault" vartype="SV" enabled="false"
+                      visiblevar="system.SV_System2HMI.sS3_Diagnose.sMaster.mAnyBusFault" visiblevartype="SV"
+                          col="100" row="20" cspan="30" rspan="10" halign="stretch" valign="stretch"/>		
+      </GROUP>
+
+      <GROUP key="S3Diagnose.group.slave1" col="1" row="36" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave2" col="1" row="71" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave3" col="1" row="106" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave4" col="1" row="141" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave5" col="1" row="176" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave6" col="1" row="211" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave7" col="1" row="246" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave8" col="1" row="281" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave9" col="1" row="316" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave10" col="1" row="351" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave11" col="1" row="386" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave12" col="1" row="421" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave13" col="1" row="456" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave14" col="1" row="491" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave15" col="1" row="526" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave16" col="1" row="561" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave17" col="1" row="596" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave18" col="1" row="631" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave19" col="1" row="666" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave20" col="1" row="701" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave21" col="1" row="736" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave22" col="1" row="771" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave23" col="1" row="806" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave24" col="1" row="841" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave25" col="1" row="876" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave26" col="1" row="911" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave27" col="1" row="946" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave28" col="1" row="981" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave29" col="1" row="1016" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>
+      <GROUP key="S3Diagnose.group.slave30" col="1" row="1051" columns="375" rows="35" cspan="375" rspan="35" top="1" bottom="1" left="1" right="1"
+             visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mShow" visiblevartype="SV">
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iDeviceCode" vartype="SV" halign="left" row="3" col="3">
+                 <SYMBOL value="-1" file="S3_Sim.gif"/>
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+            <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].zName" vartype="SV" enabled="false" row="2" col="80" cspan="200" halign="stretch" rspan="8" valign="stretch"/>
+            <LABEL key="S3Diagnose.label.adr" row="13" col="140" cspan="30" halign="stretch" rspan="6" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iAddress" vartype="SV" enabled="false" col="80" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"/>
+            <NUMFIELD  var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iAddressBusscan" vartype="SV" enabled="false" col="250" row="13" cspan="25"  halign="stretch" rspan="10" valign="stretch"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mTopologyError" visiblevartype="SV"/>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iState" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0" file="S3_Undef.gif"/>
+                 <SYMBOL value="1" file="S3_Undef.gif"/>
+                 <SYMBOL value="2" file="S3_OK.gif"/>
+                 <SYMBOL value="4" file="S3_Error.gif"/> 
+                 <SYMBOL value="8" file="S3_Warning.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iDeviceCodeBusscan" vartype="SV" halign="left" col="300" row="3"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mTopologyError" visiblevartype="SV">
+                 <SYMBOL value="0"  file="S3_Undef.gif"/>
+                 <SYMBOL value="1"  file="S3_Indradrive.gif"/>
+                 <SYMBOL value="11" file="S3_BR_Airflow_Speed.gif"/>
+                 <SYMBOL value="12" file="S3_BR_Airflow_Air.gif"/>
+                 <SYMBOL value="21" file="S3_PhoenixContact.gif"/>				
+                 <SYMBOL value="31" file="S3_Festo.gif"/>
+                 <SYMBOL value="32" file="S3_Festo_CPX.gif"/>
+                 <SYMBOL value="41" file="S3_HT_XSensor.gif"/>
+                 <SYMBOL value="51" file="S3_NetTap.gif"/>
+                 <SYMBOL value="52" file="S3_Feller.gif"/>
+                 <SYMBOL value="53" file="S3_VMT.gif"/>
+                 <SYMBOL value="61" file="S3_PNOZmulti.gif"/>
+                 <SYMBOL value="71" file="S3_Automata_Bridge.gif"/>
+            </VARSYMBOL>
+      </GROUP>    
+          
+          
+          
+      <GROUP col="376" row="36" columns="197" rows="1325" cspan="197" rspan="1325" top="1" bottom="1" left="1" right="1">
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="1"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn4_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn4_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn4_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn4_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="1"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="33"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="28"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+            </VARSYMBOL>
+            
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="36"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="68"
+                      visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="63"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+            </VARSYMBOL>
+            
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="71"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="103"
+                       visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="98"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="106"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="138"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="133"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+              <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="141"
+                         visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="173"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="168"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mShow" visiblevartype="SV">
+             <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="176"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="208"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="203"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="211"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="243"
+                          visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="238"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="246"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="278"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="273"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="281"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="313"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="308"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="316"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="348"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="343"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="351"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="383"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="378"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="386"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="418"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="413"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="421"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="453"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="448"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="456"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="488"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="483"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="491"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="523"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="518"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="526"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="558"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="553"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="561"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="593"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="588"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="596"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="628"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+            </VARSYMBOL>
+            <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="623"
+                       visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="631"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="663"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="658"
+                                    visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="666"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="698"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="693"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="701"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="733"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="728"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="736"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="768"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="763"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="771"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+                    </VARSYMBOL>
+                    <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="803"
+                               visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="798"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="806"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="838"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="833"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="841"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="873"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="868"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="876"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="908"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="903"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="911"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="943"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="938"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="946"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="978"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="973"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="981"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="1013"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="1008"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+             
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.sMaster.iStateConnectionLastDev" vartype="SV" halign="left" col="140" row="1016"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn1_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn1_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn1_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="1048"
+                        visiblevar="!system.SV_System2HMI.sS3_Diagnose.ySlaves[31].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn2_Blank.gif"/>
+                <SYMBOL value="1" file="S3_Conn2_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn2_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn2_Red.gif"/>
+             </VARSYMBOL>
+             <VARSYMBOL var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].iStateConnectionNextDev" vartype="SV" halign="left" col="1" row="1043"
+                        visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[31].mShow" visiblevartype="SV">
+                <SYMBOL value="0" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="1" file="S3_Conn3_Grey.gif"/>
+                <SYMBOL value="2" file="S3_Conn3_Black.gif"/>
+                <SYMBOL value="4" file="S3_Conn3_Red.gif"/>
+             </VARSYMBOL>
+
+      </GROUP>
+   </MASKDEF>
+</VIEW>

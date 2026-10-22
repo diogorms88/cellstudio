@@ -1,0 +1,144 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuPositionMixedMode.tts
+*  First Author : pen
+*  Date         : 28.11.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Cartesian-Position , orientation in joint values
+*------------------------------------------------------------------------------
+*)
+
+
+INHERIT TRcuPosition;
+
+
+// data describing the current position
+VAR
+   // reference system for this position
+   refSys : TRcuReferenceSystem;
+
+   // cartesian position
+   cartPos : TMcuVector3;
+
+   // wrist-joints
+   nrWristJoints : DINT;
+   
+   // wristJoints : TMcuJointVector;
+   wristJoints : ARRAY [cgiRcuMaxWristJoints] OF REAL;
+
+   // mode for this position
+   mode : TMcuRobotMode;
+
+   // auxiliary joints
+   nrAuxJoints : DINT;
+   auxJoints : ARRAY [cgiRcuMaxAuxJoints] OF REAL;
+END_VAR
+
+
+ROUTINE GetReferenceSystem(CONST kin : TRcuKinematic) : TRcuReferenceSystem
+   RETURN refSys;
+END_ROUTINE
+
+// Fill a Mcu-Position with values corresponding to the current position
+ROUTINE GetMcuPos(pos : TMcuPosition; CONST kin : TRcuKinematic) : BOOL
+   VAR
+      i : DINT;
+   END_VAR
+
+   IF NOT RcuRefSysGetMcuId(refSys, pos.mPosMixed.mRefSysID) THEN
+      RETURN FALSE;
+   END_IF;
+   pos.mDBObjTyp := eMcuPermanent;
+   pos.mName := INSTANCE_NAME();
+   pos.mPosTyp := eMcuPosMixed;
+   pos.mPosMixed.mCartPos := cartPos;
+   pos.mPosMixed.mWristJoints.mValidLen := nrWristJoints;
+   //pos.mPosMixed.mWristJoints.mValues := wristJoints;
+   FOR i := 0 TO nrWristJoints - 1 DO
+      pos.mPosMixed.mWristJoints.mValues[i] := wristJoints[i];
+   END_FOR;
+   pos.mPosMixed.mMode := mode;
+
+   pos.mAuxJoints.mValidLen := nrAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      pos.mAuxJoints.mValues[i] := auxJoints[i];
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Fill the current position with values from the current Kinematic. Can be
+// called from e.g. the Dialogue-system.
+ROUTINE TEACH(pos : TRcuPositionMixedMode) : BOOL
+   VAR
+      i : DINT;
+      calcFrame : TMcuFrame;
+      nrBaseJoints : DINT;
+      tmpRefSys : TRcuReferenceSystem;
+      kin : MAPTO TRcuKinematic;
+   END_VAR
+   
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+   
+   // check kinematic focus
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      RcuSetMessageOnce(TRcuPosMixedMode_ErrNoKinSelect, -1, 1, instId, "TRcuPositionMixedMode.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   ELSE
+      kin := MAP(gRcuFocusedKinematic);
+   END_IF;
+
+   // check whether kinematic is ready for teaching
+   IF NOT(kin.updateActive AND kin.allDrivesReferenced) THEN
+      RcuSetMessageOnce(TRcuPosMixedMode_ErrKinNotReady, kin.kinListInx, 1, instId, "TRcuPositionMixedMode.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+
+   (*
+   // if gRcuTeachRefSystem is set then use it, otherwise use actual refSys
+   IF gRcuTeachRefSystem <> eRcuRefSystemInvalid THEN
+      tmpRefSys := gRcuTeachRefSystem;
+   ELSE
+      tmpRefSys := refSys;
+   END_IF;
+   *)
+   // if refSys is set then use it, otherwise use gRcuTeachRefSystem
+   IF refSys <> eRcuRefSystemInvalid THEN
+      tmpRefSys := refSys;
+   ELSE
+      tmpRefSys := gRcuTeachRefSystem;
+   END_IF;
+
+   // read actual values and transform to the specified reference system
+   IF NOT RcuReadTransformedActPos(kin, tmpRefSys, calcFrame) THEN
+      RcuSetMessageOnce(TRcuPosMixedMode_ErrTrafoNoSucc, kin.kinListInx, 1, instId, "TRcuPositionMixedMode.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+
+   // write values
+   refSys := tmpRefSys;
+   cartPos := calcFrame.mPos;
+   mode := kin.actCartVals.mRobotMode;
+   mode.mIsValid := TRUE;
+
+   // @? eigenes Shared-Memory für wristJoints!
+   nrWristJoints := kin.kinematic.mNrOfWristJoints;
+   nrBaseJoints := kin.kinematic.mNrOfBaseJoints;
+   FOR i := 0 TO nrWristJoints - 1 DO
+      wristJoints[i] := kin.actJoints.mPos[nrBaseJoints + i];
+   END_FOR;
+
+   nrAuxJoints := kin.nrOfMainJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE

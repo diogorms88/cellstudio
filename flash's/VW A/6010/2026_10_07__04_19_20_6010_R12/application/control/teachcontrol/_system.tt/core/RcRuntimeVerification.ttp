@@ -1,0 +1,189 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2007 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RC
+*  Modul        : _RcRuntimeVerification.ttp
+*  First Author : nmr
+*  Date         : 29.03.2007
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Routines and variables for verification of runtime accuracy and
+*  repeat accuracy
+*------------------------------------------------------------------------------
+*)
+
+
+(* ----------------------------------------------------------------------------
+* user data
+*)
+
+
+ROUTINE StartCount() //GLOBAL USER { macro="OTHER" }
+   VAR
+      elem : TRcuKinListElem; // element with the kinematicreference
+   END_VAR
+
+  IF RcData.CheckKin(elem, "Runtime.StartCount") THEN  
+     SwoRaiseEvent(23, "Runtime");
+     elem.kin.WaitMcMainCycles(5);
+     gStartCounter := elem.kin.actExecData.mUpdateCounterMain;
+     gTimeStep := 0;
+  END_IF;
+END_ROUTINE
+
+
+ROUTINE GetCount()// GLOBAL USER { macro="OTHER" }
+   VAR
+      elem : TRcuKinListElem; // element with the kinematicreference
+      diff : DINT;
+   END_VAR
+
+   IF gDoRuntimeVerification THEN
+      IF RcData.CheckKin(elem, "Runtime.GetCount") THEN  
+         diff := elem.kin.actExecData.mUpdateCounterMain - gStartCounter;
+         IF diff < 0 THEN
+            diff := diff + cgiMaxMcUpdCnt + 1; // UpdateCounter runs from 0 to 21700
+         END_IF;
+         PRINT("Measured runtime (mc cycles): " +STR(diff));
+         IF gInitRuntimeVerification THEN
+            gRuntime := diff; 
+         END_IF;
+         IF gRuntime <> diff THEN
+            PRINT("Runtime violation - program runtime");
+            SwoRaiseEvent(23, "Runtime");
+            //RcuSetError(0, eRcuErrorRuntimeVerification, "Runtime violation - program runtime");
+         END_IF;
+      END_IF;
+      gStartCounter := 0;
+   END_IF;
+END_ROUTINE
+
+
+(* ----------------------------------------------------------------------------
+* globals
+*)
+
+
+TYPE GLOBAL
+   TTriggerValidationData : STRUCT
+      eventData  : TMcuJobEventData;
+      signalPos  : TMcuVector3;
+      signalPosError : ARRAY [3] OF TMinMax;
+      mainRunPos : TMcuVector3;
+      mainRunError : ARRAY [3] OF TMinMax;
+   END_STRUCT;
+   
+   TMinMax : STRUCT
+      min : REAL;
+      max : REAL;
+   END_STRUCT;
+END_TYPE
+
+   
+VAR GLOBAL
+   gTriggerNumber           : DINT;
+   gInitTriggerVerification : BOOL;
+   gInitRuntimeVerification : BOOL;
+   gDoTriggerVerification   : BOOL;
+   gDoRuntimeVerification   : BOOL;
+   gDoCyclicMcUpdateCheck   : BOOL;
+   gRuntime                 : DINT;
+   gTriggerEventData        : ARRAY [128] OF TTriggerValidationData;
+   gTriggerMaxPosFailure    : REAL := 3.5;
+   gTimeStepData            : ARRAY [512] OF DINT;
+   gTimeStep                : DINT;
+   gStartCounter            : DINT;
+   gErrorCnt                : DINT;
+END_VAR
+
+
+ROUTINE RuntimeVerification(CONST kin : TRcuKinematic; CONST text : STRING; 
+    CONST event : DINT; CONST writeStarep : BOOL; CONST dbgEvent : DINT) GLOBAL
+VAR
+    diff : DINT;
+    error : STRING;
+END_VAR
+
+    diff := kin.actExecData.mUpdateCounterMain - gStartCounter;
+    IF diff < 0 THEN
+        diff := diff + cgiMaxMcUpdCnt + 1;
+    END_IF;
+
+    IF gInitRuntimeVerification THEN
+        gTimeStepData[gTimeStep] := diff;
+    ELSE
+        IF diff <> gTimeStepData[gTimeStep] THEN
+            error := "Runtime violation - " + text;
+            PRINT(error);
+            SwoRaiseEvent(event, text);
+            IF writeStarep AND NOT gStarepWriteFlag THEN
+                gStarepWriteFlag := TRUE;
+            END_IF;
+            IF dbgEvent <> 0 THEN
+                SetDbgEvent(dbgEvent);
+            END_IF;
+            //RcuSetError(0, eRcuErrorRuntimeVerification, error);
+            //kin.ErrorReaction();   
+        END_IF;
+    END_IF;
+    gTimeStep := gTimeStep+1;
+END_ROUTINE
+
+
+(* ----------------------------------------------------------------------------
+*  private members
+*)
+
+
+ROUTINE CyclicUpdateCheck() PRIVATE
+VAR
+   chg   : BOOL;
+   old   : DINT;
+   new   : DINT;
+   cnt   : DINT;
+   start : DINT;
+END_VAR
+
+   WHILE TRUE DO
+      WAIT gDoCyclicMcUpdateCheck;
+      SwoAddDIntVariable(gErrorCnt, "CycleMissedCnt");
+      chg := IS_CHANGED(gRcuFocusedKinematic.actExecData.mUpdateCounterMain);
+      old := gRcuFocusedKinematic.actExecData.mUpdateCounterMain;
+      start := old;
+      WHILE gDoCyclicMcUpdateCheck DO    
+         WAIT chg;
+         LOCK;
+         chg := FALSE;     
+         UNLOCK;
+         new := gRcuFocusedKinematic.actExecData.mUpdateCounterMain;
+         IF new > old + 1 THEN
+            SwoRaiseEvent(22, "UpdateCountMissed");
+            gErrorCnt := gErrorCnt + 1;
+            cnt := new-start;
+            PRINT("UpdateCycle missed, total: "+STR(gErrorCnt) + " times, new: " + STR(new)+", old: "+STR(old));
+         END_IF;
+         old := new;
+      END_WHILE;
+      SwoRemoveVariable("CycleMissedCnt");
+   END_WHILE;
+END_ROUTINE
+
+
+(* ----------------------------------------------------------------------------
+*  system routines
+*)
+
+
+ROUTINE NEW()
+
+   START CyclicUpdateCheck() PRIO 1;
+END_ROUTINE
+
+
+ROUTINE DELETE()
+
+   SwoRemoveVariable("CycleMissedCnt");
+END_ROUTINE

@@ -1,0 +1,413 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 12.09.2013  | KLCH   | First release
+//  v2_01.01.00  | 21.11.2016  | KLCH   | AddOn: new TempHeatZone9; EcoTemp PT
+//  v2_01.02.00  | 31.01.2017  | KLCH   | Change: configuration of EcoTemp PT
+//  v2_01.03.00  | 28.09.2017  | KLCH   | Bugfix: correction of case-selection
+
+// Script includes all SubRoutines for common use of temperature control units
+
+Parameter Option1 Option2 Option14 EcoTempAxis1 EcoTempAxis3 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9
+
+SubRoutine CommonTempCtrl_MatHeater
+	Call CommonTempCtrl_DeviceOnMaterial1_AMH1
+Return
+
+SubRoutine CommonTempCtrl_DeviceOnMaterial1_AMH1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1
+		Delete
+	Endif
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase TempHeatZone1
+		Case 1
+			Call Common_AddDevice_AMH1
+		CaseElse
+			SelectCase TempHeatZone2
+				Case 1
+					Call Common_AddDevice_AMH1
+				CaseElse
+					SelectCase TempHeatZone3
+						Case 1
+							Call Common_AddDevice_AMH1
+						CaseElse
+							SelectCase TempHeatZone4
+								Case 1
+									Call Common_AddDevice_AMH1
+								CaseElse
+									SelectCase TempHeatZone5
+										Case 1
+											Call Common_AddDevice_AMH1
+										CaseElse
+											SelectCase TempHeatZone6
+												Case 1
+													Call Common_AddDevice_AMH1
+												CaseElse
+													SelectCase TempHeatZone7
+														Case 1
+															Call Common_AddDevice_AMH1
+														CaseElse
+															SelectCase TempHeatZone8
+																Case 1
+																	Call Common_AddDevice_AMH1
+																CaseElse
+																	SelectCase TempHeatZone9
+																		Case 1
+																			Call Common_AddDevice_AMH1
+																	EndSelect
+															EndSelect
+													EndSelect
+											EndSelect
+									EndSelect
+							EndSelect
+					EndSelect
+			EndSelect
+	EndSelect
+Return
+
+SubRoutine CommonTempCtrl_TempCtrlSupply
+	SelectCase Option1 // Process type
+		Case EcoDose_ES
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1
+		Case EcoDose_PM
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1
+		Case EcoDose_PCL
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1
+		Case EcoDose_PCL_PCL
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1_1
+			Call CommonTempCtrl_DeviceOnMaterial2_ATCP1_2
+		Case EcoDose_SM_PCL
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1_1
+			Call CommonTempCtrl_DeviceOnMaterial2_ATCP1_2
+		Case EcoDose_SM_SM
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1_1
+			Call CommonTempCtrl_DeviceOnMaterial2_ATCP1_2
+		Case EcoDose_SM
+			Call CommonTempCtrl_DeviceOnMaterial1_ATCP1
+		CaseElse
+			Message Wrong process type !! (CommonTempCtrl_TempCtrlSupply)
+	EndSelect
+Return
+
+SubRoutine CommonTempCtrl_DeviceOnMaterial1_ATCP1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1
+		Delete
+	Endif
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase EcoTempAxis1
+		Case No_EcoTempAxis1
+			SelectCase EcoTempAxis3
+				Case No_EcoTempAxis3
+				CaseElse
+					Call Common_AddDevice_Supply_ATCP1
+					Call CommonTempCtrl_ConfigureMaterial1_ATCP1
+			EndSelect
+		CaseElse
+			Call Common_AddDevice_Supply_ATCP1
+			Call CommonTempCtrl_ConfigureMaterial1_ATCP1
+	EndSelect
+Return
+
+SubRoutine CommonTempCtrl_DeviceOnMaterial1_ATCP1_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_1
+		Delete
+	Endif
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase EcoTempAxis1
+		Case No_EcoTempAxis1
+			SelectCase EcoTempAxis3
+				Case No_EcoTempAxis3
+				CaseElse
+					Call Common_AddDevice_Supply_ATCP1_1
+					Call CommonTempCtrl_ConfigureMaterial1_ATCP1_1
+			EndSelect
+		CaseElse
+			Call Common_AddDevice_Supply_ATCP1_1
+			Call CommonTempCtrl_ConfigureMaterial1_ATCP1_1
+	EndSelect
+Return
+
+SubRoutine CommonTempCtrl_DeviceOnMaterial2_ATCP1_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_2
+		Delete
+	Endif
+	
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectCase EcoTempAxis1
+		Case No_EcoTempAxis1
+			SelectCase EcoTempAxis3
+				Case No_EcoTempAxis3
+				CaseElse
+					Call Common_AddDevice_Supply_ATCP1_2
+					Call CommonTempCtrl_ConfigureMaterial2_ATCP1_2
+			EndSelect
+		CaseElse
+			Call Common_AddDevice_Supply_ATCP1_2
+			Call CommonTempCtrl_ConfigureMaterial2_ATCP1_2
+	EndSelect
+Return
+
+SubRoutine CommonTempCtrl_ConfigureMaterial1_ATCP1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1
+		SelectTab [CfgParameter]
+		SelectCfg ATCP1.ControlMode
+		Value 2
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATCP1_SetCurrent
+				BusType 6 //Sercos III
+				Vendor  2 //Phoenix Contact
+				Card    1 //Analog output current - 28 61 31 5
+				SelectHWSignal HWI_wATCP1_ActVoltage
+				BusType 6 //Sercos III
+				Vendor  2 //Phoenix Contact
+				Card    1 //Analog input current/voltage
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATCP1_SetCurrent
+				BusType 1 //Profibus-DP
+				Vendor  1 //Siemens
+				Card    2 //Analog output current - 6ES7 135-4GB01-0AB0
+				SelectHWSignal HWI_wATCP1_ActVoltage
+				BusType 1 //Profibus-DP
+				Vendor  1 //Siemens
+				Card    2 //Analog input current - 6ES7 134-4GB01-0AB0
+			CaseElse
+				Message Wrong bus master !! Only Profibus and Sercos III supported (CommonTempCtrl_ConfigureMaterial1_ATCP1)
+		EndSelect
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_ConfigureMaterial1_ATCP1_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_1
+		SelectTab [CfgParameter]
+		SelectCfg ATCP1_1.ControlMode
+		Value 2
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_1
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATCP1_1_SetCurrent
+				BusType 6 //Sercos III
+				Vendor  2 //Phoenix Contact
+				Card    1 //Analog output current - 28 61 31 5
+				SelectHWSignal HWI_wATCP1_1_ActVoltage
+				BusType 6 //Sercos III
+				Vendor  2 //Phoenix Contact
+				Card    1 //Analog input current/voltage
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATCP1_1_SetCurrent
+				BusType 1 //Profibus-DP
+				Vendor  1 //Siemens
+				Card    2 //Analog output current - 6ES7 135-4GB01-0AB0
+				SelectHWSignal HWI_wATCP1_1_ActVoltage
+				BusType 1 //Profibus-DP
+				Vendor  1 //Siemens
+				Card    2 //Analog input current - 6ES7 134-4GB01-0AB0
+			CaseElse
+				Message Wrong bus master !! Only Profibus and Sercos III supported (CommonTempCtrl_ConfigureMaterial1_ATCP1_1)
+		EndSelect
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_ConfigureMaterial2_ATCP1_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_2
+		SelectTab [CfgParameter]
+		SelectCfg ATCP1_2.ControlMode
+		Value 2
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_2
+		SelectCase Option14 // Variant of bus master
+			Case SercosIII
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATCP1_2_SetCurrent
+				BusType 6 //Sercos III
+				Vendor  2 //Phoenix Contact
+				Card    1 //Analog output current - 28 61 31 5
+				SelectHWSignal HWI_wATCP1_2_ActVoltage
+				BusType 6 //Sercos III
+				Vendor  2 //Phoenix Contact
+				Card    1 //Analog input current/voltage
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATCP1_2_SetCurrent
+				BusType 1 //Profibus-DP
+				Vendor  1 //Siemens
+				Card    2 //Analog output current - 6ES7 135-4GB01-0AB0
+				SelectHWSignal HWI_wATCP1_2_ActVoltage
+				BusType 1 //Profibus-DP
+				Vendor  1 //Siemens
+				Card    2 //Analog input current - 6ES7 134-4GB01-0AB0
+			CaseElse
+				Message Wrong bus master !! Only Profibus and Sercos III supported (CommonTempCtrl_ConfigureMaterial2_ATCP1_2)
+		EndSelect
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_SetConfigMaterial1_AMatManager1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+		SelectTab [CfgParameter]
+		SelectCfg AMatManager1.Temperature
+		OptionalUsed 1
+		SelectCfg AMatManager1.Temperature.ControlParam
+		OptionalUsed 1
+		SelectCfg AMatManager1.Temperature.MonitorStatic
+		OptionalUsed 1
+		SelectCfg AMatManager1.Temperature.SampleRate
+		OptionalUsed 1
+		SelectCfg AMatManager1.Temperature.TimeGunOn
+		OptionalUsed 1
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_ResetConfigMaterial1_AMatManager1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMatManager1
+		SelectTab [CfgParameter]
+		SelectCfg AMatManager1.Temperature
+		OptionalUsed 0
+		SelectCfg AMatManager1.Temperature.ControlParam
+		OptionalUsed 0
+		SelectCfg AMatManager1.Temperature.MonitorStatic
+		OptionalUsed 0
+		SelectCfg AMatManager1.Temperature.SampleRate
+		OptionalUsed 0
+		SelectCfg AMatManager1.Temperature.TimeGunOn
+		OptionalUsed 0
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_SetConfigMaterial2_AMatManager2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+		SelectTab [CfgParameter]
+		SelectCfg AMatManager2.Temperature
+		OptionalUsed 1
+		SelectCfg AMatManager2.Temperature.ControlParam
+		OptionalUsed 1
+		SelectCfg AMatManager2.Temperature.MonitorStatic
+		OptionalUsed 1
+		SelectCfg AMatManager2.Temperature.SampleRate
+		OptionalUsed 1
+		SelectCfg AMatManager2.Temperature.TimeGunOn
+		OptionalUsed 1
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_ResetConfigMaterial2_AMatManager2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.AMatManager2
+		SelectTab [CfgParameter]
+		SelectCfg AMatManager2.Temperature
+		OptionalUsed 0
+		SelectCfg AMatManager2.Temperature.ControlParam
+		OptionalUsed 0
+		SelectCfg AMatManager2.Temperature.MonitorStatic
+		OptionalUsed 0
+		SelectCfg AMatManager2.Temperature.SampleRate
+		OptionalUsed 0
+		SelectCfg AMatManager2.Temperature.TimeGunOn
+		OptionalUsed 0
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_SetConfigWaterQuench_AManagerSW1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench.AManagerSW1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench.AManagerSW1
+		SelectTab [CfgParameter]
+		SelectCfg AManagerSW1.Temperature
+		OptionalUsed 1
+		SelectCfg AManagerSW1.Temperature.ControlParam
+		OptionalUsed 0
+		SelectCfg AManagerSW1.Temperature.MonitorStatic
+		OptionalUsed 0
+		SelectCfg AManagerSW1.Temperature.SampleRate
+		OptionalUsed 0
+		SelectCfg AManagerSW1.Temperature.TimeGunOn
+		OptionalUsed 0
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_SetConfigMaterial1_EcoTempPT
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+		SelectCase EcoTempAxis3	//Peltier type
+			Case No_EcoTempAxis3
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+				SelectTab [CfgParameter]
+				SelectCfg ATCP1_WT12.MasterOrder
+				Value 1
+			CaseElse
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12
+				SelectTab [CfgParameter]
+				SelectCfg ATCP1_WT12.MasterOrder
+				Value 2
+		EndSelect
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT51
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT51
+		SelectTab [CfgParameter]
+		SelectCfg ATCP1_WT51.MasterOrder
+		Value 1
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_SetConfigMaterial1_Multi_EcoTempPT
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+		SelectCase EcoTempAxis3	//Peltier type
+			Case No_EcoTempAxis3
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+				SelectTab [CfgParameter]
+				SelectCfg ATCP1_WT12_1.MasterOrder
+				Value 1
+			CaseElse
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT12_1
+				SelectTab [CfgParameter]
+				SelectCfg ATCP1_WT12_1.MasterOrder
+				Value 2
+		EndSelect
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT51_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.ATCP1_WT51_1
+		SelectTab [CfgParameter]
+		SelectCfg ATCP1_WT51_1.MasterOrder
+		Value 1
+	Endif
+Return
+
+SubRoutine CommonTempCtrl_SetConfigMaterial2_Multi_EcoTempPT
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+		SelectCase EcoTempAxis3	//Peltier type
+			Case No_EcoTempAxis3
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+				SelectTab [CfgParameter]
+				SelectCfg ATCP1_WT12_2.MasterOrder
+				Value 1
+			CaseElse
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT12_2
+				SelectTab [CfgParameter]
+				SelectCfg ATCP1_WT12_2.MasterOrder
+				Value 2
+		EndSelect
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT51_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATCP1_WT51_2
+		SelectTab [CfgParameter]
+		SelectCfg ATCP1_WT51_2.MasterOrder
+		Value 1
+	Endif
+Return

@@ -1,0 +1,315 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2006 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         05.03.2007                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       TRcuVerifyDriveParam.tts                                    *
+*    Description: Verify parameters of the drive with cfg-file                *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 
+*)
+
+//-----------------------------------------------------------------------------
+// read the values from catalog and scale factor from sercos
+//-----------------------------------------------------------------------------
+ROUTINE ReadConfig(iRobot : DINT; iDrive : DINT)
+ VAR
+  i      : INT;
+  j      : INT;
+  s1     : STRING;
+  handle : DINT;
+  r      : REAL;
+  catVal  : DINT;
+  dragParamRead : BOOL;
+  lagParamRead : BOOL;
+  optional : BOOL;
+ END_VAR
+ 
+   myRobot := MAP(PaintRobot[iRobot]);
+   
+   IF NOT bConfigRead THEN
+      //look for parameter under "[RC]" in config
+      IF CatalogReadIntRange(giRcBaseHdl, "verificationDriveParam", catVal, 0, 1, TRUE) THEN
+         bEnabled := (catVal = 1);
+      bConfigRead := TRUE;
+      END_IF;
+      //if rehau config and parameter for verificationDriveParam not found under "[RC]" jet
+      IF (giFieldBusSlaveType = 1) AND NOT (lagParamRead AND dragParamRead) THEN
+      s1 := "KINEMATIC:" + STR(gyIndexOfKinematics[PaintRobot[iRobot].kinListInx]);
+      IF CatalogGetHandleRelative(giRcKinHdl, s1, handle) THEN
+         IF CatalogReadIntRange(handle, "verificationDriveParam", catVal, 0, 1, TRUE) THEN
+            bEnabled := (catVal = 1);
+               bConfigRead := TRUE;
+            END_IF;      
+         END_IF;      
+      END_IF;
+      IF NOT bConfigRead THEN  
+         RcuSetMessageOnce(TRcuVerifyDriveParam_FaNotInCfg, myRobot.kinListInx, 1, i, "_RcuConfiguration.RcuReadConfigRob", "[RC] / [RC.KINEMATIC:" + STR(PaintRobot[iRobot].kinListInx) + "] Param: verificationDriveParam");
+      END_IF;
+   END_IF;   
+ 
+   //if drive is simulated do nothing
+   IF PaintRobot[iRobot].drive[iDrive].simulated OR PaintRobot[iRobot].drive[iDrive].ioSimulated THEN
+      yDrive[iDrive].bDriveInSim := TRUE;
+      RETURN;
+   END_IF;
+   
+   IF NOT bEnabled THEN
+      RETURN;
+   END_IF;
+   
+   IF myRobot.drive[iDrive].bEtherCAT THEN
+      myRobot.DebugPrint(eTraceEquipment, "TRcuVerifyDriveParam.ReadConfig für ETHERCAT nicht implementiert");
+      bEnabled := FALSE;
+      RETURN;
+      
+     // ??????????????????????????ETHERCAT????????????????????????????
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 1 Lageregler Kv-Faktor
+      yDrive[iDrive].yData[0].ident    := 16#2B8D;                         // S-0-0104 entspricht Object 2B8Dh - CON PCON Kp 
+      yDrive[iDrive].yData[0].subIndex := 0;                               // position control gain 
+      yDrive[iDrive].yData[0].sCfgName := "S0104";
+      
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 2 Geschwindigkeitsregler-Proportionalverstärkung
+      yDrive[iDrive].yData[1].ident    := 16#2B87;                         // S-0-0100 entspricht Object 2B87h - CON SCON Ctrl 
+      yDrive[iDrive].yData[1].subIndex := 1;                               // speed control gain 
+      yDrive[iDrive].yData[1].sCfgName := "S0100";
+      
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 3 Geschwindigkeitsregler-Nachstellzeit
+      yDrive[iDrive].yData[2].ident    := 16#2B87;                         // S-0-0101 entspricht Object 2B87h - CON SCON Ctrl 
+      yDrive[iDrive].yData[2].subIndex := 2;                               // speed control integration time constant
+      yDrive[iDrive].yData[2].sCfgName := "S0101";
+      
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 4 Stromregler-Proportionalverstärkung 1
+      yDrive[iDrive].yData[2].ident    := 16#2B88;                         // S-0-0106 entspricht Object 2B88h - CON CCON Ctrl  
+      yDrive[iDrive].yData[2].subIndex := 1;                               // current control integration time constant
+      yDrive[iDrive].yData[2].sCfgName := "S0106";
+      
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 5 Stromregler-Nachstellzeit 1
+      yDrive[iDrive].yData[2].ident    := 16#2B88;                         // S-0-0107 entspricht Object 2B88h - CON CCON Ctrl  
+      yDrive[iDrive].yData[2].subIndex := 2;                               // current control integration time constant
+      yDrive[iDrive].yData[2].sCfgName := "S0107";
+      
+      FOR i:=0 TO yDrive[iDrive].iNrOfParameters-1 DO
+         s1 := "KINEMATIC:" + STR(gyIndexOfKinematics[PaintRobot[iRobot].kinListInx]) + ".Joint" + STR(iDrive + 1);
+         IF CatalogGetHandleRelative(giRcKinHdl, s1, handle) THEN
+            optional := FALSE;
+            IF CatalogReadReal(handle, yDrive[iDrive].yData[i].sCfgName, r, optional) THEN
+               yDrive[iDrive].yData[i].valueCfg := r;
+            ELSE
+               //temporary until Gunther Raila has implemented this parameter
+               IF (yDrive[iDrive].yData[i].sCfgName = "P0041") THEN
+                  yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters - 1;
+               ELSE
+                   yDrive[iDrive].bConfigError       := TRUE;
+                   yDrive[iDrive].yData[i].valueCfg  := 0.0;
+                   yDrive[iDrive].yData[i].iDecimals :=   0;
+                   //Firmware is setting the error message
+               END_IF;
+            END_IF;   
+         ELSE
+            yDrive[iDrive].bConfigError       := TRUE;
+            yDrive[iDrive].yData[i].valueCfg  := 0.0;
+            yDrive[iDrive].yData[i].iDecimals :=   0;
+            RcuSetMessageOnce(TRcuVerifyDriveParam_ErrConfig, myRobot.kinListInx, 1, instId, "TRcuVerifyDriveParam.ReadConfig", s1);
+         END_IF;   
+      END_FOR;
+      RETURN;
+   END_IF;
+   
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 1
+   yDrive[iDrive].yData[0].ident    := 100;                         // S-0-0100
+   yDrive[iDrive].yData[0].sCfgName := "S0100";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 2
+   yDrive[iDrive].yData[1].ident    := 101;                         // S-0-0101
+   yDrive[iDrive].yData[1].sCfgName := "S0101";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 3
+   yDrive[iDrive].yData[2].ident    := 104;                         // S-0-0104
+   yDrive[iDrive].yData[2].sCfgName := "S0104";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 4
+   yDrive[iDrive].yData[3].ident    := 106;                         // S-0-0106
+   yDrive[iDrive].yData[3].sCfgName := "S0106";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 5
+   yDrive[iDrive].yData[4].ident    := 107;                         // S-0-0107
+   yDrive[iDrive].yData[4].sCfgName := "S0107";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 6
+   yDrive[iDrive].yData[5].ident    := 348;                         // S-0-0348
+   yDrive[iDrive].yData[5].sCfgName := "S0348";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 7
+   yDrive[iDrive].yData[6].ident    :=   4 + P_ParamMask;           // P-0-0004
+   yDrive[iDrive].yData[6].sCfgName := "P0004";
+   yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1;   // Nr. 8
+   yDrive[iDrive].yData[7].ident    :=  99 + P_ParamMask;           // P-0-0099
+   yDrive[iDrive].yData[7].sCfgName := "P0099";
+   //only EcoDrive uses this parameter
+   IF PaintRobot[iRobot].drive[iDrive].deviceType = eRcuEcoDrive THEN
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1; //Nr. 9
+      yDrive[iDrive].yData[8].ident    := 181 + P_ParamMask;              // P-0-0181
+      yDrive[iDrive].yData[8].sCfgName := "P0181";
+   ELSIF PaintRobot[iRobot].drive[iDrive].deviceType = eRcuIndraDrive THEN
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1; //Nr. 9
+      yDrive[iDrive].yData[8].ident    := 41 + P_ParamMask;             // P-0-0041
+      yDrive[iDrive].yData[8].sCfgName := "P0041";     
+   ELSIF PaintRobot[iRobot].drive[iDrive].deviceType = eRcuIndraDriveCS THEN
+      yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters + 1; //Nr. 9
+      yDrive[iDrive].yData[8].ident    := 41 + P_ParamMask;             // P-0-0041
+      yDrive[iDrive].yData[8].sCfgName := "P0041";         
+   END_IF;
+
+   FOR i:=0 TO yDrive[iDrive].iNrOfParameters-1 DO
+      s1 := "KINEMATIC:" + STR(gyIndexOfKinematics[PaintRobot[iRobot].kinListInx]) + ".Joint" + STR(iDrive + 1);
+      IF CatalogGetHandleRelative(giRcKinHdl, s1, handle) THEN
+         optional := (yDrive[iDrive].yData[i].sCfgName = "P0041");
+         IF CatalogReadReal(handle, yDrive[iDrive].yData[i].sCfgName, r, optional) THEN
+            yDrive[iDrive].yData[i].valueCfg := r;
+            IF GetScaleFactor(iDrive, PaintRobot[iRobot].drive[iDrive].sercHdl, i) THEN
+               FOR j:=0 TO yDrive[iDrive].yData[i].iDecimals-1 DO
+                   yDrive[iDrive].yData[i].valueCfg := yDrive[iDrive].yData[i].valueCfg * 10.0;
+               END_FOR;
+            ELSE
+               yDrive[iDrive].bConfigError       := TRUE;
+               yDrive[iDrive].yData[i].valueCfg  := 0.0;
+               yDrive[iDrive].yData[i].iDecimals :=   0;
+               //GetScaleFactor is setting the error message
+            END_IF;
+         ELSE
+            //temporary until Gunther Raila has implemented this parameter
+            IF (yDrive[iDrive].yData[i].sCfgName = "P0041") THEN
+               yDrive[iDrive].iNrOfParameters := yDrive[iDrive].iNrOfParameters - 1;
+            ELSE
+                yDrive[iDrive].bConfigError       := TRUE;
+                yDrive[iDrive].yData[i].valueCfg  := 0.0;
+                yDrive[iDrive].yData[i].iDecimals :=   0;
+                //Firmware is setting the error message
+            END_IF;
+         END_IF;   
+      ELSE
+         yDrive[iDrive].bConfigError       := TRUE;
+         yDrive[iDrive].yData[i].valueCfg  := 0.0;
+         yDrive[iDrive].yData[i].iDecimals :=   0;
+         RcuSetMessageOnce(TRcuVerifyDriveParam_ErrConfig, myRobot.kinListInx, 1, instId, "TRcuVerifyDriveParam.ReadConfig", s1);
+      END_IF;   
+   END_FOR;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// verify drive and cfg parameters
+//-----------------------------------------------------------------------------
+ROUTINE GetDataValid(drive : DINT; sercHdl : DINT) : BOOL
+ VAR
+  i         : INT;
+  iValueCfg : DINT;
+ END_VAR   
+  
+  //if not enabled don't stop drives OR drive is simulated do nothing
+  IF (NOT bEnabled OR yDrive[drive].bDriveInSim) THEN
+     RETURN TRUE;
+  END_IF;
+   
+  IF yDrive[drive].bConfigError THEN
+     RETURN FALSE;
+  END_IF;
+  
+  FOR i:=0 TO yDrive[drive].iNrOfParameters-1 DO
+     IF NOT GetDriveValue(drive, sercHdl, i) THEN
+        //GetDriveValue is setting the error message
+        RETURN FALSE;
+     END_IF;
+     iValueCfg := DINT(yDrive[drive].yData[i].valueCfg + 0.5);
+     IF iValueCfg <> yDrive[drive].yData[i].valueDrive THEN
+        RcuSetMessageOnce(TRcuVerifyDriveParam_ErrParDiff, myRobot.kinListInx, 1, instId, "TRcuVerifyDriveParam.GetDataValid", STR(drive+1), yDrive[drive].yData[i].sCfgName);
+        RETURN FALSE;
+     END_IF;   
+  END_FOR;
+  RETURN TRUE;
+  
+END_ROUTINE
+
+(*******************************************************************************
+* private members
+*)
+TYPE PRIVATE
+  TData : STRUCT
+    ident      : DINT;
+    subIndex   : DINT; 
+    iDecimals  : DINT;
+    valueDrive : REAL;
+    sCfgName   : STRING;
+    valueCfg   : REAL;
+  END_STRUCT;
+  TDrive : STRUCT
+    bConfigError   : BOOL;
+    bDriveInSim    : BOOL;
+    iNrOfParameters : INT;
+    yData          : ARRAY [9] OF TData;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  instId         : DINT;
+  bConfigRead    : BOOL;
+  bEnabled       : BOOL;
+  yDrive         : ARRAY [cMcuMaxJ] OF TDrive;
+  myRobot        : MAPTO TRcuRobot;
+END_VAR
+
+//-----------------------------------------------------------------------------
+// read the scale factor from sercos
+//-----------------------------------------------------------------------------
+ROUTINE GetScaleFactor(drive : DINT; sercHdl : DINT; index : INT) : BOOL PRIVATE
+ VAR
+   ret     : TKSC_Status; 
+   i       : DINT;
+ END_VAR  
+   
+  ret := RcReadSercosParameter(sercHdl, yDrive[drive].yData[index].ident, i, 3, 3);
+  IF ret = eKSC_Ok THEN
+     yDrive[drive].yData[index].iDecimals := SHR(i, 24) AND 15;
+     RETURN TRUE;
+  ELSE
+     RcuSetMessageOnce(TRcuVerifyDriveParam_ErrScale, myRobot.kinListInx, 1, instId, "TRcuVerifyDriveParam.GetScaleFactor", yDrive[drive].yData[index].sCfgName, STR(drive+1));
+     RETURN FALSE;
+  END_IF;
+  
+  
+END_ROUTINE
+   
+//-----------------------------------------------------------------------------
+// read parameter from sercos and scale it with the AttrFactor
+//-----------------------------------------------------------------------------
+ROUTINE GetDriveValue(drive : DINT; sercHdl : DINT; index : INT) : BOOL PRIVATE
+ VAR
+   ret     : TKSC_Status; 
+   iValue  : DINT;
+ END_VAR
+  
+   ret := RcReadSercosParameter(sercHdl, yDrive[drive].yData[index].ident, iValue , 1, 7);
+   IF ret <> eKSC_Ok THEN
+       yDrive[drive].yData[index].valueDrive := 0.0;
+       RcuSetMessageOnce(TRcuVerifyDriveParam_ErrValue, myRobot.kinListInx, 1, instId, "TRcuVerifyDriveParam.GetDriveValue", yDrive[drive].yData[index].sCfgName, STR(drive+1));
+       RETURN FALSE;
+   ELSE
+      yDrive[drive].yData[index].valueDrive := iValue;
+      RETURN TRUE;
+   END_IF;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// system routine
+//-----------------------------------------------------------------------------
+ROUTINE NEW()
+  instId := RcuGetInstanceId();
+END_ROUTINE

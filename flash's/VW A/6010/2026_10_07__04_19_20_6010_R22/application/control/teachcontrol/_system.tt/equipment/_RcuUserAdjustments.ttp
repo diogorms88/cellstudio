@@ -1,0 +1,97 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : _RcuUserAdjustments.ttp
+*  First Author : pen
+*  Date         : 27.11.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  data which are necessary for the RCU but should be adjusted by the user
+*------------------------------------------------------------------------------
+* 20.01.05 nmr: Enumeration for Kemroscope-Events added
+* 16.02.05 nmr: cgiRcuNrRefSysForActCartVals added
+* 29.03.05 nmr: Enumeration for User-Icons added
+* 20.04.05 BMA: Enumeration for reference-coordinatesystem extended
+* 04.07.05 kto: translated into english
+* 08.09.05 nmr: changes for Teachview 2.14
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+CONSTANT GLOBAL
+   // maximum number of joints
+   cgiRcuMaxJoints : DINT := 7;
+   
+   // maximum number of wrist joints
+   cgiRcuMaxWristJoints : DINT := 3; 
+   
+   // maximum number of auxiliary joints
+   cgiRcuMaxAuxJoints : DINT := 3;
+
+   // maximum number of main modes
+   cgiRcuMaxMainModes : DINT := 8;
+
+   // maximum number of kinematics
+   cgiRcuMaxKinematics : DINT := 4;
+
+   // number of reference systems for Mcu-actual-data
+   cgiRcuNrRefSysForActCartVals : DINT := 18;
+END_CONSTANT
+
+TYPE GLOBAL
+   // Enumeration denoting the different reference systems
+   TRcuReferenceSystem : (eRcuRefSystemInvalid := -1, eRcuRefSystemWorld, 
+      eRcuRefSystemConveyorBase,
+      eRcuRefSystemVisionAbs1, eRcuRefSystemVisionRel1, eRcuRefSystemConveyor1, 
+      eRcuRefSystemConveyorPostLink1, eRcuRefSystemSensor1, eRcuRefSystemObject1,  
+      eRcuRefSystemFixTool1,
+      eRcuRefSystemVisionAbs2, eRcuRefSystemVisionRel2, eRcuRefSystemConveyor2, 
+      eRcuRefSystemConveyorPostLink2, eRcuRefSystemSensor2, eRcuRefSystemObject2, 
+      eRcuRefSystemFixTool2,
+      eRcuRefSystemVisionAbs3, eRcuRefSystemVisionRel3, eRcuRefSystemConveyor3, 
+      eRcuRefSystemConveyorPostLink3, eRcuRefSystemSensor3, eRcuRefSystemObject3, 
+      eRcuRefSystemFixTool3,
+      eRcuRefSystemVisionAbs4, eRcuRefSystemVisionRel4, eRcuRefSystemConveyor4, 
+      eRcuRefSystemConveyorPostLink4, eRcuRefSystemSensor4, eRcuRefSystemObject4, 
+      eRcuRefSystemFixTool4,
+      eRcuNrOfRefSystems);
+
+
+   // Enumeration denoting the different offset objects
+   TRcuOffsetObject : (eRcuOffsObjInvalid := -1, eRcuOffsObj1, eRcuNrOfOffsObj);
+
+   // Enumeration denoting the different kemroscope-events
+   TRcuKemroscopeEvents : (
+      eScopeTriggerGunOn := 1, eScopeGunOnCorrPreWarn, eScopeSignalGunOn,
+      eScopeTriggerGunOff, eScopeGunOffCorrPreWarn, eScopeSignalGunOff, 
+      eScopeTriggerBrush, eScopeBrushCorrPreWarn,  eScopeSignalGunOnMR,
+      eScopeSignalGunOffMR, eScopeSignalBrushMR, eScopeSignalBrush,
+      eScopeTriggerProcess, eScopeProcessCommandCorrPreWarn, eScopeSignalProcessMR, eScopeSignalProcess,
+      eScopeTriggerVision, eScopeVisionCommandCorrPreWarn, eScopeSignalVisionMR, eScopeSignalVision,
+      eScopeHandlerTool);
+      
+   // Enumeration denoting the different user-icons
+   (*$$$$$* motionstep *$$$$$*)
+   TRcuUserIcons : (eIconTrigger := 0, eIconDirection, eIconConveyor, eIcon4, eIcon5, eIconMotionStep);
+   TRcuConveyorIcons : (eIconConveyorNormal := 0, eIconConveyorJogging);
+   TRcuTriggerIcons : (eIconTriggerNormal := 0, eIconTriggerAsPoint);
+   (*$$$$$* motionstep *$$$$$*)
+   TMotionStep : (eMotionStepInactive := 0, eMotionStepSegment, (*eMotionStepAll,*) eMotionStepInterpreter, eMotionStepMax);
+   TMotionStepIcons : (eStepInactiveIcon := 0, eStepSegmentIcon,  eStepSegmentInvIcon);
+   TRcuDirectionIcons : (eIconDirectionNormal := 0, eIconDirectionGoldenRepos, eIconDirectionBackward);
+END_TYPE
+
+VAR GLOBAL
+   gRcuRefSysNames : ARRAY[eRcuNrOfRefSystems] OF String32 := 
+      ("World", "ConveyorBase", "VisionAbs1", "VisionRel1", "Conveyor1", "ConveyorPostLink1", "Sensor1", "Object", "FixTool1",
+         "VisionAbs2", "VisionRel2", "Conveyor2", "ConveyorPostLink2", "Sensor2", "Object ", "FixTool2", 
+         "VisionAbs3", "VisionRel3", "Conveyor3", "ConveyorPostLink3", "Sensor3", "Object  ", "FixTool3", 
+         "VisionAbs4", "VisionRel4", "Conveyor4", "ConveyorPostLink4", "Sensor4", "Object   ", "FixTool4");
+END_VAR

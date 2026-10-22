@@ -1,0 +1,400 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2004 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RC
+*  Modul        : _RcuSetMessage.ttp
+*  First Author : nmr
+*  Date         : 30.03.2004
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Global Routines to set Errors, Warnings and Infos
+*------------------------------------------------------------------------------
+* 25.09.04 nmr: Adaption on changed interface to GetUserProgInfo
+* 25.01.05 nmr: change declaration from CONST -> VAR_IN in routinedeclarations 
+*               to use expressions on call
+* 04.07.05 kto: translated into english
+* 12.07.05 nmr: removed RcuSetError2, -Warning2, -Info2. Now RcuSetError, -Warning, -Info
+*               can take 0 - 3 parameters
+* 28.03.07 kto: changed messageparameter (%2, %3, %4 --> %1, %2, %3) in RcuSetMessageOnce
+*               and RcuResetMessage
+* 22.11.10 kto: add new variable in structure tsMessageSystemLocal (mErrorQuit : BOOL) and 
+*               renamed variable tsMessageSystemGlobal from mErrorQuit to mErrorQuitSCU
+*               and RcuResetMessage
+* 13.12.10 kto: remove error suppression v1; messages are only suppressed on hmi now
+* 25.05.11 kto: new element mMotionAllowedFromProcess:BOOL in structure tsMessageSystemLocal 
+* 04.03.14 kto: removed writing drive positions in additional info structure
+* 14.10.15 kto: messages set with kinNr=-1 was not shown on hmi
+* 16.12.15 wnt: add new structure elements tsMessageSystemGlobal->mErrorQuit,tsMessageSystem->mExCtrlIsOff,mFuseDropped 
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+CONSTANT
+ cFgArraySize : INT := 4 (* upper bound of functiongroup-array [1..n] *);
+END_CONSTANT
+
+CONSTANT GLOBAL
+   // error-relevant messagebuffers
+   cgiRcuNrOfErrorBuffers : DINT := 8;   
+   cgiRcuMaxBufferClass   : DINT := 15; 
+   cgiRcuAllBufferClasses : DINT := eKMSG_Class_All; 
+   
+   cgiMsgClassFatalError      : INT := 1;
+   cgiMsgClassError           : INT := 2;
+   cgiMsgClassWarning         : INT := 4;
+   cgiMsgClassInfo            : INT := 5;
+   cgiMsgClassStopAtEndOfCar  : INT := 6;
+   cgiMsgClassStopStation     : INT := 7;
+END_CONSTANT
+
+TYPE
+ tsMessageSystemLocal : 
+   STRUCT 
+     mMotionAllowedFromProcess : BOOL;
+     mMotionAllowed : BOOL := TRUE;
+     mChannelError : BOOL;
+     mMotionError : BOOL;
+     mProcessError : BOOL;
+     mStopAtEndOfCarError : BOOL;
+     mStopStationError : BOOL;
+     mProcessRelease : BOOL;
+     mMotionRelease : BOOL;
+     mErrorQuit : BOOL;
+   END_STRUCT;
+   
+ tyMessageSystemLocal : ARRAY  [1..cFgArraySize] OF tsMessageSystemLocal;
+ 
+ tsMessageSystemGlobal : 
+   STRUCT 
+     mFatalError : BOOL;
+     mQuitAll : BOOL;
+     mErrorQuit : BOOL;
+     mErrorQuitSCU : BOOL;
+     mFirmwareError : BOOL;
+     mErrorQuitMotion : BOOL;
+   END_STRUCT;
+   
+ tsMessageSystem : 
+   STRUCT 
+     mSuppressMessages : BOOL;
+     mMaskProcessErrors : BOOL;
+     mMaskMotionErrors : BOOL;
+     mExCtrlIsOff : BOOL;
+     mFuseDropped : BOOL;
+     sGlobal : tsMessageSystemGlobal;
+     sLocal : tyMessageSystemLocal;
+   END_STRUCT;
+END_TYPE
+
+VAR
+   svMessagesystem  : MAPTO tsMessageSystem;
+END_VAR
+
+VAR GLOBAL
+   gyErrorBuffers : ARRAY [1 .. cgiRcuNrOfErrorBuffers] OF KMSG_Class := 
+      (eKMSG_Class_ErrorFatal, eKMSG_Class_Error, eKMSG_Class_ErrorMinor, 
+       eKMSG_Class_ErrorApp, eKMSG_Class_7, eKMSG_Class_8, eKMSG_Class_9, eKMSG_Class_10);
+   giErrorClasses   : DINT;
+   giWarningClasses : DINT;
+   giInfoClasses    : DINT;
+
+END_VAR
+
+VAR
+   mFatalError : MAPTO BOOL;
+END_VAR
+
+
+ROUTINE RcuSetMessageOnce(CONST ident : DINT;
+                       VAR_IN kinNr : DINT;
+                       VAR_IN msgCount : DINT;
+                       VAR_IN instNr : DINT;
+                       VAR_IN location : STRING;
+                       OPTIONAL VAR_IN param2 : STRING;
+                       OPTIONAL VAR_IN param3 : STRING;
+                       OPTIONAL VAR_IN param4 : STRING) GLOBAL
+   
+   VAR
+      class           : KMSG_Class;
+      diCompNr        : DINT;
+      diErrNr         : DINT;
+      classNr         : DINT;
+      progName        : STRING;
+      lineNr          : DINT;
+      hdl             : DINT;
+      msgStatus       : KMSG_Status;
+      state           : KMSG_State;
+      instance        : DINT;
+      info            : STRING;
+      iMsgInfoCounter : DINT;
+      kinNrStr        : STRING;
+      mFatal          : BOOL := FALSE;
+   END_VAR
+   
+// if no fatal error was set then set all messages
+   
+   IF NOT mFatalError THEN
+
+       diCompNr := (ident / 65536) AND 4095;
+       diErrNr := ident AND 65535;
+       classNr := ident / 268435456;
+       kinNr := kinNr + 1;
+
+       CASE classNr OF
+         1 : class := eKMSG_Class_ErrorApp; // Fatal Error
+         2 : class := eKMSG_Class_7;        // Normal Error
+         3 : class := eKMSG_Class_8;        // Channel Error
+         4 : class := eKMSG_Class_11;       // Warning
+         5 : class := eKMSG_Class_12;       // Info
+         6 : class := eKMSG_Class_9;        // Stop At End Of Car
+         7 : class := eKMSG_Class_10;       // Stop Station (but not the whole line)
+       END_CASE;
+
+       //kto: if fatal error occurs, change type to normal error
+       IF class = eKMSG_Class_ErrorApp THEN
+         class       := eKMSG_Class_7;
+         mFatal := TRUE;
+       END_IF;
+
+       IF kinNr < 1 THEN
+          kinNr := giNrMasterRobot + 1;
+       END_IF;
+   
+       kinNrStr := PaintRobot[kinNr-1].robotName + ": ";
+       
+       instance := kinNr*1000000 + msgCount*1000 + instNr;
+
+       GetUserProgInfo(progName, lineNr, hdl);
+
+       IF progName <> "" THEN
+          info := location + " " + STR(msgCount) + ":" + STR(instNr) + " | " + progName + ":" + STR(lineNr);
+       ELSE
+          info := location + " " + STR(msgCount) + ":" + STR(instNr) + " | ";
+       END_IF;
+
+       msgStatus := KMSG_GetMsgState(class, diCompNr, diErrNr, instance, state);
+
+       IF NOT IS_MAPPED(svMessagesystem) OR
+          ((svMessagesystem.mMaskMotionErrors
+           AND NOT svMessagesystem.sLocal[kinNr].mMotionRelease
+           AND NOT mFatal) AND
+          _system.gbBootupFinished) THEN
+          ; // Do nothing if variable not mapped or message should be suppressed because robot is unselected.
+            // But don´t suppress messages during bootup.
+       ELSE
+          IF ((msgStatus=eKMSG_Status_NotOk) OR 
+              (state=eKMSG_State_Invalid) OR NOT
+              (state=eKMSG_State_InactiveNotAck) OR 
+              (state=eKMSG_State_InactiveAck)) THEN
+
+             IF _system.gbBootupFinished THEN
+                 // KTO
+                 // set additional messageinfos 
+                 iMsgInfoCounter := PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.iMsgInfoCounter;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].CompNr      := diCompNr;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].MsgNr       := diErrNr;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].DeviceCount := instNr;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].MsgCount    := msgCount;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].Location    := location;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].PrgName     := progName;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].LineNr      := lineNr;
+
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].SuppressionInfos.iFgNumber  := kinNr;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].SuppressionInfos.zFuName    := "TeachControl";
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].SuppressionInfos.iChannelNr := 0;
+
+                 // increment ringbufferslot
+                 iMsgInfoCounter := iMsgInfoCounter + 1;
+                 // if ringbuffer is full go to first element
+                 IF iMsgInfoCounter > 20 THEN
+                   iMsgInfoCounter := 1;
+                 END_IF;
+                 PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.iMsgInfoCounter := iMsgInfoCounter;
+
+               END_IF;
+
+               KMSG_SetMsg(class, diCompNr, diErrNr, instance, param2, param3, param4, kinNrStr);
+          END_IF;
+
+         //kto: if error was a fatal error set signal to iec to stop iec
+         IF mFatal THEN
+           mFatalError := TRUE; 
+         END_IF;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE RcuResetMessage(CONST ident : DINT;
+                       VAR_IN kinNr : DINT;
+                       VAR_IN msgCount : DINT;
+                       VAR_IN instNr : DINT;
+                       VAR_IN location : STRING;
+                       OPTIONAL VAR_IN param2 : STRING;
+                       OPTIONAL VAR_IN param3 : STRING;
+                       OPTIONAL VAR_IN param4 : STRING) GLOBAL
+   
+   VAR
+      class           : KMSG_Class;
+      diCompNr        : DINT;
+      diErrNr         : DINT;
+      classNr         : DINT;
+      progName        : STRING;
+      lineNr          : DINT;
+      hdl             : DINT;
+      msgStatus       : KMSG_Status;
+      state           : KMSG_State;
+      instance        : DINT;
+      info            : STRING;
+      iMsgInfoCounter : DINT;
+      kinNrStr        : STRING;
+      zMsgStringTmp   : STRING;
+   END_VAR
+   
+   IF NOT mFatalError THEN
+       diCompNr := (ident / 65536) AND 4095;
+       diErrNr := ident AND 65535;
+       classNr := ident / 268435456;
+       kinNr := kinNr + 1;
+
+       CASE classNr OF
+         1 : class := eKMSG_Class_ErrorApp; // Fatal Error
+         2 : class := eKMSG_Class_7;        // Normal Error
+         3 : class := eKMSG_Class_8;        // Channel Error
+         4 : class := eKMSG_Class_11;       // Warning
+         5 : class := eKMSG_Class_12;       // Info
+         6 : class := eKMSG_Class_9;        // Stop At End Of Car
+         7 : class := eKMSG_Class_10;       // Stop Station (but not the whole line)
+       END_CASE;
+
+       instance := kinNr*1000000 + msgCount*1000 + instNr;
+
+       GetUserProgInfo(progName, lineNr, hdl);
+
+       IF progName <> "" THEN
+          info := location + " " + STR(msgCount) + ":" + STR(instNr) + " | " + progName + ":" + STR(lineNr);
+       ELSE
+          info := location + " " + STR(msgCount) + ":" + STR(instNr) + " | ";
+       END_IF;
+
+       IF kinNr >= 1 THEN
+          kinNrStr := PaintRobot[kinNr-1].robotName + ": ";
+       ELSE
+          kinNr := giNrMasterRobot + 1;
+       END_IF;
+
+       IF NOT IS_MAPPED(svMessagesystem) OR
+          ((svMessagesystem.mMaskMotionErrors 
+           AND NOT svMessagesystem.sLocal[kinNr].mMotionRelease) AND
+          _system.gbBootupFinished) THEN
+          ; // Do nothing if variable not mapped or message should be suppressed because robot is unselected.
+            // But don´t suppress messages during bootup.
+       ELSE  
+          msgStatus := KMSG_GetMsgState(class, diCompNr, diErrNr, instance, state);
+          // check if msgclass is warning or info
+          IF (class=eKMSG_Class_11) OR (class=eKMSG_Class_12) THEN
+             KMSG_QuitMsg(class,diCompNr,diErrNr,instance);
+          ELSE   
+             // if class not correct, convert class to warning and set additional error
+             class := eKMSG_Class_11;
+             KMSG_QuitMsg(class,diCompNr,diErrNr,instance);
+
+             //build parameter "(Comp/Err)"
+             zMsgStringTmp := "(" + STR(diCompNr) + "/" + STR(diErrNr) + ")";
+             // set error that RcuResetMessage was used with wrong MsgClass
+             RcuSetMessageOnce(equipment_WrongMsgClass, -1, 2, 0, "_RcuResetMessage",zMsgStringTmp);
+          END_IF;
+
+          // KTO
+          // set additional messageinfos 
+          IF _system.gbBootupFinished THEN
+             iMsgInfoCounter := PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.iMsgInfoCounter;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].CompNr      := diCompNr;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].MsgNr       := diErrNr;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].DeviceCount := instNr;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].MsgCount    := msgCount;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].Location    := location;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].PrgName     := progName;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].LineNr      := lineNr;
+
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].SuppressionInfos.iFgNumber  := kinNr;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].SuppressionInfos.zFuName    := "TeachControl";
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.yMsgInfos[iMsgInfoCounter].SuppressionInfos.iChannelNr := 0;
+
+             // increment ringbufferslot
+             iMsgInfoCounter := iMsgInfoCounter + 1;
+             // if ringbuffer is full go to first element
+             IF iMsgInfoCounter > 20 THEN
+               iMsgInfoCounter := 1;
+             END_IF;
+             PaintRobot[kinNr-1].RcuInterfaceToProcess.svMessageInfo.iMsgInfoCounter := iMsgInfoCounter;
+          END_IF;
+
+          KMSG_SetMsg(class, diCompNr, diErrNr, instance, param2, param3, param4, kinNrStr);
+       END_IF;
+    END_IF;
+
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------------------------------
+// Convert class of given message ident to another message class
+ROUTINE RcuConvertMessageClass(CONST ident : DINT; CONST class : INT) : DINT GLOBAL
+ VAR
+   diComp     : DINT;
+   diMsgNr    : DINT;
+   diNewIdent : DINT;
+ END_VAR
+ 
+ diComp   := SHR((ident),16) AND 16#0FFF;
+ diMsgNr  := ident AND 16#0FFFF;
+ diNewIdent := class; 
+ diNewIdent := SHL(diNewIdent,12) OR diComp;
+ diNewIdent := SHL(diNewIdent,16) OR diMsgNr;
+ RETURN(diNewIdent);
+END_ROUTINE
+
+ROUTINE fMapFatalErrors() PRIVATE
+   mFatalError := MAPX("system.SV_Messagesystem.sGlobal.mFatalError");
+   IF NOT IS_MAPPED(mFatalError) THEN
+      gbBootupError := TRUE;
+      PRINT(" ");
+      PRINT(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      PRINT(" !!!!!! MAPPING of systemvariable - system.SV_Messagesystem.sGlobal.mFatalError - failed. BootupError set !!!!!!!!!");
+      PRINT(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      PRINT(" ");
+      RcuSetMessageOnce(equipment_ErrMapToHwFailed, -1, 1, 0, "core._RcSetMessage", "system.SV_Messagesystem.sGlobal.mFatalError");
+   END_IF;
+   
+   svMessagesystem := MAPX("system.SV_Messagesystem");
+   IF NOT IS_MAPPED(svMessagesystem) THEN
+      gbBootupError := TRUE;
+      PRINT(" ");
+      PRINT(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      PRINT(" !!!!!! MAPPING of systemvariable - system.SV_Messagesystem - failed. BootupError set !!!!!!!");
+      PRINT(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      PRINT(" ");
+      RcuSetMessageOnce(equipment_ErrMapToHwFailed, -1, 2, 0, "core._RcSetMessage", "system.SV_Messagesystem");
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE NEW()
+   VAR
+      i : DINT;
+   END_VAR
+   
+   giWarningClasses := eKMSG_Class_Warning OR eKMSG_Class_11;
+   giInfoClasses    := eKMSG_Class_Info OR eKMSG_Class_12;
+   FOR i := 1 TO cgiRcuNrOfErrorBuffers DO
+      giErrorClasses := giErrorClasses OR KMSG_Class(gyErrorBuffers[i]); 
+   END_FOR;
+   
+   START fMapFatalErrors();
+END_ROUTINE

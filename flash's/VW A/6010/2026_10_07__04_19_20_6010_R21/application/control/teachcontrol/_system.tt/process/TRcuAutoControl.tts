@@ -1,0 +1,3153 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuAutoControl.ttp                                          *
+*    Description: Interface to the PLC, Starting programs in                  *
+*                 automatic mode                                              *
+*-----------------------------------------------------------------------------
+* 13.08.04 nmr: In PLCStartProgram und PLCSelect the loadingprocess is addicted
+                to project/programstate,this means programs first start
+*               if loadingprocess is finished.
+*               Therefor the Ready-Flag in NEW-Routines in programs is not necessary
+* 19.08.04 nmr: sActProject removed (not used)
+*               Adaptions on messageoutputs. sErrorText only set if bError is set.
+*               New function: Check whether a program has changed since last compile 
+*               if happend reload it
+* 20.08.04 nmr: New function: Check whether a program has changed since last compile 
+*               if happend reload it in ReadProgTab, too.
+*               New routine CloseProject
+*               Observe unload on leaving Automatik-Modes
+* 25.08.04 nmr: Bugfixing errormessages after UnloadProject
+*               bCompiled removed, process now controlled by projectstate
+*               selected projekts must be finished before switch to automaticmode
+* 28.08.04 nmr: Tolerances for Homeposition enlarged
+*               errormessages corrected
+* 07.09.04 BMA: typelist generated from catalog instead from file
+* 25.09.04 nmr: Considering projectstate eProjectOperational
+*               (project loading completely finished if achieved this state)
+*               Furthermore global variable ProjectName first written, if project 
+*               is completely loaded. Same procedure for the global project, so
+*               ProjectName string can be empty.
+*               Projektstate now correct signalled, so workaround in PlcStartProgram
+*               removed.
+* 27.09.04 nmr: order changed on reading Vision-Data: reset signal "Reset order
+*               displacement value", then PLC resets signal "Strobe 
+*               displacement value"
+*               correct conversionfactors for vision-displacement values in DC Bremen 
+*               Change priority for ObserveHomePos to Prio 3
+*               Correction of reading typelist: delete old list first, because
+*               consisting list is only replenished on reading.
+* 30.09.04 BMA: In PLCSelect now Program and Projekt is read, depending on programnumber
+*               from catalog
+* 10.10.04 nmr: new routine ObserveContinue, to continue a stopped program automaticly,
+*               if driverelease from PLC is set and robot is ready
+* 22.10.04 BMA: ObserveContinue modified
+* 10.11.04 BMA: Observing byte 26 bit 0 ("Atomizer selectedlt") in funktion ObserveProcessActive.
+*               Continue a stopped program in ObserveContinue only if process
+*               ready or deselected.                           
+* 24.11.04 BMA: "simplified homing"
+*               Bit 0.3 (in Startposition) set if ReceiveVisionData is executed
+*               reset bit on successfully measurement, on start a program or leaving automaticmode
+*               new function ObserveLifeBit to bbserve PLC lifebit (because of profibus faults)
+* 12.01.05 BMA  on switching from AutoExtern to T1 or T2 the actual program will not stopped
+*               and actual project remains loaded.
+*               So its possible to continue or modify actual program on breakpoint.
+*               Changes in ObserveAutomatic()
+* 26.01.05 nmr: Changes in ReceiveVisionData for processing vision-datas in Teachview,
+*               reset triggersAsPathPositions on switch to automaticmode
+* 16.02.05 nmr: Change-over to traceWordcontrolled debugprints,
+*               if goldenRepos is configured, it will be started from PLCContinueProg
+* 25.02.05 BMA: Observe "bypass" with parameterized limits on axis1: routine ObserveBypass
+* 10.03.05 BMA: Systemvariable SV_NormalEndOfProgram will be set if a program is 
+*               normally finished in automaticmode, it will be reset if a new program 
+*               starts or on leaving operating mode automatic.
+* 01.07.05 sbj: RcuAutoControl is with immediate effect only used for
+*               global variables. For every special RPC-PLC-interface
+*               there exists an own file, e.g. RcuAutoControlPaint.
+* 26.08.05 nmr: name-changes according to naming-conventions, changes
+*               for the new vision-mask
+* 15.09.05 nmr: Changes for new Vision-Mask
+* 07.02.06 BMA: Ghost without motion
+*)
+
+
+(*------------------------------------------------------------------------------
+* globals
+*)
+
+VAR
+   tGlobalVisionData        : OBJECT SAVE;
+   bNoAutoExt               : BOOL;
+   progNumber               : INT;
+   sActProject              : STRING; // loaded project
+   sNewProg                 : STRING; // program to start
+   handlerExecHandle        : DINT;
+   handlerActProg           : STRING;
+   dExecHandle              : DINT;   // Execution Handle of the program   BIT 29.09.05 moved from private var
+   bBitAutoExt              : BOOL;
+   bBitT1                   : BOOL;
+   bBitT2                   : BOOL;
+   bBitSleep                : BOOL;
+   bBitNoMode               : BOOL;
+   bPLCErrorQuit            : BOOL;
+   bPLCPowerOn              : BOOL;
+   bPLCRelease              : BOOL;
+   bPLCReleaseFieldBus      : BOOL;
+   bPLCGhostNoMotion        : BOOL;
+   bPLCGhost                : BOOL;
+   bSimpleHomingActive      : BOOL;
+   state                    : DINT;
+   bBitProcessActive        : BOOL;
+   bNormalEndOfProgram      : MAPTO BOOL;
+   bLockChangeProject       : BOOL;
+   bLockStartProject        : BOOL;
+   badCondition             : BOOL;
+   iLoggerNumber            : INT;        //token for the logger
+   driveReleaseIntern       : BOOL;
+   bEnableCustomBits        : BOOL;
+   bObserveContinueRunning  : BOOL;  // = TRUE if Routine ObserveContinue is running, i.e.
+                                     // teachprogram is running in automatic mode
+   yCollisionLowSet         : ARRAY[16] OF BOOL;
+   yCollisionHighSet        : ARRAY[16] OF BOOL;
+END_VAR
+
+
+(*------------------------------------------------------------------------------
+* members
+*)
+
+// called from EcoTalk
+ROUTINE GetVariante(variante : DINT) : BOOL
+ VAR
+  tmp : DINT;
+ END_VAR
+  
+  IF (variante <= 32) THEN
+     tmp := SHR(dVariante, (variante-1));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSIF myRobot.RcuInterfaceToBCU.bVariantHighMapped THEN
+     tmp := SHR(dVarianteHigh, (variante-33));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSIF (myRobot.RcuInterfaceToBCU.bVariantExtMapped AND (variante <= 64)) THEN
+     tmp := SHR(dVariantsExt[1], (variante-33));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSIF (myRobot.RcuInterfaceToBCU.bVariantExtMapped AND (variante <= 96)) THEN
+     tmp := SHR(dVariantsExt[2], (variante-65));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSIF (myRobot.RcuInterfaceToBCU.bVariantExtMapped AND (variante <= 128)) THEN
+     tmp := SHR(dVariantsExt[3], (variante-97));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSIF (myRobot.RcuInterfaceToBCU.bVariantExtMapped AND (variante <= 160)) THEN
+     tmp := SHR(dVariantsExt[4], (variante-129));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSIF (myRobot.RcuInterfaceToBCU.bVariantExtMapped AND (variante <= 192)) THEN
+     tmp := SHR(dVariantsExt[5], (variante-161));
+     RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSE
+     RETURN FALSE;
+  END_IF;
+   
+END_ROUTINE
+
+// called from EcoTalk
+ROUTINE GetPartAreas(partareas : DINT) : BOOL
+  VAR
+   tmp : DINT;
+  END_VAR
+ 
+   IF (partareas = 0) THEN
+      RETURN (dPartAreas = partareas);
+   ELSIF (partareas <= 32) THEN
+      tmp := SHR(dPartAreas, (partareas-1));
+      RETURN (tmp AND 16#0000000000000001) = 1;
+   ELSIF (myRobot.RcuInterfaceToBCU.bPartareasExtMapped AND (partareas <= 64)) THEN
+      tmp := SHR(dPartAreasExt[1], (partareas-33));
+      RETURN (tmp AND 16#0000000000000001) = 1;
+   ELSIF (myRobot.RcuInterfaceToBCU.bPartareasExtMapped AND (partareas <= 96)) THEN
+      tmp := SHR(dPartAreasExt[2], (partareas-65));
+      RETURN (tmp AND 16#0000000000000001) = 1;
+   ELSIF (myRobot.RcuInterfaceToBCU.bPartareasExtMapped AND (partareas <= 128)) THEN
+      tmp := SHR(dPartAreasExt[3], (partareas-97));
+      RETURN (tmp AND 16#0000000000000001) = 1;
+   ELSIF (myRobot.RcuInterfaceToBCU.bPartareasExtMapped AND (partareas <= 160)) THEN
+      tmp := SHR(dPartAreasExt[4], (partareas-129));
+      RETURN (tmp AND 16#0000000000000001) = 1;
+   ELSIF (myRobot.RcuInterfaceToBCU.bPartareasExtMapped AND (partareas <= 192)) THEN
+      tmp := SHR(dPartAreasExt[5], (partareas-161));
+      RETURN (tmp AND 16#0000000000000001) = 1;
+  ELSE
+     RETURN FALSE;
+   END_IF;
+
+END_ROUTINE
+
+// called from EcoTalk
+ROUTINE GetDegradeMode(degraderob : DINT) : BOOL
+ VAR
+  tmp : INT;
+ END_VAR
+ 
+  tmp := SHR(myRobot.RcuInterfaceToBCU.iDegrade, (degraderob-1));
+  RETURN (tmp AND 16#00000001) = 1;
+
+END_ROUTINE
+
+// called from EcoTalk
+// wait until the collision bit from PLC has the value bIn
+ROUTINE ReceiveCollision(nr : IONAME; bIn : BOOL)
+ VAR
+    bReceived      : BOOL;
+    bChgInputs     : BOOL;
+    maskBit        : SINT;      
+ END_VAR
+
+   // Don't wait if simulation!!!
+   IF gbRcuSimulateStationPLC  THEN 
+      RETURN;
+   END_IF;
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+     RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 1, 0, "RcuAutoControl.ReceiveCollision", "ReceiveCollision");
+     RETURN;
+   END_IF;
+   IF (nr < 1) OR (nr > 16) THEN
+      DebugPrint(eTraceAutoControl, "RECEIVE COLLISION wrong bit number");
+      WAIT FALSE;
+   END_IF;
+   
+   bChgInputs := IS_CHANGED (myRobot.fieldbusIn.yCollisionBits);
+  
+   WHILE TRUE DO 
+      IF bIn = TRUE THEN
+         IF myRobot.fieldbusIn.yCollisionBits[nr-1] THEN
+            yCollisionHighSet[nr-1] := FALSE;
+            RETURN;
+         END_IF;
+      ELSE
+         IF NOT myRobot.fieldbusIn.yCollisionBits[nr-1] THEN
+            yCollisionLowSet[nr-1] := FALSE;
+            RETURN;   
+         END_IF;
+      END_IF;
+      WAIT bChgInputs;
+      bChgInputs := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+// called from EcoTalk
+// wait until the custom bit from PLC has the value bIn
+ROUTINE ReceiveCustomBit(nr : IONAME; bIn : BOOL)
+ VAR
+    bReceived      : BOOL;
+    bChgInputs     : BOOL;
+    maskBit        : SINT;      
+ END_VAR
+
+   // Don't wait if simulation!!!
+   IF gbRcuSimulateStationPLC  THEN 
+      RETURN;
+   END_IF;
+   IF NOT myRobot.bFieldbusSlaveReady OR NOT myRobot.autoControl.bEnableCustomBits THEN
+     RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 6, 0, "RcuAutoControl.ReceiveCustomBit", "ReceiveCustomBit");
+     RETURN;
+   END_IF;
+   IF (nr < 100) OR (nr > 115) THEN
+      DebugPrint(eTraceAutoControl, "RECEIVE Custom wrong bit number");
+      WAIT FALSE;
+   END_IF;
+   
+   bChgInputs := IS_CHANGED (myRobot.fieldbusIn.yCustomBits);
+  
+   WHILE TRUE DO 
+      IF bIn = TRUE THEN
+         IF myRobot.fieldbusIn.yCustomBits[nr-100] THEN
+            RETURN;
+         END_IF;
+      ELSE
+         IF NOT myRobot.fieldbusIn.yCustomBits[nr-100] THEN
+            RETURN;   
+         END_IF;
+      END_IF;
+      WAIT bChgInputs;
+      bChgInputs := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+
+// called from EcoTalk
+// return the custom bit from PLC 
+ROUTINE GetCustomBit(nr : IONAME) : BOOL
+ VAR
+    bReceived      : BOOL;
+    bChgInputs     : BOOL;
+    maskBit        : SINT;      
+ END_VAR
+
+   IF NOT myRobot.bFieldbusSlaveReady OR NOT myRobot.autoControl.bEnableCustomBits THEN
+     RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 9, 0, "RcuAutoControl.GetCustomBit", "GetCustomBit");
+     RETURN FALSE;
+   END_IF;
+   IF (nr < 100) OR (nr > 115) THEN
+      DebugPrint(eTraceAutoControl, "GET Custom wrong bit number");
+      WAIT FALSE;
+   END_IF;
+   
+   RETURN myRobot.fieldbusIn.yCustomBits[nr-100];
+
+END_ROUTINE
+
+
+// called from EcoTalk
+// set the value bOut to the collision bit to the PLC 
+ROUTINE SetCollision(nr : IONAME; bOut : BOOL)
+ VAR
+   sLogText : STRING;
+ END_VAR
+
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 2, 0, "RcuAutoControl.SetCollision", "SetCollision");
+      RETURN;
+   END_IF;
+   IF (nr < 1) OR (nr > 16) THEN
+      myRobot.DebugPrint(eTraceAutoControl, "SET COLLISION wrong bit number");
+      RETURN;
+   END_IF;
+   
+   myRobot.fieldbusOut.yCollisionBits[nr-1].svBool := bOut;
+   IF bOut THEN
+      sLogText := "SET COLLISION BIT-NR " + STR(nr);
+   ELSE
+      sLogText := "RESET COLLISION BIT-NR " + STR(nr);   
+   END_IF;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+
+END_ROUTINE
+
+// called from EcoTalk
+ROUTINE SetAndCheckCollisionRequest(nr : IONAME; State : IOTYPE)
+ VAR
+   sLogText : STRING;
+   bOut     : BOOL;
+ END_VAR
+
+   // Don't wait if simulation!!!
+   IF gbRcuSimulateStationPLC  THEN 
+      RETURN;
+   END_IF;
+   
+   IF (nr < 1) OR (nr > 16) THEN
+      RETURN;
+   END_IF;
+   CASE State OF
+      High : bOut := TRUE;
+      Low  : bOut := FALSE;
+   ELSE
+      PRINT("ERROR - Wrong state for Job");
+      RETURN;
+   END_CASE;
+   IF yCollisionLowSet[nr-1] AND bOut THEN
+      myRobot.DebugPrint(eTraceAutoControl, "SetAndCheckCollisionRequest: wait until collision "+STR(nr)+" FALSE");
+      WAIT NOT myRobot.fieldbusIn.yCollisionBits[nr-1];
+      yCollisionLowSet[nr-1] := FALSE;
+      RETURN;
+   END_IF;
+   IF yCollisionHighSet[nr-1] AND NOT bOut THEN
+      myRobot.DebugPrint(eTraceAutoControl, "SetAndCheckCollisionRequest: wait until collision "+STR(nr)+" TRUE");
+      WAIT myRobot.fieldbusIn.yCollisionBits[nr-1];
+      yCollisionHighSet[nr-1] := FALSE;
+      RETURN;
+   END_IF;
+   IF bOut THEN
+      yCollisionHighSet[nr-1] := TRUE;
+   ELSE
+      yCollisionLowSet[nr-1] := TRUE;
+   END_IF;
+
+END_ROUTINE
+
+
+// called from EcoTalk
+// set the value bOut to the custom defined bit to the PLC 
+ROUTINE SetCustomBit(nr : IONAME; bOut : BOOL)
+ VAR
+   sLogText : STRING;
+ END_VAR
+
+   IF NOT myRobot.bFieldbusSlaveReady OR NOT bEnableCustomBits THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 7, 0, "RcuAutoControl.SetCustomBit", "SetCustomBit");
+      RETURN;
+   END_IF;
+   IF (nr < 100) OR (nr > 115) THEN
+      myRobot.DebugPrint(eTraceAutoControl, "SET custom wrong bit number");
+      RETURN;
+   END_IF;
+   
+   myRobot.fieldbusOut.yCustomBits[nr-100].svBool := bOut;
+
+END_ROUTINE
+
+
+// called from EcoTalk
+ROUTINE MainRunTimerStart()
+
+   MAINRUN();
+   SysTimerGetUs(t);
+   bStartTimerCond := TRUE;
+END_ROUTINE
+
+
+// called from EcoTalk
+ROUTINE MainRunTimerStop(t4 : DINT)
+VAR
+   t2         : LINT;
+   t3         : LINT;
+   pNr        : DINT;
+END_VAR
+
+   bStopTimer := FALSE;
+   MAINRUN();
+   pNr := progNumber;
+   SysTimerGetUs(t2);
+   t3 := (t2-t);
+   t3 := t3/100000;
+   bStartTimerCond := FALSE;
+   IF badCondition THEN
+      myRobot.DebugPrint(eTraceAutoControl, "measure of time invalid!!!!!");
+      myRobot.DebugPrint(eTraceAutoControl, "Program Nr. " + STR(pNr) + " : TIME [1/10s] = "+STR(t3));
+   ELSE
+      iTimeData := t3;
+      bStopTimer := TRUE;
+   END_IF;
+   t4 := DINT(t3);
+END_ROUTINE
+
+
+// get input from PLC for simple homing in teach program
+// called from EcoTalk
+ROUTINE GetHomingActive(state : BOOL) : BOOL
+  
+  RETURN (state = myRobot.fieldbusIn.StartHoming.svBool);
+
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* private members
+*)
+VAR PRIVATE
+   dVariante               : DINT;
+   dVarianteHigh           : DINT;
+   dPartAreas              : DINT;
+   dVariantsExt            : ARRAY [1..5] OF DINT;
+   dPartAreasExt           : ARRAY [1..5] OF DINT;
+//   iDegrade                : INT;
+   bLoading                : BOOL;       // loading selected project
+   sNewProject             : STRING;     // project to load
+   bRunning                : BOOL;       // program is running
+   bStopped                : BOOL;       // program is stopped 
+   bInterrupted            : BOOL;       // program is interrupted
+   bError                  : BOOL;       
+   sActProg                : STRING;     // actually started program
+   sErrorText              : STRING;
+   projChanged             : BOOL;
+   myRobot                 : MAPTO TRcuRobot;
+   bStartTimerCond         : BOOL;
+   bStopTimer              : BOOL;
+   t                       : LINT;
+   iTimeData               : LINT;
+   bDownloadReq            : MAPTO BOOL; 
+   bDownloadReqAck         : MAPTO BOOL;
+   bSemaTeachProg          : BOOL;
+   bObservePrgNrFifo       : BOOL;
+   bConvStop               : BOOL;
+   bLockDestroyProjects    : BOOL;
+   
+END_VAR
+
+// starts the communication with the PLC
+ROUTINE ConnectToPLC() PRIVATE
+   
+   IF gbRcuSimulateStationPLC AND NOT myRobot.gluingRobot THEN
+      myRobot.simulatePlc.SimulationOfPLC(myRobot);
+   END_IF;
+   
+   IF NOT (myRobot.bFieldbusSlaveReady) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrConToPLC, myRobot.kinListInx, 1, 0, "RcuAutoControl.ConnectToPLC");
+      RETURN;
+   END_IF;
+   
+   START ObserveModesFromPLC() PRIO 1;
+   START ObserveAutomatic();
+   START ObservePower();
+   START ObserveStop();
+   START ObserveDeadman();
+   START ObserveError();
+   START ObserveProcessActive();
+   START ObserveProgActiv();
+   START ObserveTimerConditions();
+   START ObserveTimerStop();
+   START ObserveDownloadReq();
+   START ObserveGhostNoMotion();
+   IF (NOT myRobot.bRcuSimulatesAllDrives) AND gbEstopFromBusMaster THEN
+      // real robot with direct hw e-stop/deadman input
+      bPLCRelease := UPDATE(bPLCReleaseFieldBus AND (NOT myRobot.bRcuAnyErrorPending) AND driveReleaseIntern
+                            AND myRobot.RcuEmergencyStop.stop AND (NOT myRobot.RcuInterfaceToBCU.bStopProg) AND (NOT myRobot.RcuInterfaceToBCU.bSwitchOffDrives));
+   ELSE
+      bPLCRelease := UPDATE(bPLCReleaseFieldBus AND NOT (myRobot.bRcuAnyErrorPending OR myRobot.RcuInterfaceToBCU.bStopProg OR myRobot.RcuInterfaceToBCU.bSwitchOffDrives OR myRobot.interfaceToSCP.bNoMovementRelease));
+   END_IF;
+//   START ObservePrjChanged(); // for testing
+END_ROUTINE
+
+// Load the project selected by the PLC 
+// 13.08.04 nmr: load project now observed with projectstate
+//               Furthermore it will be checked if program has changes since last compile
+ROUTINE PLCSelect() PRIVATE
+ VAR
+    projectState    : TProjectState;
+    errorInstID     : DINT;
+    s               : STRING;
+    ok              : BOOL;
+    iTimeStart      : LINT;
+    iTimeStop       : LINT;
+    iTimeResult     : LINT;
+    sLogText        : STRING;
+    flag            : BOOL;
+    errCnt          : DINT;
+    timeOut         : BOOL;
+    chgPrj          : BOOL;
+    dHashCode       : DWORD;
+    backgrProj      : BOOL;
+    i               : INT;
+ END_VAR
+   
+   myRobot.RcuInterfaceToBCU.bBadBodyData := FALSE;                              // Data invalid reset
+   progNumber := myRobot.RcuInterfaceToBCU.iProgramNumber;                       // Read program number
+   myRobot.DebugPrint(eTraceAutoControl, myRobot.robotName+" programnumber = " + STR(progNumber));
+   sLogText := "Program-Number " + STR(progNumber) + " received from BCU";
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   dVariante  := myRobot.RcuInterfaceToBCU.dVariants;                            // Read variant bits
+   dVarianteHigh := myRobot.RcuInterfaceToBCU.dVariantsHigh;
+   dPartAreas := myRobot.RcuInterfaceToBCU.dPartAreas;                            // Read partarea bits
+   FOR i := 1 TO 5 DO
+      dVariantsExt[i] := myRobot.RcuInterfaceToBCU.dVariantsExt[i];
+      dPartAreasExt[i] := myRobot.RcuInterfaceToBCU.dPartAreasExt[i];      
+   END_FOR;
+   START PrintVariantRepairDegrade();
+   
+   IF (progNumber < 1) OR (progNumber > giNoOfTypes) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrWrongPrgNr, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCSelect", STR(progNumber));
+      myRobot.RcuInterfaceToBCU.bBadBodyData := TRUE;                            // Data invalid
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE;                            // stationerror
+      bLoading := FALSE;
+      RETURN;
+   ELSE
+      ok := myRobot.RcuTypeList.ReadTypeListEntry(progNumber, sNewProject, sNewProg, myRobot.subDirName); 
+      sNewProg :=  sNewProject + "." + sNewProg;
+      IF NOT ok THEN
+         RcuSetMessageOnce(RcuAutoCtrl_ErrWrongPrgNr, myRobot.kinListInx, 2, 0, "RcuAutoControl.PLCSelect", STR(progNumber));
+         myRobot.RcuInterfaceToBCU.bBadBodyData := TRUE;                         // Data invalid
+         myRobot.RcuInterfaceToBCU.mMotionError := TRUE;                         // stationerror
+         bLoading := FALSE;
+         RETURN;
+      END_IF;
+      myRobot.fixpos.CheckExtFixposProg(progNumber);
+   END_IF;
+   
+   // dont load a project as long as a program is running
+   IF bRunning OR bInterrupted THEN
+      RcuResetMessage(RcuAutoCtrl_InfProgAct, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCSelect");
+      bLoading := FALSE;
+      RETURN;
+   END_IF;
+   
+   bError := FALSE;
+   iTimeStart := 0;               //Only for debugging 08.05.06 BIT
+   SysTimerGetUs(iTimeStart);   
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Start loading teach-project");
+   
+   myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProject + 
+                                " GetProjectStateFast()");
+   projectState := GetProjectStateFast(sNewProject);
+   myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProject + 
+                                " GetProjectStateFast() = " + STR(projectState));
+   SysTimerSet(50000, timeOut);
+   chgPrj := IS_CHANGED(gProjectStateChgCnt);
+   chgPrj := TRUE;
+   errCnt := 0;
+   IF (projectState = eProjectBuilt) THEN
+      GetProjectErrCnt(sNewProject, errCnt);
+   END_IF;
+   WHILE NOT timeOut AND (NOT (projectState = eProjectUnknown)) AND (NOT (projectState = eProjectOperational) OR bLockStartProject) AND (errCnt = 0)  DO
+      WAIT chgPrj OR timeOut;
+      IF chgPrj THEN
+         chgPrj := FALSE;
+         projectState := GetProjectStateFast(sNewProject);
+         IF (projectState = eProjectBuilt) THEN
+            GetProjectErrCnt(sNewProject, errCnt);
+         END_IF;
+      END_IF;
+   END_WHILE;
+
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProject + 
+                                " not loaded! TimeOut!");
+      RcuSetMessageOnce(RcuAutoCtrl_ErrLoadPrj, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCSelect", sNewProject);
+      myRobot.RcuInterfaceToBCU.bBadBodyData := TRUE; // Acknowledge no Skid-Data 
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE; // stationerror
+   ELSIF (errCnt <> 0) THEN
+      myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProject + 
+                                " not loaded! Error(s) in project");
+      RcuSetMessageOnce(RcuAutoCtrl_ErrProjError, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCSelect", sNewProject);
+      myRobot.RcuInterfaceToBCU.bBadBodyData := TRUE; // Acknowledge no Skid-Data 
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE; // stationerror
+   ELSIF (projectState = eProjectUnknown) THEN
+      myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProg +
+                                " not loaded! Unknown project");
+      RcuSetMessageOnce(RcuAutoCtrl_ErrPrgNotExist, myRobot.kinListInx, 2, 0, "RcuAutoControl.PLCSelect", sNewProg);
+      myRobot.RcuInterfaceToBCU.bBadBodyData := TRUE; // Acknowledge no Skid-Data 
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE; // stationerror
+   ELSE
+      bLockChangeProject := TRUE;
+      sActProject := sNewProject;
+      dHashCode := 0;
+      backgrProj := FALSE;
+      GetProjectHash(sActProject, dHashCode, backgrProj);
+      IF backgrProj THEN
+         myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProject + 
+                                " GetProjectHash for backgrProj");
+         dHashCode := ROR(dHashCode, 1);
+      END_IF;
+      IF IS_MAPPED(myRobot.RcuInterfaceToProcess.svCheckSumProject) THEN
+               myRobot.RcuInterfaceToProcess.svCheckSumProject := dHashCode;
+      END_IF;
+      myRobot.DebugPrint(eTraceAutoControl, "PLCSelect: " + STR(progNumber) + ": Typelist Project = " + sNewProject + 
+                                " is Operational!");
+      myRobot.DebugPrint(eTraceAutoControl, "HashCode = "+STR(dHashCode));
+      myRobot.RcuInterfaceToBCU.bAckBodyData := TRUE; // Acknowledge Skid-Data      
+   END_IF;
+   
+   iTimeStop := 0;
+   SysTimerGetUs(iTimeStop);
+   iTimeResult := 0;
+   iTimeResult := (iTimeStop - iTimeStart) / 1000;
+   myRobot.DebugPrint(eTraceAutoControl, "End PLCSelect: " + sNewProject + " used time " + STR(iTimeResult) + " ms");
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "End PLCSelect teach-project");
+   
+   bLoading := FALSE;
+END_ROUTINE
+
+
+// start the selected program in the loaded project
+// 13.08.04 nmr: Program-start now observed with programstate
+//               actual projectstate is set zu early on'eProjectLoaded'
+//               because of that start program need to observed with ExecHandle
+// 25.09.04 nmr: Projectstate now correct signalised, so workaround can be removed
+ROUTINE PLCStartProgram()
+  VAR 
+    programState : TProgState;
+    sLogText     : STRING;
+    projectState : TProjectState;
+    timeOut      : BOOL;
+  END_VAR
+
+   bError := FALSE;
+   sActProg := sNewProg;
+   sNewProg := "";
+   
+   // set drives to simulation mode on GhostNoMotion
+   IF NOT (gbSimulationOS OR gbFBSSActive) THEN
+      IF bPLCGhostNoMotion AND NOT myRobot.allDrivesSimulated THEN
+         myRobot.ghostNoMotion.bSwitchingDrives := TRUE;
+         myRobot.SimulateAllDrives(TRUE);
+         WAIT myRobot.allDrivesReady AND myRobot.updateActive;
+         myRobot.ghostNoMotion.bSwitchingDrives := FALSE;
+      ELSIF NOT bPLCGhostNoMotion AND myRobot.allDrivesSimulated THEN
+         myRobot.SimulateAllDrives(FALSE);
+         WAIT myRobot.allDrivesReady AND myRobot.updateActive;
+      END_IF;
+   ELSE
+      IF bPLCGhostNoMotion AND NOT myRobot.ghostNoMotion.bActiveInSim THEN
+         myRobot.ghostNoMotion.bSwitchingDrives := TRUE;
+         myRobot.SimulateAllDrives(TRUE);
+         WAIT myRobot.allDrivesReady AND myRobot.updateActive;
+         myRobot.ghostNoMotion.bSwitchingDrives := FALSE;
+      ELSIF NOT bPLCGhostNoMotion AND myRobot.ghostNoMotion.bActiveInSim THEN
+         myRobot.SimulateAllDrives(FALSE);
+      END_IF;
+   END_IF;
+   
+   // check if program selected
+   IF sActProg = "" THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNoPrjSel, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCStartProgram");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Start program but no project selected");
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE;               // stationerror
+      myRobot.RcuInterfaceToBCU.bBadStartProg := TRUE;   
+   // check if program started
+   ELSIF ((dExecHandle <> 0) AND (dExecHandle <> -1)) OR bRunning OR bInterrupted THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrPrNotStart, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCStartProgram", sActProg);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Start program but other program still active");
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE;               // stationerror
+      myRobot.RcuInterfaceToBCU.bBadStartProg := TRUE; 
+   ELSE
+      programState := GetProgState(sActProg);
+      IF programState = eProgUnknown THEN
+         RcuSetMessageOnce(RcuAutoCtrl_ErrPrgNotExist, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCStartProgram", sActProg);
+         myRobot.RcuInterfaceToBCU.mMotionError := TRUE;               // stationerror
+         myRobot.RcuInterfaceToBCU.bBadStartProg := TRUE; 
+      ELSE
+      
+         // NISSAN Huadu kin1.B12D.B12D_MAIN Program  cannot be started
+         IF programState <> eProgInactive THEN
+            IF programState = eProgInterrupted THEN
+               myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: GetProgState(" + sActProg + ") = eProgInterrupted");
+            ELSIF programState = eProgRunning THEN
+               myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: GetProgState(" + sActProg + ") = eProgRunning");
+            ELSIF programState = eProgStopping THEN
+               myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: GetProgState(" + sActProg + ") = eProgStopping");
+            END_IF;
+            timeOut := FALSE;
+            SysTimerSet(40, timeOut);
+            WHILE (programState <> eProgInactive) AND NOT timeOut DO
+               myRobot.WaitMcMainCycles(1);
+               programState := GetProgState(sActProg);
+            END_WHILE;
+            IF timeOut THEN
+               myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: Program " + sActProg + " (programState <> eProgInactive) timeOut");      
+               IF programState = eProgInterrupted THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: GetProgState(" + sActProg + ") = eProgInterrupted");
+               ELSIF programState = eProgRunning THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: GetProgState(" + sActProg + ") = eProgRunning");
+               ELSIF programState = eProgStopping THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "PLCStartProgram: GetProgState(" + sActProg + ") = eProgStopping");
+               END_IF;
+            END_IF;
+            SysTimerClear(timeOut);
+         END_IF;
+      
+         myRobot.homing.ClearCallStack();
+         WAIT NOT myRobot.brakeCheck.autoCheckActive;
+         dExecHandle := StartProg(sActProg);
+         IF dExecHandle = -1 THEN
+            RcuSetMessageOnce(RcuAutoCtrl_ErrPrgNotStart, myRobot.kinListInx, 1, 0, "RcuAutoControl.PLCStartProgram", sActProg);
+            myRobot.RcuInterfaceToBCU.mMotionError := TRUE;               // stationerror
+            myRobot.RcuInterfaceToBCU.bBadStartProg := TRUE; 
+            sLogText := "Can't start program " + sActProg;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         ELSE
+            handlerExecHandle := dExecHandle;
+            handlerActProg := sActProg;        
+            START CheckProgState() PRIO 1;  // start immediatly
+
+            myRobot.DebugPrint(eTraceAutoControl, "Program " + sActProg + " started");
+            sLogText := "Program " + sActProg + " started";
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            IF IS_MAPPED(bNormalEndOfProgram) THEN
+               bNormalEndOfProgram := FALSE;
+            END_IF;
+            bRunning := TRUE;
+            bStopped := FALSE;
+            bInterrupted := FALSE;
+            myRobot.RcuInterfaceToBCU.bAckStartProg := TRUE;               // Reset Acknowledge Start Program
+            myRobot.RcuInterfaceToBCU.bNewBodyData := FALSE;               // Not ready for new Skiddata
+            START ObserveContinue();
+         END_IF;
+      END_IF;
+   END_IF;
+   timeOut := FALSE;
+   SysTimerSet(40, timeOut);
+   WAIT timeOut OR myRobot.selectingFlow.present;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceAutoControl, "Program " + sActProg + " selectingFlow.present timeOut");      
+   END_IF;
+   bLockChangeProject := FALSE;
+   myRobot.RcuInterfaceToBCU.bAckBodyData := FALSE;     // reset Acknowledge Skid-Data
+END_ROUTINE
+
+// continue an interrupted program
+ROUTINE PLCContinueProgram() PRIVATE
+ VAR
+   ok         : BOOL;
+   okHandler  : BOOL;
+   timeout    : BOOL;
+   UseHandler : BOOL;
+   sLogText   : STRING;
+ END_VAR
+
+   bError := FALSE;
+   IF myRobot.bNoContinue THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNoContinue, myRobot.kinListInx, 1, 0, "RcuAutoCtrl.PLCContinueProgram", sActProg);
+      RETURN;
+   END_IF;
+   IF myRobot.bGoldenReposInterrupt THEN 
+      myRobot.bGoldenReposContinue := TRUE;
+      myRobot.bGoldenReposInterrupt := FALSE;
+      myRobot.DebugPrint(eTraceAutoControl, "PLCContinueProgram bGoldenReposContinue := TRUE");
+      SysTimerSet(20000, timeout);
+      sLogText := "Continue golden repos ";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText); 
+      ok := myRobot.SetMovementDirection(eDirReposContinue);
+   ELSIF (myRobot.bHandlerDoBackwardMove AND NOT myRobot.bHandlerAbortBackMove) THEN                  
+      IF myRobot.bGoldenTracking THEN
+         myRobot.RcuInterfaceToBCU.mConveyorRelease := TRUE;
+      END_IF;
+      IF (myRobot.movementDirection = eDirBack) THEN
+         myRobot.DebugPrint(eTraceAutoControl, "program " + handlerActProg + " continued in backward movement");    
+         sLogText := "program " + handlerActProg + " continued in backward movement";
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);         
+         UseHandler := TRUE;
+         //BIT 25.04.06 included GetProgState before continuation
+         IF myRobot.SetPcWithoutStopActive THEN
+            myRobot.DebugPrint(eTraceAutoControl, "PLCContinueProgram SetPcWithoutStopActive = TRUE");
+         END_IF;
+         IF (GetProgState(handlerActProg) <> eProgRunning) AND (GetProgState(sActProg) <> eProgRunning) THEN
+            WAIT NOT myRobot.SetPcWithoutStopActive;
+            SysTimerSet(2000, timeout);
+            myRobot.DebugPrint(eTraceAutoControl, "ContinueProgSignal handlerExecHandle = "+STR(handlerExecHandle));
+            ContinueProgSignal(handlerExecHandle, okHandler);  
+            myRobot.DebugPrint(eTraceAutoControl, "ContinueProgSignal dExecHandle = "+STR(dExecHandle));
+            ContinueProgSignal(dExecHandle, ok);
+         ELSIF (GetProgState(handlerActProg) <> eProgRunning) THEN
+            WAIT NOT myRobot.SetPcWithoutStopActive;
+            SysTimerSet(2000, timeout);
+            myRobot.DebugPrint(eTraceAutoControl, "ContinueProgSignal handlerExecHandle = "+STR(handlerExecHandle));
+            ContinueProgSignal(handlerExecHandle, okHandler);  
+            ok := TRUE;
+         ELSIF (GetProgState(sActProg) <> eProgRunning) THEN
+            WAIT NOT myRobot.SetPcWithoutStopActive;
+            SysTimerSet(2000, timeout);
+            myRobot.DebugPrint(eTraceAutoControl, "ContinueProgSignal dExecHandle = "+STR(dExecHandle));
+            ContinueProgSignal(dExecHandle, ok);
+            okHandler := TRUE;
+         ELSE // programs already running
+            ok        := TRUE;
+            okHandler := TRUE;
+            timeout   := FALSE;
+         END_IF;
+      ELSE
+         myRobot.DebugPrint(eTraceAutoControl, "start backward movement");   
+         UseHandler := FALSE;
+         ok := myRobot.SetMovementDirection(eDirBack);
+         sLogText := "start backward movement";
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText); 
+      END_IF;
+   ELSIF myRobot.bUseGoldenRepos AND NOT myRobot.handler.bJobRunning AND myRobot.selectingFlow.present THEN
+      UseHandler := FALSE;
+      SysTimerSet(20000, timeout);
+      sLogText := "start golden repos ";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText); 
+      ok := myRobot.SetMovementDirection(eDirRepos);
+   ELSIF NOT myRobot.bHandlerBlockContinue THEN
+      IF myRobot.bGoldenTracking THEN
+         myRobot.RcuInterfaceToBCU.mConveyorRelease := TRUE;
+      END_IF;
+      UseHandler := TRUE;
+      //BIT 25.04.06 included GetProgState before continuation
+         IF (GetProgState(handlerActProg) <> eProgRunning) AND (GetProgState(sActProg) <> eProgRunning) THEN
+            SysTimerSet(2000, timeout);
+            IF handlerActProg = sActProg THEN
+               ContinueProgSignal(dExecHandle, ok);
+               okHandler := TRUE;
+            ELSE
+               ContinueProgSignal(handlerExecHandle, okHandler);  
+               ContinueProgSignal(dExecHandle, ok);
+            END_IF;
+         ELSIF (GetProgState(handlerActProg) <> eProgRunning) THEN
+            SysTimerSet(2000, timeout);
+            ContinueProgSignal(handlerExecHandle, okHandler);  
+            ok := TRUE;
+         ELSIF (GetProgState(sActProg) <> eProgRunning) THEN
+            SysTimerSet(2000, timeout);
+            ContinueProgSignal(dExecHandle, ok);
+            okHandler := TRUE;
+         ELSE // programs already running
+            ok        := TRUE;
+            okHandler := TRUE;
+            timeout   := FALSE;
+         END_IF;
+   ELSE
+      timeout := TRUE;
+      PRINT("!!!!! unhandled else !!!!!");
+   END_IF;
+   
+   WAIT ((ok OR timeout) AND NOT UseHandler) OR (((ok AND okHandler) OR timeout) AND UseHandler);
+   
+   IF NOT timeout THEN
+       myRobot.DebugPrint(eTraceAutoControl, "program " + handlerActProg + " continued");
+       sLogText := "program " + handlerActProg + " continued";
+       myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   ELSE
+       IF (myRobot.mmgrState <> eRcuMMgrStateAutoBegin) THEN  
+          myRobot.DebugPrint(eTraceAutoControl, "program " + handlerActProg + " error on continuation");
+          sLogText := "program " + handlerActProg + " error on continuation";
+          myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+       END_IF;
+       RETURN;
+   END_IF;
+   bRunning := TRUE;
+   bStopped := FALSE;
+   bInterrupted := FALSE;
+   myRobot.RcuInterfaceToBCU.bAckStartProg := TRUE;                     // Acknowledge Start Program
+   myRobot.RcuInterfaceToBCU.bAckBodyData := FALSE;                     // Acknowledge Skid-Data
+
+END_ROUTINE
+
+// stop the running or interrupted program
+ROUTINE PLCStopProgram()
+ VAR
+    flag     : BOOL;
+    timeout  : BOOL;
+    ProgName : STRING;
+    sLogText : STRING;
+ END_VAR
+
+   bError := FALSE;
+   bLockDestroyProjects := TRUE;
+   IF (handlerExecHandle <> 0) AND (handlerExecHandle <> -1) THEN
+      IF myRobot.mmgrState <> eRcuMMgrStateStoppedJoints THEN
+         myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+         WAIT myRobot.isNotMovingOnPath;
+         myRobot.SetMotionMode(eRcuMMgrModeStopJoints);// ???????????
+         WAIT myRobot.mmgrState = eRcuMMgrStateStoppedJoints;
+      END_IF;
+      IF (handlerExecHandle <> dExecHandle) THEN
+         GetNameFromProgHdl(handlerExecHandle, ProgName);
+         IF StopProgSignal(handlerExecHandle, flag) THEN
+            timeout := FALSE;
+            SysTimerSet(1000, timeout); // give time to stop the program
+            WAIT flag OR timeout;
+            IF flag THEN
+               myRobot.DebugPrint(eTraceAutoControl, "Handler-Program stopped. Program = " + ProgName);
+               sLogText := "Handler-Program stopped. Program = " + ProgName;
+               myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+               handlerActProg := "";
+               handlerExecHandle := 0;
+            ELSE
+               sLogText := "Handler-Program can not be stopped. Program = " + ProgName;
+               myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+               myRobot.DebugPrint(eTraceAutoControl, "Handler-Program can not be stopped. Program = " + ProgName);
+            END_IF;
+         ELSE
+            sLogText := "Handler-Program can not be stopped. Program = " + ProgName;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            myRobot.DebugPrint(eTraceAutoControl, "Handler-Program can not be stopped. Program = " + ProgName);
+         END_IF;
+      END_IF;
+      IF StopProgSignal(dExecHandle, flag) THEN
+         timeout := FALSE;
+         SysTimerSet(1000, timeout); // give time to stop the program
+         WAIT flag OR timeout;
+         IF flag THEN
+             myRobot.DebugPrint(eTraceAutoControl, "Program " + sActProg + " stopped. Project = " + sActProject);
+             sLogText := "Program " + sActProg + " stopped. Project = " + sActProject;
+             myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+             STOP CheckProgState;
+             bStopped := TRUE;
+             bInterrupted := FALSE;
+             bRunning := FALSE;
+             sActProg := "";
+             handlerActProg := "";
+             dExecHandle := 0;
+             handlerExecHandle := 0;
+             STOP ObserveContinue;
+             bObserveContinueRunning := FALSE;
+         ELSE
+            sLogText := "Program " + sActProg + " can not be stopped. Project = " + sActProject;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            myRobot.DebugPrint(eTraceAutoControl, "Program " + sActProg + " can not be stopped. Project = " + sActProject);
+         END_IF;
+      ELSE
+         sLogText := "Program " + sActProg + " can not be stopped. Project = " + sActProject;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         myRobot.DebugPrint(eTraceAutoControl, "Program " + sActProg + " can not be stopped. Project = " + sActProject);
+      END_IF;
+   END_IF;
+   bLockDestroyProjects := FALSE;
+   myRobot.RcuInterfaceToBCU.bAckStartProg := FALSE;                    // Reset Acknowledge Start Program
+   myRobot.RcuInterfaceToBCU.bAckBodyData := FALSE;                     // reset Acknowledge Skid-Data
+   myRobot.RcuInterfaceToBCU.bBadBodyData := FALSE;                     // reset invalid Skiddata
+   myRobot.RcuInterfaceToBCU.bNewBodyData := TRUE;                      // ready for new skiddata
+END_ROUTINE
+
+// periodic check if programstate changed
+//  - Program stopped by itself
+//  - Program paused or stopped with teachpendant
+ROUTINE CheckProgState() PRIVATE
+   VAR
+      flowState          : TFlowState;
+      bChangedKinPresent : BOOL;
+      bChangedKinRunning : BOOL;
+      bChangedExecName   : BOOL;
+      locExecHandle      : DINT;
+      locActProg         : STRING;
+   END_VAR
+   
+   locExecHandle      := handlerExecHandle;
+   locActProg         := handlerActProg;
+   bChangedExecName   := IS_CHANGED(handlerActProg);
+   bChangedExecName   := FALSE;
+   bChangedKinPresent := IS_CHANGED(myRobot.selectingFlow.present);
+   bChangedKinPresent := FALSE;
+   bChangedKinRunning := IS_CHANGED(myRobot.selectingFlow.running);
+   bChangedKinRunning := FALSE;
+   
+   WHILE TRUE DO
+      WAIT bChangedKinPresent OR bChangedKinRunning OR bChangedExecName;
+      bChangedKinPresent := FALSE;
+      bChangedKinRunning := FALSE;
+      IF bChangedExecName THEN // handler case
+         bChangedExecName := FALSE;
+         state := 1;
+         WAIT myRobot.selectingFlow.flowId = 0; // wait for deselect = end of program
+         state := 2;
+         WAIT myRobot.selectingFlow.flowId = handlerExecHandle;
+         locActProg := handlerActProg;
+         locExecHandle := handlerExecHandle;
+      END_IF;
+      
+      IF myRobot.selectingFlow.flowId = locExecHandle THEN // program is active
+         myRobot.DebugPrint(eTraceEquipment, "CheckProgState program is active FlowState = "+STR(flowState));
+         flowState := GetFlowState(locExecHandle);
+         CASE flowState OF
+            eFlowInvalid :
+               IF handlerExecHandle = dExecHandle THEN
+                  bInterrupted := FALSE;
+                  bRunning := FALSE;
+                  bStopped := TRUE;
+                  sActProg := "";
+                  dExecHandle := 0;
+                  STOP ObserveContinue;
+                  bObserveContinueRunning := FALSE;
+                  myRobot.DebugPrint(eTraceAutoControl, "AutoControl: Program stopped - 1");
+                  //RcuResetMessage(RcuAutoCtrl_InfPrStop, myRobot.kinListInx, 1, 0, "RcuAutoControl.CheckProgState");
+                  myRobot.RcuInterfaceToBCU.bAckStartProg := FALSE;  // Reset Acknowledge Start Program
+                  myRobot.RcuInterfaceToBCU.bNewBodyData := TRUE;    // Ready for new skiddata
+                  RETURN;
+               END_IF;
+           eFlowInterrupted :
+              bInterrupted := TRUE;
+              bRunning := FALSE;
+              bStopped := FALSE;
+           eFlowRunning :
+              bRunning := TRUE;
+              bInterrupted := FALSE;
+              bStopped := FALSE;
+           eFlowStopping :
+              bRunning := TRUE;
+              bInterrupted := FALSE;
+              bStopped := FALSE;
+         ELSE
+            sErrorText := "unknown feedbackvalue from GetFlowState: " + STR(flowState);
+            myRobot.DebugPrint(eTraceAutoControl, sErrorText);
+         END_CASE;
+      ELSE // end of program
+         myRobot.DebugPrint(eTraceEquipment, "CheckProgState end of program");
+         IF myRobot.selectingFlow.flowId <> locExecHandle THEN
+            IF locExecHandle = dExecHandle THEN // not handler case
+               // compare applied quantity and target quantity only on
+               // regular programs
+               IF (IS_MAPPED(bNormalEndOfProgram) AND (progNumber < giMinFixposNr)) THEN
+                  IF GetProgTerminateState(sActProg) = eTerminateRegular THEN
+                     bNormalEndOfProgram := TRUE;
+                     myRobot.DebugPrint(eTraceEquipment, "regular end of program");
+                  END_IF;
+               END_IF;
+               bInterrupted := FALSE;
+               bRunning := FALSE;
+               bStopped := TRUE;
+               STOP ObserveContinue;
+               bObserveContinueRunning := FALSE;
+               IF handlerExecHandle = dExecHandle THEN
+                  dExecHandle := myRobot.selectingFlow.flowId;
+                  handlerExecHandle := dExecHandle;
+               ELSE
+                  dExecHandle := myRobot.selectingFlow.flowId;
+               END_IF;
+               myRobot.DebugPrint(eTraceAutoControl, "AutoControl: Program stopped " + sActProg + " - 2");
+               //RcuResetMessage(RcuAutoCtrl_InfPrStop, myRobot.kinListInx, 2, 0, "RcuAutoControl.CheckProgState");
+               myRobot.RcuInterfaceToBCU.bAckStartProg := FALSE;  // Reset Acknowledge Start Program
+               myRobot.RcuInterfaceToBCU.bNewBodyData := TRUE;    // Ready for new skiddata
+               sActProg := "";
+               RETURN;
+            ELSE // handler case
+               IF GetProgTerminateState(locActProg) = eTerminateRegular THEN
+                  myRobot.DebugPrint(eTraceEquipment, "regular end of handler-program " + locActProg);
+               ELSE
+                  myRobot.DebugPrint(eTraceEquipment, "irregular end of handler-program " + locActProg);
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+// 10.09.04 nmr: new routine, to continue a paused program automatically
+//               as soon as driverelease from PLC is set and robot is ready
+// 07.12.06 BMA: additional condition that the InterruptProg signal from
+//               the BCU is not set
+ROUTINE ObserveContinue() PRIVATE
+VAR
+    progState   : TProgState;
+    progStateMP : TProgState;
+END_VAR
+
+   bObserveContinueRunning := TRUE;
+   WHILE TRUE DO
+      progState := GetProgState(handlerActProg);
+      IF (handlerActProg <> sActProg) THEN
+         progStateMP := GetProgState(sActProg);
+      ELSE
+         progStateMP := progState;
+      END_IF;
+      
+      IF (progState = eProgInterrupted) OR (progStateMP = eProgInterrupted) THEN
+         Sleep(250);
+         IF myRobot.RcuInterfaceToBCU.bInterruptProg THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Wait till BCU has reset interrupt program");
+            myRobot.DebugPrint(eTraceAutoControl, "Wait till BCU has reset interrupt program");
+         ELSIF NOT myRobot.mainModeMgr.automatic THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Wait till main mode manager is in automatic");
+            myRobot.DebugPrint(eTraceAutoControl, "Wait till main mode manager is in automatic");
+         END_IF;
+         WAIT myRobot.mainModeMgr.automatic AND 
+            (NOT myRobot.RcuInterfaceToBCU.bInterruptProg OR myRobot.homing.bHomingRun)
+            AND NOT myRobot.brakeCheck.autoCheckActive;
+         // 22-02-2008 BMA
+         progState := GetProgState(handlerActProg);
+         IF progState = eProgUnknown THEN
+            bRunning := FALSE;
+            bStopped := TRUE;
+            myRobot.DebugPrint(eTraceAutoControl, "ObserveContinue stopped by itself. " + handlerActProg + " no longer loaded");
+            sActProg := "";
+            handlerActProg := "";
+            dExecHandle := 0;
+            STOP CheckProgState;
+            myRobot.RcuInterfaceToBCU.bAckStartProg := FALSE; // Reset Acknowledge Start Program
+            myRobot.RcuInterfaceToBCU.bNewBodyData := TRUE;   // ready for new skiddata
+            bObserveContinueRunning := FALSE;
+            RETURN;
+         END_IF;
+         
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Wait for ProcessContinue to continue program");
+         myRobot.RcuInterfaceToProcess.WaitProcessReady(TRUE, myRobot.kinListInx);
+         IF myRobot.mainModeMgr.automatic AND 
+            ( NOT myRobot.RcuInterfaceToBCU.bInterruptProg OR myRobot.homing.bHomingRun) THEN
+            Sleep(200); // Workaround Bit 3 Stateword IndraDrive
+            PLCContinueProgram();
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "BCU interrupt program still set");
+         END_IF;
+      END_IF;
+      Sleep(250);
+   END_WHILE;
+    
+END_ROUTINE
+
+// observe drivepower
+ROUTINE ObservePower() PRIVATE
+//   IF NOT myRobot.bRcuSimulatesAllDrives THEN
+   IF NOT myRobot.bRcuSimulatesAllDrives AND NOT gbEthercat THEN // workaround bis bit im Stateword vorhanden
+      WHILE TRUE DO
+         IF myRobot.updateActive THEN
+            myRobot.fieldbusOut.PowerOn.svBool := TRUE;
+            WAIT NOT myRobot.updateActive;
+         ELSE
+            IF myRobot.PowerApplied() THEN
+               myRobot.fieldbusOut.PowerOn.svBool := TRUE;
+            ELSE
+               myRobot.fieldbusOut.PowerOn.svBool := FALSE;
+            END_IF;
+            Sleep(200); // ???
+         END_IF;
+      END_WHILE;
+   ELSE
+      WHILE TRUE DO
+         WAIT myRobot.autoControl.bPLCPowerOn;
+         myRobot.fieldbusOut.PowerOn.svBool := TRUE;
+         WAIT NOT myRobot.autoControl.bPLCPowerOn;
+         myRobot.fieldbusOut.PowerOn.svBool := FALSE;
+      END_WHILE;
+   END_IF;
+END_ROUTINE
+
+// observe Motion active
+ROUTINE ObserveProgActiv() PRIVATE
+   VAR
+      chg : BOOL;
+   END_VAR
+ 
+   chg := IS_CHANGED(myRobot.bMotionActive);
+   
+   WHILE TRUE DO
+      IF myRobot.bMotionActive THEN
+         myRobot.fieldbusOut.ProgramActive.svBool := TRUE;
+      ELSE
+         myRobot.fieldbusOut.ProgramActive.svBool := FALSE;
+      END_IF;
+      chg := FALSE;
+      WAIT chg;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveError() PRIVATE
+   VAR
+      sApplPath : STRING;
+      sFilePath : STRING;
+      SN        : STRING;
+      hdlFile   : DINT;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT myRobot.bRcuAnyErrorPending;
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE; // station error
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MotionError=TRUE to BCU, because of error pending");
+      IF NOT (myRobot.iSerialNr = -2) AND (myRobot.RcuEmergencyStop.stop)  THEN 
+         START CS(); 
+      END_IF; 
+      WAIT NOT myRobot.bRcuAnyErrorPending;
+      myRobot.RcuInterfaceToBCU.mMotionError := FALSE; // station error quit
+      myRobot.handler.tool.QuitError();
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MotionError=FALSE to BCU, because error no longer pending");
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE CS()
+      IF myRobot.actCartVals.mPathVeloRel >= 20 THEN         
+         IF (myRobot.mainModeMgr.mainModeInput[1] = TRUE) OR (myRobot.mainModeMgr.mainModeInput[3] = TRUE) THEN
+            myRobot.iI2 := myRobot.iI2 + 1;
+         END_IF;
+      END_IF;   
+END_ROUTINE
+
+ROUTINE ObserveDeadman() PRIVATE
+   VAR
+      bDeadman      : MAPTO BOOL;
+      bChgDeadman   : BOOL;
+      bChgAutoEx    : BOOL;
+      bChgModeT1    : BOOL;
+      bChgModeT2    : BOOL;
+      bChgModeSleep : BOOL;
+   END_VAR
+   
+   IF (NOT myRobot.bRcuSimulatesAllDrives) AND gbEstopFromBusMaster THEN
+      bDeadman := MAPX(cHW_DeadmanPaint[myRobot.kinListInx]);
+      IF NOT IS_MAPPED(bDeadman) THEN
+         RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 1, 0, "RcuAutoControl.ObserveDeadman", cHW_DeadmanPaint[myRobot.kinListInx]);
+         RETURN;
+      END_IF;
+      
+      bChgDeadman := IS_CHANGED(bDeadman);
+      bChgAutoEx := IS_CHANGED(myRobot.fieldbusIn.ModeAutoExtern.svBool);
+      bChgModeT1 := IS_CHANGED(myRobot.fieldbusIn.ModeT1.svBool);
+      bChgModeT2 := IS_CHANGED(myRobot.fieldbusIn.ModeT2.svBool);
+      bChgModeSleep := IS_CHANGED(myRobot.fieldbusIn.ModeSleep.svBool);
+      
+      IF gbRcuSimulateStationPLC THEN
+         // stand alone robot with direct hw deadman input,
+         // signal is set when drives have power (via deadman switch or switch in the control cabinet)
+         WHILE TRUE DO
+            IF bDeadman THEN
+               driveReleaseIntern := TRUE;
+            ELSE
+               driveReleaseIntern := FALSE;
+            END_IF;
+            WAIT bChgDeadman;
+            bChgDeadman := FALSE;
+         END_WHILE;
+      ELSE
+         // station robot with direct hw deadman input
+         WHILE TRUE DO
+            IF (myRobot.fieldbusIn.ModeT1.svBool OR myRobot.fieldbusIn.ModeT2.svBool) THEN
+               IF bDeadman THEN
+                  driveReleaseIntern := TRUE;
+               ELSE
+                  driveReleaseIntern := FALSE;
+               END_IF;
+            ELSE
+               driveReleaseIntern := TRUE;
+            END_IF;
+            WAIT bChgDeadman OR bChgAutoEx OR bChgModeT1 OR bChgModeT2 OR bChgModeSleep;
+            bChgDeadman := FALSE;
+            bChgAutoEx := FALSE;
+            bChgModeT1 := FALSE;
+            bChgModeT2 := FALSE;
+            bChgModeSleep := FALSE;
+         END_WHILE;
+      END_IF;
+   END_IF;
+   
+   (* old
+   bDeadman := MAPX(cHW_DeadmanPaint[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bDeadman) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 1, 0, "RcuAutoControl.ObserveDeadman", cHW_DeadmanPaint[myRobot.kinListInx]);
+      RETURN;
+   END_IF;
+   
+   bChanged1 := IS_CHANGED(bDeadman);
+   WHILE TRUE DO
+      IF bDeadman THEN
+         myRobot.RcuInterfaceToBCU.sMotionInterface.tMotiontoBCU.mDeadMan := TRUE;
+      ELSE
+         myRobot.RcuInterfaceToBCU.sMotionInterface.tMotiontoBCU.mDeadMan := FALSE;
+      END_IF;
+      WAIT bChanged1;
+      bChanged1 := FALSE;
+   END_WHILE;
+   *)
+END_ROUTINE
+
+ROUTINE ObservePrjChanged() PRIVATE
+  VAR
+    bChanged1 : BOOL;
+  END_VAR
+  
+   bChanged1 := IS_CHANGED(ProjectName);
+   WHILE TRUE DO
+      WAIT bChanged1;
+      myRobot.DebugPrint(eTraceAutoControl, "ObservePrjChanged: ProjectName = "+ProjectName);
+      bChanged1 := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+ROUTINE ObserveStop() PRIVATE
+   VAR
+       bStop : MAPTO BOOL;
+       bChg  : BOOL;
+   END_VAR
+   
+   bStop := MAP(myRobot.RcuEmergencyStop.stop);
+   IF NOT IS_MAPPED(bStop) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 2, 0, "RcuAutoControl.ObserveStop", cHW_mEmergencyStop[myRobot.kinListInx]);
+      gbBootupError := TRUE;
+      RETURN;
+   END_IF;
+   bChg := IS_CHANGED(bStop);
+   
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF bStop THEN
+          ;           
+      ELSE
+         // this error is already set by station plc or scu
+         //RcuSetMessageOnce(RcuAutoCtrl_ErrEStop, myRobot.kinListInx, 1, 0, "RcuAutoControl.ObserveStop");
+         myRobot.DebugPrint(eTraceAutoControl, "*** emergency stop by station plc or scu ***");
+      END_IF;
+   END_WHILE;
+
+END_ROUTINE
+
+ROUTINE ObserveModesFromPLC() PRIVATE
+   VAR
+      bChgPowerOn       : BOOL;
+      bChgMoveRelease   : BOOL;
+      bChgGhostNoMotion : BOOL;
+      bChgGhost         : BOOL;
+      bChgErrorQuit     : BOOL;
+      bChgHoming        : BOOL;
+                     
+      bChgAutoEx        : BOOL;
+      bChgModeT1        : BOOL;
+      bChgModeT2        : BOOL;
+      bChgModeSleep     : BOOL;
+END_VAR
+
+   bChgPowerOn       := IS_CHANGED(myRobot.fieldbusIn.PowerOn.svBool);
+   bChgMoveRelease   := IS_CHANGED(myRobot.fieldbusIn.MovementRelease.svBool);
+   bChgGhostNoMotion := IS_CHANGED(myRobot.fieldbusIn.GhostNoMotion.svBool);
+   bChgGhost         := IS_CHANGED(myRobot.fieldbusIn.GhostMode.svBool);
+   bChgErrorQuit     := IS_CHANGED(myRobot.fieldbusIn.ErrorQuit.svBool);
+   bChgHoming        := IS_CHANGED(myRobot.fieldbusIn.StartHoming.svBool);
+
+   bChgAutoEx        := IS_CHANGED(myRobot.fieldbusIn.ModeAutoExtern.svBool);
+   bChgModeT1        := IS_CHANGED(myRobot.fieldbusIn.ModeT1.svBool);
+   bChgModeT2        := IS_CHANGED(myRobot.fieldbusIn.ModeT2.svBool);
+   bChgModeSleep     := IS_CHANGED(myRobot.fieldbusIn.ModeSleep.svBool);
+   
+   WHILE TRUE DO
+      bPLCPowerOn          := myRobot.fieldbusIn.PowerOn.svBool;
+      // mainModeMgr.mainModeInput[] has to map this bit!!!
+      bPLCReleaseFieldBus  := myRobot.fieldbusIn.MovementRelease.svBool;
+      bPLCGhostNoMotion    := myRobot.fieldbusIn.GhostNoMotion.svBool;
+      bPLCGhost            := myRobot.fieldbusIn.GhostMode.svBool;
+      bPLCErrorQuit        := myRobot.fieldbusIn.ErrorQuit.svBool;
+      
+      IF NOT myRobot.homing.bEnableHoming THEN // real homing not enabled
+         IF (NOT bSimpleHomingActive) AND myRobot.fieldbusIn.StartHoming.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Start Homing received from PLC");
+            START SetOverrideForHoming();
+         ELSIF bSimpleHomingActive AND (NOT myRobot.fieldbusIn.StartHoming.svBool) THEN
+
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "Reset Homing received from PLC");
+         END_IF;
+         bSimpleHomingActive := myRobot.fieldbusIn.StartHoming.svBool;
+      END_IF;
+      
+      IF (NOT bBitAutoExt) AND myRobot.fieldbusIn.ModeAutoExtern.svBool THEN
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Mainmode changed to automatic extern");
+      END_IF;
+      bBitAutoExt := myRobot.fieldbusIn.ModeAutoExtern.svBool;
+      
+      IF (NOT bBitT1) AND myRobot.fieldbusIn.ModeT1.svBool THEN
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Mainmode changed to T1");
+      END_IF;
+      bBitT1 := myRobot.fieldbusIn.ModeT1.svBool;
+      
+      IF (NOT bBitT2) AND myRobot.fieldbusIn.ModeT2.svBool THEN
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Mainmode changed to T2");
+      END_IF;
+      bBitT2 := myRobot.fieldbusIn.ModeT2.svBool;
+      
+      IF (NOT bBitSleep) AND myRobot.fieldbusIn.ModeSleep.svBool THEN
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Mainmode changed to sleep");
+      END_IF;
+      bBitSleep := myRobot.fieldbusIn.ModeSleep.svBool;
+
+      bBitNoMode := NOT bBitAutoExt AND NOT bBitT1 AND NOT bBitT2 AND NOT bBitSleep;
+      
+      // mirror some Inputbits onto outputbits
+      myRobot.fieldbusOut.ModeAutoExtern.svBool := myRobot.fieldbusIn.ModeAutoExtern.svBool;
+      myRobot.fieldbusOut.ModeT1.svBool         := myRobot.fieldbusIn.ModeT1.svBool;
+      myRobot.fieldbusOut.ModeT2.svBool         := myRobot.fieldbusIn.ModeT2.svBool;
+      myRobot.fieldbusOut.ModeSleep.svBool      := myRobot.fieldbusIn.ModeSleep.svBool;
+            
+      WAIT bChgPowerOn OR bChgMoveRelease OR bChgAutoEx OR bChgModeT1 OR 
+           bChgModeT2 OR bChgModeSleep OR bChgGhostNoMotion OR bChgGhost OR 
+           bChgErrorQuit OR bChgHoming;       
+           
+      IF bChgAutoEx OR bChgModeT1 OR bChgModeT2 OR bChgModeSleep THEN
+         myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+         WAIT myRobot.isNotMovingOnPath;
+      END_IF;
+      
+      bChgPowerOn       := FALSE;
+      bChgMoveRelease   := FALSE;
+      bChgGhostNoMotion := FALSE;
+      bChgGhost         := FALSE;
+      bChgErrorQuit     := FALSE;
+      bChgHoming        := FALSE;
+      
+      bChgAutoEx        := FALSE;
+      bChgModeT1        := FALSE;
+      bChgModeT2        := FALSE;
+      bChgModeSleep     := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveProcessActive() PRIVATE
+   VAR
+      bChg               : BOOL;
+      AdrInProcessActive : INT;
+      InputProcessActive : MAPTO BOOL;
+   END_VAR
+
+   bBitProcessActive := TRUE; // at the moment no input bit exists
+   (*
+   IF NOT myRobot.pbSlave.ReadCfgInputBit("ProcessActive", AdrInProcessActive) THEN
+      RETURN;
+   ELSE
+      InputProcessActive       := MAP(myRobot.pbSlave.PB_InBitData[AdrInProcessActive]);
+      IF NOT (IS_MAPPED(InputProcessActive)) THEN
+         RcuSetMessage( RcuAutoCtrl_ErrObsModesPB, instId, INSTANCE_NAME());
+         RETURN;
+      END_IF;
+   END_IF;
+  
+   bChg := IS_CHANGED(InputProcessActive);
+
+   WHILE TRUE DO
+      gbBitProcessActive := InputProcessActive;
+      WAIT bChg;
+      bChg := FALSE;
+   END_WHILE;
+   *)
+   
+END_ROUTINE
+
+ROUTINE ObservePrgNrFifo() PRIVATE
+   VAR
+      i            : INT;
+      projectState : TProjectState;
+      program      : STRING;
+      project      : STRING;
+      errCnt       : DINT;
+      backgrProj   : BOOL;
+      wasBuilt     : BOOL;
+      exist        : BOOL;
+      ok           : BOOL;
+      flag         : BOOL;
+   END_VAR
+
+   WHILE TRUE DO
+      START CheckDestroyProjects();
+      WAIT myRobot.RcuInterfaceToBCU.bPrgNrFifoChg;
+      myRobot.RcuInterfaceToBCU.bPrgNrFifoChg := FALSE;
+      STOP CheckDestroyProjects;
+      myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: STOP CheckDestroyProjects");
+      FOR i:= 1 TO myRobot.RcuInterfaceToBCU.iPrgNrFifoAmount DO
+         IF myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i] <> 0 THEN
+            ok := myRobot.RcuTypeList.ReadTypeListEntry(myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i], project, program, myRobot.subDirName);
+         ELSE
+            myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: aiPrgNrFifo[" + STR(i) + "] = 0");
+            ok := FALSE;
+         END_IF;
+         IF (program <> "") AND (project <> "") AND ok THEN
+               myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: Semaphore waiting");
+               WAIT NOT bSemaTeachProg;
+               bSemaTeachProg := TRUE;
+               bObservePrgNrFifo := TRUE;
+               myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: Semaphore received");
+               projectState := GetProjectStateFast(project);
+               IF projectState = eProjectUnknown THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: " + STR(i) + ": Typelist Project = " + project + 
+                      " does not exist");
+               ELSE
+                  errCnt := 0;
+                  backgrProj  := FALSE;
+                  wasBuilt    := FALSE;
+                  exist       := FALSE;
+                  
+                  exist := UpdateProject(project, backgrProj, errCnt, wasBuilt);
+                  IF wasBuilt THEN
+                     myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: " + STR(i) + ": Typelist Project = " + project + 
+                                " compiled");
+                  ELSE
+                     myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: Project = " + STR(i) + ": Typelist Project = " + project + 
+                                " already compiled");
+                  END_IF;
+               END_IF;
+               IF (errCnt = 0) AND (wasBuilt OR ( projectState = eProjectBuilt))
+                  AND ((project <> sActProject) OR NOT myRobot.selectingFlow.present) THEN
+                  IF backgrProj THEN
+                     IF (project = sActProject) AND bLockChangeProject THEN
+                        myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: " + STR(i) + ": Typelist Project = " + project + 
+                                   " refresh locked");
+                     ELSE
+                        ChangeProjectWait(project, project);
+                        myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: " + STR(i) + ": Typelist Project = " + project + 
+                                   " refreshed");
+                     END_IF;
+                  ELSE
+                     flag := FALSE;
+                     IF LoadProject(project,flag) THEN
+                        WAIT flag;
+                        myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: " + STR(i) + ": Typelist Project = " + project + 
+                                " loaded");
+                     ELSE
+                         myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: Project = " + STR(i) + project +  " LoadProject liefert FALSE");
+                     END_IF;
+                  END_IF;
+               END_IF;   
+               bSemaTeachProg := FALSE;
+               bObservePrgNrFifo := FALSE;
+               myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo: Semaphore released");
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, "ObservePrgNrFifo:(program <> '') AND (project <> '') AND ok nicht erfuellt!");
+            END_IF;
+      END_FOR;
+   END_WHILE;
+
+END_ROUTINE
+
+
+ROUTINE ObserveTypeList() PRIVATE
+   VAR
+      bChg : BOOL;
+   END_VAR;
+   
+   bChg := IS_CHANGED(myRobot.RcuTypeList.select);
+   
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      myRobot.DebugPrint(eTraceAutoControl, " Typlist changed");
+      myRobot.RcuInterfaceToBCU.bPrgNrFifoChg := TRUE;
+   END_WHILE;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// switch the drives from sim to operating at end of ghost
+//-----------------------------------------------------------------------------            
+ROUTINE ObserveGhostNoMotion()
+  
+  WHILE TRUE DO
+     WAIT bPLCGhostNoMotion;
+     WAIT NOT bPLCGhostNoMotion;
+     IF myRobot.allDrivesSimulated OR myRobot.ghostNoMotion.bActiveInSim THEN
+        myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+        WAIT myRobot.isNotMovingOnPath;
+        myRobot.SetMotionMode(eRcuMMgrModeStopJoints);
+        WAIT myRobot.mmgrState = eRcuMMgrStateStoppedJoints;
+        myRobot.SimulateAllDrives(FALSE);
+     END_IF;
+  END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveAutomatic() PRIVATE
+  VAR
+     loadedProj      : STRING;
+  END_VAR
+   
+   WHILE TRUE DO
+      WAIT myRobot.mainModeMgr.externControl;
+      myRobot.triggersAsPathPositions := FALSE;
+      myRobot.SetTimeOverride(1.0);
+      //myRobot.override := 1000;             // Override 100%
+      START AutomaticAction();
+      START myRobot.RcuInterfaceToBCU.ObserveBCUFifos();
+      START myRobot.RcuInterfaceToBCU.ObserveProgNumber(myRobot);
+      myRobot.handler.StartAutomatic();
+      WAIT NOT myRobot.mainModeMgr.externControl;
+      STOP AutomaticAction;
+      STOP CheckDestroyProjects;
+      STOP myRobot.RcuInterfaceToBCU.ObserveProgNumber;
+      STOP myRobot.RcuInterfaceToBCU.ObserveBCUFifos;
+
+      STOP ObservePrgNrFifo;
+      IF bObservePrgNrFifo THEN
+         bObservePrgNrFifo := FALSE;
+         bSemaTeachProg := FALSE;
+      END_IF;
+      STOP UpdateLater;
+      STOP ObserveTypeList;
+      // Ghost without motion only in Automatic mode
+      IF myRobot.allDrivesSimulated OR myRobot.ghostNoMotion.bActiveInSim THEN
+         myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+         WAIT myRobot.isNotMovingOnPath;
+         myRobot.SetMotionMode(eRcuMMgrModeStopJoints);
+         WAIT myRobot.mmgrState = eRcuMMgrStateStoppedJoints;
+         myRobot.SimulateAllDrives(FALSE);
+      END_IF;
+      myRobot.DebugPrint(eTraceAutoControl, "End A U T O M A T I C");
+      myRobot.fixpos.bExtFixpos := FALSE;
+      IoDeviceGuarding(RcuTeachPendantControl.deviceHdl, TRUE);
+      STOP CheckProgState;
+      STOP ObserveContinue;
+      bObserveContinueRunning := FALSE;
+      UnloadAllProjects();
+      sErrorText        := "";
+      sActProg          := "";
+      handlerActProg    := "";
+      sNewProg          := "";
+      sNewProject       := "";
+      progNumber        := 0;
+      dExecHandle       := 0;
+      handlerExecHandle := 0;
+      bRunning          := FALSE;
+      bInterrupted      := FALSE;
+      bStopped          := TRUE;
+      IF IS_MAPPED(bNormalEndOfProgram) THEN
+         bNormalEndOfProgram := FALSE;
+      END_IF;
+      myRobot.RcuInterfaceToBCU.bNewBodyData := FALSE;      // Not ready for new skiddata
+//      InitCollisionBits(TRUE);                              // set all collision bits 
+      myRobot.RcuInterfaceToBCU.bAckBodyData := FALSE;      // reset Acknowledge Skid-Data   
+      myRobot.RcuInterfaceToBCU.bAckStartProg := FALSE;     // reset Acknowledge Start
+      bLockChangeProject := FALSE;
+      bLockStartProject := FALSE;
+      bLockDestroyProjects := FALSE;
+      myRobot.handler.EndAutomatic();
+   END_WHILE;
+END_ROUTINE
+
+
+
+ROUTINE ObserveTimerConditions() PRIVATE
+VAR
+   bChg1     : BOOL;
+   bChg2     : BOOL;
+   bChg3     : BOOL;
+   bChgStart : BOOL;
+   bCond     : BOOL;
+END_VAR
+
+   bCond := UPDATE(bConvStop AND myRobot.bWaitingTrackingPos);
+   bChg1 := IS_CHANGED(bCond);
+   bChg2 := IS_CHANGED(myRobot.svMotionAllowed);
+   bChg3 := IS_CHANGED(myRobot.override);
+   bChgStart := IS_CHANGED(bStartTimerCond);
+   
+   WHILE TRUE DO
+      WAIT bChgStart;
+      bChgStart := FALSE;
+      bChg1     := FALSE;
+      bChg2     := FALSE;
+      bChg3     := FALSE;
+      IF bStartTimerCond THEN
+         myRobot.DebugPrint(eTraceAutoControl, "ObserveTimerConditions bStartTimerCond");
+         badCondition := FALSE;
+         START ObserveConvStop();
+         WAIT bChg1 OR bChg2 OR bChg3 OR bChgStart OR bCond;
+         IF (myRobot.bWaitingTrackingPos AND bConvStop) OR NOT myRobot.svMotionAllowed 
+             OR bChg3 THEN
+            badCondition := TRUE;
+            myRobot.DebugPrint(eTraceAutoControl, "ObserveTimerConditions TRUE bWaitingTrackingPos = "+STR(myRobot.bWaitingTrackingPos));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bConvStop = "+STR(bConvStop));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bCond     = "+STR(bCond));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      svMotionAllowed = "+STR(myRobot.svMotionAllowed));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChg1 = "+STR(bChg1));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChg2 = "+STR(bChg2));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChg3 = "+STR(bChg3));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChgStart = "+STR(bChgStart));
+         ELSE
+            myRobot.DebugPrint(eTraceAutoControl, "ObserveTimerConditions FALSE bWaitingTrackingPos = "+STR(myRobot.bWaitingTrackingPos));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bConvStop = "+STR(bConvStop));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bCond     = "+STR(bCond));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      svMotionAllowed = "+STR(myRobot.svMotionAllowed));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChg1 = "+STR(bChg1));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChg2 = "+STR(bChg2));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChg3 = "+STR(bChg3));
+            myRobot.DebugPrint(eTraceAutoControl, "                                      bChgStart = "+STR(bChgStart));
+         END_IF;
+         STOP ObserveConvStop;
+         bChgStart := FALSE;
+      END_IF;
+   END_WHILE;
+   
+END_ROUTINE
+
+ROUTINE ObserveTimerStop() PRIVATE
+VAR
+   bChg     : BOOL;
+   timeOut    : BOOL;
+END_VAR
+
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 4, 0, "RcuAutoControl.ObserveTimerStop", "ObserveTimerStop");
+      RETURN;
+   END_IF;
+   bChg := IS_CHANGED(bStopTimer);
+   
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF bStopTimer THEN
+         bStopTimer := FALSE;
+         IF IS_MAPPED(myRobot.fieldbusOut.TimeData.svWord) AND
+            IS_MAPPED(myRobot.fieldbusOut.ProgramNo.svWord) AND 
+            IS_MAPPED(myRobot.fieldbusOut.TimeDataValid.svBool) AND
+            IS_MAPPED(myRobot.fieldbusIn.AckTimeData.svBool) THEN
+            myRobot.DebugPrint(eTraceAutoControl, "Program No. " + STR(progNumber) + " : time [1/10s] = "+STR(iTimeData));
+            myRobot.fieldbusOut.TimeData.svWord := iTimeData;
+            myRobot.fieldbusOut.ProgramNo.svWord := progNumber;
+            myRobot.fieldbusOut.TimeDataValid.svBool := TRUE;
+            IF gbRcuSimulateStationPLC THEN
+               myRobot.WaitMcMicroCycles(50);
+            ELSE
+               timeOut := FALSE;
+               SysTimerSet(500, timeOut);
+               WAIT myRobot.fieldbusIn.AckTimeData.svBool OR timeOut;
+               IF timeOut THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "MainRunTimerStop: No ACK from PLC");
+               END_IF;
+            END_IF;
+            myRobot.fieldbusOut.TimeData.svWord := 0;
+            myRobot.fieldbusOut.ProgramNo.svWord := 0;
+            myRobot.fieldbusOut.TimeDataValid.svBool := FALSE;
+         ELSE
+            myRobot.DebugPrint(eTraceAutoControl, "Fieldbussignals for time measurement not mapped");
+            RETURN;
+         END_IF;
+      END_IF;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE ObserveConvStop() PRIVATE
+VAR
+   bChg     : BOOL;
+END_VAR
+
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 5, 0, "RcuAutoControl.ObserveTimerStop", "ObserveTimerStop");
+      RETURN;
+   END_IF;
+   
+   IF NOT IS_MAPPED(myRobot.fieldbusIn.ConvRunning.svBool) THEN
+      RETURN;
+   END_IF;
+   
+   bChg := IS_CHANGED(myRobot.fieldbusIn.ConvRunning.svBool);
+   bConvStop := NOT myRobot.fieldbusIn.ConvRunning.svBool;
+   
+   WHILE TRUE DO
+      myRobot.DebugPrint(eTraceAutoControl, "ObserveConvStop 1");
+      WAIT bChg;
+      bChg := FALSE;
+      IF NOT myRobot.fieldbusIn.ConvRunning.svBool THEN
+         myRobot.DebugPrint(eTraceAutoControl, "ObserveConvStop bConvStop := TRUE");
+         bConvStop := TRUE;
+      ELSE
+         myRobot.DebugPrint(eTraceAutoControl, "ObserveConvStop bConvStop := FALSE");
+      END_IF;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE ObserveDownloadReq() PRIVATE
+   VAR
+      bChg : BOOL;
+      timeout : BOOL;
+   END_VAR;
+
+   bDownloadReq := MAPX(cSV_bDownloadReq[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bDownloadReq) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 5, 0, 
+         "RcuAutoControl.ObserveDownloadReq", cSV_bDownloadReq[myRobot.kinListInx]);
+      RETURN;
+   END_IF;
+   bDownloadReqAck := MAPX(cSV_bDownloadReqAck[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bDownloadReqAck) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 6, 0, 
+         "RcuAutoControl.ObserveDownloadReq", cSV_bDownloadReqAck[myRobot.kinListInx]);
+      RETURN;
+   END_IF;
+   
+   bDownloadReq      := FALSE;
+   bDownloadReqAck   := FALSE;
+   bSemaTeachProg    := FALSE;
+   bObservePrgNrFifo := FALSE;
+   bChg := IS_CHANGED(bDownloadReq);
+   
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF bDownloadReq THEN
+         myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Download requested from 3DOnsite");
+         WAIT NOT bSemaTeachProg;
+         bSemaTeachProg := TRUE;
+         bDownloadReqAck := TRUE;
+         myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Semaphore received");
+         timeout := FALSE;
+         SysTimerSet(giTimeOutDownload3DOnsite, timeout); // 5 sec
+         WAIT NOT bDownloadReq OR timeout;
+         IF timeout THEN
+            myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Download timeout");
+         ELSE
+            myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Download finished");
+         END_IF;
+         bDownloadReqAck := FALSE;
+         IF NOT bDownloadReq THEN
+            // read file ChangedProjects.ini and build/load these projects
+            IF myRobot.mainModeMgr.externControl THEN
+               myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Update of downloaded projects started");
+               UpdateDownloadedProjects();
+               myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Update of downloaded projects finished");
+            END_IF;
+         END_IF;
+         bSemaTeachProg := FALSE;
+         myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Semaphore released");
+      ELSE
+         IF bDownloadReqAck THEN
+            // in Automatik : 
+            IF myRobot.mainModeMgr.externControl THEN
+               myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Update of downloaded projects started");
+               UpdateDownloadedProjects();
+               myRobot.DebugPrint(eTraceAutoControl, "ObserveDownloadReq: Update of downloaded projects finished");
+            END_IF;
+         END_IF;
+         
+      END_IF;
+   END_WHILE;
+
+END_ROUTINE
+
+
+ROUTINE UpdateDownloadedProjects() PRIVATE
+   VAR
+      FileHandle   : DINT;
+      fileName     : STRING;
+      s            : STRING;
+      eof          : BOOL;
+      sApplPath    : STRING;
+      len          : DINT;
+      robotStr     : STRING;
+      project      : STRING;
+      projectState : TProjectState;
+      errCnt       : DINT;
+      backgrProj   : BOOL;
+      wasBuilt     : BOOL;
+      exist        : BOOL;
+      ok           : BOOL;
+      flag         : BOOL;
+      i            : INT;
+      prgNr        : INT;
+      bFound       : BOOL;
+   END_VAR
+   
+
+   robotStr := myRobot.subDirName;
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   fileName := sApplPath + "application/control/teachcontrol/" + robotStr + "/changedprojects.ini";
+   FileHandle := FileOpen (fileName, eFileModeReadOnly);
+   IF FileHandle <> -1 THEN
+      eof := FALSE;
+      WHILE NOT eof DO
+         // liest eine Zeile aus dem angegebenen File, das Zeilen-Endzeichen wird
+         // nicht Teil des ausgelesenen Textes
+         eof := NOT FileReadLn(FileHandle, s);
+         s := StrToLower(s);
+         project := StrToLower(robotStr) + "." + s;
+         IF NOT eof THEN
+            PRINT(project);
+            projectState := GetProjectStateFast(project);
+            IF projectState = eProjectUnknown THEN
+               myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                   " does not exist");
+            ELSIF (projectState = eProjectBuilt) OR
+                  (projectState = eProjectLoaded) OR
+                  (projectState = eProjectOperational) OR
+                  ( (projectState = eProjectNotBuilt) AND (StrToLower(project) = StrToLower(sActProject))) THEN
+               errCnt := 0;
+               backgrProj  := FALSE;
+               wasBuilt    := FALSE;
+               exist       := FALSE;
+
+               exist := UpdateProject(project, backgrProj, errCnt, wasBuilt);
+               IF wasBuilt THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                                " compiled");
+                  IF errCnt <> 0 THEN
+                     myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                                " with " + STR(errCnt) + " error(s)");
+                  END_IF; // errCnt
+                     IF backgrProj THEN
+                        IF (StrToLower(project) = StrToLower(sActProject)) AND 
+                           (myRobot.selectingFlow.present OR bLockChangeProject) THEN
+                           myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                                      " refresh locked");
+                        START UpdateLater(project, errCnt);
+                        ELSE
+                           myRobot.autoControl.ChangeProjectWait(project, project);
+                           myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                                      " refreshed");
+                        END_IF;
+                     ELSE
+                     myRobot.RcuInterfaceToBCU.anyPrgNrChanged := TRUE;
+                        // not possible
+                        myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                                   " NOT backgrProj");
+                     END_IF; // backgrProj
+               ELSE
+                  myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                                " is up to date");
+               END_IF;   // wasBuilt
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, "UpdateDownloadedProjects: Project = " + project + 
+                   " projectState=eProjectNotBuilt - not compiled");
+            END_IF; // projectState
+         END_IF; // NOT eof
+      END_WHILE;
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "File " + fileName + " cannot be opened");
+   END_IF;
+   // delete file changedprojects.ini
+   ok := StreamClose(FileHandle);
+   ok := FileDelete(fileName);
+   IF NOT ok THEN
+      myRobot.DebugPrint(eTraceAutoControl, "File " + fileName + " cannot be deleted");
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE UpdateLater(project : STRING; errCnt : DINT)
+   VAR
+      projectState : TProjectState;
+      flag         : BOOL;
+      ok           : BOOL;
+      state        : TFlowState;
+      flowId       : DINT;
+   END_VAR
+
+   flowId := 0;
+   WHILE (StrToLower(project) = StrToLower(sActProject)) AND 
+      (myRobot.selectingFlow.present OR bLockChangeProject) DO
+      IF myRobot.selectingFlow.present THEN
+         flowId := myRobot.selectingFlow.flowId;
+      END_IF;
+      myRobot.WaitMcMicroCycles(1);
+   END_WHILE;
+             
+   myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project = " + project + 
+                                " wait (FlowState = eFlowInvalid)");   
+
+   bLockStartProject := TRUE;
+   IF flowId <> 0 THEN
+      GetFlowState(flowId, state);
+      WAIT state = eFlowInvalid; // wait until program is completly finished
+   END_IF;
+             
+   myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project = " + project + 
+                                " no longer locked");
+                             
+   projectState := GetProjectStateFast(project);
+   IF (projectState = eProjectBuilt) OR
+      (projectState = eProjectLoaded) OR
+      (projectState = eProjectOperational) THEN
+      IF (errCnt <> 0) THEN
+         myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project = " + project + 
+                                " with errors.  NOT refreshed");
+         RcuSetMessageOnce(RcuAutoCtrl_ErrDownload, myRobot.kinListInx, 2, 0, "RcuAutoControl.UpdateLater", project);
+         flag := FALSE;
+         IF NOT UnloadProject(project, flag) THEN
+            myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project " + project + " unload not possible");
+         ELSE
+            WAIT flag;
+         END_IF;
+         ok := DestroyProject(project);
+         IF ok THEN
+            myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project " + project + " deleted");
+         ELSE
+            myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project " + project + " delete not possible");
+         END_IF;
+      ELSE   
+      myRobot.autoControl.ChangeProjectWait(project, project);
+      myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project = " + project + 
+                 " refreshed");
+      END_IF;
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "UpdateLater: Project = " + project + 
+                 " not yet loaded");
+   END_IF;
+   bLockStartProject := FALSE;
+   
+             
+END_ROUTINE
+
+// must be called when Mode is changed to AUTOMATIC
+// 25.08.04 nmr: before switch to automatic mode, all selected projects must be deselected
+ROUTINE AutomaticAction() PRIVATE
+
+   VAR
+      InputStartProg     : MAPTO BOOL;  
+      bChgStart          : BOOL;
+      InputSkidData      : MAPTO BOOL;
+      bChgSkidData       : BOOL;
+      bChgRelease        : BOOL;
+      bChgAbort          : BOOL;
+      bAbortProgOld      : BOOL;
+      bChgGhost          : BOOL;
+      bGhostOld          : BOOL;
+      bitStartOld        : BOOL;
+      bitSelectOld       : BOOL;
+      bitStopOld         : BOOL;
+      oldProj            : STRING;
+      progState          : TProgState;
+      bError             : BOOL;
+      flag               : BOOL;
+      timeout            : BOOL;
+      progHdl            : DINT;
+      progName           : STRING;
+      projName           : STRING;
+      kinName            : STRING;
+      j                  : INT;
+      bFlowFound         : BOOL;
+   END_VAR
+
+   InputSkidData := MAP(myRobot.RcuInterfaceToBCU.bBodyData);
+   InputStartProg := MAP(myRobot.RcuInterfaceToBCU.bStartProg);
+   
+   // waiting until project _global is loaded. Check the project state with
+   // function GetProjectStateFast()
+   timeout := FALSE;
+   SysTimerSet(5000, timeout);
+   WHILE (GetProjectStateFast(myRobot.subDirName) <> eProjectOperational) DO
+      myRobot.WaitMcMicroCycles(1);
+      IF timeout THEN
+         RcuSetMessageOnce(RcuAutoCtrl_ErrGlobalNLoad, myRobot.kinListInx, 1, 0, "RcuAutoControl.AutomaticAction");
+         timeout := FALSE;
+         SysTimerSet(5000, timeout);
+      END_IF;
+   END_WHILE;
+   SysTimerClear(timeout);
+
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrAutomPB, myRobot.kinListInx, 1, 0, "RcuAutoControl.AutomaticAction");
+      RETURN;
+   END_IF;
+   
+   // stop the program which has selected the kinematic
+   flag := FALSE;
+   IF myRobot.selectingFlow.present THEN
+      StopProg(myRobot.selectingFlow.flowId, flag);
+      timeout := FALSE;
+      SysTimerSet(1000, timeout); // give time to stop the program
+      WAIT flag OR timeout;
+   END_IF;
+   // deselect selected project
+   // @@@@@@@@@@@@@ all selected projects of this robot!!!!!
+   IF (sActProject <> "") THEN
+      myRobot.DebugPrint(eTraceAutoControl, "AutomaticAction:                       ProjectName = "+sActProject);
+      oldProj := sActProject; 
+      projChanged := FALSE;
+      flag := FALSE;
+//      IF NOT UnloadProject(sActProject, flag) THEN
+      IF NOT UnloadProject(sActProject,flag) THEN
+         projChanged := FALSE;
+         sActProject := "";
+         myRobot.DebugPrint(eTraceAutoControl, oldProj + " UnloadProject returns FALSE");
+      ELSE
+         WAIT flag;
+         projChanged := FALSE;
+         sActProject := "";
+         myRobot.DebugPrint(eTraceAutoControl, oldProj + " unloaded");
+      END_IF;
+   END_IF;
+
+//*****************************************************************************
+  
+   kinName := "kin"+STR(myRobot.kinListInx+1);
+   IF GetFirstFlow(TRUE, progHdl) THEN
+      GetNameFromProgHdl(progHdl, projName);
+      projName := StrToLower(projName);
+      j := StrFind(projName, kinName);
+      WHILE j = 1 DO
+         GetProjectName(progHdl, projName);
+         projName := kinName + "." + projName;
+         myRobot.DebugPrint(eTraceAutoControl, "AutomaticAction 1: = Unload " + projName);
+         myRobot.DebugPrint(eTraceAutoControl, "progHdl                     " + STR(progHdl));
+         flag := FALSE;
+         IF NOT UnloadProject(projName,flag) THEN
+            RcuSetMessageOnce(RcuAutoCtrl_ErrAutoNUnLoad, myRobot.kinListInx, 1, 0, "RcuAutoControl.AutomaticAction", projName);
+            RETURN;
+         ELSE
+            WAIT flag;
+         END_IF;
+         bFlowFound := GetFirstFlow(TRUE, progHdl);
+         IF bFlowFound THEN
+            GetNameFromProgHdl(progHdl, projName);
+            projName := StrToLower(projName);
+            j := StrFind(projName, kinName);
+         ELSE
+            j := 0;
+         END_IF;
+      END_WHILE;
+      WHILE GetNextFlow(progHdl) DO
+         GetNameFromProgHdl(progHdl, projName);
+         projName := StrToLower(projName);
+         IF StrFind(projName, kinName) = 1 THEN
+            GetProjectName(progHdl, projName);
+            projName := kinName + "." + projName;
+            myRobot.DebugPrint(eTraceAutoControl, "AutomaticAction 2: = Unload " + projName);
+            flag := FALSE;
+            IF NOT UnloadProject(projName,flag) THEN
+               RcuSetMessageOnce(RcuAutoCtrl_ErrAutoNUnLoad, myRobot.kinListInx, 1, 0, "RcuAutoControl.AutomaticAction", projName);
+               RETURN;
+            ELSE
+               WAIT flag;
+            END_IF;
+         END_IF;
+      END_WHILE;
+   END_IF;
+   IF myRobot.bBccActive THEN
+      ClearPlcInterface_BCC();
+   END_IF;   
+
+//*****************************************************************************
+   
+   myRobot.DebugPrint(eTraceAutoControl, "Start A U T O M A T I C");
+   IoDeviceGuarding(RcuTeachPendantControl.deviceHdl, FALSE);
+   LoadProjectsFromFifo();
+   LoadAllFixposProjects();
+   myRobot.homing.ClearCallStack();
+   
+   START ObservePrgNrFifo();
+   START ObserveTypeList();
+   
+   bChgStart     := IS_CHANGED(InputStartProg);
+   bChgSkidData  := IS_CHANGED(InputSkidData);
+   bChgRelease   := IS_CHANGED(myRobot.fieldbusIn.ReleaseRobot.svBool);
+   bChgGhost     := IS_CHANGED(bPLCGhost);
+   bChgAbort     := IS_CHANGED(myRobot.RcuInterfaceToBCU.bAbortProg);
+   bGhostOld     := bPLCGhost;
+   bAbortProgOld := myRobot.RcuInterfaceToBCU.bAbortProg;
+   
+   myRobot.RcuInterfaceToBCU.bNewBodyData := TRUE;            // ready for new Skiddata
+   myRobot.RcuInterfaceToBCU.bBadBodyData := FALSE;           // reset invalid Skiddata
+   InitCollisionBits(FALSE);                                  // reset all collision bits normal logic
+   InitCustomBits(FALSE);                                     // reset all custom bits
+   myRobot.RcuInterfaceToBCU.bAckBodyData := FALSE;           // reset Acknowledge Skid-Data
+   bLoading := FALSE;
+   myRobot.RcuInterfaceToBCU.bFixposActive := FALSE;          // reset fixpos active signal from BCU
+   
+   WHILE TRUE DO   
+      IF NOT myRobot.fieldbusIn.ReleaseRobot.svBool AND NOT bitStopOld THEN
+         // stop
+         myRobot.DebugPrint(eTraceAutoControl, "No Release robot from PLC");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "No Release robot from PLC");         
+         PLCStopProgram();
+      END_IF;
+      bitStopOld   := NOT myRobot.fieldbusIn.ReleaseRobot.svBool;
+      
+      IF myRobot.RcuInterfaceToBCU.bAbortProg AND NOT bAbortProgOld THEN
+         // stop
+         myRobot.DebugPrint(eTraceAutoControl, "Programstop from BCU");
+         WAIT NOT bLoading;
+         myRobot.DebugPrint(eTraceAutoControl, "End waiting for NOT bLoading");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Abort teachprogram received from BCU");         
+         PLCStopProgram();
+      END_IF;
+      bAbortProgOld := myRobot.RcuInterfaceToBCU.bAbortProg;
+
+(*
+      IF NOT bPLCGhost AND bGhostOld AND NOT bStopped THEN // Abort Ghost
+         // stop
+         myRobot.DebugPrint(eTraceAutoControl, "Abort Ghost from PLC");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Abort Ghost received from PLC");         
+         PLCStopProgram();
+      END_IF;
+      bGhostOld    := bPLCGhost;
+*)
+      IF InputSkidData AND NOT bitSelectOld THEN
+         // select
+         bLoading := TRUE;
+         START PLCSelect();
+      ELSIF NOT InputSkidData AND bitSelectOld THEN
+         myRobot.RcuInterfaceToBCU.bBadBodyData := FALSE;         
+      END_IF;
+      IF NOT InputSkidData AND bitSelectOld THEN
+         IF myRobot.RcuInterfaceToBCU.bAckBodyData = TRUE THEN
+            myRobot.WaitMcMicroCycles(1);
+         END_IF;
+         myRobot.RcuInterfaceToBCU.bAckBodyData := FALSE; // reset Acknowledge Skid-Data
+      END_IF;
+      IF InputStartProg AND NOT bitStartOld THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Start teachprogram received from InterfaceToBCU");
+         // start, check for Interrupted better with programstate
+(*//         progState := GetProgState(handlerActProg);
+         progState := GetProgState(sNewProg);
+         IF progState = eProgInterrupted THEN
+             PLCContinueProgram();
+         ELSE
+             WAIT NOT bLoading; // Start when program is loaded
+             PLCStartProgram();
+         END_IF;*)  
+         WAIT NOT bLoading; // Start when program is loaded
+         
+         IF NOT myRobot.RcuInterfaceToBCU.bAbortProg THEN
+            PLCStartProgram();
+         ELSE
+            myRobot.DebugPrint(eTraceAutoControl, "bAbortProg: No PLCStartProgram ");
+         END_IF;
+      END_IF;
+      bitSelectOld := InputSkidData;
+      bitStartOld  := InputStartProg;
+      WAIT bChgStart OR bChgSkidData OR bChgAbort OR bChgGhost OR bChgRelease;
+      bChgStart    := FALSE;
+      bChgSkidData := FALSE;
+      bChgAbort    := FALSE;
+      bChgGhost    := FALSE;
+      bChgRelease  := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE CheckDestroyProjects()
+VAR
+   project          : STRING;
+   program          : STRING;
+   kinName          : STRING;
+   projName         : STRING;
+   ok               : BOOL;
+   nrFound          : INT;
+   j                : INT;
+   i                : INT;
+   projectWithSlash : STRING;
+   pos              : DINT;
+   flag             : BOOL;
+   prjFound         : BOOL;
+   bNoUnload        : BOOL;
+   iStartCnt        : DINT;
+   iEndCnt          : DINT;
+   aDestroy         : ARRAY [1..cMaxFifoData] OF STRING;
+   iNrDestroy       : INT;
+END_VAR
+   
+   iStartCnt := myRobot.actExecData.mUpdateCounterMain;
+   iNrDestroy := 0;
+//   myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects gestartet");
+   myRobot.WaitMcMicroCycles(10);
+   kinName := "kin"+STR(myRobot.kinListInx+1);
+   bNoUnload := FALSE;
+   ok     := TRUE;
+   prjFound := TRUE;
+   
+   IF myRobot.homing.bHomingRun THEN
+      PRINT("CheckDestroyProjects Warten auf Ende Homing");
+      WAIT NOT myRobot.homing.bHomingRun;
+   END_IF;
+   
+   bNoUnload := FALSE;
+//   myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects Vor GetFirstProject ");
+   prjFound := GetFirstProject(FALSE, projName);
+//   myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects Nach GetFirstProject ");
+   IF NOT prjFound THEN
+//      myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects Vor 2.GetFirstProject ");
+      prjFound := GetFirstProject(FALSE, projName);
+//      myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects Nach 2. GetFirstProject ");
+   END_IF;
+   IF prjFound THEN
+      projName := StrToLower(projName);
+      j := StrFind(projName, kinName);
+      IF j = 1 THEN
+         IF myRobot.RcuTypeList.CheckProjectIsFixpos(projName) THEN
+            bNoUnload := TRUE;
+         ELSE
+            FOR i:= 1 TO myRobot.RcuInterfaceToBCU.iPrgNrFifoAmount DO
+               IF myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i] <> 0 THEN
+                  ok := myRobot.RcuTypeList.ReadTypeListEntry(myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i], project, program, myRobot.subDirName);
+               ELSE
+                  myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: aiPrgNrFifo[" + STR(i) + "] = 0");
+                  ok := FALSE;
+               END_IF;
+               IF (program <> "") AND (project <> "") AND ok THEN
+                  project := StrToLower(project);
+                  IF project = projName THEN
+                     bNoUnload := TRUE; 
+                  END_IF;
+               END_IF;
+               myRobot.WaitMcMicroCycles(1);
+            END_FOR;
+         END_IF;
+         IF NOT bNoUnload THEN
+            pos := StrFind(projName, ".");
+            projectWithSlash := StrReplace(projName, "/", 1, pos);
+
+            iNrDestroy := iNrDestroy + 1;
+            IF iNrDestroy > cMaxFifoData THEN
+               myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: too many projects!!!!");
+               iNrDestroy := cMaxFifoData;
+            ELSE
+               aDestroy[iNrDestroy] := projectWithSlash;
+            END_IF;
+         END_IF;
+      ELSE
+         bNoUnload := TRUE;
+      END_IF;
+   ELSE
+   iEndCnt := myRobot.actExecData.mUpdateCounterMain;
+//   myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects GetFirstProject = FALSE  Zyklen bisher: " + STR(iEndCnt-iStartCnt));
+   END_IF;
+   myRobot.WaitMcMicroCycles(1);
+
+   WHILE ok AND prjFound DO
+      bNoUnload := FALSE;
+      prjFound := GetNextProject(projName);
+      IF prjFound THEN
+         projName := StrToLower(projName);
+         j := StrFind(projName, kinName);
+         IF j = 1 THEN
+            IF myRobot.RcuTypeList.CheckProjectIsFixpos(projName) THEN
+               bNoUnload := TRUE;
+            ELSE
+               FOR i:= 1 TO myRobot.RcuInterfaceToBCU.iPrgNrFifoAmount DO
+                  IF myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i] <> 0 THEN
+                     ok := myRobot.RcuTypeList.ReadTypeListEntry(myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i], project, program, myRobot.subDirName);
+                  ELSE
+                     myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: aiPrgNrFifo[" + STR(i) + "] = 0");
+                     ok := FALSE;
+                  END_IF;
+                  IF (program <> "") AND (project <> "") AND ok THEN
+                     project := StrToLower(project);
+                     IF project = projName THEN
+                        bNoUnload := TRUE; 
+                     END_IF;
+                  END_IF;
+                  myRobot.WaitMcMicroCycles(1);
+               END_FOR;
+            END_IF;
+            IF NOT bNoUnload THEN
+               pos := StrFind(projName, ".");
+               projectWithSlash := StrReplace(projName, "/", 1, pos);
+               
+               iNrDestroy := iNrDestroy + 1;
+               IF iNrDestroy > cMaxFifoData THEN
+                  myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: too many projects!!!!");
+                  iNrDestroy := cMaxFifoData;
+               ELSE
+                  aDestroy[iNrDestroy] := projectWithSlash;
+               END_IF;
+            END_IF;
+         END_IF;
+      ELSE
+      END_IF;
+      myRobot.WaitMcMicroCycles(1);
+   END_WHILE;
+   
+   FOR i := 1 TO iNrDestroy DO
+      WAIT NOT bLockDestroyProjects;
+      flag := FALSE;
+      IF NOT UnloadProject(aDestroy[i], flag) THEN
+         myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: Project " + aDestroy[i] + " unload not possible");
+         ok := FALSE;
+      ELSE
+         myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: Project " + aDestroy[i] + " unload");
+         WAIT flag;
+         myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: Project " + aDestroy[i] + " unloaded");
+      END_IF;
+      ok := DestroyProject(aDestroy[i]);
+      IF ok THEN
+         myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: Project " + aDestroy[i] + " deleted");
+         prjFound := GetFirstProject(FALSE, projName);
+      ELSE
+         myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects: Project " + aDestroy[i] + " delete not possible");
+      END_IF;
+   END_FOR;
+   
+   iEndCnt := myRobot.actExecData.mUpdateCounterMain;
+   myRobot.DebugPrint(eTraceAutoControl, "CheckDestroyProjects normal end. Cycles : " + STR(iEndCnt-iStartCnt));
+END_ROUTINE
+
+ROUTINE LoadProjectsFromFifo() PRIVATE
+   VAR
+      i            : INT;
+      build        : BOOL;
+      error        : BOOL;
+      projectState : TProjectState;
+      program      : STRING;
+      project      : STRING;
+      ok           : BOOL;
+      progName     : STRING;
+      progState    : TProgState;
+      flag         : BOOL;
+      projectWithSlash : STRING;
+      pos : DINT;
+   END_VAR
+
+   FOR i:= 1 TO myRobot.RcuInterfaceToBCU.iPrgNrFifoAmount DO
+      IF myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i] <> 0 THEN
+         ok  := myRobot.RcuTypeList.ReadTypeListEntry(myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i] , project, program, myRobot.subDirName);
+      ELSE
+         ok := FALSE;
+         myRobot.DebugPrint(eTraceAutoControl, "LoadProjectsFromFifo: aiPrgNrFifo[" + STR(i) + "] = 0");
+      END_IF;
+      IF (program <> "") AND (project <> "") AND ok THEN
+         build := FALSE;
+         pos := StrFind(project, ".");
+         projectWithSlash := StrReplace(project, "/", 1, pos); 
+         projectState := GetProjectStateFast(project);
+         IF projectState = eProjectUnknown THEN
+            myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + project + 
+                " does not exist");
+            error := TRUE;
+         ELSIF projectState = eProjectNotBuilt THEN
+            build := TRUE;
+         ELSIF (projectState = eProjectBuilt) OR 
+               (projectState = eProjectLoaded) OR 
+               (projectState = eProjectOperational) THEN
+            // Project exist and was compiled, but has changed since last compile
+            // 28.09.04 nmr: close statt build
+            IF NOT IsProjectCurrent(project) THEN
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project : " + project + 
+                  " not actual -> recompile");
+               // remove project from memory
+               IF CloseProject(i, project) THEN
+                  build := TRUE;
+               ELSE
+                  error := TRUE;     
+               END_IF;
+            END_IF;
+         END_IF;
+
+         // project must be recompiled
+         IF build THEN
+            // 20.08.04 nmr: Print STR(j) instead of STR(i)
+            IF NOT BuildProject(projectWithSlash) THEN
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " not compiled");
+               error := TRUE;
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " compiled");
+//               DestroyProject(projectWithSlash);
+            END_IF;
+         END_IF;
+         
+//******************* load all projects                    
+         progName := project + "." + program;
+         progState := GetProgState(progName);
+         IF progState = eProgInterrupted THEN
+            flag := FALSE;
+            IF UnloadProject(project, flag) THEN
+               WAIT flag;
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + project + 
+                  " UnloadProject returns FALSE");
+            END_IF;
+         END_IF;
+
+         projectState := GetProjectStateFast(project);
+         IF (projectState <> eProjectOperational) THEN
+            flag := FALSE;
+            build := LoadProject(project, flag);
+            IF NOT build THEN
+               // ERROR!!!!!!!!!!!!!!!
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + project + 
+                  " LoadProject returns FALSE");
+               error := TRUE;
+            ELSE
+               WAIT flag;
+            END_IF;
+         END_IF;
+//*******************                    
+         
+      END_IF;
+      WAIT TRUE;
+      //Handler
+      myRobot.handler.tool.SetTypelistEntry(myRobot.RcuInterfaceToBCU.aiPrgNrFifo[i], project);
+   END_FOR; 
+
+   IF error THEN
+      sErrorText := "Typelist could not be processed";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sErrorText);
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE;                  // Stationerror
+      RcuSetMessageOnce(RcuAutoCtrl_ErrProgTab, myRobot.kinListInx, 1, 0, "RcuAutoControl.LoadProjectsFromFifo");
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "LoadProjectsFromFifo successfully executed");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "LoadProjectsFromFifo successfully executed");
+   END_IF;
+END_ROUTINE
+
+ROUTINE LoadAllFixposProjects() PRIVATE
+   VAR
+      i            : INT;
+      build        : BOOL;
+      error        : BOOL;
+      projectState : TProjectState;
+      program      : STRING;
+      project      : STRING;
+      oldProject   : STRING;
+      ok           : BOOL;
+      progName     : STRING;
+      progState    : TProgState;
+      flag         : BOOL;
+      projectWithSlash : STRING;
+      pos : DINT;
+   END_VAR
+
+   FOR i:= giMinFixposNr TO giNoOfTypes DO
+      ok := myRobot.RcuTypeList.ReadTypeListEntry(i, project, program, myRobot.subDirName);
+      IF (program <> "") AND (project <> "") AND ok AND (oldProject <> project) THEN
+         oldProject := project;
+         build := FALSE;
+         pos := StrFind(project, ".");
+         projectWithSlash := StrReplace(project, "/", 1, pos); 
+         projectState := GetProjectStateFast(project);
+         IF projectState = eProjectUnknown THEN
+            myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + project + 
+                " does not exist");
+            error := TRUE;
+         ELSIF projectState = eProjectNotBuilt THEN
+            build := TRUE;
+         ELSIF (projectState = eProjectBuilt) OR 
+               (projectState = eProjectLoaded) OR 
+               (projectState = eProjectOperational) THEN
+            // Project exist and was compiled, but has changed since last compile
+            // 28.09.04 nmr: close statt build
+            IF NOT IsProjectCurrent(project) THEN
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project : " + project + 
+                  " not actual -> recompile");
+               // remove project from memory
+               IF CloseProject(i, project) THEN
+                  build := TRUE;
+               ELSE
+                  error := TRUE;     
+               END_IF;
+            END_IF;
+         END_IF;
+
+         // project must be recompiled
+         IF build THEN
+            // 20.08.04 nmr: Print STR(j) instead of STR(i)
+            IF NOT BuildProject(projectWithSlash) THEN
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " not compiled");
+               error := TRUE;
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " compiled");
+            END_IF;
+         END_IF;
+         
+        //******************* load fixpos projects                    
+         progName := projectWithSlash + "/" + program;
+         progState := GetProgState(progName);
+         IF progState = eProgInterrupted THEN
+            flag := FALSE;
+            IF UnloadProject(projectWithSlash, flag) THEN
+               WAIT flag;
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " UnloadProject returns FALSE");
+            END_IF;
+         END_IF;
+
+         projectState := GetProjectStateFast(project);
+         IF (projectState <> eProjectOperational) THEN
+            flag := FALSE;
+            build := LoadProject(projectWithSlash, flag);
+            IF NOT build THEN
+               // ERROR!!!!!!!!!!!!!!!
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " LoadProject returns FALSE");
+               error := TRUE;
+            ELSE
+               WAIT flag;
+            END_IF;
+         END_IF;
+         
+      END_IF;
+      WAIT TRUE;
+   END_FOR; 
+
+   IF error THEN
+      sErrorText := "Typelist could not be processed";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sErrorText);
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE;                  // Stationerror
+      RcuSetMessageOnce(RcuAutoCtrl_ErrProgTab, myRobot.kinListInx, 1, 0, "RcuAutoControl.LoadAllFixposProjects");
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "LoadAllFixposProjects successfully executed");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "LoadAllFixposProjects successfully executed");
+   END_IF;
+END_ROUTINE
+
+
+// is called from the init-Routine only
+ROUTINE CheckProjectsInTypeList() PRIVATE
+   VAR
+      i            : INT;
+      build        : BOOL;
+      error        : BOOL;
+      projectState : TProjectState;
+      program      : STRING;
+      project      : STRING;
+      projectOld   : STRING;
+      ok           : BOOL;
+      progName     : STRING;
+      progState    : TProgState;
+      flag         : BOOL;
+      projectWithSlash : STRING;
+      pos : DINT;
+   END_VAR
+
+   projectOld := "";
+   WAIT (giNoOfTypes <> 0);
+   FOR i:= 1 TO giNoOfTypes DO
+      ok := myRobot.RcuTypeList.ReadTypeListEntry(i, project, program, myRobot.subDirName);
+      IF (program <> "") AND (project <> "") THEN
+         build := FALSE;
+         pos := StrFind(project, ".");
+         projectWithSlash := StrReplace(project, "/", 1, pos); 
+         projectState := GetProjectStateFast(project);
+         IF projectState = eProjectUnknown THEN
+            myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + project + 
+                " does not exist");
+            error := TRUE;
+         ELSIF (projectState = eProjectNotBuilt) THEN
+            IF (project <> projectOld) THEN
+               build := TRUE;
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + project + 
+                   " already compiled");
+            END_IF;
+         ELSIF (projectState = eProjectBuilt) OR 
+               (projectState = eProjectLoaded) OR 
+               (projectState = eProjectOperational) THEN
+            // Project exist and was compiled, but has changed since last compile
+            // 28.09.04 nmr: close statt build
+            IF NOT IsProjectCurrent(project) THEN
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project : " + project + 
+                  " not actual -> recompile");
+               // remove project from memory
+               IF CloseProject(i, project) THEN
+                  build := TRUE;
+               ELSE
+                  error := TRUE;     
+               END_IF;
+            END_IF;
+         END_IF;
+
+         // project must be recompiled
+         IF build THEN
+            // 20.08.04 nmr: Print STR(j) instead of STR(i)
+            IF NOT BuildProject(projectWithSlash) THEN
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " not compiled");
+               error := TRUE;
+            ELSE
+               myRobot.DebugPrint(eTraceAutoControl, STR(i) + ": Typelist Project = " + projectWithSlash + 
+                  " compiled");
+               DestroyProject(projectWithSlash);
+            END_IF;
+         END_IF;
+         
+      END_IF;
+      projectOld := project;
+      WAIT TRUE;
+      //Handler
+      myRobot.handler.tool.SetTypelistEntry(i, project);
+   END_FOR; 
+
+   IF error THEN
+      sErrorText := "Typelist could not be processed";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, sErrorText);
+      myRobot.RcuInterfaceToBCU.mMotionError := TRUE;                  // Stationerror
+      RcuSetMessageOnce(RcuAutoCtrl_ErrProgTab, myRobot.kinListInx, 1, 0, "RcuAutoControl.CheckProjectsInTypeList");
+   ELSE
+      myRobot.DebugPrint(eTraceAutoControl, "CheckProjectsInTypeList successfully executed");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "CheckProjectsInTypeList successfully executed");
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE UnloadAllProjects()
+VAR
+   project          : STRING;
+   program          : STRING;
+   kinName          : STRING;
+   projName         : STRING;
+   ok               : BOOL;
+   nrFound          : INT;
+   j                : INT;
+   i                : INT;
+   projectWithSlash : STRING;
+   pos              : DINT;
+   flag             : BOOL;
+   prjFound         : BOOL;
+   bUnload          : BOOL;
+   iStartCnt        : DINT;
+   iEndCnt          : DINT;
+   projectState     : TProjectState;
+   actProjName      : STRING;
+END_VAR
+   
+   actProjName := StrToLower(sActProject);
+   kinName := "kin"+STR(myRobot.kinListInx+1);
+   prjFound := GetFirstProject(FALSE, projName);
+   IF NOT prjFound THEN
+      prjFound := GetFirstProject(FALSE, projName);
+   END_IF;
+   IF prjFound THEN
+      projName := StrToLower(projName);
+      j := StrFind(projName, kinName);
+      IF j = 1 THEN
+         IF (projName <> actProjName) THEN
+            projectState := GetProjectStateFast(projName);
+            IF (projectState = eProjectLoaded) OR 
+               (projectState = eProjectOperational) THEN
+               flag := FALSE;
+               IF NOT UnloadProject(projName, flag) THEN
+                  ok := FALSE;
+                  myRobot.DebugPrint(eTraceAutoControl, "UnloadAllProjects: 1 " + projName + 
+                     " UnloadProject returns FALSE");
+               ELSE
+                  WAIT flag;
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+   END_IF;
+
+   WHILE prjFound DO
+      prjFound := GetNextProject(projName);
+      IF prjFound THEN
+         projName := StrToLower(projName);
+         j := StrFind(projName, kinName);
+         IF j = 1 THEN
+            IF (projName <> actProjName) THEN
+               projectState := GetProjectStateFast(projName);
+               IF (projectState = eProjectLoaded) OR 
+                  (projectState = eProjectOperational) THEN
+                  flag := FALSE;
+                  IF NOT UnloadProject(projName, flag) THEN
+                     ok := FALSE;
+                     myRobot.DebugPrint(eTraceAutoControl, "UnloadAllProjects: 2 " + projName + 
+                        " UnloadProject returns FALSE");
+                  ELSE
+                     WAIT flag;
+                  END_IF;
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE CloseProject(CONST idx : INT; CONST proj : STRING) : BOOL
+   VAR
+      projectState    : TProjectState;
+      error           : BOOL;
+      flag            : BOOL;
+   END_VAR
+
+    projectState := GetProjectStateFast(proj);
+    IF (projectState = eProjectUnknown) OR (projectState = eProjectNotBuilt) THEN
+       RETURN TRUE; // nothing to do
+    END_IF;
+
+    IF (projectState = eProjectLoaded) OR (projectState = eProjectOperational) THEN
+    // Projekt abwählen
+        projChanged := FALSE;
+        flag := FALSE;
+        IF NOT UnloadProject(proj, flag) THEN
+            sErrorText := STR(idx) + ": Typelist Project : " + proj + " Error on unloading";
+            myRobot.DebugPrint(eTraceAutoControl, sErrorText);
+            RETURN FALSE;
+        ELSE
+            WAIT flag;
+            projChanged := FALSE;
+            myRobot.DebugPrint(eTraceAutoControl, STR(idx) + ": Typelist Project : " + proj + " unloaded");
+        END_IF;
+    END_IF;
+
+    projectState := GetProjectStateFast(proj);
+    IF projectState = eProjectBuilt THEN
+    // remove project from memory
+        IF NOT DestroyProject(proj) THEN
+           error := TRUE;
+           sErrorText := STR(idx) + ": Typelist Project : " + proj + " error on closing";
+           myRobot.DebugPrint(eTraceAutoControl, sErrorText);
+        ELSE
+           projectState := GetProjectStateFast(proj);
+           IF projectState <> eProjectNotBuilt THEN
+                error := TRUE;
+                sErrorText := STR(idx) + ": Typelist Project : " + proj + " could not be closed";
+                myRobot.DebugPrint(eTraceAutoControl, sErrorText);
+           ELSE
+              myRobot.DebugPrint(eTraceAutoControl, STR(idx) + ": Typelist Project : " + proj + " closed");
+           END_IF;
+        END_IF;
+    END_IF;
+    RETURN NOT error;
+END_ROUTINE
+
+// initialise all collision bits with given state
+ROUTINE InitCollisionBits(bState : BOOL)
+ VAR
+   i : INT;
+ END_VAR
+ 
+  IF NOT myRobot.bFieldbusSlaveReady THEN
+     RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 3, 0, "RcuAutoControl.InitCollisionBits", "InitCollisionBits");
+     RETURN;
+  END_IF;
+
+  FOR i:=0 TO 15 DO
+     myRobot.fieldbusOut.yCollisionBits[i].svBool := bState;
+     yCollisionLowSet[i]  := bState;
+     yCollisionHighSet[i] := bState;
+  END_FOR;
+ 
+END_ROUTINE
+
+// initialise all custom bits with given state
+ROUTINE InitCustomBits(bState : BOOL)
+ VAR
+   i : INT;
+ END_VAR
+ 
+  IF NOT myRobot.bFieldbusSlaveReady THEN
+     RcuSetMessageOnce(RcuAutoCtrl_ErrMalFunc, myRobot.kinListInx, 8, 0, "RcuAutoControl.InitCustomBits", "InitCustomBits");
+     RETURN;
+  END_IF;
+
+  IF bEnableCustomBits THEN
+     FOR i:=0 TO 15 DO
+        myRobot.fieldbusOut.yCustomBits[i].svBool := bState;
+     END_FOR;
+  END_IF;
+ 
+END_ROUTINE
+
+// the same function as ChangeProject in _FWTeachControl but with waiting for the Load
+ROUTINE ChangeProjectWait(CONST loadedProject : STRING; CONST builtProject : STRING)
+   : BOOL
+VAR
+   flag : BOOL;
+   bRet : BOOL;
+END_VAR
+
+   IF NOT UnloadProjectRefresh(loadedProject) THEN
+      RETURN FALSE;
+   END_IF;
+   flag := FALSE;
+   bRet := LoadProject(builtProject, flag);
+   IF bRet THEN
+      WAIT flag;
+   END_IF;
+   RETURN bRet;
+END_ROUTINE
+
+ROUTINE GetProjectStateFast(CONST projectName : STRING) : TProjectState
+VAR
+   pState : TProjectState;
+   s      : STRING;
+END_VAR
+
+   s := StrToLower(projectName);
+   IF GetProjState(s, pState)  THEN
+         myRobot.DebugPrint(eTraceAutoControl, "GetProjState(" + projectName + ") = " + STR(pState));
+      RETURN pState;
+   ELSE
+         pState := GetProjectState(s);
+         myRobot.DebugPrint(eTraceAutoControl, "GetProjState failed -- GetProjectState(" + projectName + ") = " + STR(pState));
+         RETURN pState;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// set lower override while homing
+//------------------------------------------------------------------------
+ROUTINE SetOverrideForHoming() PRIVATE
+VAR
+   rStoredOvr : REAL;
+END_VAR 
+  
+  IF (myRobot.rOverrideForHoming = 1.0) THEN
+     RETURN; //Homing with full speed, nothing to do
+  END_IF;
+
+  IF myRobot.fieldbusIn.StartHoming.svBool THEN
+     rStoredOvr := REAL(myRobot.override)/1000.0;
+     myRobot.SetTimeOverride(myRobot.rOverrideForHoming);
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "Set " + STR(myRobot.rOverrideForHoming*100.0) + "% override for Homing");
+
+     WAIT (NOT myRobot.fieldbusIn.StartHoming.svBool) OR (myRobot.mainModeMgr.mode = ciT1) OR (myRobot.mainModeMgr.mode = ciT2);
+     IF (myRobot.mainModeMgr.mode = ciAuto) OR (myRobot.mainModeMgr.mode = ciSleep) THEN
+        myRobot.SetTimeOverride(rStoredOvr);
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Restored " + STR(rStoredOvr*100.0) + "% override after Homing");
+     ELSE
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Homing left, no override restored because Mode T1/T2"); 
+     END_IF;
+  END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Print variants, degrade and repair to telnet and logger
+//------------------------------------------------------------------------
+ROUTINE PrintVariantRepairDegrade()
+ VAR
+  i    : SINT;
+  j    : INT;
+  tmp  : DINT;
+  s    : STRING;
+ END_VAR
+
+   s := "";
+   FOR i:=0 TO 31 DO
+       tmp := SHR(dVariante, i);
+       IF ((tmp AND 16#0000000000000001) = 1) THEN
+          s := "1" + s;
+       ELSE
+          s := "0" + s;
+       END_IF;
+   END_FOR;
+   myRobot.DebugPrint(eTraceAutoControl, "variante = " + s);
+   s := "Variante " + s + " received";
+   myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+
+   IF myRobot.RcuInterfaceToBCU.bVariantHighMapped THEN
+      s := "";
+      FOR i:=0 TO 31 DO
+          tmp := SHR(dVarianteHigh, i);
+          IF ((tmp AND 16#0000000000000001) = 1) THEN
+             s := "1" + s;
+          ELSE
+             s := "0" + s;
+          END_IF;
+      END_FOR;
+      myRobot.DebugPrint(eTraceAutoControl, "varianteHigh = " + s);
+      s := "VarianteHigh " + s + " received";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+   END_IF;
+   
+   IF myRobot.RcuInterfaceToBCU.bVariantExtMapped  THEN
+      FOR j := 1 TO 5 DO
+         s := "";
+         FOR i:=0 TO 31 DO
+             tmp := SHR(dVariantsExt[j], i);
+             IF ((tmp AND 16#0000000000000001) = 1) THEN
+                s := "1" + s;
+             ELSE
+                s := "0" + s;
+             END_IF;
+         END_FOR;
+         myRobot.DebugPrint(eTraceAutoControl, "varianteExt " + STR(j) + " = " + s);
+         s := "varianteExt " + STR(j) + " " + s + " received";
+         myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+      END_FOR;
+   END_IF;
+   
+   s := "";
+   FOR i:=0 TO 31 DO
+       tmp := SHR(dPartAreas, i);
+       IF ((tmp AND 16#0000000000000001) = 1) THEN
+          s := "1" + s;
+       ELSE
+          s := "0" + s;
+       END_IF;
+   END_FOR;
+   myRobot.DebugPrint(eTraceAutoControl, "partarea = " + s);
+   s := "Partarea " + s + " received";
+   myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+
+   IF myRobot.RcuInterfaceToBCU.bPartareasExtMapped  THEN
+      FOR j := 1 TO 5 DO
+         s := "";
+         FOR i:=0 TO 31 DO
+             tmp := SHR(dPartAreasExt[j], i);
+             IF ((tmp AND 16#0000000000000001) = 1) THEN
+                s := "1" + s;
+             ELSE
+                s := "0" + s;
+             END_IF;
+         END_FOR;
+         myRobot.DebugPrint(eTraceAutoControl, "partareasExt " + STR(j) + " = " + s);
+         s := "partareasExt " + STR(j) + " " + s + " received";
+         myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+      END_FOR;
+   END_IF;
+
+   s := "";
+   FOR i:=0 TO 15 DO
+       tmp := SHR(myRobot.RcuInterfaceToBCU.iDegrade, i);
+       IF ((tmp AND 16#0000000000000001) = 1) THEN
+          s := "1" + s;
+       ELSE
+          s := "0" + s;
+       END_IF;
+   END_FOR;
+
+   myRobot.DebugPrint(eTraceAutoControl, "degrade-mode = " + s);
+   s := "Degrade-mode " + s + " received";
+   myRobot.logger.SetLoggerStep(iLoggerNumber, s);
+
+END_ROUTINE
+
+ROUTINE ClearPlcInterface_BCC_EcoTalk()     
+  
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool1.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool2.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool3.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool4.svBool := FALSE;
+
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool1.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool2.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool3.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool4.svBool := FALSE;
+
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool1.svBool   := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool2.svBool   := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool3.svBool   := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool4.svBool   := FALSE;
+
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool1.svBool  := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool2.svBool  := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool3.svBool  := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool4.svBool  := FALSE;
+      
+      PaintRobot[myRobot.kinListInx].fieldbusOut.HoleNumber.svWord       := 0;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.ApplicationStart.svBool := FALSE;
+      
+      PaintRobot[myRobot.kinListInx].fieldbusOut.PlacePlug.svBool            := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CheckPlug.svBool            := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.FillMagazine.svBool         := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool_PI.svBool        := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool_PI.svBool      := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.GetPlug.svBool              := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.DiscargePlugMagazin.svBool  := FALSE;
+            
+END_ROUTINE
+
+ROUTINE ClearPlcInterface_BCC()     
+  
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool1.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool2.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool3.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool4.svBool := FALSE;
+
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool1.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool2.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool3.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool4.svBool := FALSE;
+
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool1.svBool   := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool2.svBool   := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool3.svBool   := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LiftTool4.svBool   := FALSE;
+
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool1.svBool  := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool2.svBool  := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool3.svBool  := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.LowerTool4.svBool  := FALSE;
+      
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CollisionType.svBool := TRUE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.HoleNumber.svWord    := 0;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.ApplicationStart.svBool := FALSE;
+      
+      PaintRobot[myRobot.kinListInx].fieldbusOut.PlacePlug.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CheckPlug.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.FillMagazine.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.CoupleTool_PI.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.UncoupleTool_PI.svBool := FALSE;
+      PaintRobot[myRobot.kinListInx].fieldbusOut.GetPlug.svBool       := FALSE;   
+      PaintRobot[myRobot.kinListInx].fieldbusOut.DiscargePlugMagazin.svBool  := FALSE;
+      
+END_ROUTINE
+
+//Called from EcoTalk
+ROUTINE WaitConvFixation() : BOOL
+   IF myRobot.bFieldbusSlaveReady THEN
+      myRobot.fieldbusOut.WaitingBodyFixed.svBool := TRUE;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting until body is fixed or abort from PLC");
+      WAIT myRobot.fieldbusIn.BodyIsFixed.svBool OR myRobot.fieldbusIn.AbortWaitingBody.svBool;
+      IF myRobot.fieldbusIn.BodyIsFixed.svBool AND NOT myRobot.fieldbusIn.AbortWaitingBody.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Received body is fixed from PLC");
+         myRobot.fieldbusOut.WaitingBodyFixed.svBool := FALSE;
+         RETURN TRUE;
+      ELSE
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Received abort body is fixed from PLC");
+         myRobot.fieldbusOut.WaitingBodyFixed.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.AbortWaitingBody.svBool;
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE Init(locRobot : TRcuRobot)
+   
+   myRobot := MAP(locRobot);  
+   iLoggerNumber  := myRobot.logger.ActivateLogger("TRcuAutoControl", myRobot);
+   IF (iLoggerNumber = 0) THEN
+     PRINT("LOG Kein Token fuer AutoControl-Logger erhalten");
+   END_IF;
+   CheckProjectsInTypeList();
+   sActProject := "";
+   projChanged := IS_CHANGED(sActProject);   
+   WAIT PaintRobot[myRobot.kinListInx].initRobComplete;
+   bNoAutoExt := UPDATE(NOT bBitAutoExt);
+   ConnectToPLC();
+   
+END_ROUTINE

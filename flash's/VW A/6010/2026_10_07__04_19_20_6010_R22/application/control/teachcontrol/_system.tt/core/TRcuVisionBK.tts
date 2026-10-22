@@ -1,0 +1,3748 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Carl-Benz-Str. 34                                                         *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bauder                                                       *
+*   E-Mail:      Manfred.Bauder@durr.com                                      *
+*                                                                             *
+*   Modul:       TRcuVisionBK.tts                                             *
+*   Description: Interface to VMT-BK-System and handling of data              *
+*-----------------------------------------------------------------------------*
+*  
+
+
+
+   direkte Schnittstelle zu VMT (ohne SPS) 
+
+
+
+Schnittstelle zu VMT-BK:
+
+Eingaenge vom BK-PC:
+____________________________________________________________________________________________________________________
+Byte	   Bit Nr.	   Wert / Bedeutung
+____________________________________________________________________________________________________________________
+0	      0	         Daten übernehmen
+0	      1	         Daten übernommen
+0	      3	         Prüfung läuft
+0        4           Automatik Betrieb
+0        5           Einricht Betrieb
+0        6           Systemfehler
+1	      0 – 7	      Status
+2	      0 – 7	      Typnummer
+3	      0 – 7  	   Bahnnummer
+4 -5	   0 – 7 	   Punktnummer
+6	      0 – 3 	   Wertebereich Rotation (0=Wert x 1°, 1= Wert x 1/10°, 2= Wert x 1/100°,4= Wert x 1/1000°)
+6	      5 – 7 	   Wertebereich Translation (0=Wert x 1mm, 1= Wert x 1/10mm, ... )
+7 – 10	0 – 7	      Verschiebung X
+11 – 14	0 – 7	      Verschiebung Y
+15 – 18	0 – 7	      Verschiebung Z
+19 – 22	0 – 7	      Verdrehung X (C)
+23 – 26	0 – 7	      Verdrehung Y (B)
+27 – 30	0 – 7	      Verdrehung Z (A)
+
+
+Ausgaenge zum BK-PC:
+____________________________________________________________________________________________________________________
+Byte	   Bit Nr.	   Wert / Bedeutung
+____________________________________________________________________________________________________________________
+0	      0	         Daten übernehmen
+0	      1	         Daten übernommen
+
+0	      3	         Messungen zusammenfassen
+1	      0 – 7	      Kommando (z.B. StartMessung, AbfrageKorrektur usw.)
+2	      0 – 7	      1-255 Typvarianten
+3	      0 – 7	      1-255 Bahnnummer
+4-5	   0 – 7	      1-65535 Punktnummer
+6	      0 – 3 	   Wertebereich Rotation (0=Wert x 1°, 1= Wert x 1/10°, 2= Wert x 1/100°,4= Wert x 1/1000°)
+6	      5 – 7 	   Wertebereich Translation (0=Wert x 1mm, 1= Wert x 1/10mm, ... )
+7 – 10	0 – 7	      Position X
+11 – 14	0 – 7	      Position Y
+15 – 18	0 – 7	      Position Z
+19 – 22	0 – 7	      Verdrehung X (C)
+23 – 26	0 – 7	      Verdrehung Y (B)
+27 – 30	0 – 7	      Verdrehung Z (A)
+31       0 - 7       Roboter ID
+
+-------------------------------------------------------------------------------------
+
+                      A C H T U N G !!!!!!!!!!!
+                      
+TRcuVisionBK.tts wurde von Version 3 portiert, und getestet
+
+Fehlende Funktionen:
+
+- RECEIVE erweitern für die Abfrage von RequestPurge und BkRepeat (siehe auch 
+  ROUTINE ReceiveAbortOrRepeat(): BOOL
+
+- SENSOR_CHECK
+  Variable muss in Kin1._global.tt._globalvars.tid deklariert
+  werden, damit sie im Teachprogramm verwendet werden kann und das Mapping in
+  der Routine Init möglich ist:
+  SENSOR_CHECK : BOOL := FALSE
+
+                      
+-------------------------------------------------------------------------------------
+*)
+
+CONSTANT
+   MaxPunkteProMessung   : INT := 255;
+   
+   // Berechnete Korrekturen
+   BK_MaxKorrekturenProBahn : INT := 255;
+   // BK_TriggerTime : FLOAT := 0.032;
+   BK_TriggerTime : REAL := 0.048;
+END_CONSTANT
+
+
+TYPE GLOBAL
+   FRAME : STRUCT
+      X : REAL;
+      Y : REAL;
+      Z : REAL;
+      A : REAL;
+      B : REAL;
+      C : REAL;
+   END_STRUCT;
+END_TYPE    
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+
+VAR
+   bBKCfgDataRead           : BOOL;
+   BK_TYPE                  : INT := 0;
+   BK_PATH                  : INT := 0;
+
+   BK_ScanRobPos            : INT := 0; // Zählt die Trigger (BK_Aktion und TriggerDirectVmtBk) = Index für BKMessPos
+   BK_RequestCount          : INT := 0; // Wird in Co-Routine BK_Abfrage benutzt, um zu erkennen, wann TriggerTelegramm
+                                        // an VMT gesendet werden muss
+   NULLFRAME                : FRAME := (0,0,0,0,0,0);
+   //Anzahl der Korrekturen fuer die einzelnen Bahnen
+   BK_KORREKTUREN_GUELTIG   : ARRAY[1..5] OF INT := (0,0,0,0,0);
+
+   //ID der einzelnen Bahnen
+   BK_KORR_BAHN_ID          : ARRAY[1..5] OF INT := (0,0,0,0,0);
+
+   //Korrekturwerte fuer alle Bahnpunkte nach Bahnen getrennt
+   BK_KORREKTUR             : ARRAY[1..5,1..255] OF FRAME;
+   
+   //IDs der einzelnen Punktkorrekturen nach Bahnen getrennt
+   BK_KORR_PUNKT_ID         : ARRAY [1..5,1..255] OF INT;
+   BK_KORR_BAHNEN           : INT := 2;
+
+   BK_MODUS                 : BK_MODE_TYPE := Mode_Off;
+   BK_ROB_ID                : INT;
+   BK_TYPE_ID               : INT := 0;
+   BK_PATH_ID               : INT := 0;
+   BK_POINT_ID              : INT := 0;
+   //Kommandos fuer VMT BK
+   BK_CMD_START_MEASUREMENT : INT := 1;
+   BK_CMD_TRIGGER           : INT := 2;
+   BK_CMD_STOP_MEASUREMENT  : INT := 3;
+   BK_CMD_REQUEST_CORR      : INT := 4;
+   BK_CMD_START_MP_REF      : INT := 5;
+   BK_CMD_STOP_MP_REF       : INT := 6;
+   BK_CMD_START_PP_REF      : INT := 7;
+   BK_CMD_STOP_PP_REF       : INT := 8;
+   BK_CMD_DATA              : INT := 9;
+
+   BK_STATE_IGNORE          : INT := 0;
+   BK_STATE_OK              : INT := 1;
+   BK_STATE_FAIL            : INT := 2;
+   BK_STATE_MORE            : INT := 4;
+   BK_ERROR_SENSOR          : INT := 8;
+   BK_ERROR_LIMIT           : INT := 16;
+   BK_ERROR_COLLISION       : INT := 32;
+   BK_ERROR_DETECTION       : INT := 64;
+   BK_ERROR_GENERAL         : INT := 128;
+     
+   BKMessPos                : ARRAY [1..255] OF FRAME;
+   BKMessPunkt              : ARRAY [1..255] OF INT;
+
+   BK_STATUS                : INT := 1;
+   BK_PATH_INDEX            : INT := 2;
+
+   BK_Korr_X                : REAL := 0.0;
+   BK_Korr_Y                : REAL := 0.0;
+   BK_Korr_Z                : REAL := 0.0;
+   BK_Korr_RX               : REAL := 0.0;
+   BK_Korr_RY               : REAL := 0.0;
+   BK_Korr_RZ               : REAL := 0.0;
+   
+   BK_SCALE_FAC_T           : INT := 10000;
+   BK_SCALE_FAC_R           : INT := 10000;
+   
+   BK_Wait                  : DINT := 40;
+//   BK_MaxCommRetry          : INT := 2;
+   BK_MaxCommRetry          : INT := 4;     //Vorschlag VMT 12.03.2012
+   BK_TOSend                : DINT := 5000; //Timeout in [ms] beim Senden
+   BK_TORecv                : DINT := 5000; //Timeout in [ms] beim Empfangen
+
+   BK_Measure_Ok            : BOOL;
+
+   rLinLimit               : REAL;
+   rRotLimit               : REAL;
+
+   bSimulateBK             : BOOL;
+   bAutoGeneratePP         : BOOL;
+   iBkKorrPunktNr          : INT;
+   bBkKorrFlag             : BOOL;
+   iBkAutoPunktNr          : DINT;
+   iBKCntRetry             : INT;
+   iBKMaxRetry             : INT;
+
+   // TV Userpage
+   sBkModus                : STRING;
+   iBkState                : DINT;
+   iBkPPNr                 : INT;
+   iBkPPNrPreRun           : INT;
+   tObjectData             : OBJECT;
+   tVmtCorr                : OBJECT;
+   bInSensorCheckHMI       : MAPTO BOOL;
+   bOutSensorCheckHMI      : MAPTO BOOL;
+   bSensorCheck            : MAPTO BOOL;  // Check of camerasystem
+   corrFrameMR             : TMcuFrame;   // corrFrame in Mainrun
+END_VAR   
+
+
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+VAR
+   bError : BOOL;
+   iTemp       : DINT;
+   iCatalogHdl : DINT;
+END_VAR
+
+   bError := FALSE;
+   bBKCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrMappKin, myRobot.kinListInx, 2, instId, "TRcuVisionBk.ReadConfig");
+      RETURN FALSE;
+   END_IF; 
+             
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "VMT_BK", iCatalogHdl) THEN
+      IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+         IF (iTemp <> 1) THEN
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            myRobot.DebugPrint(eTraceVision, "---------- BK deactivated -------------");  
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            bBKCfgDataRead := TRUE;
+            RETURN FALSE;
+         ELSE
+            IF CatalogReadInt(iCatalogHdl, "RobotID", iTemp, FALSE) THEN
+               BK_ROB_ID := iTemp;
+            ELSE
+               bError := TRUE;
+            END_IF;
+            IF NOT CatalogReadRealRange(iCatalogHdl, "LinearLimit", rLinLimit , 0.0, 100.0, FALSE) THEN
+               rLinLimit := 100.0;
+            END_IF;
+            IF NOT CatalogReadRealRange(iCatalogHdl, "RotationLimit", rRotLimit , 0.0, 5.0, FALSE) THEN
+               rRotLimit := 5.0;
+            END_IF;
+
+            IF CatalogReadIntRange(iCatalogHdl, "SimulateBK", iTemp, 0, 1, TRUE) THEN
+               bSimulateBK := iTemp = 1;
+            ELSE
+               bSimulateBK := FALSE;
+            END_IF;
+            IF CatalogReadIntRange(iCatalogHdl, "autoGeneratePP", iTemp, 0, 1, TRUE) THEN
+               bAutoGeneratePP := iTemp = 1;
+            ELSE
+               bAutoGeneratePP := FALSE;
+            END_IF;
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            IF CatalogReadIntRange(iCatalogHdl, "MaxRetryCount", iTemp, 0, 5, TRUE) THEN
+               iBKMaxRetry := iTemp;
+            ELSE
+               iBKMaxRetry := 0;
+            END_IF;
+            
+         END_IF;
+      ELSE  
+         bError := TRUE;
+         myRobot.DebugPrint(eTraceVision, "BK not enabled");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      bError := TRUE;
+      myRobot.DebugPrint(eTraceVision, "No configuration for BK found");
+      RETURN FALSE;
+   END_IF;
+
+   IF NOT bError THEN
+      MapBkSignals();
+   END_IF;
+   
+   IF bMappingOk AND NOT bError THEN
+      idWarnPointNo := RcuConvertMessageClass(TRcVisionBk_ErrPointNo, cgiMsgClassWarning);
+      bBKCfgDataRead := TRUE;
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(TRcVisionBk_ErrBkInit, myRobot.kinListInx, 1, instId, "TRcuVisionBk.ReadConfig");
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      myRobot.DebugPrint(eTraceVision, "-------- Boot-Up BK failed ------------");  
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      bBKCfgDataRead := FALSE;
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE Init()
+VAR
+   s : STRING;
+END_VAR
+
+   IF NOT bBKCfgDataRead THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrBkInit, myRobot.kinListInx, 5, instId, "TRcuVisionBK.Init");
+      gbBootupError := TRUE;
+      RETURN;
+   END_IF;
+   
+   WAIT myRobot.fixPosReady;
+   s := "Kin"+STR(myRobot.kinListInx+1)+".SENSOR_CHECK";
+   bSensorCheck := MAPX(s);
+   IF IS_MAPPED(bSensorCheck) THEN
+      START MapSensorCheck();
+   ELSE
+      WHILE TRUE DO
+         myRobot.DebugPrint(eTraceVision,"SENSOR_CHECK = " + s + " not mapped");
+         RcuSetMessageOnce(TRcVisionBk_ErrSensorCheckNMap, myRobot.kinListInx, 1, instId, "TRcuVisionBk.Init", s);
+	 WAIT NOT myRobot.svMotionAllowed;
+	 myRobot.WaitMcMicroCycles(3);
+	 WAIT myRobot.svMotionAllowed;
+      END_WHILE;
+   END_IF;
+
+   bInSensorCheckHMI  := MAPX(cSV_InSensorCheck[myRobot.kinListInx]); 
+   bOutSensorCheckHMI := MAPX(cSV_OutSensorCheck[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(bInSensorCheckHMI) THEN
+      myRobot.DebugPrint(eTraceVision,"SENSOR_CHECK HMI interface = " + cSV_InSensorCheck[myRobot.kinListInx] + " not mapped");
+   ELSIF NOT IS_MAPPED(bOutSensorCheckHMI) THEN
+      myRobot.DebugPrint(eTraceVision,"SENSOR_CHECK HMI interface = " + cSV_OutSensorCheck[myRobot.kinListInx] + " not mapped");
+   ELSE
+      START SensorCheckHMI();
+   END_IF;
+
+   bSystemFault := UPDATE(InSignals.bBK_SIG_B2R_SYSFAULT.svBool);
+   bInAutoMode  := UPDATE(InSignals.bBK_SIG_B2R_AUTOMODE.svBool);
+   bInAdjustMode:= UPDATE(InSignals.bBK_SIG_B2R_ADJUSTMODE.svBool);
+   IF IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled THEN
+      bS3CommFault := UPDATE((gmSercosRing.actComPhase <> 4) AND (gmSercosRing.state <> 0) OR NOT bS3CommOK);
+   END_IF;
+   myRobot.vision.bBKGhostMode   := UPDATE(myRobot.fieldbusIn.GhostMode.svBool);
+
+   bSystemReady := UPDATE(bSensorCheck AND bInAutoMode AND NOT bSystemFault);
+      
+   START BK_Abfrage();
+   START ObserveBkModus();
+   START BkSignalsToEPS() PRIO 3;
+   
+   myRobot.DebugPrint(eTraceVision, "--------------------------------");
+   myRobot.DebugPrint(eTraceVision, "---  Boot-up VMT_BK finished ---");
+   myRobot.DebugPrint(eTraceVision, "--------------------------------");
+   myRobot.vision.bBKBootUpOk := TRUE;
+   
+   // Kemroskop test
+   SwoAddBoolVariable(bBK_SIG_TRIGGER.svBool,                "BK.SIG_TRIGGER");
+   SwoAddBoolVariable(InSignals.bBK_SIG_B2R_STROBE.svBool,   "BK.InSignals.SIG_B2R_STROBE");
+   SwoAddBoolVariable(InSignals.bBK_SIG_B2R_ACK.svBool,      "BK.InSignals.SIG_B2R_ACK");
+   SwoAddBoolVariable(InSignals.bBK_SIG_B2R_READY.svBool,    "BK.InSignals.SIG_B2R_READY");
+   SwoAddByteVariable(InSignals.byteBK_SIG_B2R_STATE.svByte, "BK.InSignals.SIG_B2R_STATE");
+   SwoAddByteVariable(TBOX_STATE_VECTOR, "BK.InSignals.TBOX_STATE_VECTOR");
+   SwoAddIntVariable(InSignals.wBK_SIG_B2R_POINT.svWord,    "BK.InSignals.IG_B2R_POINT");
+   
+   SwoAddBoolVariable(OutSignals.bBK_SIG_R2B_STROBE.svBool,  "BK.OutSignals.SIG_R2B_STROBE");
+   SwoAddBoolVariable(OutSignals.bBK_SIG_R2B_ACK.svBool,     "BK.OutSignals.SIG_R2B_ACK");
+   SwoAddByteVariable(OutSignals.byteBK_SIG_R2B_CMD.svByte,  "BK.OutSignals.SIG_R2B_CMD");
+   
+   corrFrameMR.mFrameTyp := eMcuFrameKardan;
+   
+   IF myRobot.vision.iLoggerNumber <> 0 THEN
+      iLoggerNumber := myRobot.vision.iLoggerNumber;
+   ELSE
+      iLoggerNumber  := myRobot.logger.ActivateLogger("TRcuVisionBK", myRobot);
+   END_IF;
+
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT BK initialized");
+   RETURN;
+END_ROUTINE
+
+
+//****************************************
+// Paket:    VMT BK 
+// Funktion: BK initialisieren
+// Version:  
+// Name:     F.Höfts
+// Datum:    16.09.2008
+// Aenderungen: 
+//****************************************
+ROUTINE BK_Init()
+   
+   IF NOT myRobot.vision.bBKBootUpOk THEN
+      
+   END_IF;
+   myRobot.DebugPrint(eTraceVision, "BK_Init");
+   OutSignals.bBK_SIG_R2B_STROBE.svBool    := FALSE;      //bBK_SIG_R2B_STROBE := FALSE  
+   OutSignals.bBK_SIG_R2B_ACK.svBool       := FALSE;      //bBK_SIG_R2B_ACK := FALSE  
+   BK_TYPE                                 := 0;
+   BK_PATH                                 := 0;
+   BK_MODUS                                := Mode_Off;
+   BK_RequestCount                         := 0;
+   BK_ScanRobPos                           := 0;
+
+   OutSignals.bBK_SIG_R2B_AUTO.svBool      := TRUE;
+//    ;TODO Toolnummer des Sensors und Toolnummer des Applikationstools uebergeben lassen
+//    ;BASE_DATA[1]=BASE_DATA[2]
+   
+END_ROUTINE
+
+
+//****************************************
+// Paket:    VMT BK 
+// Funktion: BK Start + Auswahl Modus Messung, MP/BP Referenz, Applikation
+// Version:  
+// Name:     F.Höfts
+// Datum:    27.05.2009
+// Aenderungen: 
+//****************************************
+ROUTINE BK_Start(Typ : INT; Bahn : INT; Modus : BK_MODE_TYPE)
+VAR
+   i       : INT;
+   j       : INT;
+   bEXIT   : BOOL;
+   sText   : STRING;
+   timeOut : BOOL;
+END_VAR
+
+   BK_MODUS := Modus;
+   BK_TYPE  := Typ;
+   BK_PATH  := Bahn;
+   bOverflowError := FALSE;
+   bSyncRobots    := FALSE;
+   //;HALT 
+   sText := "BK_Start: Type = "+STR(Typ)+" Path = "+STR(Bahn)+" Mode = "+STR(Modus);
+   myRobot.DebugPrint(eTraceVision, sText);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sText);
+   timeOut := FALSE;
+   SysTimerSet(10000, timeOut);
+   WAIT InSignals.bBK_SIG_B2R_READY.svBool OR timeOut OR bSimulateBK;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_Start by waiting for bBkSigB2RReady");
+      RETURN;
+   END_IF;
+
+   CASE BK_MODUS OF
+     Mode_Off :
+       ;
+
+     ModeMeasure: //Messung
+       BK_SendCMD(BK_ROB_ID, BK_CMD_START_MEASUREMENT, Typ, Bahn, 0, NULLFRAME);
+       BK_RecStateOnly();
+       BK_StateCheck();
+
+     Mode_MP_Ref:  //MP Referenz
+       BK_SendCMD(BK_ROB_ID, BK_CMD_START_MP_REF, Typ, Bahn, 0, NULLFRAME);
+       BK_RecStateOnly();
+       BK_StateCheck();
+
+     Mode_PP_Ref:   //BP Referenz
+       BK_SendCMD(BK_ROB_ID, BK_CMD_START_PP_REF, Typ, Bahn, 0, NULLFRAME);
+       BK_RecStateOnly();
+       BK_StateCheck();
+
+     ModeApplication:
+
+      ELSE
+         RcuSetMessageOnce(TRcVisionBk_ErrInvMode, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Start", STR(BK_MODUS));
+         BK_MODUS := Mode_Off;
+
+   END_CASE;
+
+
+   BK_RequestCount := 1;
+   BK_ScanRobPos := 1;
+   bBK_SIG_TRIGGER.svBool := FALSE;
+   IF (BK_MODUS = ModeMeasure) THEN
+
+     // Aktuelle Messpositionen loeschen
+     FOR i := 1 TO MaxPunkteProMessung DO
+       BKMessPos[i] := NULLFRAME;
+       BKMessPunkt[i] := 0;
+     END_FOR;
+
+      BK_Measure_Ok := TRUE;
+
+     // Evtl. vorhandene Korrekturen loeschen
+     FOR i := 1 TO 5 DO
+       IF (BK_KORR_BAHN_ID[i] = BK_PATH) OR (BK_KORR_BAHN_ID[i] = -BK_PATH) THEN
+         BK_KORR_BAHN_ID[i] := 0;
+         BK_KORREKTUREN_GUELTIG[i] := 0;
+         FOR j := 1 TO MaxPunkteProMessung DO
+           BK_KORREKTUR[i][j] := NULLFRAME;
+         END_FOR;
+         IF (BK_KORR_BAHNEN > 0) THEN
+           BK_KORR_BAHNEN := BK_KORR_BAHNEN - 1;
+         END_IF;
+       END_IF;
+     END_FOR;
+
+         //BahnIndex bestimmen
+         BK_PATH_INDEX := 0;
+         FOR i := 1 TO 5 DO
+            IF (BK_KORR_BAHN_ID[i] = BK_PATH) THEN
+               BK_PATH_INDEX := i;
+            END_IF;
+         END_FOR;
+         //Keine aktuellen Ergebnisse fuer diese Bahn gefunden
+         IF (BK_PATH_INDEX = 0) THEN
+            // Erste freie Stelle suchen
+            i := 1;
+            bEXIT := FALSE;
+            WHILE (i <= 5) AND NOT bEXIT DO
+               IF (BK_KORR_BAHN_ID[i] = 0) THEN
+                  BK_PATH_INDEX := i;
+                  BK_KORR_BAHN_ID[i] := BK_PATH;
+                  BK_KORR_BAHNEN := BK_KORR_BAHNEN + 1;
+                  BK_KORREKTUREN_GUELTIG[i] := 0;
+                  FOR j := 1 TO MaxPunkteProMessung DO
+                     BK_KORREKTUR[i][j] := NULLFRAME;
+                     BK_KORR_PUNKT_ID[i][j] := 0;
+                  END_FOR;
+                  bEXIT := TRUE;
+               END_IF; 
+               i := i+1;
+            END_WHILE;
+         END_IF;
+
+         // Kein freier Platz mehr - einen loeschen (den ersten bereits abgeholten)
+         IF (BK_PATH_INDEX = 0) THEN
+            // Erste freie Stelle suchen
+            i := 1;
+            bEXIT := FALSE;
+            WHILE (i <= 5) AND NOT bEXIT DO
+               IF (BK_KORR_BAHN_ID[i] < 0) THEN
+                  BK_PATH_INDEX := i;
+                  BK_KORR_BAHN_ID[i] := BK_PATH;
+                  BK_KORR_BAHNEN := BK_KORR_BAHNEN + 1;
+                  BK_KORREKTUREN_GUELTIG[i] := 0;
+                  FOR j := 1 TO MaxPunkteProMessung DO
+                     BK_KORREKTUR[i][j] := NULLFRAME;
+                     BK_KORR_PUNKT_ID[i][j] := 0;
+                  END_FOR;
+                  bEXIT := TRUE;
+               END_IF; 
+               i := i+1;
+            END_WHILE;
+         END_IF;
+
+   END_IF;
+
+   IF (BK_MODUS = Mode_MP_Ref) OR (BK_MODUS = Mode_PP_Ref) THEN
+      // Aktuelle Messpositionen loeschen
+      FOR i := 1 TO MaxPunkteProMessung DO
+        BKMessPos[i] := NULLFRAME;
+        BKMessPunkt[i] := 0;
+      END_FOR;
+   END_IF;
+
+   IF (BK_MODUS = ModeApplication) THEN
+      //BahnIndex bestimmen
+      iBkAutoPunktNr := 0;
+      BK_PATH_INDEX := 0;
+      FOR i := 1 TO 5 DO
+         // BK_KORR_BAHN_ID[i] = -BK_PATH) ... Bahn wurde schon einmal abgefahren!!!!!
+         IF ((BK_KORR_BAHN_ID[i] = BK_PATH) OR (BK_KORR_BAHN_ID[i] = -BK_PATH)) THEN
+            BK_PATH_INDEX := i;
+         END_IF;
+      END_FOR;
+      IF (BK_PATH_INDEX = 0) THEN
+         myRobot.DebugPrint(eTraceVision, "BK_Start: BK_PATH_INDEX = 0");
+         RcuSetMessageOnce(TRcVisionBk_ErrInvPath, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Start", STR(BK_TYPE), STR(BK_PATH));
+      END_IF;
+   END_IF;
+
+END_ROUTINE
+
+
+
+//==========================================================
+ROUTINE BK_Ende(AnzahlPunkte : INT; AnzahlKorrekturen : INT; OPTIONAL iRetVal : VISION_STATE) : BOOL   
+
+VAR
+   i            : INT;
+   j            : INT;
+   timeOut      : BOOL;
+   bEXIT        : BOOL;
+   corrFrame    : TMcuFrame;
+   bk_ok        : BOOL := TRUE;
+   bPlcFeedback : BOOL;
+END_VAR
+
+   myRobot.DebugPrint(eTraceVision, "BK_Ende: Number of points = "+STR(AnzahlPunkte));
+      
+   CASE BK_MODUS OF
+      ModeMeasure:
+         IF bDisabledHMI OR bS3CommFault THEN
+            myRobot.DebugPrint(eTraceVision, "BK_Ende - System is disabled or communication fault");
+            bk_ok := FALSE;
+         ELSE
+            //Warte auf Synchronisierung durch freilaufende SPS
+            timeOut := FALSE;
+            SysTimerSet(10000, timeOut);
+            WAIT (BK_RequestCount >= BK_ScanRobPos) OR timeOut;
+            IF timeOut THEN
+               myRobot.DebugPrint(eTraceVision, "TimeOut in BK_Ende by waiting for BK_RequestCount >= BK_ScanRobPos");
+               RcuSetMessageOnce(TRcVisionBk_ErrTimeOutBkEnd, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende");
+               bk_ok := FALSE;
+            END_IF;
+            
+            IF bk_ok THEN
+               timeOut := FALSE;
+               SysTimerSet(10000, timeOut);
+               WAIT InSignals.bBK_SIG_B2R_READY.svBool OR timeOut OR bSimulateBK;
+               IF timeOut THEN
+                  myRobot.DebugPrint(eTraceVision, "TimeOut in BK_Ende by waiting for bBkSigB2RReady");
+                  RcuSetMessageOnce(TRcVisionBk_ErrTimeOutBkEnd, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_Ende");
+                  bk_ok := FALSE;
+               END_IF;
+               BK_MODUS := Mode_Off; // dadurch wird in BK_Abfrage() die Funktion Bk_Korr_holen
+               Sleep(BK_Wait);       // nicht mehr aufgerufen
+            END_IF;
+            
+            //Ergebnisse abholen
+            IF bk_ok THEN
+               myRobot.DebugPrint(eTraceVision, "BK_Ende: fetch corrections");
+               j := BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX];
+               IF j=0 THEN
+                  j := 1;
+               END_IF;
+               REPEAT
+                   BK_SendCMD(BK_ROB_ID, BK_CMD_REQUEST_CORR, BK_TYPE, BK_PATH, 0, NULLFRAME);
+                   IF NOT BK_RecShiftData() THEN
+                      bk_ok := FALSE;
+                   END_IF;
+                   IF ((BK_STATUS AND BK_STATE_OK) = BK_STATE_OK) OR bSimulateBK THEN
+                      myRobot.DebugPrint(eTraceVision, STR(i)+" ID= "+STR(BK_POINT_ID)+" X= "+STR(BK_Korr_X)+
+                                         " Y= "+STR(BK_Korr_Y)+" Z= "+STR(BK_Korr_Z)+" A= "+STR(BK_Korr_RX)+
+                                         " B= "+STR(BK_Korr_RY)+" C= "+STR(BK_Korr_RZ));
+                      IF (j <= BK_MaxKorrekturenProBahn) THEN
+                         BK_KORREKTUR[BK_PATH_INDEX][j].X := BK_Korr_X;
+                         BK_KORREKTUR[BK_PATH_INDEX][j].Y := BK_Korr_Y;
+                         BK_KORREKTUR[BK_PATH_INDEX][j].Z := BK_Korr_Z;
+                         BK_KORREKTUR[BK_PATH_INDEX][j].A := BK_Korr_RX;
+                         BK_KORREKTUR[BK_PATH_INDEX][j].B := BK_Korr_RY;
+                         BK_KORREKTUR[BK_PATH_INDEX][j].C := BK_Korr_RZ;
+                         BK_KORR_PUNKT_ID[BK_PATH_INDEX][j] := BK_POINT_ID;  
+                      END_IF;
+                      Sleep(BK_Wait);
+                      j := j + 1;
+                   ELSE
+                      IF (BK_POINT_ID <= 0) THEN
+                         myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_POINT_ID <= 0");
+                         //RcuSetError(instId, eRcuErrorBkCfgTyp, STR(BK_TYPE), STR(BK_PATH));
+                         //bk_ok := FALSE;
+                      ELSE
+                         BK_KORR_PUNKT_ID[BK_PATH_INDEX][j] := -1;
+                         IF (BK_STATUS AND BK_ERROR_COLLISION) = BK_ERROR_COLLISION THEN
+                            myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_ERROR_COLLISION");
+                            RcuSetMessageOnce(TRcVisionBk_WarnCollision, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(BK_POINT_ID));
+                            bk_ok := FALSE;
+                         ELSE
+                            IF (BK_STATUS AND BK_ERROR_LIMIT)= BK_ERROR_LIMIT THEN
+                               myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_ERROR_LIMIT");
+                               RcuSetMessageOnce(TRcVisionBk_WarnLimit, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(BK_POINT_ID));
+                               bk_ok := FALSE;
+                            ELSE
+                               IF (BK_STATUS AND BK_ERROR_DETECTION) = BK_ERROR_DETECTION THEN
+                                  myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_ERROR_DETECTION");
+                                  RcuSetMessageOnce(TRcVisionBk_WarnInvMeasure, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(BK_POINT_ID));
+                                  bk_ok := FALSE;
+                               ELSE
+                                  IF (BK_STATUS AND BK_ERROR_SENSOR)= BK_ERROR_SENSOR THEN
+                                     myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_ERROR_SENSOR");
+                                     RcuSetMessageOnce(TRcVisionBk_WarnSensor, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(BK_POINT_ID));
+                                     bk_ok := FALSE;
+                                  ELSE
+                                     myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_MSG_GENERAL");
+                                     RcuSetMessageOnce(TRcVisionBk_WarnGenPoint, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(BK_POINT_ID));
+                                     bk_ok := FALSE;
+                                  END_IF;
+                               END_IF;
+                            END_IF;
+                         END_IF;
+                         Sleep(BK_Wait);
+                         j := j + 1;
+                      END_IF;
+                   END_IF;
+               UNTIL (BK_STATUS AND BK_STATE_MORE) = 0;
+               IF j > BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX] THEN
+                  BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX] := j;
+               END_IF;
+               Sleep(BK_Wait);
+               
+               //Vorschlag VMT 12.03.2012
+               timeOut := FALSE;
+               SysTimerSet(10000, timeOut);
+               WAIT InSignals.bBK_SIG_B2R_READY.svBool OR timeOut OR bSimulateBK;
+               IF timeOut THEN
+                  myRobot.DebugPrint(eTraceVision, "TimeOut(2) in BK_Ende by waiting for bBkSigB2RReady");
+                  bk_ok := FALSE;
+               ELSE
+                  //Ende VMT 12.03.2012
+                  BK_SendCMD(BK_ROB_ID, BK_CMD_STOP_MEASUREMENT, BK_TYPE, BK_PATH, AnzahlPunkte, NULLFRAME);
+                  BK_RecStateOnly();
+                  IF  NOT BK_StateCheck() THEN
+                     bk_ok := FALSE;
+                  END_IF;
+
+                  IF (BK_ScanRobPos-1 <> AnzahlPunkte) THEN
+                     //retry counter is used --> set only warning
+                     IF (iBKCntRetry < iBKMaxRetry) AND NOT bSyncRobots THEN
+                        RcuSetMessageOnce(idWarnPointNo, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(AnzahlPunkte), STR(BK_ScanRobPos-1));
+                     ELSE   
+                        RcuSetMessageOnce(TRcVisionBk_ErrPointNo, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(AnzahlPunkte), STR(BK_ScanRobPos-1));
+                     END_IF;
+                     bk_ok := FALSE;
+                  END_IF;
+                  // Pruefen, ob genuegend Korrekturwerte empfangen wurden
+                  IF BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX] < AnzahlKorrekturen THEN
+                     RcuSetMessageOnce(TRcVisionBk_WarCorrNo, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende", STR(AnzahlKorrekturen), STR(BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX]));
+                     bk_ok := FALSE;
+                  END_IF;
+                  bk_ok := bk_ok AND BK_Measure_Ok;
+                  IF NOT bk_ok THEN
+                     OutSignals.bBK_SIG_R2B_ERRACK.svBool := TRUE;
+                     myRobot.WaitMcMainCycles(6);
+                     OutSignals.bBK_SIG_R2B_ERRACK.svBool := FALSE;
+                  END_IF;
+               END_IF;
+            END_IF;
+         END_IF;
+         
+      Mode_MP_Ref:
+         IF bDisabledHMI OR bS3CommFault THEN
+            myRobot.DebugPrint(eTraceVision, "BK_Ende - System is disabled or communication fault");
+            bk_ok := FALSE;
+         ELSE
+            myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_MODUS = BK_MODUS_MP_REF");
+            //Warte auf Synchronisierung durch freilaufende SPS
+            timeOut := FALSE;
+            SysTimerSet(10000, timeOut);
+            WAIT (BK_RequestCount >= BK_ScanRobPos) OR timeOut;
+            IF timeOut THEN
+               myRobot.DebugPrint(eTraceVision, "TimeOut in BK_Ende by waiting for BK_RequestCount >= BK_ScanRobPos");
+            END_IF;
+            timeOut := FALSE;
+            SysTimerSet(1000, timeOut);
+            WAIT InSignals.bBK_SIG_B2R_READY.svBool OR timeOut OR bSimulateBK;
+            IF timeOut THEN
+               myRobot.DebugPrint(eTraceVision, "TimeOut in BK_Ende by waiting for InSignals.bBK_SIG_IS_READY.svBool");
+            END_IF;
+            
+            BK_MODUS := Mode_Off;
+            Sleep(300);
+            BK_SendCMD(BK_ROB_ID, BK_CMD_STOP_MP_REF, BK_TYPE, BK_PATH, AnzahlPunkte, NULLFRAME);
+            BK_RecStateOnly();
+            BK_StateCheck();
+         END_IF;
+         
+      Mode_PP_Ref:
+         IF bDisabledHMI OR bS3CommFault THEN
+            myRobot.DebugPrint(eTraceVision, "BK_Ende - System is disabled or communication fault");
+            bk_ok := FALSE;
+         ELSE
+            myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_MODUS = BK_MODUS_PP_REF");
+            BK_MODUS := Mode_Off;
+            AnzahlPunkte := BK_ScanRobPos-1;
+            FOR i := 1 TO BK_ScanRobPos-1 DO
+               BK_SendCMD(BK_ROB_ID, BK_CMD_DATA, BK_TYPE, BK_PATH, BKMessPunkt[i], BKMessPos[i]);
+               myRobot.DebugPrint(eTraceVision, "Point "+STR(BKMessPunkt[i])+":");
+               myRobot.DebugPrint(eTraceVision, "  X = "+STR(BKMessPos[i].X)+"  Y = "+STR(BKMessPos[i].Y)+"  Z = "+STR(BKMessPos[i].Z));
+               myRobot.DebugPrint(eTraceVision, "  A = "+STR(BKMessPos[i].A)+"  B = "+STR(BKMessPos[i].B)+"  C = "+STR(BKMessPos[i].C));
+               Sleep(100);
+            END_FOR;
+            Sleep(300);
+            BK_SendCMD(BK_ROB_ID, BK_CMD_STOP_PP_REF, BK_TYPE, BK_PATH, AnzahlPunkte, NULLFRAME);
+            BK_RecStateOnly();
+            BK_StateCheck();
+         END_IF;
+         
+      ModeApplication:
+         myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_MODUS = BK_MODUS_APPLICATION");
+         //Base Verschiebung
+         corrFrame.mFrameTyp := eMcuFrameKardan;
+         corrFrame.mPos.mValues[0] := 0.0;
+         corrFrame.mPos.mValues[1] := 0.0;
+         corrFrame.mPos.mValues[2] := 0.0;
+         corrFrame.mOri.mValues[0] := 0.0;
+         corrFrame.mOri.mValues[1] := 0.0;
+         corrFrame.mOri.mValues[2] := 0.0;
+         RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrame, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+         myRobot.homing.StoreRefSystemVision(FALSE, corrFrame);
+         CalcActualObject(corrFrame, FALSE);  // FALSE because of STOPPOINT in Macro BK_FINISH
+         BK_MODUS := Mode_Off;
+         //die letzten Korrekturen schon mal freigeben
+         IF (BK_PATH_INDEX = 0) THEN
+            //$MSG_T.RELEASE = TRUE
+            myRobot.DebugPrint(eTraceVision, "BK_Ende: BK_PATH_INDEX = 0");
+            RcuSetMessageOnce(TRcVisionBk_ErrInvPath, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_Ende", STR(BK_TYPE), STR(BK_PATH));
+        ELSE
+            BK_KORR_BAHN_ID[BK_PATH_INDEX] := -BK_KORR_BAHN_ID[BK_PATH_INDEX];
+        END_IF;
+   END_CASE;
+
+//   OutSignals.bBK_SIG_MESSUNG_AKTIV.svBool := FALSE;
+   BK_Init();
+   IF bOverflowError THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrValOutOfRange, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Ende");
+      bOverflowError := FALSE;
+      bk_ok          := FALSE;
+   END_IF;
+   
+   IF IS_USED(iRetVal) THEN   
+      IF bk_ok AND NOT bSyncRobots THEN
+         myRobot.fieldbusOut.VisionError.svBool   := FALSE;
+         myRobot.fieldbusOut.ReqSyncVision.svBool := FALSE;
+         iRetVal := DataOk;
+         iBKCntRetry := 0;
+         RETURN TRUE;
+      ELSIF bk_ok AND bSyncRobots THEN
+         myRobot.fieldbusOut.VisionError.svBool   := FALSE;
+         myRobot.fieldbusOut.ReqSyncVision.svBool := TRUE;
+         bPlcFeedback := UPDATE(myRobot.fieldbusIn.AckSyncVision.svBool OR myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Sync - waiting AckSyncVision or GoDirectHome or DoRemeasure or Continue");
+      ELSE   
+         IF bSyncRobots THEN
+            myRobot.fieldbusOut.VisionError.svBool   := TRUE;
+            myRobot.fieldbusOut.ReqSyncVision.svBool := TRUE;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Sync Error detected - waiting GoDirectHome or DoRemeasure or Continue");
+            bPlcFeedback := UPDATE(myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool);
+         //try once more if counter is smaller than cfg value   
+         ELSIF (iBKCntRetry < iBKMaxRetry) THEN
+            iBKCntRetry := iBKCntRetry + 1;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Error detected - iBKCntRetry=" + STR(iBKCntRetry) + " is smaller than CfgMax=" + STR(iBKMaxRetry) + " - DoRemeasure");
+            iRetVal := Remeasure;
+            RETURN TRUE;
+         ELSE
+            myRobot.fieldbusOut.VisionError.svBool   := TRUE;
+            myRobot.fieldbusOut.ReqSyncVision.svBool := FALSE;
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Error detected - waiting GoDirectHome or DoRemeasure or Continue");
+            bPlcFeedback := UPDATE(myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool);
+         END_IF;
+      END_IF;
+      
+      WAIT bPlcFeedback;
+      iBKCntRetry := 0;
+      myRobot.fieldbusOut.VisionError.svBool   := FALSE;
+      myRobot.fieldbusOut.ReqSyncVision.svBool := FALSE;
+      IF myRobot.fieldbusIn.DoRemeasure.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH- DoRemeasure received from PLC");
+         WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+         iRetVal := Remeasure;
+      ELSIF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - GoDirectHome received from PLC");   
+         WAIT NOT myRobot.fieldbusIn.GoDirectHome.svBool;
+         iRetVal := GoHome;
+      ELSIF myRobot.fieldbusIn.Continue.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Continue received from PLC");
+         WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+         iRetVal := Continue;    
+      ELSIF myRobot.fieldbusIn.AckSyncVision.svBool THEN  
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "BK_FINISH - Ack Sync received from PLC");
+         WAIT NOT myRobot.fieldbusIn.AckSyncVision.svBool;
+         iRetVal := DataOk;
+      END_IF;
+   END_IF;
+   
+   RETURN bk_ok;
+   
+END_ROUTINE 
+
+
+//==========================================================
+ROUTINE BK_Korr(PunktNr : DINT)   
+
+VAR
+   i          : INT;
+   j          : INT;
+   timeOut    : BOOL;
+   bError     : BOOL;
+   PunktIndex : INT;
+   corrFrame  : TMcuFrame;
+END_VAR
+
+
+   myRobot.DebugPrint(eTraceVision, "BK_Korr: Pointnumber = "+STR(PunktNr));
+   iBkPPNrPreRun := PunktNr;
+   IF bAutoGeneratePP THEN
+      myRobot.DebugPrint(eTraceVision, "BK_Korr: ignored");
+      RcuSetMessageOnce(TRcVisionBk_ErrNotYetImpl, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Korr");
+      RETURN;
+   END_IF;
+   CASE BK_MODUS OF
+      ModeMeasure:
+
+      Mode_MP_Ref:
+
+      Mode_PP_Ref:
+         // Prüfung ob PunktNr. schon verwendet
+         bError := FALSE;
+         FOR i := 1 TO BK_ScanRobPos DO
+            IF BKMessPunkt[i] = PunktNr THEN
+               RcuSetMessageOnce(TRcVisionBk_ErrInvPointNumber, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Korr");
+               myRobot.DebugPrint(eTraceVision, "BK_Korr: pointnumer already used!");
+               bError := TRUE;
+            END_IF;
+         END_FOR;
+         IF NOT bError THEN
+            iBkKorrPunktNr := PunktNr;
+            bBkKorrFlag := TRUE;
+         END_IF;
+         
+      ModeApplication:
+         IF (BK_PATH_INDEX = 0) THEN
+            //$MSG_T.RELEASE = TRUE
+            myRobot.DebugPrint(eTraceVision, "BK_Korr: BK_PATH_INDEX = 0");
+            RcuSetMessageOnce(TRcVisionBk_ErrInvPath, myRobot.kinListInx, 3, instId, "TRcuVisionBk.BK_Korr", STR(BK_TYPE), STR(BK_PATH));
+            RETURN;
+         END_IF;
+         myRobot.DebugPrint(eTraceVision, "BK_Korr: BK_MODUS_APPLICATION Pointnumber = " + STR(PunktNr));
+         PunktIndex := BK_GetIndex(BK_PATH_INDEX, PunktNr);
+         IF (PunktIndex >= 0) THEN
+            myRobot.DebugPrint(eTraceVision, "BK_Korr: pointindex = " + STR(PunktIndex));
+            //Base Verschiebung
+            corrFrame.mFrameTyp := eMcuFrameKardan;
+            corrFrame.mPos.mValues[0] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].X;
+            corrFrame.mPos.mValues[1] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].Y;
+            corrFrame.mPos.mValues[2] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].Z;
+            corrFrame.mOri.mValues[0] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].A;
+            corrFrame.mOri.mValues[1] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].B;
+            corrFrame.mOri.mValues[2] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].C;
+            RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrame, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+            myRobot.homing.StoreRefSystemVision(FALSE, corrFrame);
+            START CalcActualObject(corrFrame, TRUE);
+         ELSE
+            RcuSetMessageOnce(TRcVisionBk_ErrCorr, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Korr", STR(PunktNr));
+         END_IF;
+       
+   END_CASE;
+
+END_ROUTINE 
+
+//-------------------------------------------------------------------------------------------
+// Check PLC feedback even measuring was successful to syncronize several robots
+//-------------------------------------------------------------------------------------------
+ROUTINE SyncRobots(state : BOOL)
+  bSyncRobots := state;
+END_ROUTINE
+
+
+ROUTINE TriggerDirectVmtBk(pointNumber : INT)
+
+  STOPPOINT();
+  IF BK_ScanRobPos > 0 THEN
+    CASE BK_MODUS OF
+
+    ModeMeasure:
+
+      myRobot.DebugPrint(eTraceVision, "TriggerDirectVmtBk: BK_MODUS_MEASUREMENT point = " + STR(pointNumber));
+      // ?????????????? BKMessPos[BK_ScanRobPos] := $pos_int // Position beim Interrupt
+      BKMessPos[BK_ScanRobPos].X := myRobot.readBackObjectPos.mPos.mValues[0];  
+      BKMessPos[BK_ScanRobPos].Y := myRobot.readBackObjectPos.mPos.mValues[1];
+      BKMessPos[BK_ScanRobPos].Z := myRobot.readBackObjectPos.mPos.mValues[2];
+      BKMessPos[BK_ScanRobPos].A := myRobot.readBackObjectPos.mOri.mValues[0];
+      BKMessPos[BK_ScanRobPos].B := myRobot.readBackObjectPos.mOri.mValues[1];
+      BKMessPos[BK_ScanRobPos].C := myRobot.readBackObjectPos.mOri.mValues[2];
+      BKMessPunkt[BK_ScanRobPos] := pointNumber;
+      // CONTINUE
+      IF bBK_SIG_TRIGGER.svBool THEN
+         WAIT NOT bBK_SIG_TRIGGER.svBool;
+         RcuSetMessageOnce(TRcVisionBk_ErrTrigTooFast, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TriggerDirectVmtBk", STR(pointNumber));
+         myRobot.ErrorReaction(TRUE);
+         RETURN;
+      ELSE
+         PULSE(bBK_SIG_TRIGGER.svBool, TRUE, BK_TriggerTime);
+      END_IF;
+
+    Mode_MP_Ref:
+
+      myRobot.DebugPrint(eTraceVision, "TriggerDirectVmtBk: BK_MODUS_MP_REF point = " + STR(pointNumber));
+      // ?????????????? CONTINUE
+      // ?????????????? BKMessPos[BK_ScanRobPos] := $pos_int
+      BKMessPos[BK_ScanRobPos].X := myRobot.readBackObjectPos.mPos.mValues[0];
+      BKMessPos[BK_ScanRobPos].Y := myRobot.readBackObjectPos.mPos.mValues[1];
+      BKMessPos[BK_ScanRobPos].Z := myRobot.readBackObjectPos.mPos.mValues[2];
+      BKMessPos[BK_ScanRobPos].A := myRobot.readBackObjectPos.mOri.mValues[0];
+      BKMessPos[BK_ScanRobPos].B := myRobot.readBackObjectPos.mOri.mValues[1];
+      BKMessPos[BK_ScanRobPos].C := myRobot.readBackObjectPos.mOri.mValues[2];
+      // ??????????????  CONTINUE
+      BKMessPunkt[BK_ScanRobPos] := pointNumber;
+      // ?????????????? CONTINUE
+      IF bBK_SIG_TRIGGER.svBool THEN
+         RcuSetMessageOnce(TRcVisionBk_ErrTrigTooFast, myRobot.kinListInx, 2, instId, "TRcuVisionBk.TriggerDirectVmtBk", STR(pointNumber));
+         myRobot.ErrorReaction(TRUE);
+         RETURN;
+      ELSE
+         PULSE(bBK_SIG_TRIGGER.svBool, TRUE, BK_TriggerTime);
+      END_IF;
+
+    Mode_PP_Ref:
+      RETURN;
+
+
+    ModeApplication:
+      RETURN;
+
+    Mode_ApplTest:
+      RETURN;
+
+    END_CASE;
+
+  END_IF;
+  BK_ScanRobPos := BK_ScanRobPos + 1;
+
+   
+END_ROUTINE
+
+//==========================================================
+ROUTINE BK_AutoCorr()   
+
+VAR
+   i          : INT;
+   j          : INT;
+   timeOut    : BOOL;
+   bError     : BOOL;
+   PunktIndex : INT;
+   corrFrame  : TMcuFrame;
+END_VAR
+
+
+   IF bAutoGeneratePP THEN
+      CASE BK_MODUS OF
+         ModeMeasure:
+
+         Mode_MP_Ref:
+
+         Mode_PP_Ref:
+
+         ModeApplication:
+            IF (BK_PATH_INDEX = 0) THEN
+               //$MSG_T.RELEASE = TRUE
+               myRobot.DebugPrint(eTraceVision, "BK_AutoCorr: BK_PATH_INDEX = 0");
+               RcuSetMessageOnce(TRcVisionBk_ErrInvPath, myRobot.kinListInx, 4, instId, "TRcuVisionBk.BK_AutoCorr", STR(BK_TYPE), STR(BK_PATH));
+               RETURN;
+            END_IF;
+            iBkAutoPunktNr := iBkAutoPunktNr+1;
+            myRobot.DebugPrint(eTraceVision, "BK_AutoCorr: pointnumber = "+STR(iBkAutoPunktNr));
+            IF iBkAutoPunktNr > BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX] THEN
+               RcuSetMessageOnce(TRcVisionBk_ErrTooFewValues, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_AutoCorr");
+               myRobot.DebugPrint(eTraceVision, "BK_AutoCorr: some correction values are missing");
+            END_IF;
+            iBkPPNrPreRun := iBkAutoPunktNr;
+            PunktIndex := BK_GetIndex(BK_PATH_INDEX, iBkAutoPunktNr);
+            IF (PunktIndex >= 0) THEN
+               myRobot.DebugPrint(eTraceVision, "BK_AutoCorr: index of point = " + STR(PunktIndex));
+               //Base Verschiebung
+               corrFrame.mFrameTyp := eMcuFrameKardan;
+               corrFrame.mPos.mValues[0] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].X;
+               corrFrame.mPos.mValues[1] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].Y;
+               corrFrame.mPos.mValues[2] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].Z;
+               corrFrame.mOri.mValues[0] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].A;
+               corrFrame.mOri.mValues[1] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].B;
+               corrFrame.mOri.mValues[2] := BK_KORREKTUR[BK_PATH_INDEX][PunktIndex].C;
+               RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrame, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+               myRobot.homing.StoreRefSystemVision(FALSE, corrFrame);
+               START CalcActualObject(corrFrame, TRUE);
+            ELSE
+               RcuSetMessageOnce(TRcVisionBk_ErrCorr, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_AutoCorr", STR(iBkAutoPunktNr));
+               myRobot.ErrorReaction(TRUE);
+            END_IF;
+
+      END_CASE;
+   END_IF;
+
+END_ROUTINE 
+
+//==========================================================
+ROUTINE BK_Korr_Holen() PRIVATE
+
+VAR
+   i : INT;
+   j : INT;
+   timeOut : BOOL;
+   bEXIT   : BOOL;
+END_VAR
+
+    j := BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX];
+    IF j=0 THEN
+       j := 1;
+    END_IF;
+    myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: receive correction values");
+    REPEAT
+        BK_SendCMD(BK_ROB_ID, BK_CMD_REQUEST_CORR, BK_TYPE, BK_PATH, 0, NULLFRAME);
+        IF NOT BK_RecShiftData() THEN
+           BK_Measure_Ok := FALSE;
+        END_IF;
+        IF (BK_STATUS AND BK_STATE_OK) = BK_STATE_OK THEN
+           myRobot.DebugPrint(eTraceVision, STR(i)+" ID= "+STR(BK_POINT_ID)+" X= "+STR(BK_Korr_X)+
+                              " Y= "+STR(BK_Korr_Y)+" Z= "+STR(BK_Korr_Z)+" A= "+STR(BK_Korr_RX)+
+                              " B= "+STR(BK_Korr_RY)+" C= "+STR(BK_Korr_RZ));
+           IF (j <= BK_MaxKorrekturenProBahn) THEN
+              BK_KORREKTUR[BK_PATH_INDEX][j].X := BK_Korr_X;
+              BK_KORREKTUR[BK_PATH_INDEX][j].Y := BK_Korr_Y;
+              BK_KORREKTUR[BK_PATH_INDEX][j].Z := BK_Korr_Z;
+              BK_KORREKTUR[BK_PATH_INDEX][j].A := BK_Korr_RX;
+              BK_KORREKTUR[BK_PATH_INDEX][j].B := BK_Korr_RY;
+              BK_KORREKTUR[BK_PATH_INDEX][j].C := BK_Korr_RZ;
+              BK_KORR_PUNKT_ID[BK_PATH_INDEX][j] := BK_POINT_ID;    
+           END_IF;
+           Sleep(BK_Wait);
+           j := j + 1;
+        ELSE
+           IF (BK_POINT_ID <= 0) THEN
+              myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: BK_POINT_ID <= 0");
+              //RcuSetError(instId, eRcuErrorBkCfgTyp, STR(BK_TYPE), STR(BK_PATH));
+              //BK_Measure_Ok := FALSE;
+           ELSE
+              BK_KORR_PUNKT_ID[BK_PATH_INDEX][j] := -1;
+              IF (BK_STATUS AND BK_ERROR_COLLISION) = BK_ERROR_COLLISION THEN
+                 myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: BK_ERROR_COLLISION");
+                 RcuSetMessageOnce(TRcVisionBk_WarnCollision, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_Korr_Holen", STR(BK_POINT_ID));
+                 BK_Measure_Ok := FALSE;
+              ELSE
+                 IF (BK_STATUS AND BK_ERROR_LIMIT)= BK_ERROR_LIMIT THEN
+                    myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: BK_ERROR_LIMIT");
+                    RcuSetMessageOnce(TRcVisionBk_WarnLimit, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_Korr_Holen", STR(BK_POINT_ID));
+                    BK_Measure_Ok := FALSE;
+                 ELSE
+                    IF (BK_STATUS AND BK_ERROR_DETECTION) = BK_ERROR_DETECTION THEN
+                       myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: BK_ERROR_DETECTION");
+                       RcuSetMessageOnce(TRcVisionBk_WarnInvMeasure, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_Korr_Holen", STR(BK_POINT_ID));
+                       BK_Measure_Ok := FALSE;
+                    ELSE
+                       IF (BK_STATUS AND BK_ERROR_SENSOR)= BK_ERROR_SENSOR THEN
+                          myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: BK_ERROR_SENSOR");
+                          RcuSetMessageOnce(TRcVisionBk_WarnSensor, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Korr_Holen", STR(BK_POINT_ID));
+                          BK_Measure_Ok := FALSE;
+                       ELSE
+                          myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: BK_MSG_GENERAL");
+                             RcuSetMessageOnce(TRcVisionBk_WarnGenPoint, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_Korr_Holen", STR(BK_POINT_ID));
+                          BK_Measure_Ok := FALSE;
+                       END_IF;
+                    END_IF;
+                 END_IF;
+              END_IF;
+              Sleep(BK_Wait);
+              j := j + 1;
+           END_IF;
+        END_IF;
+    UNTIL (BK_STATUS AND BK_STATE_MORE) = 0;
+    IF j > BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX] THEN
+       BK_KORREKTUREN_GUELTIG[BK_PATH_INDEX] := j;
+    END_IF;
+    myRobot.DebugPrint(eTraceVision, "BK_Korr_Holen: END");
+
+END_ROUTINE 
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier wird der Sensor getriggert und die jeweilige Position gespeichert
+// Letzteres wird in einem Array gespeichert und ist nur fürs Messen interessant
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE BK_Aktion(commandData : TMcuUserData; pos : TRcuTrigger;
+                            posInvalid : BOOL; VAR_IN triggerIdx  : DINT) PRIVATE
+VAR
+   command          : DINT;
+   bMRTriggerSignal : BOOL;
+   bTimeOut         : BOOL;
+   sTriggerName     : STRING;
+   sLogText         : STRING;
+   timeOut          : BOOL;
+   PunktIndex       : INT;
+END_VAR
+
+  
+   command         := commandData.mDataInt[3];
+
+  IF BK_ScanRobPos > 0 THEN
+    CASE BK_MODUS OF
+
+    ModeMeasure:
+
+      myRobot.DebugPrint(eTraceVision, "BK_Aktion: BK_MODUS_MEASUREMENT pointnumber = " + STR(command));
+      // ?????????????? BKMessPos[BK_ScanRobPos] := $pos_int // Position beim Interrupt
+      BKMessPos[BK_ScanRobPos].X := myRobot.readBackObjectPos.mPos.mValues[0];
+      BKMessPos[BK_ScanRobPos].Y := myRobot.readBackObjectPos.mPos.mValues[1];
+      BKMessPos[BK_ScanRobPos].Z := myRobot.readBackObjectPos.mPos.mValues[2];
+      BKMessPos[BK_ScanRobPos].A := myRobot.readBackObjectPos.mOri.mValues[0];
+      BKMessPos[BK_ScanRobPos].B := myRobot.readBackObjectPos.mOri.mValues[1];
+      BKMessPos[BK_ScanRobPos].C := myRobot.readBackObjectPos.mOri.mValues[2];
+      BKMessPunkt[BK_ScanRobPos] := command;
+      // CONTINUE
+      IF bBK_SIG_TRIGGER.svBool THEN
+         WAIT NOT bBK_SIG_TRIGGER.svBool;
+         RcuSetMessageOnce(TRcVisionBk_ErrTrigTooFast, myRobot.kinListInx, 3, instId, "TRcuVisionBk.BK_Aktion", STR(command));
+         myRobot.ErrorReaction(TRUE);
+         RETURN;
+      ELSE
+         PULSE(bBK_SIG_TRIGGER.svBool, TRUE, BK_TriggerTime);
+      END_IF;
+
+    Mode_MP_Ref:
+
+      myRobot.DebugPrint(eTraceVision, "BK_Aktion: BK_MODUS_MP_REF pointnumber = " + STR(command));
+      // ?????????????? CONTINUE
+      // ?????????????? BKMessPos[BK_ScanRobPos] := $pos_int
+      BKMessPos[BK_ScanRobPos].X := myRobot.readBackObjectPos.mPos.mValues[0];
+      BKMessPos[BK_ScanRobPos].Y := myRobot.readBackObjectPos.mPos.mValues[1];
+      BKMessPos[BK_ScanRobPos].Z := myRobot.readBackObjectPos.mPos.mValues[2];
+      BKMessPos[BK_ScanRobPos].A := myRobot.readBackObjectPos.mOri.mValues[0];
+      BKMessPos[BK_ScanRobPos].B := myRobot.readBackObjectPos.mOri.mValues[1];
+      BKMessPos[BK_ScanRobPos].C := myRobot.readBackObjectPos.mOri.mValues[2];
+      // ??????????????  CONTINUE
+      BKMessPunkt[BK_ScanRobPos] := command;
+      // ?????????????? CONTINUE
+      IF bBK_SIG_TRIGGER.svBool THEN
+         RcuSetMessageOnce(TRcVisionBk_ErrTrigTooFast, myRobot.kinListInx, 4, instId, "TRcuVisionBk.BK_Aktion", STR(command));
+         myRobot.ErrorReaction(TRUE);
+         RETURN;
+      ELSE
+         PULSE(bBK_SIG_TRIGGER.svBool, TRUE, BK_TriggerTime);
+      END_IF;
+
+    Mode_PP_Ref:
+      RETURN;
+
+
+    ModeApplication:
+      RETURN;
+      
+    Mode_ApplTest:
+      RETURN;
+      myRobot.DebugPrint(eTraceVision, "BK_Aktion: BK_MODUS_APPLTEST pointnumber = " + STR(command));
+
+    END_CASE;
+
+  END_IF;
+  BK_ScanRobPos := BK_ScanRobPos + 1;
+
+END_ROUTINE
+
+ROUTINE ActCartInObjectCoord(tcp : FRAME) PRIVATE
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := myRobot.actCartVals.mPos;
+   actPos.mFrame.mOri := myRobot.actCartVals.mOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(myRobot.kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, refSysId) THEN
+      myRobot.DebugPrint(eTraceVision, "ActPosInObjectCoord RcuRefSystemObject = "+STR(myRobot.RcuRefSystemObject)+" refSysId = "+STR(refSysId));
+      // ERROR
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         myRobot.DebugPrint(eTraceVision, "error in McuTransformPosCart in TRcuRobot");
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         //ERROR
+      END_IF;
+      tcp.X := calcPos.mFrame.mPos.mValues[0];
+      tcp.Y := calcPos.mFrame.mPos.mValues[1];
+      tcp.Z := calcPos.mFrame.mPos.mValues[2];
+      tcp.A := calcPos.mFrame.mOri.mValues[0];
+      tcp.B := calcPos.mFrame.mOri.mValues[1];
+      tcp.C := calcPos.mFrame.mOri.mValues[2];
+   ELSE
+      tcp.X := actPos.mFrame.mPos.mValues[0];
+      tcp.Y := actPos.mFrame.mPos.mValues[1];
+      tcp.Z := actPos.mFrame.mPos.mValues[2];
+      tcp.A := actPos.mFrame.mOri.mValues[0];
+      tcp.B := actPos.mFrame.mOri.mValues[1];
+      tcp.C := actPos.mFrame.mOri.mValues[2];
+   END_IF;
+END_ROUTINE
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier wird die Position gespeichert
+// Letzteres wird in einem Array gespeichert und ist nur fürs Messen interessant
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE BK_PP_Ref(pos : TMcuPosition)
+
+   IF bAutoGeneratePP THEN // alle kart. Punke zwischen BK_START und BK_ENDE sind
+                           // BK-Bahnpunkte
+      IF (BK_ScanRobPos > 0) AND (BK_ScanRobPos <= MaxPunkteProMessung) THEN
+         IF pos.mPosTyp = eMcuPosCart THEN
+            IF BK_MODUS = Mode_PP_Ref THEN
+               myRobot.DebugPrint(eTraceVision, "BK_PP_Ref: BK_MODUS_PP_REF point = " + STR(BK_ScanRobPos));
+               BKMessPos[BK_ScanRobPos].X := pos.mPosCart.mFrame.mPos.mValues[0];
+               BKMessPos[BK_ScanRobPos].Y := pos.mPosCart.mFrame.mPos.mValues[1];
+               BKMessPos[BK_ScanRobPos].Z := pos.mPosCart.mFrame.mPos.mValues[2];
+               BKMessPos[BK_ScanRobPos].A := pos.mPosCart.mFrame.mOri.mValues[0];
+               BKMessPos[BK_ScanRobPos].B := pos.mPosCart.mFrame.mOri.mValues[1];
+               BKMessPos[BK_ScanRobPos].C := pos.mPosCart.mFrame.mOri.mValues[2];
+               BKMessPunkt[BK_ScanRobPos] := BK_ScanRobPos;
+               BK_ScanRobPos := BK_ScanRobPos + 1;
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(TRcVisionBk_ErrNoCartPos, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_PP_Ref", pos.mName);
+            myRobot.ErrorReaction(TRUE);
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(TRcVisionBk_ErrInternalIndex, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_PP_Ref", STR(BK_ScanRobPos));
+         myRobot.ErrorReaction(TRUE);
+      END_IF;
+   ELSE
+      IF bBkKorrFlag THEN
+         IF (BK_ScanRobPos > 0) AND (BK_ScanRobPos <= MaxPunkteProMessung) THEN
+            IF pos.mPosTyp = eMcuPosCart THEN
+               IF BK_MODUS = Mode_PP_Ref THEN
+                  myRobot.DebugPrint(eTraceVision, "BK_PP_Ref: BK_MODUS_PP_REF point = " + STR(iBkKorrPunktNr));
+                  BKMessPos[BK_ScanRobPos].X := pos.mPosCart.mFrame.mPos.mValues[0];
+                  BKMessPos[BK_ScanRobPos].Y := pos.mPosCart.mFrame.mPos.mValues[1];
+                  BKMessPos[BK_ScanRobPos].Z := pos.mPosCart.mFrame.mPos.mValues[2];
+                  BKMessPos[BK_ScanRobPos].A := pos.mPosCart.mFrame.mOri.mValues[0];
+                  BKMessPos[BK_ScanRobPos].B := pos.mPosCart.mFrame.mOri.mValues[1];
+                  BKMessPos[BK_ScanRobPos].C := pos.mPosCart.mFrame.mOri.mValues[2];
+                  BKMessPunkt[BK_ScanRobPos] := iBkKorrPunktNr;
+                  BK_ScanRobPos := BK_ScanRobPos + 1;
+               END_IF;
+            ELSE
+               RcuSetMessageOnce(TRcVisionBk_ErrNoCartPos, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_PP_Ref", pos.mName);
+               myRobot.ErrorReaction(TRUE);
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(TRcVisionBk_ErrInternalIndex, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_PP_Ref", STR(BK_ScanRobPos));
+            myRobot.ErrorReaction(TRUE);
+         END_IF;
+         bBkKorrFlag := FALSE;
+      END_IF;
+   END_IF;
+
+END_ROUTINE
+
+ROUTINE SignalVmtBk(commandData : TMcuUserData; pos : TRcuTrigger;
+                            posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+VAR
+   triggerNumOnSeg  : DINT;
+   command          : DINT;
+END_VAR
+
+   myRobot.DebugPrint(eTraceVision, "SignalVmtBk");
+   triggerNumOnSeg := commandData.mDataInt[1];
+   command         := commandData.mDataInt[3];
+   START BK_Aktion(commandData,pos, posInvalid, triggerIdx) PRIO 1;
+   myRobot.progPath.lastExecutedTrigger := triggerNumOnSeg;
+
+END_ROUTINE
+
+
+ROUTINE PULSE(bOut : MAPTO BOOL; bSig: BOOL; time : REAL ) PRIVATE
+  IF NOT IS_MAPPED(bOut) THEN
+     RETURN;
+  END_IF; 
+  bOut := bSig;
+  Sleep(DINT(1000*time));
+  bOut := NOT bSig;
+END_ROUTINE
+
+
+//;-----------------------------------------------------------
+//;                  BK_GetIndex
+//;-----------------------------------------------------------
+ROUTINE BK_GetIndex(PathIndex : INT; PointID: DINT) : INT PRIVATE
+VAR
+   i          : INT;
+   PointIndex : INT;
+END_VAR
+
+   PointIndex := -1;
+   IF (PathIndex < 1) THEN
+     RETURN -1;
+   END_IF;
+   IF (PathIndex > 5) THEN
+     RETURN -1;
+   END_IF;
+
+   FOR i := 1 TO BK_MaxKorrekturenProBahn DO
+     IF (BK_KORR_PUNKT_ID[PathIndex][i] = PointID) THEN
+       PointIndex := i;
+       i := BK_MaxKorrekturenProBahn;
+     END_IF;
+   END_FOR;
+   RETURN (PointIndex);
+END_ROUTINE
+
+//----------------------------------------------------
+// 
+ROUTINE BK_Abfrage() PRIVATE
+VAR
+   i : INT;
+END_VAR
+
+WHILE TRUE DO
+   WAIT (BK_RequestCount > 0) AND (BK_RequestCount < BK_ScanRobPos) AND InSignals.bBK_SIG_B2R_READY.svBool;
+     IF ((BK_MODUS = ModeMeasure) OR (BK_MODUS = Mode_MP_Ref)) THEN
+        i := BK_RequestCount;
+        BK_SendCMD(BK_ROB_ID, BK_CMD_TRIGGER, BK_TYPE, BK_PATH, BKMessPunkt[i], BKMessPos[i]);
+        myRobot.DebugPrint(eTraceVision, "Triggerpoint "+STR(BKMessPunkt[i])+":");
+        myRobot.DebugPrint(eTraceVision, "  X = "+STR(BKMessPos[i].X)+"  Y = "+STR(BKMessPos[i].Y)+"  Z = "+STR(BKMessPos[i].Z));
+        myRobot.DebugPrint(eTraceVision, "  A = "+STR(BKMessPos[i].A)+"  B = "+STR(BKMessPos[i].B)+"  C = "+STR(BKMessPos[i].C));
+        WAIT InSignals.bBK_SIG_B2R_READY.svBool;
+        IF (BK_MODUS = ModeMeasure) THEN
+           BK_Korr_Holen();
+        END_IF;
+        IF (BK_RequestCount > 0) THEN
+           BK_RequestCount := BK_RequestCount + 1;
+        ELSE
+           myRobot.DebugPrint(eTraceVision,"BK_Abfrage: BK_RequestCount invalid");
+        END_IF;
+     ELSE
+        myRobot.WaitMcMicroCycles(1);
+     END_IF;
+END_WHILE;
+END_ROUTINE
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier werden Kommandos verschickt
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE BK_SendCMD(nRobID: INT; nCommand: INT; nTypeId: INT; nPathId: INT; nPointId: INT; pActRobPos: FRAME) PRIVATE
+VAR
+   timeOut      : BOOL;
+   timeOut2     : BOOL;
+   timeOut3     : BOOL;
+   RetryCounter : INT;
+   d            : DINT;
+END_VAR
+
+   myRobot.DebugPrint(eTraceVision, "BK_SendCMD nCommand = "+STR(nCommand)+" POINT = "+STR(nPointId));
+//   OutSignals.bBK_SIG_R2B_ACK.svBool    := FALSE;
+   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TOSend, timeOut);
+   WAIT NOT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut OR bSimulateBK;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_SendCMD while waiting for NOT bBK_SIG_B2R_ACK for PointId: " + STR(nPointId));
+   END_IF;
+   //;BK_SIG_R2B_ID    := nRobID;
+   SysTimerClear(timeOut);
+   OutSignals.byteBK_SIG_R2B_CMD.svByte   := nCommand;
+   OutSignals.byteBK_SIG_R2B_TYPE.svByte  := nTypeId;
+   OutSignals.byteBK_SIG_R2B_PATH.svByte  := nPathId;
+   OutSignals.byteBK_SIG_R2B_ROBID.svByte := nRobID;
+   OutSignals.wBK_SIG_R2B_POINT.svWord    := TurnByte(nPointId);
+
+   //BK_SIG_R2B_FAC_T := 4;
+   //BK_SIG_R2B_FAC_R := 4;
+   OutSignals.byteBK_SIG_R2B_FAC.svByte := 4*16 + 4;
+   
+   // Absolute Position zur Kontrolle an VMT (3 Nachkommastellen)
+   OutSignals.dBK_SIG_R2B_X.svDword   := Turn4Bytes(DINT(pActRobPos.X * 1000.0));
+   OutSignals.dBK_SIG_R2B_Y.svDword   := Turn4Bytes(DINT(pActRobPos.Y * 1000.0));
+   OutSignals.dBK_SIG_R2B_Z.svDword   := Turn4Bytes(DINT(pActRobPos.Z * 1000.0));
+   OutSignals.dBK_SIG_R2B_RX.svDword  := Turn4Bytes(DINT(pActRobPos.A * 1000.0));
+   OutSignals.dBK_SIG_R2B_RY.svDword  := Turn4Bytes(DINT(pActRobPos.B * 1000.0));
+   OutSignals.dBK_SIG_R2B_RZ.svDword  := Turn4Bytes(DINT(pActRobPos.C * 1000.0));
+
+   RetryCounter := 0;
+   // ???????????WAIT SEC 0  ; Vorlaufstop   
+   
+   myRobot.WaitMcMainCycles(6); // to avoid problems with reading command=00 on VMT computer
+   
+   REPEAT
+      OutSignals.bBK_SIG_R2B_STROBE.svBool := TRUE;
+      timeOut2 := FALSE;
+      SysTimerSet(1000, timeOut2);
+//      WAIT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut2 OR bSimulateBK;
+      IF RetryCounter = 0 THEN
+         WAIT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut2 OR bSimulateBK;
+      ELSE
+         WAIT InSignals.bBK_SIG_B2R_ACK.svBool OR InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut2 OR bSimulateBK; //Vorschlag VMT 09.03.2012
+      END_IF;
+      IF timeOut2 THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in BK_SendCMD while waiting for bBK_SIG_B2R_ACK for PointId: " + STR(nPointId));
+         OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+         Sleep(200);
+         RetryCounter := RetryCounter + 1;
+      ELSE
+         RetryCounter := BK_MaxCommRetry;
+      END_IF;
+   UNTIL RetryCounter >= BK_MaxCommRetry;
+   
+   IF timeOut2 THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutSend, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_SendCMD", STR(RetryCounter));
+   END_IF;
+   OutSignals.byteBK_SIG_R2B_CMD.svByte    := 0;
+   myRobot.DebugPrint(eTraceVision, "BK_SendCMD: byteBK_SIG_R2B_CMD = 0");
+   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   SysTimerClear(timeOut2);
+   timeOut3 := FALSE;
+   SysTimerSet(BK_TOSend, timeOut3);
+   WAIT NOT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut3 OR bSimulateBK;
+   IF timeOut3 THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_SendCMD while waiting for NOT bBK_SIG_B2R_ACK");
+   END_IF;
+   myRobot.DebugPrint(eTraceVision, "BK_SendCMD ENDE nCommand = "+STR(nCommand)+" POINT = "+STR(nPointId));
+END_ROUTINE
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier werden der Status und die Verschiebedaten empfangen
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE BK_RecShiftData( ) : BOOL PRIVATE
+VAR
+   iFactorRot : INT;
+   iFactorTrl : INT;
+   timeOut    : BOOL;
+   d          : DINT;
+   i          : INT;
+   bRangeOK   : BOOL := FALSE;
+   sLogText   : STRING;
+END_VAR
+
+
+//   OutSignals.bBK_SIG_R2B_ACK.svBool    := FALSE;
+   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TORecv, timeOut);
+   WAIT InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut OR bSimulateBK; // Auf Signal vom BK warten
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_RecShiftData while waiting for bBK_SIG_B2R_STROBE");
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutReceive, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_RecShiftData", "11");
+      RETURN FALSE;
+   END_IF;
+   // STATUS UEBERNEHMEN
+   BK_STATUS := InSignals.byteBK_SIG_B2R_STATE.svByte;
+   myRobot.DebugPrint(eTraceVision, "BK_RecShiftData BK_STATUS = "+STR(BK_STATUS));
+   IF BK_STATUS > 127 THEN 
+     BK_STATUS  := (BK_STATUS  - 256);
+   END_IF;
+
+   // Zuordnung der Verschiebewerte
+   BK_Korr_X  := Turn4Bytes(InSignals.dBK_SIG_B2R_X.svDword);
+   BK_Korr_Y  := Turn4Bytes(InSignals.dBK_SIG_B2R_Y.svDword);
+   BK_Korr_Z  := Turn4Bytes(InSignals.dBK_SIG_B2R_Z.svDword);
+   BK_Korr_RX := Turn4Bytes(InSignals.dBK_SIG_B2R_RX.svDword);
+   BK_Korr_RY := Turn4Bytes(InSignals.dBK_SIG_B2R_RY.svDword);
+   BK_Korr_RZ := Turn4Bytes(InSignals.dBK_SIG_B2R_RZ.svDword);
+
+   // Skalierung / Vorzeichenkontrolle
+
+   BK_SCALE_FAC_R := 1;
+   iFactorRot := InSignals.byteBK_SIG_B2R_FAC.svByte AND 16#0F;
+   
+   CASE iFactorRot OF
+     0:
+       BK_SCALE_FAC_R := 1;
+     1:
+       BK_SCALE_FAC_R := 10;
+     2:
+       BK_SCALE_FAC_R := 100;
+     4:
+       BK_SCALE_FAC_R := 1000;
+     8:
+       BK_SCALE_FAC_R := 10000;
+   END_CASE;
+
+   BK_SCALE_FAC_T := 1;
+   iFactorTrl := SHR(InSignals.byteBK_SIG_B2R_FAC.svByte AND 16#F0, 4);
+
+   CASE iFactorTrl OF
+     0:
+       BK_SCALE_FAC_T := 1;
+     1:
+       BK_SCALE_FAC_T := 10;
+     2:
+       BK_SCALE_FAC_T := 100;
+     4:
+       BK_SCALE_FAC_T := 1000;
+     8:
+       BK_SCALE_FAC_T := 10000;
+   END_CASE;
+
+   BK_Korr_X  := BK_Korr_X / BK_SCALE_FAC_T;
+   BK_Korr_Y  := BK_Korr_Y / BK_SCALE_FAC_T;
+   BK_Korr_Z  := BK_Korr_Z / BK_SCALE_FAC_T;
+   BK_Korr_RX := BK_Korr_RX / BK_SCALE_FAC_R;
+   BK_Korr_RY := BK_Korr_RY / BK_SCALE_FAC_R;
+   BK_Korr_RZ := BK_Korr_RZ / BK_SCALE_FAC_R;
+   BK_TYPE_ID  := InSignals.byteBK_SIG_B2R_TYPE.svByte;
+   BK_PATH_ID  := InSignals.byteBK_SIG_B2R_PATH.svByte;
+   BK_POINT_ID := TurnByte(InSignals.wBK_SIG_B2R_POINT.svWord);
+
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "ID = "+STR(BK_POINT_ID));   
+   sLogText := " X = " + STR(BK_Korr_X) + ", Y = " + STR(BK_Korr_Y) + ", Z = " + STR(BK_Korr_Z);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   myRobot.DebugPrint(eTraceVision, sLogText);
+   sLogText := " Rx = " + STR(BK_Korr_RX) + ", Ry = " + STR(BK_Korr_RY) + ", Rz = " + STR(BK_Korr_RZ);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   myRobot.DebugPrint(eTraceVision, sLogText);
+   IF BK_TYPE = 255 THEN
+      myRobot.DebugPrint(eTraceVision, " BK_TYPE = 255 : No check of limits !!!");
+      bRangeOK := TRUE;
+   ELSE
+      IF (rAbs(BK_Korr_X) > rLinLimit) OR
+         (rAbs(BK_Korr_Y) > rLinLimit) OR
+         (rAbs(BK_Korr_Z) > rLinLimit) OR
+         (rAbs(BK_Korr_RX) > rRotLimit) OR
+         (rAbs(BK_Korr_RY) > rRotLimit) OR
+         (rAbs(BK_Korr_RZ) > rRotLimit) THEN
+         bOverflowError := TRUE;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "correction values out off limits");
+         BK_Korr_X  := 0.0;
+         BK_Korr_Y  := 0.0;
+         BK_Korr_Z  := 0.0;
+         BK_Korr_RX := 0.0;
+         BK_Korr_RY := 0.0;
+         BK_Korr_RZ := 0.0;
+         bRangeOK := FALSE;
+      ELSE
+         bRangeOK := TRUE;
+      END_IF;
+   END_IF;
+    // Empfang bestaetigen
+   OutSignals.bBK_SIG_R2B_ACK.svBool := TRUE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TORecv, timeOut);
+   WAIT NOT InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut OR bSimulateBK; // Auf Signal vom BK warten
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_RecShiftData while waiting for NOT bBK_SIG_B2R_STROBE");
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutReceive, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_RecShiftData", "12");
+   END_IF;
+   OutSignals.bBK_SIG_R2B_ACK.svBool := FALSE;
+   RETURN bRangeOK;
+END_ROUTINE
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// hier wird nur der Status empfangen
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE BK_RecStateOnly( ) PRIVATE
+VAR
+   timeOut : BOOL;
+   i       : INT;
+END_VAR
+
+   OutSignals.bBK_SIG_R2B_ACK.svBool    := FALSE;       
+//   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   OutSignals.byteBK_SIG_R2B_CMD.svByte := 0;
+   myRobot.DebugPrint(eTraceVision, "BK_RecStateOnly: byteBK_SIG_R2B_CMD = 0");
+   //;WAIT FOR BK_SIG_B2R_STROBE = TRUE                     ; Auf Signal  vomten wurde auskommentiert um weiter zu kommen
+
+   timeOut := FALSE;
+   SysTimerSet(BK_TORecv, timeOut);
+   WAIT InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut OR bSimulateBK; // Auf Signal vom BK warten
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_RecStateOnly while waiting for bBK_SIG_B2R_STROBE");
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutReceive, myRobot.kinListInx, 3, instId, "TRcuVisionBk.BK_RecStateOnly", "21");
+      RETURN;
+   END_IF;
+
+   // STATUS UEBERNEHMEN
+   BK_STATUS := InSignals.byteBK_SIG_B2R_STATE.svByte;
+   IF BK_STATUS > 127 THEN 
+     BK_STATUS  := (BK_STATUS  - 256);
+   END_IF;
+
+   BK_TYPE_ID  := InSignals.byteBK_SIG_B2R_TYPE.svByte;
+   BK_PATH_ID  := InSignals.byteBK_SIG_B2R_PATH.svByte;
+   BK_POINT_ID := TurnByte(InSignals.wBK_SIG_B2R_POINT.svWord);
+
+   // ??????????? WAIT SEC 0
+   // Empfang bestaetigen
+   OutSignals.bBK_SIG_R2B_ACK.svBool := TRUE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TORecv, timeOut);
+   WAIT NOT InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut OR bSimulateBK; // Auf Signal vom BK warten
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in BK_RecStateOnly while waiting for NOT bBK_SIG_B2R_STROBE");
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutReceive, myRobot.kinListInx, 4, instId, "TRcuVisionBk.BK_RecStateOnly", "22");
+   END_IF;
+   // ??????????? wait sec 0.3
+   OutSignals.bBK_SIG_R2B_ACK.svBool := FALSE;
+
+END_ROUTINE
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier wird die Plausibilität des Status gecheckt, war vorher bei KUKA überall verschmiert im Code
+// Muss auf jeden Fall neu gemacht werden!!!
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE BK_StateCheck( ) : BOOL PRIVATE
+VAR
+   bOk : BOOL := TRUE;
+END_VAR
+
+     IF (BK_STATUS AND BK_ERROR_COLLISION) = BK_ERROR_COLLISION THEN
+        myRobot.DebugPrint(eTraceVision, "BK_StateCheck: BK_ERROR_COLLISION");
+        RcuSetMessageOnce(TRcVisionBk_WarnCollision, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_StateCheck", STR(BK_POINT_ID));
+        bOk := FALSE;
+     ELSE
+        IF (BK_STATUS AND BK_ERROR_LIMIT)= BK_ERROR_LIMIT THEN
+           myRobot.DebugPrint(eTraceVision, "BK_StateCheck: BK_ERROR_LIMIT");
+           RcuSetMessageOnce(TRcVisionBk_WarnLimit, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_StateCheck", STR(BK_POINT_ID));
+           bOk := FALSE;
+        ELSE
+           IF (BK_STATUS AND BK_ERROR_DETECTION) = BK_ERROR_DETECTION THEN
+              myRobot.DebugPrint(eTraceVision, "BK_StateCheck: BK_ERROR_DETECTION");
+              RcuSetMessageOnce(TRcVisionBk_WarnInvMeasure, myRobot.kinListInx, 2, instId, "TRcuVisionBk.BK_StateCheck", STR(BK_POINT_ID));
+              bOk := FALSE;
+           ELSE
+              IF (BK_STATUS AND BK_ERROR_SENSOR)= BK_ERROR_SENSOR THEN
+                 myRobot.DebugPrint(eTraceVision, "BK_StateCheck: BK_ERROR_SENSOR");
+                 RcuSetMessageOnce(TRcVisionBk_WarnSensor, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_StateCheck", STR(BK_POINT_ID));
+                 bOk := FALSE;
+              ELSE
+                 IF ((BK_STATUS AND BK_ERROR_GENERAL)= BK_ERROR_GENERAL)  OR ((BK_STATUS AND BK_STATE_FAIL)= BK_STATE_FAIL) THEN
+                    myRobot.DebugPrint(eTraceVision, "BK_StateCheck: BK_MSG_GENERAL");
+                    RcuSetMessageOnce(TRcVisionBk_WarnGenPoint, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BK_StateCheck", STR(BK_POINT_ID));
+                    bOk := FALSE;
+                 END_IF;
+              END_IF;
+           END_IF;
+        END_IF;
+     END_IF;
+  RETURN bOk;
+END_ROUTINE 
+
+TYPE PRIVATE
+   tsBkInputs : STRUCT
+      bBK_SIG_B2R_STROBE    : TInOutBool;          // Daten übernehmen
+      bBK_SIG_B2R_ACK       : TInOutBool;          // Daten übernommen
+      bBK_SIG_B2R_READY     : TInOutBool;          // Prüfung läuft
+      bBK_SIG_B2R_ADJUSTMODE: TInOutBool;          // Einrichtbetrieb
+      bBK_SIG_B2R_AUTOMODE  : TInOutBool;          // Automatik
+      bBK_SIG_B2R_SYSFAULT  : TInOutBool;          // Fehlerzustand
+      byteBK_SIG_B2R_STATE  : TInOutByte;          // Status
+      byteBK_SIG_B2R_TYPE   : TInOutByte;          // Typnummer
+      byteBK_SIG_B2R_PATH   : TInOutByte;          // Bahnnummer
+      wBK_SIG_B2R_POINT     : TInOutWord;          // Punktnummer
+      byteBK_SIG_B2R_FAC    : TInOutByte;          // Bit 0 – 3 Wertebereich Rotation (0=Wert x 1°, 1= Wert x 1/10°, 2= Wert x 1/100°,4= Wert x 1/1000°)
+                                                   // Bit 5 – 7 Wertebereich Translation (0=Wert x 1mm, 1= Wert x 1/10mm, ... )
+      dBK_SIG_B2R_X         : TInOutDword;         // Verschiebung X
+      dBK_SIG_B2R_Y         : TInOutDword;         // Verschiebung Y
+      dBK_SIG_B2R_Z         : TInOutDword;         // Verschiebung Z
+      dBK_SIG_B2R_RX        : TInOutDword;         // Verdrehung X (C)
+      dBK_SIG_B2R_RY        : TInOutDword;         // Verdrehung Y (B)
+      dBK_SIG_B2R_RZ        : TInOutDword;         // Verdrehung Z (A)
+   END_STRUCT;
+   
+   tsBkOutputs : STRUCT
+      bBK_SIG_R2B_STROBE    : TInOutBool;          // Daten übernehmen
+      bBK_SIG_R2B_ACK       : TInOutBool;          // Daten übernommen
+      bBK_SIG_R2B_AUTO      : TInOutBool;          // Automatik
+      bBK_SIG_R2B_ERRACK    : TInOutBool;          // Fehler quittieren
+      byteBK_SIG_R2B_CMD    : TInOutByte;          // Kommando (z.B. StartMessung, AbfrageKorrektur usw.)
+      byteBK_SIG_R2B_TYPE   : TInOutByte;          // 1-255 Typvarianten
+      byteBK_SIG_R2B_PATH   : TInOutByte;          // 1-255 Bahnnummer
+      byteBK_SIG_R2B_ROBID  : TInOutByte;          // 1-255 Roboternummer
+      wBK_SIG_R2B_POINT     : TInOutWord;          // 1-65535 Punktnummer
+      byteBK_SIG_R2B_FAC    : TInOutByte;          // Bit 0 – 3 Wertebereich Rotation (0=Wert x 1°, 1= Wert x 1/10°, 2= Wert x 1/100°,4= Wert x 1/1000°)
+                                                   // Bit 5 – 7 Wertebereich Translation (0=Wert x 1mm, 1= Wert x 1/10mm, ... )
+      dBK_SIG_R2B_X         : TInOutDword;         // Position X
+      dBK_SIG_R2B_Y         : TInOutDword;         // Position Y
+      dBK_SIG_R2B_Z         : TInOutDword;         // Position Z
+      dBK_SIG_R2B_RX        : TInOutDword;         // Verdrehung X (C)
+      dBK_SIG_R2B_RY        : TInOutDword;         // Verdrehung Y (B)
+      dBK_SIG_R2B_RZ        : TInOutDword;         // Verdrehung Z (A)
+   END_STRUCT;
+  
+END_TYPE
+
+VAR PRIVATE
+   myRobot            : MAPTO TRcuRobot;
+   iLoggerNumber      : INT;
+   instId             : DINT;    // instance identification number
+   idWarnPointNo      : DINT;    // ident to set error TRcVisionBk_ErrPointNo as class warning
+   bMappingOk         : BOOL;
+   InSignals          : tsBkInputs;
+   OutSignals         : tsBkOutputs;
+   bBK_SIG_TRIGGER    : TInOutBool;
+   bS3CommOK          : MAPTO BOOL;    //device is detected and proceeds realtime communication
+   bS3IgnoreError     : MAPTO BOOL;    //device is setting only warnings instead of errors
+   bS3CommFault       : BOOL;
+   bSystemFault       : BOOL;   //BK-System is in state error
+   bInAutoMode        : BOOL;   //BK-System is in automtic mode
+   bInAdjustMode      : BOOL;   //BK-System is in adjust mode
+   bSystemReady       : BOOL;
+   bOverflowError     : BOOL;
+   bDisabledHMI       : BOOL;
+   bSyncRobots        : BOOL;          //Check PLC feedback even measuring was successful to syncronize several robots
+   tEPS_PathCorrIn    : MAPTO tsPathCorrIn;
+   tEPS_PathCorrOut   : MAPTO tsPathCorrOut;
+   
+//---------------------------------------------------------------------------------------------------
+//-----------------  Hardware-Endpoint to Fieldbus-Master VMT-BK-System --------------------------
+//---------------------------------------------------------------------------------------------------
+   
+   //Name of Sercos3 device in IEC and Sercos3.cfgr
+   Sym_BK_S3_DeviceName    : STRING;
+//--------------------------------------------------------------------------   
+//                 Inputs
+//--------------------------------------------------------------------------   
+   Sym_BK_In_B2R_STROBE    : STRING := "HWI_mBK_SIG_B2R_STROBE";
+   Sym_BK_In_B2R_ACK       : STRING := "HWI_mBK_SIG_B2R_ACK";
+   Sym_BK_In_B2R_BUSY      : STRING := "HWI_mBK_SIG_B2R_BUSY";
+   Sym_BK_In_B2R_ADJUSTMODE: STRING := "HWI_mBK_SIG_B2R_ADJUSTMODE";
+   Sym_BK_In_B2R_AUTOMODE  : STRING := "HWI_mBK_SIG_B2R_AUTOMODE";
+   Sym_BK_In_B2R_SYSFAULT  : STRING := "HWI_mBK_SIG_B2R_SYSFAULT";
+   Sym_BK_In_B2R_STATE     : STRING := "HWI_bBK_SIG_B2R_STATE";
+   Sym_BK_In_B2R_TYPE      : STRING := "HWI_bBK_SIG_B2R_TYPE";
+   Sym_BK_In_B2R_PATH      : STRING := "HWI_bBK_SIG_B2R_PATH";
+   Sym_BK_In_B2R_POINT     : STRING := "HWI_wBK_SIG_B2R_POINT";
+   Sym_BK_In_B2R_FAC       : STRING := "HWI_bBK_SIG_B2R_FAC";
+   Sym_BK_In_B2R_X         : STRING := "HWI_dBK_SIG_B2R_X";
+   Sym_BK_In_B2R_Y         : STRING := "HWI_dBK_SIG_B2R_Y";
+   Sym_BK_In_B2R_Z         : STRING := "HWI_dBK_SIG_B2R_Z";
+   Sym_BK_In_B2R_RX        : STRING := "HWI_dBK_SIG_B2R_RX";
+   Sym_BK_In_B2R_RY        : STRING := "HWI_dBK_SIG_B2R_RY";
+   Sym_BK_In_B2R_RZ        : STRING := "HWI_dBK_SIG_B2R_RZ";
+   
+//--------------------------------------------------------------------------   
+//                 Outputs
+//--------------------------------------------------------------------------   
+
+   Sym_BK_Out_R2B_STROBE    : STRING := "HWO_mBK_SIG_R2B_STROBE";
+   Sym_BK_Out_R2B_ACK       : STRING := "HWO_mBK_SIG_R2B_ACK";
+   Sym_BK_Out_R2B_AUTO      : STRING := "HWO_mBK_SIG_R2B_AUTO";
+   Sym_BK_Out_R2B_ERRACK    : STRING := "HWO_mBK_SIG_R2B_ERRACK";
+   Sym_BK_Out_R2B_CMD       : STRING := "HWO_bBK_SIG_R2B_CMD";
+   Sym_BK_Out_R2B_TYPE      : STRING := "HWO_bBK_SIG_R2B_TYPE";
+   Sym_BK_Out_R2B_PATH      : STRING := "HWO_bBK_SIG_R2B_PATH";
+   Sym_BK_Out_R2B_ROBID     : STRING := "HWO_bBK_SIG_R2B_ROBID";
+   Sym_BK_Out_R2B_POINT     : STRING := "HWO_wBK_SIG_R2B_POINT";
+   Sym_BK_Out_R2B_FAC       : STRING := "HWO_bBK_SIG_R2B_FAC";
+   Sym_BK_Out_R2B_X         : STRING := "HWO_dBK_SIG_R2B_X";
+   Sym_BK_Out_R2B_Y         : STRING := "HWO_dBK_SIG_R2B_Y";
+   Sym_BK_Out_R2B_Z         : STRING := "HWO_dBK_SIG_R2B_Z";
+   Sym_BK_Out_R2B_RX        : STRING := "HWO_dBK_SIG_R2B_RX";
+   Sym_BK_Out_R2B_RY        : STRING := "HWO_dBK_SIG_R2B_RY";
+   Sym_BK_Out_R2B_RZ        : STRING := "HWO_dBK_SIG_R2B_RZ";
+
+   Sym_BK_Out_TRIGGER       : STRING := "RCU1.HWO_mBK_SIG_TRIGGER";
+
+END_VAR
+
+ROUTINE RcuReadSymbols(kinListIndex : DINT) : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      name : STRING;
+      i      : SINT;
+   END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionBk.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      // VMT BK PC
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_STROBE", Sym_BK_In_B2R_STROBE, TRUE) THEN
+         Sym_BK_In_B2R_STROBE := "HWI_mBK_SIG_B2R_STROBE";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_ACK", Sym_BK_In_B2R_ACK, TRUE) THEN
+         Sym_BK_In_B2R_ACK := "HWI_mBK_SIG_B2R_ACK";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_BUSY", Sym_BK_In_B2R_BUSY, TRUE) THEN
+         Sym_BK_In_B2R_BUSY := "HWI_mBK_SIG_B2R_BUSY";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_ADJUSTMODE", Sym_BK_In_B2R_ADJUSTMODE, TRUE) THEN
+         Sym_BK_In_B2R_ADJUSTMODE := "HWI_mBK_SIG_B2R_ADJUSTMODE";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_AUTOMODE", Sym_BK_In_B2R_AUTOMODE, TRUE) THEN
+         Sym_BK_In_B2R_AUTOMODE := "HWI_mBK_SIG_B2R_AUTOMODE";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_SYSFAULT", Sym_BK_In_B2R_SYSFAULT, TRUE) THEN
+         Sym_BK_In_B2R_SYSFAULT := "HWI_mBK_SIG_B2R_SYSFAULT";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_STATE", Sym_BK_In_B2R_STATE, TRUE) THEN
+         Sym_BK_In_B2R_STATE := "HWI_bBK_SIG_B2R_STATE";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_TYPE", Sym_BK_In_B2R_TYPE, TRUE) THEN
+         Sym_BK_In_B2R_TYPE := "HWI_bBK_SIG_B2R_TYPE";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_PATH", Sym_BK_In_B2R_PATH, TRUE) THEN
+         Sym_BK_In_B2R_PATH := "HWI_bBK_SIG_B2R_PATH";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_POINT", Sym_BK_In_B2R_POINT, TRUE) THEN
+         Sym_BK_In_B2R_POINT := "HWI_wBK_SIG_B2R_POINT";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_FAC", Sym_BK_In_B2R_FAC, TRUE) THEN
+         Sym_BK_In_B2R_FAC := "HWI_bBK_SIG_B2R_FAC";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_X", Sym_BK_In_B2R_X, TRUE) THEN
+         Sym_BK_In_B2R_X := "HWI_dBK_SIG_B2R_X";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_Y", Sym_BK_In_B2R_Y, TRUE) THEN
+         Sym_BK_In_B2R_Y := "HWI_dBK_SIG_B2R_Y";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_Z", Sym_BK_In_B2R_Z, TRUE) THEN
+         Sym_BK_In_B2R_Z := "HWI_dBK_SIG_B2R_Z";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_RX", Sym_BK_In_B2R_RX, TRUE) THEN
+         Sym_BK_In_B2R_RX := "HWI_dBK_SIG_B2R_RX";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_RY", Sym_BK_In_B2R_RY, TRUE) THEN
+         Sym_BK_In_B2R_RY := "HWI_dBK_SIG_B2R_RY";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_In_B2R_RZ", Sym_BK_In_B2R_RZ, TRUE) THEN
+         Sym_BK_In_B2R_RZ := "HWI_dBK_SIG_B2R_RZ";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_STROBE", Sym_BK_Out_R2B_STROBE, TRUE) THEN
+         Sym_BK_Out_R2B_STROBE := "HWO_mBK_SIG_R2B_STROBE";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_ACK", Sym_BK_Out_R2B_ACK, TRUE) THEN
+         Sym_BK_Out_R2B_ACK := "HWO_mBK_SIG_R2B_ACK";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_AUTO", Sym_BK_Out_R2B_AUTO, TRUE) THEN
+         Sym_BK_Out_R2B_AUTO := "HWO_mBK_SIG_R2B_AUTO";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_ERRACK", Sym_BK_Out_R2B_ERRACK, TRUE) THEN
+         Sym_BK_Out_R2B_ERRACK := "HWO_mBK_SIG_R2B_ERRACK";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_CMD", Sym_BK_Out_R2B_CMD, TRUE) THEN
+         Sym_BK_Out_R2B_CMD := "HWO_bBK_SIG_R2B_CMD";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_TYPE", Sym_BK_Out_R2B_TYPE, TRUE) THEN
+         Sym_BK_Out_R2B_TYPE := "HWO_bBK_SIG_R2B_TYPE";
+      END_IF;     
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_PATH", Sym_BK_Out_R2B_PATH, TRUE) THEN
+         Sym_BK_Out_R2B_PATH := "HWO_bBK_SIG_R2B_PATH";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_ROBID", Sym_BK_Out_R2B_ROBID, TRUE) THEN
+         Sym_BK_Out_R2B_ROBID := "HWO_bBK_SIG_R2B_ROBID";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_POINT", Sym_BK_Out_R2B_POINT, TRUE) THEN
+         Sym_BK_Out_R2B_POINT := "HWO_wBK_SIG_R2B_POINT";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_FAC", Sym_BK_Out_R2B_FAC, TRUE) THEN
+         Sym_BK_Out_R2B_FAC := "HWO_bBK_SIG_R2B_FAC";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_X", Sym_BK_Out_R2B_X, TRUE) THEN
+         Sym_BK_Out_R2B_X := "HWO_dBK_SIG_R2B_X";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_Y", Sym_BK_Out_R2B_Y, TRUE) THEN
+         Sym_BK_Out_R2B_Y := "HWO_dBK_SIG_R2B_Y";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_Z", Sym_BK_Out_R2B_Z, TRUE) THEN
+         Sym_BK_Out_R2B_Z := "HWO_dBK_SIG_R2B_Z";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_RX", Sym_BK_Out_R2B_RX, TRUE) THEN
+         Sym_BK_Out_R2B_RX := "HWO_dBK_SIG_R2B_RX";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_RY", Sym_BK_Out_R2B_RY, TRUE) THEN
+         Sym_BK_Out_R2B_RY := "HWO_dBK_SIG_R2B_RY";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_R2B_RZ", Sym_BK_Out_R2B_RZ, TRUE) THEN
+         Sym_BK_Out_R2B_RZ := "HWO_dBK_SIG_R2B_RZ";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_BK_Out_TRIGGER", Sym_BK_Out_TRIGGER, TRUE) THEN
+         Sym_BK_Out_TRIGGER := "HWO_mBK_SIG_TRIGGER";
+      END_IF;
+      name := "RCU" + STR(gyiNrRcu[kinListIndex]) + "." + Sym_BK_Out_R2B_CMD;
+      IF NOT GetDevNameFromHwEndPoint(name, Sym_BK_S3_DeviceName) THEN
+         Sym_BK_S3_DeviceName := "RCU" + STR(gyiNrRcu[kinListIndex]) + "." + "IO_8_RCMP";
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuVisionBk.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+RETURN TRUE;
+
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to VMT BK
+//----------------------------------------------------------------------------------------
+ROUTINE MapBkSignals() PRIVATE
+VAR
+   sNameSvVar         : STRING;
+   i                  : INT;
+   iRobot             : DINT;
+END_VAR
+ 
+   bMappingOk := TRUE;
+   iRobot     := myRobot.kinListInx;
+   RcuReadSymbols(iRobot);   
+   
+   (*****************************************************************************************
+   *********** Access to Sercos3Device  *****************************************************
+   ******************************************************************************************)
+   IF IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled THEN
+      IF NOT IS_MAPPED(yS3DeviceNames) THEN
+         bMappingOk := TRUE;
+         RcuSetMessageOnce(TRcuDrive_ErrNotMap, myRobot.kinListInx, 1, instId, "TRcuVisionBk.MapBkSignals", cSV_S3DeviceNames);
+      ELSE
+         FOR i:=0 TO cgiMaxS3Devices - 1 DO
+             IF (StrFind(yS3DeviceNames[i], Sym_BK_S3_DeviceName) > 0) THEN
+                sNameSvVar := cSV_S3Device + "[" + STR(i+1) + "].mCommOK";
+                bS3CommOK := MAPX(sNameSvVar);
+                IF NOT IS_MAPPED(bS3CommOK) THEN
+                   bMappingOk := TRUE;
+                   RcuSetMessageOnce(TRcuDrive_ErrNotMap, myRobot.kinListInx, 2, instId, "TRcuVisionBk.MapBkSignals", sNameSvVar);
+                END_IF;
+                sNameSvVar := cSV_S3Device + "[" + STR(i+1) + "].mIgnoreError";
+                bS3IgnoreError := MAPX(sNameSvVar);
+                IF NOT IS_MAPPED(bS3IgnoreError) THEN
+                   bMappingOk := TRUE;
+                   RcuSetMessageOnce(TRcuDrive_ErrNotMap, myRobot.kinListInx, 3, instId, "TRcuVisionBk.MapBkSignals", sNameSvVar);
+                END_IF;
+             END_IF; 
+         END_FOR;
+      END_IF;
+   END_IF;
+  
+(*****************************************************************************************
+***********   Inputs   *******************************************************************
+******************************************************************************************)
+   MapAndCheckBoolIn  (iRobot, InSignals.bBK_SIG_B2R_STROBE,   Sym_BK_In_B2R_STROBE, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bBK_SIG_B2R_ACK,      Sym_BK_In_B2R_ACK, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bBK_SIG_B2R_READY,    Sym_BK_In_B2R_BUSY, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bBK_SIG_B2R_ADJUSTMODE,Sym_BK_In_B2R_ADJUSTMODE, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bBK_SIG_B2R_AUTOMODE, Sym_BK_In_B2R_AUTOMODE, bMappingOk);
+   MapAndCheckBoolIn  (iRobot, InSignals.bBK_SIG_B2R_SYSFAULT, Sym_BK_In_B2R_SYSFAULT, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteBK_SIG_B2R_STATE, Sym_BK_In_B2R_STATE, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteBK_SIG_B2R_TYPE,  Sym_BK_In_B2R_TYPE, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteBK_SIG_B2R_PATH,  Sym_BK_In_B2R_PATH, bMappingOk);
+   MapAndCheckWordIn  (iRobot, InSignals.wBK_SIG_B2R_POINT,    Sym_BK_In_B2R_POINT, bMappingOk);
+   MapAndCheckByteIn  (iRobot, InSignals.byteBK_SIG_B2R_FAC,   Sym_BK_In_B2R_FAC, bMappingOk);
+   MapAndCheckDwordIn (iRobot, InSignals.dBK_SIG_B2R_X,        Sym_BK_In_B2R_X, bMappingOk);
+   MapAndCheckDwordIn (iRobot, InSignals.dBK_SIG_B2R_Y,        Sym_BK_In_B2R_Y, bMappingOk);
+   MapAndCheckDwordIn (iRobot, InSignals.dBK_SIG_B2R_Z,        Sym_BK_In_B2R_Z, bMappingOk);
+   MapAndCheckDwordIn (iRobot, InSignals.dBK_SIG_B2R_RX,       Sym_BK_In_B2R_RX, bMappingOk);
+   MapAndCheckDwordIn (iRobot, InSignals.dBK_SIG_B2R_RY,       Sym_BK_In_B2R_RY, bMappingOk);
+   MapAndCheckDwordIn (iRobot, InSignals.dBK_SIG_B2R_RZ,       Sym_BK_In_B2R_RZ, bMappingOk);
+
+(*****************************************************************************************
+***********   Outputs   ******************************************************************
+******************************************************************************************)   
+   MapAndCheckBoolOut (iRobot, OutSignals.bBK_SIG_R2B_STROBE,  Sym_BK_Out_R2B_STROBE, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bBK_SIG_R2B_ACK,     Sym_BK_Out_R2B_ACK, bMappingOk);
+   MapAndCheckBoolOut (iRobot, OutSignals.bBK_SIG_R2B_AUTO,    Sym_BK_Out_R2B_AUTO, bMappingOk);   
+   MapAndCheckBoolOut (iRobot, OutSignals.bBK_SIG_R2B_ERRACK,  Sym_BK_Out_R2B_ERRACK, bMappingOk);
+   MapAndCheckByteOut (iRobot, OutSignals.byteBK_SIG_R2B_CMD,  Sym_BK_Out_R2B_CMD, bMappingOk);
+   MapAndCheckByteOut (iRobot, OutSignals.byteBK_SIG_R2B_TYPE, Sym_BK_Out_R2B_TYPE, bMappingOk);  
+   MapAndCheckByteOut (iRobot, OutSignals.byteBK_SIG_R2B_PATH, Sym_BK_Out_R2B_PATH, bMappingOk);
+   MapAndCheckByteOut (iRobot, OutSignals.byteBK_SIG_R2B_ROBID,Sym_BK_Out_R2B_ROBID, bMappingOk);
+   MapAndCheckWordOut (iRobot, OutSignals.wBK_SIG_R2B_POINT,   Sym_BK_Out_R2B_POINT, bMappingOk);
+   MapAndCheckByteOut (iRobot, OutSignals.byteBK_SIG_R2B_FAC,  Sym_BK_Out_R2B_FAC, bMappingOk);
+   MapAndCheckDwordOut(iRobot, OutSignals.dBK_SIG_R2B_X,       Sym_BK_Out_R2B_X, bMappingOk);
+   MapAndCheckDwordOut(iRobot, OutSignals.dBK_SIG_R2B_Y,       Sym_BK_Out_R2B_Y, bMappingOk);
+   MapAndCheckDwordOut(iRobot, OutSignals.dBK_SIG_R2B_Z,       Sym_BK_Out_R2B_Z, bMappingOk);
+   MapAndCheckDwordOut(iRobot, OutSignals.dBK_SIG_R2B_RX,      Sym_BK_Out_R2B_RX, bMappingOk);
+   MapAndCheckDwordOut(iRobot, OutSignals.dBK_SIG_R2B_RY,      Sym_BK_Out_R2B_RY, bMappingOk);
+   MapAndCheckDwordOut(iRobot, OutSignals.dBK_SIG_R2B_RZ,      Sym_BK_Out_R2B_RZ, bMappingOk);
+   MapAndCheckBoolOut (iRobot, bBK_SIG_TRIGGER,                Sym_BK_Out_TRIGGER, bMappingOk);
+      
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, instId, "TRcuVisionBk.MapBkSignals");
+   END_IF;   
+   
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// calculate object and correction values for teachview
+//----------------------------------------------------------------------------------------
+ROUTINE CalcActualObject(corrFrame : TMcuFrame; bMRFlag : BOOL) PRIVATE
+
+VAR
+   mRefSysId  : TMcuDbObjID;
+   tVmtObject : TMcuTransformation;
+   tObject    : TMcuTransformation;
+   lCorrFrame : TMcuFrame;
+   iLocNr     : INT;
+END_VAR
+
+   iLocNr := iBkPPNrPreRun;
+   lCorrFrame := corrFrame;
+   RcuRefSysGetMcuId(myRobot.RcuRefSystemObject, tVmtObject.mRefSysID);
+   McuCreateTrsf(mRefSysId, tVmtObject);
+   IF bMRFlag THEN
+      WAIT MAIN_RUN;
+   END_IF;
+   iBkPPNr := iLocNr;
+   corrFrameMR := lCorrFrame;
+   tVmtCorr.X_mm  := lCorrFrame.mPos.mValues[0];
+   tVmtCorr.Y_mm  := lCorrFrame.mPos.mValues[1];
+   tVmtCorr.Z_mm  := lCorrFrame.mPos.mValues[2];
+   tVmtCorr.A_deg := lCorrFrame.mOri.mValues[0];
+   tVmtCorr.B_deg := lCorrFrame.mOri.mValues[1];
+   tVmtCorr.C_deg := lCorrFrame.mOri.mValues[2];
+   IF McuReadTrsfInWorld(mRefSysId, tObject) THEN
+      tObjectData.X_mm  := tObject.mFrame.mPos.mValues[0];
+      tObjectData.Y_mm  := tObject.mFrame.mPos.mValues[1];
+      tObjectData.Z_mm  := tObject.mFrame.mPos.mValues[2];
+      tObjectData.A_deg := tObject.mFrame.mOri.mValues[0];
+      tObjectData.B_deg := tObject.mFrame.mOri.mValues[1];
+      tObjectData.C_deg := tObject.mFrame.mOri.mValues[2];
+   END_IF;
+
+   McuReleaseDbObj(mRefSysId);
+
+END_ROUTINE 
+
+(******************************************************************************
+***  build the text for teachview *********************************************
+******************************************************************************)
+ROUTINE ObserveBkModus() PRIVATE
+VAR
+   chgValid  : BOOL;
+END_VAR
+
+   chgValid  := IS_CHANGED(BK_MODUS);
+   WHILE TRUE DO
+      CASE BK_MODUS OF
+      ModeMeasure:
+         sBkModus := "Messfahrt        Typ = "+STR(BK_TYPE)+" Bahn = "+STR(BK_PATH);
+         iBkState := 1;
+      ModeApplication:
+         sBkModus := "Applikation      Typ = "+STR(BK_TYPE)+" Bahn = "+STR(BK_PATH);
+         iBkState := 2;
+      Mode_MP_Ref:
+         sBkModus := "Messpunkt-Referenzfahrt Typ = "+STR(BK_TYPE)+" Bahn = "+STR(BK_PATH);
+         iBkState := 3;
+      Mode_PP_Ref:
+         sBkModus := "Bahnpunkt-Referenzfahrt Typ = "+STR(BK_TYPE)+" Bahn = "+STR(BK_PATH);
+         iBkState := 4;
+      Mode_ApplTest:
+      Mode_Off:
+         sBkModus := "";
+         iBkState := 0;
+         iBkPPNrPreRun := 0;
+         iBkPPNr := 0;
+      END_CASE;
+      WAIT chgValid;
+      chgValid := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+(******************************************************************************
+***  State bits from VMT BK to Ecopaint Screen ********************************
+******************************************************************************)
+ROUTINE BkSignalsToEPS() PRIVATE
+VAR
+   bEpsInDisable      : MAPTO BOOL;
+   bMapOk       : BOOL;
+   bChgDiable         : BOOL;
+   bChgAdjMode        : BOOL;
+   bChgAutoMode       : BOOL;
+   bChgSysFault       : BOOL;
+   bChgS3Fault        : BOOL;
+   bChgState          : BOOL;
+   bChgType           : BOOL;
+   bChgPath           : BOOL;
+END_VAR   
+
+   bMapOk := TRUE;
+   tEPS_PathCorrIn := MAPX(cSV_EPSInPathCorr[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(tEPS_PathCorrIn) THEN
+      bMapOk := FALSE;
+      RcuSetMessageOnce(TRcVisionBk_ErrMapEpsVar, myRobot.kinListInx, 1, instId, "TRcuVisionBk.BkSignalsToEPS", cSV_EPSInPathCorr[myRobot.kinListInx]);
+   END_IF;
+   tEPS_PathCorrOut := MAPX(cSV_EPSOutPathCorr[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(tEPS_PathCorrOut) THEN
+      bMapOk := FALSE;
+      RcuSetMessageOnce(TRcVisionBk_ErrMapEpsVar, myRobot.kinListInx, 7, instId, "TRcuVisionBk.BkSignalsToEPS", cSV_EPSOutPathCorr[myRobot.kinListInx]);
+   END_IF;
+   IF NOT bMapOk THEN
+      myRobot.DebugPrint(eTraceVision, "Visu from VMT BK not running!!");
+      RETURN;
+   END_IF;
+   
+   tEPS_PathCorrOut.bDisabled    := UPDATE(bDisabledHMI);
+   tEPS_PathCorrOut.bAdjustMode  := UPDATE(bInAdjustMode);   
+   tEPS_PathCorrOut.bAutoMode    := UPDATE(bInAutoMode);   
+   tEPS_PathCorrOut.bSystemFault := UPDATE(bSystemFault);
+   tEPS_PathCorrOut.bCommFault   := UPDATE(bS3CommFault);
+   IF IS_MAPPED(myRobot.fieldbusOut.VisionError.svBool) THEN
+      tEPS_PathCorrOut.bFailure := UPDATE(myRobot.fieldbusOut.VisionError.svBool);   
+   END_IF;
+   bChgAdjMode                   := IS_CHANGED(bInAdjustMode);   
+   bChgAutoMode                  := IS_CHANGED(bInAutoMode);  
+   bChgSysFault                  := IS_CHANGED(bSystemFault);  
+   bChgS3Fault                   := IS_CHANGED(bS3CommFault);  
+   bChgDiable                    := IS_CHANGED(tEPS_PathCorrIn.bDisable);
+   bChgState                     := IS_CHANGED(iBkState);
+   bChgType                      := IS_CHANGED(BK_TYPE);
+   bChgPath                      := IS_CHANGED(BK_PATH);
+   WHILE TRUE DO
+     IF tEPS_PathCorrIn.bDisable AND NOT bDisabledHMI THEN
+        bDisabledHMI   := TRUE; 
+        bS3IgnoreError := TRUE;   //Sercos3Master is now setting warning instead of errors for this device
+     ELSIF (NOT tEPS_PathCorrIn.bDisable) AND bDisabledHMI THEN
+        bDisabledHMI   := FALSE; 
+        bS3IgnoreError := FALSE;  //Sercos3Master is now allowed to set errors for this device
+     END_IF;  
+     IF bInAutoMode AND NOT (bSystemFault OR bS3CommFault OR bDisabledHMI) THEN
+        tEPS_PathCorrOut.iSystemState := cgiHMI_Green;
+     ELSIF bSystemFault OR bS3CommFault THEN
+        tEPS_PathCorrOut.iSystemState := cgiHMI_Red;
+     ELSIF bInAdjustMode AND NOT (bSystemFault OR bS3CommFault OR bDisabledHMI) THEN
+        tEPS_PathCorrOut.iSystemState := cgiHMI_Yellow;
+     ELSE
+        tEPS_PathCorrOut.iSystemState := cgiHMI_Grey;
+     END_IF;
+     tEPS_PathCorrOut.iOpertingMode := iBkState;
+     tEPS_PathCorrOut.iType         := BK_TYPE;
+     tEPS_PathCorrOut.iPath         := BK_PATH;
+     bChgDiable   := FALSE;
+     bChgAdjMode  := FALSE;
+     bChgAutoMode := FALSE;
+     bChgSysFault := FALSE;
+     bChgS3Fault  := FALSE;
+     bChgState    := FALSE;
+     bChgType     := FALSE;
+     bChgPath     := FALSE;
+     WAIT bChgDiable OR bChgAdjMode OR bChgAutoMode OR bChgSysFault OR bChgS3Fault OR bChgState OR bChgType OR bChgPath;
+   END_WHILE;
+       
+END_ROUTINE
+
+
+// *****************************************************************************
+//
+// Erweiterungen für VMT Toolbox
+//
+// *****************************************************************************
+TYPE PRIVATE
+  tLimitsUserPage : STRUCT
+     iLabel    : INT;
+     rXmin     : REAL;
+     rXmax     : REAL;
+     rYmin     : REAL;
+     rYmax     : REAL;
+     rZmin     : REAL;
+     rZmax     : REAL;
+     rRotLimit : REAL;
+  END_STRUCT;
+  
+  tLimits : STRUCT
+     bConfigured   : BOOL;
+     bSetByEcoTalk : BOOL;
+     rXmin_Cfg     : REAL;
+     rXmax_Cfg     : REAL;
+     rYmin_Cfg     : REAL;
+     rYmax_Cfg     : REAL;
+     rZmin_Cfg     : REAL;
+     rZmax_Cfg     : REAL;
+     rXmin_TP      : REAL;
+     rXmax_TP      : REAL;
+     rYmin_TP      : REAL;
+     rYmax_TP      : REAL;
+     rZmin_TP      : REAL;
+     rZmax_TP      : REAL;
+     rRotLimit     : REAL;
+  END_STRUCT;
+  
+END_TYPE
+
+CONSTANT PRIVATE
+   cToleranceLimit  : REAL := 50.0; //50mm
+END_CONSTANT
+
+VAR
+   bTBoxEnabled             : BOOL;
+   bTBoxCfgDataRead         : BOOL;
+   bTBoxSimulate            : BOOL;
+   //correction values are bigger than warning limnit --> warning message (Lock outlet) 
+   bShowWarnLockOutlet      : BOOL;
+   //Maximum allowed correction values for TV
+   sAlarmLimitsUserPage     : tLimitsUserPage;
+   sWarnLimitsUserPage      : tLimitsUserPage;
+   bCorrectionOkUserPage    : BOOL;
+   //Maximum allowed correction values
+   sAlarmLimits             : tLimits;
+   sWarnLimits              : tLimits;
+   yTBoxCntRetry            : ARRAY [1..255] OF INT;
+   iTBoxMaxRetry            : INT;
+   bUseWarningLimit         : BOOL;
+   bWarningToPLC            : BOOL;
+   
+   // Kommandos fuer VMT ToolBox
+   TBOX_CMD_CHECK           : INT := 16#81;
+   TBOX_CMD_CORRECT         : INT := 16#82;
+   TBOX_CMD_TCP_1SHOT       : INT := 16#83;
+   TBOX_CMD_TCP_NSHOTS      : INT := 16#84;
+   
+   TBOX_TOOL_NUM            : INT; // set for TCP measurement run with multiple points
+   TBOX_PATH_ID             : INT;
+   TBOX_STATE_VECTOR        : BYTE; // Status des Lagevektors – 00 = Fehlerfrei /  01 = Fehler
+
+   TBOX_PATH_INDEX          : INT := 2;
+
+   TBOX_Korr_X              : REAL := 0.0;
+   TBOX_Korr_Y              : REAL := 0.0;
+   TBOX_Korr_Z              : REAL := 0.0;
+   TBOX_Korr_RX             : REAL := 0.0;
+   TBOX_Korr_RY             : REAL := 0.0;
+   TBOX_Korr_RZ             : REAL := 0.0;
+   
+   TBOX_SCALE_FAC_T         : INT := 10000;
+   TBOX_SCALE_FAC_R         : INT := 10000;
+   tEPS_ToolCorrIn          : MAPTO tsToolCorrIn;
+   tEPS_ToolCorrOut         : MAPTO tsToolCorrOut;
+END_VAR
+
+
+ROUTINE ReadConfigTBox(locRobot : TRcuRobot) : BOOL
+VAR
+   bError      : BOOL;
+   iTemp       : DINT;
+   iCatalogHdl : DINT;
+   iCatToolHdl : DINT;
+   r           : REAL;
+END_VAR
+
+   bError := FALSE;
+   bTBoxCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrMappKin, myRobot.kinListInx, 2, instId, "TRcuVisionBk.ReadConfigTBox");
+      RETURN FALSE;
+   END_IF; 
+             
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "VMT_TBOX", iCatalogHdl) THEN
+      IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+         IF (iTemp <> 1) THEN
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            myRobot.DebugPrint(eTraceVision, "---------- TBOX deactivated -----------");  
+            myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+            bTBoxCfgDataRead := TRUE;
+            RETURN FALSE;
+         ELSE
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            IF CatalogReadIntRange(iCatalogHdl, "SimulateTBOX", iTemp, 0, 1, TRUE) THEN
+               bTBoxSimulate := iTemp = 1;
+            ELSE
+               bTBoxSimulate := FALSE;
+            END_IF;
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            IF CatalogReadIntRange(iCatalogHdl, "MaxRetryCount", iTemp, 0, 5, TRUE) THEN
+               iTBoxMaxRetry := iTemp;
+            ELSE
+               iTBoxMaxRetry := 0;
+            END_IF;
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            IF CatalogReadIntRange(iCatalogHdl, "ShowWarnLockOutlet", iTemp, 0, 1, TRUE) THEN
+               bShowWarnLockOutlet := iTemp = 1;
+            ELSE
+               bShowWarnLockOutlet := FALSE;
+            END_IF;
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            IF CatalogReadRealRange(iCatalogHdl, "RotationLimit", r , 0.0, 5.0, FALSE) THEN
+               sAlarmLimits.rRotLimit := r;
+            ELSE
+               sAlarmLimits.rRotLimit := 0.5;
+            END_IF;  
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            //alarm limits from global node [RC.KINEMATIC:0.VMT_TBOX]
+            IF CatalogReadRealRange(iCatalogHdl, "MaxToolAdjustment_X", r, 0.0, 50.0, FALSE) THEN
+               sAlarmLimits.bConfigured     := TRUE;
+               sAlarmLimits.rXmin_Cfg       := -r;
+               sAlarmLimits.rXmax_Cfg       := r;
+            ELSE
+               sAlarmLimits.rXmin_Cfg       := -30.0;
+               sAlarmLimits.rXmax_Cfg       :=  30.0;
+            END_IF;
+            IF CatalogReadRealRange(iCatalogHdl, "MaxToolAdjustment_Y", r, 0.0, 50.0, FALSE) THEN
+               sAlarmLimits.bConfigured     := TRUE;
+               sAlarmLimits.rYmin_Cfg       := -r;
+               sAlarmLimits.rYmax_Cfg       := r;
+            ELSE
+               sAlarmLimits.rYmin_Cfg       := -30.0;
+               sAlarmLimits.rYmax_Cfg       :=  30.0;  
+            END_IF;
+            IF CatalogReadRealRange(iCatalogHdl, "MaxToolAdjustment_Z", r, 0.0, 50.0, FALSE) THEN
+               sAlarmLimits.bConfigured     := TRUE;
+               sAlarmLimits.rZmin_Cfg       := -r;
+               sAlarmLimits.rZmax_Cfg       := r;
+            ELSE
+               sAlarmLimits.rZmin_Cfg       := -30.0;
+               sAlarmLimits.rZmax_Cfg       :=  30.0;
+            END_IF; 
+            //----------------------------------------------------------------------------------------------------------------------------------------------
+            IF bShowWarnLockOutlet THEN
+               //warning limits from global node [RC.KINEMATIC:0.VMT_TBOX]
+               IF CatalogReadRealRange(iCatalogHdl, "WarnToolAdjustment_X", r, 0.0, 50.0, TRUE) THEN
+                  sWarnLimits.bConfigured     := TRUE;
+                  sWarnLimits.rXmin_Cfg       := -r;
+                  sWarnLimits.rXmax_Cfg       := r;
+               END_IF;
+               IF CatalogReadRealRange(iCatalogHdl, "WarnToolAdjustment_Y", r, 0.0, 50.0, TRUE) THEN
+                  sWarnLimits.bConfigured     := TRUE;
+                  sWarnLimits.rYmin_Cfg       := -r;
+                  sWarnLimits.rYmax_Cfg       := r;
+               END_IF;
+               IF CatalogReadRealRange(iCatalogHdl, "WarnToolAdjustment_Z", r, 0.0, 50.0, TRUE) THEN
+                  sWarnLimits.bConfigured     := TRUE;
+                  sWarnLimits.rZmin_Cfg       := -r;
+                  sWarnLimits.rZmax_Cfg       := r;
+               END_IF;
+            END_IF;        
+         END_IF;
+      ELSE  
+         bError := TRUE;
+         myRobot.DebugPrint(eTraceVision, "TBOX not enabled");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      bError := TRUE;
+      myRobot.DebugPrint(eTraceVision, "No configuration for TBOX found");
+      RETURN FALSE;
+   END_IF;
+
+   IF NOT bError AND NOT bMappingOk THEN
+      MapBkSignals();
+   END_IF;
+   
+   IF bMappingOk AND NOT bError THEN
+      bTBoxCfgDataRead := TRUE;
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(TRcVisionBk_ErrBkInit, myRobot.kinListInx, 1, instId, "TRcuVisionBk.ReadConfigTBox");
+//      RcuSetMessageOnce(TRcVisionBk_ErrTBoxInit, myRobot.kinListInx, 1, instId, "TRcuVisionBk.ReadConfig");
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      myRobot.DebugPrint(eTraceVision, "-------- Boot-Up TBOX failed ----------");  
+      myRobot.DebugPrint(eTraceVision, "---------------------------------------");
+      bTBoxCfgDataRead := FALSE;
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Initialization and starting coroutines if neccessary
+//------------------------------------------------------------------------
+ROUTINE InitTBox()
+VAR
+   s : STRING;
+END_VAR
+
+   IF NOT bTBoxCfgDataRead THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrBkInit, myRobot.kinListInx, 5, instId, "TRcuVisionBK.Init");
+//      RcuSetMessageOnce(TRcVisionBk_ErrTBoxInit, myRobot.kinListInx, 5, instId, "TRcuVisionBK.InitTBox");
+      gbBootupError := TRUE;
+      RETURN;
+   END_IF;
+   
+   WAIT myRobot.initKinComplete;
+   WAIT myRobot.fixPosReady;
+
+   IF NOT myRobot.vision.bBKBootUpOk THEN // already done in Init?
+      bSystemFault := UPDATE(InSignals.bBK_SIG_B2R_SYSFAULT.svBool);
+      bInAutoMode  := UPDATE(InSignals.bBK_SIG_B2R_AUTOMODE.svBool);
+      bInAdjustMode:= UPDATE(InSignals.bBK_SIG_B2R_ADJUSTMODE.svBool);   
+      IF IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled THEN
+         bS3CommFault := UPDATE((gmSercosRing.actComPhase <> 4) AND (gmSercosRing.state <> 0) OR NOT bS3CommOK);
+      END_IF;
+      myRobot.vision.bBKGhostMode   := UPDATE(myRobot.fieldbusIn.GhostMode.svBool);
+      bSystemReady := UPDATE(bInAutoMode AND NOT bSystemFault);
+      START ObserveBkModus();
+   END_IF;
+   START TBoxSignalsToEPS() PRIO 3;
+   myRobot.vision.TBOX_GhostNoVision := UPDATE(myRobot.fieldbusIn.GhostMode.svBool AND myRobot.fieldbusIn.GhostNoVision.svBool);
+   IF bShowWarnLockOutlet THEN   
+      START WarningToPLC();
+   END_IF;
+   myRobot.DebugPrint(eTraceVision, "--------------------------------");
+   myRobot.DebugPrint(eTraceVision, "--  Boot-up VMT_TBOX finished --");
+   myRobot.DebugPrint(eTraceVision, "--------------------------------");
+   myRobot.vision.bTBoxBootUpOk := TRUE;
+   myRobot.vision.VisionTool.bUserPageVisible := TRUE;
+   
+   IF NOT myRobot.vision.bBKBootUpOk THEN // already done in Init?
+      // Kemroskop test
+      SwoAddBoolVariable(InSignals.bBK_SIG_B2R_STROBE.svBool,   "BK.InSignals.SIG_B2R_STROBE");
+      SwoAddBoolVariable(InSignals.bBK_SIG_B2R_ACK.svBool,      "BK.InSignals.SIG_B2R_ACK");
+      SwoAddBoolVariable(InSignals.bBK_SIG_B2R_READY.svBool,    "BK.InSignals.SIG_B2R_READY");
+      SwoAddByteVariable(InSignals.byteBK_SIG_B2R_STATE.svByte, "BK.InSignals.SIG_B2R_STATE");
+
+      SwoAddBoolVariable(OutSignals.bBK_SIG_R2B_STROBE.svBool,  "BK.OutSignals.SIG_R2B_STROBE");
+      SwoAddBoolVariable(OutSignals.bBK_SIG_R2B_ACK.svBool,     "BK.OutSignals.SIG_R2B_ACK");
+      SwoAddByteVariable(OutSignals.byteBK_SIG_R2B_CMD.svByte,  "BK.OutSignals.SIG_R2B_CMD");
+
+      corrFrameMR.mFrameTyp := eMcuFrameKardan;      
+   END_IF;
+   IF myRobot.vision.iLoggerNumber <> 0 THEN
+      iLoggerNumber := myRobot.vision.iLoggerNumber;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "VMT TBOX initialized");
+   END_IF;
+   RETURN;
+END_ROUTINE
+
+
+ROUTINE TBoxTcpStart(ToolNr : DINT) : BOOL
+
+   TBOX_TOOL_NUM := ToolNr;
+   RETURN TRUE;
+   
+END_ROUTINE
+
+
+ROUTINE TBoxTcpPoint(PointNr : DINT) : BOOL
+VAR
+   bResult : BOOL;
+   pos_act : FRAME;
+   bTimeOut  : BOOL;
+END_VAR
+
+   ActCartInObjectCoord(pos_act);
+   TBOX_SendCMD(BK_ROB_ID, TBOX_CMD_TCP_NSHOTS, TBOX_TOOL_NUM, INT(PointNr), pos_act); // $pos_act = ?????
+   bUseWarningLimit := FALSE;
+   bResult := TBOX_RecShiftData(bTimeOut);
+   IF NOT bResult THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrValOutOfRange, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBoxTcpPoint");
+   END_IF;
+   IF TBOX_STATE_VECTOR <> 0 THEN
+      bResult := FALSE;
+      RcuSetMessageOnce(TRcVisionBk_ErrTBoxStateNotOk, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBoxTcpPoint");      
+   END_IF;
+   RETURN bResult;
+   
+END_ROUTINE
+
+
+ROUTINE TBoxTcpEnd(VAR_IN TBoxBase : OBJECT; VAR_IN ActTool : TOOL) : BOOL
+VAR
+   bResultTool   : BOOL;
+   bResultObject : BOOL;
+   pos_act       : FRAME;
+   bTimeOut      : BOOL;
+   nullTool      : TOOL;
+   nullFrame     : TMcuFrame;
+END_VAR
+
+   //init data for Userpage
+   myRobot.vision.VisionTool.CorrFrame      := nullFrame;
+   myRobot.vision.VisionTool.TVCorrTool     := nullTool;
+   myRobot.vision.VisionTool.TVRefTool      := nullTool;
+   myRobot.vision.VisionTool.TVRefToolName  := "";
+   myRobot.vision.VisionTool.TVCorrToolName := "";
+   myRobot.vision.VisionTool.TVToolNr       := 0;
+   sAlarmLimitsUserPage.rXmin               := 0.0;
+   sAlarmLimitsUserPage.rXmax               := 0.0;
+   sAlarmLimitsUserPage.rYmin               := 0.0;
+   sAlarmLimitsUserPage.rYmax               := 0.0;
+   sAlarmLimitsUserPage.rZmin               := 0.0;
+   sAlarmLimitsUserPage.rZmax               := 0.0;
+   sWarnLimitsUserPage.rXmin                := 0.0;
+   sWarnLimitsUserPage.rXmax                := 0.0;
+   sWarnLimitsUserPage.rYmin                := 0.0;
+   sWarnLimitsUserPage.rYmax                := 0.0;
+   sWarnLimitsUserPage.rZmin                := 0.0;
+   sWarnLimitsUserPage.rZmax                := 0.0;
+   sWarnLimitsUserPage.iLabel               := 0; //"ungueltig";
+   bCorrectionOkUserPage                    := FALSE;
+   
+   ActCartInObjectCoord(pos_act);
+   TBOX_SendCMD(BK_ROB_ID, TBOX_CMD_TCP_NSHOTS, TBOX_TOOL_NUM, 255, pos_act); // $pos_act = ?????
+   // receive tool data
+   bUseWarningLimit := FALSE;
+   bResultTool      := TBOX_RecShiftData(bTimeOut, TRUE);
+
+   ActTool.X_mm := TBOX_Korr_X;
+   ActTool.Y_mm := TBOX_Korr_Y;
+   ActTool.Z_mm := TBOX_Korr_Z;
+   ActTool.A_deg := TBOX_Korr_RX;
+   ActTool.B_deg := TBOX_Korr_RY;
+   ActTool.C_deg := TBOX_Korr_RZ;
+   myRobot.vision.VisionTool.TVCorrTool.X_mm  := TBOX_Korr_X; 
+   myRobot.vision.VisionTool.TVCorrTool.Y_mm  := TBOX_Korr_Y; 
+   myRobot.vision.VisionTool.TVCorrTool.Z_mm  := TBOX_Korr_Z; 
+   myRobot.vision.VisionTool.TVCorrTool.A_deg := TBOX_Korr_RX;
+   myRobot.vision.VisionTool.TVCorrTool.B_deg := TBOX_Korr_RY;
+   myRobot.vision.VisionTool.TVCorrTool.C_deg := TBOX_Korr_RZ;
+   
+   // receive box position
+   bUseWarningLimit := FALSE;
+   bResultObject    := TBOX_RecShiftData(bTimeOut, TRUE);
+   IF bResultObject THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrTakeObjVals, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBoxTcpEnd");
+   END_IF;
+
+   TBoxBase.X_mm := TBOX_Korr_X;
+   TBoxBase.Y_mm := TBOX_Korr_Y;
+   TBoxBase.Z_mm := TBOX_Korr_Z;
+   TBoxBase.A_deg := TBOX_Korr_RX;
+   TBoxBase.B_deg := TBOX_Korr_RY;
+   TBoxBase.C_deg := TBOX_Korr_RZ;
+   myRobot.vision.VisionTool.CorrFrame.mPos.mValues[0] := TBOX_Korr_X; 
+   myRobot.vision.VisionTool.CorrFrame.mPos.mValues[1] := TBOX_Korr_Y; 
+   myRobot.vision.VisionTool.CorrFrame.mPos.mValues[2] := TBOX_Korr_Z; 
+   myRobot.vision.VisionTool.CorrFrame.mOri.mValues[0] := TBOX_Korr_RX;
+   myRobot.vision.VisionTool.CorrFrame.mOri.mValues[1] := TBOX_Korr_RY;
+   myRobot.vision.VisionTool.CorrFrame.mOri.mValues[2] := TBOX_Korr_RZ;
+   bCorrectionOkUserPage                               := TRUE;
+   RETURN bResultTool AND bResultObject;
+   
+END_ROUTINE
+
+
+ROUTINE TBoxTcp1Shot(ToolNr : DINT; ActTool : TOOL) : BOOL
+VAR
+   bResult : BOOL;
+   pos_act : FRAME;
+   bTimeOut  : BOOL;
+END_VAR
+
+   TBOX_TOOL_NUM := ToolNr;
+   ActCartInObjectCoord(pos_act);
+   TBOX_SendCMD(BK_ROB_ID, TBOX_CMD_TCP_1SHOT, TBOX_TOOL_NUM, 1, pos_act); // $pos_act = ?????
+   bUseWarningLimit := FALSE;
+   bResult := TBOX_RecShiftData(bTimeOut, TRUE);
+   IF NOT bResult THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrValOutOfRange, myRobot.kinListInx, 4, instId, "TRcuVisionBk.TBoxTcp1Shot");
+   END_IF;
+   IF TBOX_STATE_VECTOR <> 0 THEN
+      bResult := FALSE;
+      RcuSetMessageOnce(TRcVisionBk_ErrTBoxStateNotOk, myRobot.kinListInx, 4, instId, "TRcuVisionBk.TBoxTcp1Shot");      
+   END_IF;
+   ActTool.X_mm := TBOX_Korr_X;
+   ActTool.Y_mm := TBOX_Korr_Y;
+   ActTool.Z_mm := TBOX_Korr_Z;
+   ActTool.A_deg := TBOX_Korr_RX;
+   ActTool.B_deg := TBOX_Korr_RY;
+   ActTool.C_deg := TBOX_Korr_RZ;
+   
+   RETURN bResult;
+   
+END_ROUTINE
+
+
+ROUTINE TBoxCheck(ToolNr : DINT; ToolDiff : TOOL; iRetVal : VISION_STATE) : BOOL
+VAR
+   bResult : BOOL;
+   pos_act : FRAME;
+   bTimeOut  : BOOL;
+END_VAR
+
+   //init data for EcoScreen
+   tEPS_ToolCorrOut.tDataVision.name   := "";
+   tEPS_ToolCorrOut.tDataVision.x      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.y      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.z      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.A      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.B      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.C      := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.name  := "";
+   tEPS_ToolCorrOut.tDataRefTool.x     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.y     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.z     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.A     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.B     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.C     := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.name := "";
+   tEPS_ToolCorrOut.tDataCorrTool.x    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.y    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.z    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.A    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.B    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.C    := 0.0;
+ 
+   IF bDisabledHMI OR bS3CommFault THEN
+      ToolDiff.X_mm := 0.0;
+      ToolDiff.Y_mm := 0.0;
+      ToolDiff.Z_mm := 0.0;
+      ToolDiff.A_deg := 0.0;
+      ToolDiff.B_deg := 0.0;
+      ToolDiff.C_deg := 0.0;
+      iRetVal  := Failure;
+      bResult  := FALSE;
+      myRobot.DebugPrint(eTraceVision, "ToolBox is disabled or communication fault");
+   ELSE   
+      TBOX_TOOL_NUM := ToolNr;
+      ActCartInObjectCoord(pos_act);
+      TBOX_SendCMD(BK_ROB_ID, TBOX_CMD_CHECK, TBOX_TOOL_NUM, 1, pos_act); // $pos_act = ?????
+      bUseWarningLimit := FALSE;
+      bResult := TBOX_RecShiftData(bTimeOut);
+      IF NOT bResult THEN
+         RcuSetMessageOnce(TRcVisionBk_ErrValOutOfRange, myRobot.kinListInx, 5, instId, "TRcuVisionBk.TBoxCheck");
+      END_IF;
+//   IF bSystemFault THEN
+//      bResult := FALSE;
+//      RcuSetMessageOnce(TRcVisionBk_ErrStateNotOk, myRobot.kinListInx, 2, instId, "TRcuVisionBk.TBoxCheck");
+//   END_IF;
+      IF TBOX_STATE_VECTOR <> 0 THEN
+         bResult := FALSE;
+         RcuSetMessageOnce(TRcVisionBk_ErrStateNotOk, myRobot.kinListInx, 3, instId, "TRcuVisionBk.TBoxCheck");      
+      END_IF;
+      ToolDiff.X_mm := TBOX_Korr_X;
+      ToolDiff.Y_mm := TBOX_Korr_Y;
+      ToolDiff.Z_mm := TBOX_Korr_Z;
+      ToolDiff.A_deg := TBOX_Korr_RX;
+      ToolDiff.B_deg := TBOX_Korr_RY;
+      ToolDiff.C_deg := TBOX_Korr_RZ;
+
+      //data for EcoScreen
+      tEPS_ToolCorrOut.tDataVision.name   := "";
+      tEPS_ToolCorrOut.tDataVision.x      := TBOX_Korr_X;
+      tEPS_ToolCorrOut.tDataVision.y      := TBOX_Korr_Y;
+      tEPS_ToolCorrOut.tDataVision.z      := TBOX_Korr_Z;
+      tEPS_ToolCorrOut.tDataVision.A      := TBOX_Korr_RX;
+      tEPS_ToolCorrOut.tDataVision.B      := TBOX_Korr_RY;
+      tEPS_ToolCorrOut.tDataVision.C      := TBOX_Korr_RZ;
+
+      //Disabled at HMI or no sercos communication
+      IF bDisabledHMI OR bS3CommFault OR bTimeOut THEN
+         iRetVal := Failure;
+         bResult := FALSE;
+         myRobot.DebugPrint(eTraceVision, "ToolBox is disabled or communication fault");
+      //displacement values out of range   
+      ELSIF NOT bResult THEN
+         //try once more if counter is smaller than cfg value
+         IF (yTBoxCntRetry[ToolNr] < iTBoxMaxRetry) THEN
+            iRetVal := Remeasure;
+            yTBoxCntRetry[ToolNr] := yTBoxCntRetry[ToolNr] + 1;
+         //counter expired --> skip this nozzle and go to next
+         ELSE  
+            //when nozzle chnager is used the robot shouldn't stop with error because next nozzle should be taken automatically
+            IF myRobot.nozzleChange.hasNozzleChanger THEN
+               IF TBOX_STATE_VECTOR <> 0 THEN
+                  RcuSetMessageOnce(TRcVisionBk_WarTBoxStateNotOk, myRobot.kinListInx, 2, instId, "TRcuVisionBk.TBoxCorr");
+               ELSE
+                  RcuSetMessageOnce(TRcVisionBk_WarnValOutOfRange, myRobot.kinListInx, 2, instId, "TRcuVisionBk.TBoxCorr");
+               END_IF;
+            ELSE
+               IF TBOX_STATE_VECTOR <> 0 THEN
+                  RcuSetMessageOnce(TRcVisionBk_ErrTBoxStateNotOk, myRobot.kinListInx, 5, instId, "TRcuVisionBk.TBoxCorr");
+               ELSE
+                  RcuSetMessageOnce(TRcVisionBk_ErrValOutOfRange, myRobot.kinListInx, 7, instId, "TRcuVisionBk.TBoxCorr");
+               END_IF;
+            END_IF;
+            iRetVal := Continue;
+            yTBoxCntRetry[ToolNr] := 0;
+         END_IF;
+      //all ok
+      ELSE
+         iRetVal := DataOk;
+         yTBoxCntRetry[ToolNr] := 0;
+      END_IF;
+   
+   END_IF;
+
+   // Userpage
+   myRobot.vision.VisionTool.CorrFrame.mPos.mValues[0]      := TBOX_Korr_X;
+   myRobot.vision.VisionTool.CorrFrame.mPos.mValues[1]      := TBOX_Korr_Y;
+   myRobot.vision.VisionTool.CorrFrame.mPos.mValues[2]      := TBOX_Korr_Z;
+
+   myRobot.vision.VisionTool.CorrFrame.mOri.mValues[0]      := TBOX_Korr_RX;
+   myRobot.vision.VisionTool.CorrFrame.mOri.mValues[1]      := TBOX_Korr_RY;
+   myRobot.vision.VisionTool.CorrFrame.mOri.mValues[2]      := TBOX_Korr_RZ;
+
+   myRobot.vision.VisionTool.TVToolNr       := ToolNr;
+   
+   
+   //error managment when no nozzle changer is used
+   IF (NOT myRobot.nozzleChange.hasNozzleChanger) AND (iRetVal <> DataOk) AND (iRetVal <> Remeasure) AND myRobot.vision.bUseExtendedInterface THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCheck - Error detected - waiting GoDirectHome or DoRemeasure or Continue");
+      myRobot.fieldbusOut.VisionError.svBool := TRUE;
+      WAIT myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+      IF myRobot.fieldbusIn.DoRemeasure.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCheck - DoRemeasure received from PLC");
+         myRobot.fieldbusOut.VisionError.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+         iRetVal := Remeasure;
+      ELSIF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCheck - GoDirectHome received from PLC");
+         myRobot.fieldbusOut.VisionError.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.GoDirectHome.svBool;
+         iRetVal := GoHome;
+      ELSIF myRobot.fieldbusIn.Continue.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCheck - Continue received from PLC");
+         myRobot.fieldbusOut.VisionError.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+         iRetVal := Continue;            
+      END_IF;
+      myRobot.fieldbusOut.VisionError.svBool := FALSE;
+   END_IF;
+  
+   RETURN bResult;
+   
+END_ROUTINE
+
+
+ROUTINE TBoxCorr(ToolNr : DINT; RefTool : TOOL; CorrTool : TOOL; iRetVal : VISION_STATE) : BOOL
+VAR
+   bResult    : BOOL;
+   bTimeOut   : BOOL;
+   pos_act    : FRAME;
+   FrameDiff  : TMcuFrame;
+   OrgFrame   : TMcuFrame;
+   CorrFrame  : TMcuFrame;
+   nullTool   : TOOL;
+   iToolNr    : INT;
+END_VAR
+
+   //init data for EcoScreen
+   tEPS_ToolCorrOut.tDataVision.name   := "";
+   tEPS_ToolCorrOut.tDataVision.x      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.y      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.z      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.A      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.B      := 0.0;
+   tEPS_ToolCorrOut.tDataVision.C      := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.name  := "";
+   tEPS_ToolCorrOut.tDataRefTool.x     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.y     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.z     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.A     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.B     := 0.0;
+   tEPS_ToolCorrOut.tDataRefTool.C     := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.name := "";
+   tEPS_ToolCorrOut.tDataCorrTool.x    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.y    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.z    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.A    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.B    := 0.0;
+   tEPS_ToolCorrOut.tDataCorrTool.C    := 0.0;
+   //init data for Userpage
+   myRobot.vision.VisionTool.CorrFrame      := FrameDiff;
+   myRobot.vision.VisionTool.TVCorrTool     := nullTool;
+   myRobot.vision.VisionTool.TVRefTool      := nullTool;
+   myRobot.vision.VisionTool.TVRefToolName  := "";
+   myRobot.vision.VisionTool.TVCorrToolName := "";
+   myRobot.vision.VisionTool.TVToolNr       := 0;
+   sAlarmLimitsUserPage.rXmin               := 0.0;
+   sAlarmLimitsUserPage.rXmax               := 0.0;
+   sAlarmLimitsUserPage.rYmin               := 0.0;
+   sAlarmLimitsUserPage.rYmax               := 0.0;
+   sAlarmLimitsUserPage.rZmin               := 0.0;
+   sAlarmLimitsUserPage.rZmax               := 0.0;
+   sWarnLimitsUserPage.rXmin                := 0.0;
+   sWarnLimitsUserPage.rXmax                := 0.0;
+   sWarnLimitsUserPage.rYmin                := 0.0;
+   sWarnLimitsUserPage.rYmax                := 0.0;
+   sWarnLimitsUserPage.rZmin                := 0.0;
+   sWarnLimitsUserPage.rZmax                := 0.0;
+   sWarnLimitsUserPage.iLabel               := 0; //"ungueltig";
+   bCorrectionOkUserPage                    := FALSE;
+   
+   IF bDisabledHMI OR bS3CommFault THEN
+      CorrTool := RefTool;
+      iRetVal  := Failure;
+      bResult  := FALSE;
+      myRobot.DebugPrint(eTraceVision, "ToolBox is disabled or communication fault");
+   ELSE   
+      TBOX_TOOL_NUM := ToolNr;
+      ActCartInObjectCoord(pos_act);
+      TBOX_SendCMD(BK_ROB_ID, TBOX_CMD_CORRECT, TBOX_TOOL_NUM, 1, pos_act); // $pos_act = ?????
+      bTimeOut := FALSE;
+      bUseWarningLimit := bShowWarnLockOutlet;
+      bResult  := TBOX_RecShiftData(bTimeOut);
+      
+      
+      IF TBOX_STATE_VECTOR <> 0 THEN
+         bResult := FALSE;      
+      END_IF;
+      
+      
+      // CorrTool aus RefTool und ToolDiff berechnen 
+      OrgFrame.mFrameTyp        := eMcuFrameKardan;
+      OrgFrame.mPos.mValues[0]  := RefTool.X_mm;
+      OrgFrame.mPos.mValues[1]  := RefTool.Y_mm;
+      OrgFrame.mPos.mValues[2]  := RefTool.Z_mm;
+      OrgFrame.mOri.mValues[0]  := RefTool.A_deg;
+      OrgFrame.mOri.mValues[1]  := RefTool.B_deg;
+      OrgFrame.mOri.mValues[2]  := RefTool.C_deg;
+      
+      FrameDiff.mFrameTyp       := eMcuFrameKardan;
+      FrameDiff.mPos.mValues[0] := TBOX_Korr_X;
+      FrameDiff.mPos.mValues[1] := TBOX_Korr_Y;
+      FrameDiff.mPos.mValues[2] := TBOX_Korr_Z;
+      FrameDiff.mOri.mValues[0] := TBOX_Korr_RX;
+      FrameDiff.mOri.mValues[1] := TBOX_Korr_RY;
+      FrameDiff.mOri.mValues[2] := TBOX_Korr_RZ;
+      
+      CorrFrame.mFrameTyp := eMcuFrameKardan;
+      //McuMultiplyFrames(CorrFrame, FrameDiff, OrgFrame); // TCPneu = Korrektur * TCPorg ????
+      // ich bin nicht sicher, ob das so stimmt. Wir wollen doch ein korrigiertes Tool bzgl Flansch
+      // und nicht neue TCP-Koordinaten bzgl. OBJECT ???
+      // sonst wurde das neue Tool so berechnet:
+      // RcuCalcTool(myRobot, RefTool, FrameDiff, CorrTool);  // ?????????????
+      
+      //Wenn Korrekturwerte außerhalb des Ranges sind, 
+      //werden dies nicht verrechnet und es wird das Referenztool in Teachprogramm zurückgegeben 
+      IF bResult THEN
+         McuMultiplyFrames(CorrFrame, FrameDiff, OrgFrame); // TCPneu = Korrektur * TCPorg ????
+         CorrTool.X_mm  := CorrFrame.mPos.mValues[0];
+         CorrTool.Y_mm  := CorrFrame.mPos.mValues[1];
+         CorrTool.Z_mm  := CorrFrame.mPos.mValues[2];
+         CorrTool.A_deg := CorrFrame.mOri.mValues[0];
+         CorrTool.B_deg := CorrFrame.mOri.mValues[1];
+         CorrTool.C_deg := CorrFrame.mOri.mValues[2];
+      ELSE
+         CorrTool.X_mm  := RefTool.X_mm; 
+         CorrTool.Y_mm  := RefTool.Y_mm; 
+         CorrTool.Z_mm  := RefTool.Z_mm; 
+         CorrTool.A_deg := RefTool.A_deg;
+         CorrTool.B_deg := RefTool.B_deg;
+         CorrTool.C_deg := RefTool.C_deg;
+      END_IF;
+      
+      //data for EcoScreen
+      tEPS_ToolCorrOut.tDataVision.name   := "";
+      tEPS_ToolCorrOut.tDataVision.x      := FrameDiff.mPos.mValues[0];
+      tEPS_ToolCorrOut.tDataVision.y      := FrameDiff.mPos.mValues[1];
+      tEPS_ToolCorrOut.tDataVision.z      := FrameDiff.mPos.mValues[2];
+      tEPS_ToolCorrOut.tDataVision.A      := FrameDiff.mOri.mValues[0];
+      tEPS_ToolCorrOut.tDataVision.B      := FrameDiff.mOri.mValues[1];
+      tEPS_ToolCorrOut.tDataVision.C      := FrameDiff.mOri.mValues[2];
+      tEPS_ToolCorrOut.tDataRefTool.name  := RefTool.GetName();
+      tEPS_ToolCorrOut.tDataRefTool.x     := RefTool.X_mm;
+      tEPS_ToolCorrOut.tDataRefTool.y     := RefTool.Y_mm;
+      tEPS_ToolCorrOut.tDataRefTool.z     := RefTool.Z_mm;
+      tEPS_ToolCorrOut.tDataRefTool.A     := RefTool.A_deg;
+      tEPS_ToolCorrOut.tDataRefTool.B     := RefTool.B_deg;
+      tEPS_ToolCorrOut.tDataRefTool.C     := RefTool.C_deg;
+      tEPS_ToolCorrOut.tDataCorrTool.name := CorrTool.GetName();
+      tEPS_ToolCorrOut.tDataCorrTool.x    := CorrTool.X_mm; 
+      tEPS_ToolCorrOut.tDataCorrTool.y    := CorrTool.Y_mm; 
+      tEPS_ToolCorrOut.tDataCorrTool.z    := CorrTool.Z_mm; 
+      tEPS_ToolCorrOut.tDataCorrTool.A    := CorrTool.A_deg;
+      tEPS_ToolCorrOut.tDataCorrTool.B    := CorrTool.B_deg;
+      tEPS_ToolCorrOut.tDataCorrTool.C    := CorrTool.C_deg;
+      
+      //Disabled at HMI or no sercos communication
+      IF bDisabledHMI OR bS3CommFault OR bTimeOut THEN
+         iRetVal := Failure;
+         bResult := FALSE;
+         myRobot.DebugPrint(eTraceVision, "ToolBox is disabled or communication fault");
+      //displacement values out of range   
+      ELSIF NOT bResult THEN
+         //try once more if counter is smaller than cfg value
+         IF (yTBoxCntRetry[ToolNr] < iTBoxMaxRetry) THEN
+            iRetVal := Remeasure;
+            yTBoxCntRetry[ToolNr] := yTBoxCntRetry[ToolNr] + 1;
+         //counter expired --> skip this nozzle and go to next
+         ELSE  
+            //when nozzle changer is used the robot shouldn't stop with error because next nozzle should be taken automatically
+            IF myRobot.nozzleChange.hasNozzleChanger THEN
+               IF TBOX_STATE_VECTOR <> 0 THEN
+                  RcuSetMessageOnce(TRcVisionBk_WarTBoxStateNotOk, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBoxCorr");
+               ELSE
+                  RcuSetMessageOnce(TRcVisionBk_WarnValOutOfRange, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBoxCorr");
+               END_IF;
+            ELSE
+               IF TBOX_STATE_VECTOR <> 0 THEN
+                  RcuSetMessageOnce(TRcVisionBk_ErrTBoxStateNotOk, myRobot.kinListInx, 6, instId, "TRcuVisionBk.TBoxCorr");
+               ELSE
+                  RcuSetMessageOnce(TRcVisionBk_ErrValOutOfRange, myRobot.kinListInx, 6, instId, "TRcuVisionBk.TBoxCorr");
+               END_IF;
+            END_IF;
+            iRetVal := Continue;
+            yTBoxCntRetry[ToolNr] := 0;
+         END_IF;
+      //all ok
+      ELSE
+         iRetVal := DataOk;
+         yTBoxCntRetry[ToolNr] := 0;
+      END_IF;
+   END_IF;
+   
+   // Userpage
+   myRobot.vision.VisionTool.CorrFrame      := FrameDiff;
+   myRobot.vision.VisionTool.TVCorrTool     := CorrTool;
+   myRobot.vision.VisionTool.TVRefTool      := RefTool;
+   myRobot.vision.VisionTool.TVRefToolName  := RefTool.GetName();
+   myRobot.vision.VisionTool.TVCorrToolName := CorrTool.GetName();
+   myRobot.vision.VisionTool.TVToolNr       := ToolNr;
+   bCorrectionOkUserPage                    := bResult; 
+   
+   //error managment when no nozzle changer is used
+   IF (NOT myRobot.nozzleChange.hasNozzleChanger) AND (iRetVal <> DataOk) AND (iRetVal <> Remeasure) AND myRobot.vision.bUseExtendedInterface THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCorr - Error detected - waiting GoDirectHome or DoRemeasure or Continue");
+      myRobot.fieldbusOut.VisionError.svBool := TRUE;
+      WAIT myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+      IF myRobot.fieldbusIn.DoRemeasure.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCorr - DoRemeasure received from PLC");
+         myRobot.fieldbusOut.VisionError.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+         iRetVal := Remeasure;
+      ELSIF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCorr - GoDirectHome received from PLC");
+         myRobot.fieldbusOut.VisionError.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.GoDirectHome.svBool;
+         iRetVal := GoHome;
+      ELSIF myRobot.fieldbusIn.Continue.svBool THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "TBoxCorr - Continue received from PLC");
+         myRobot.fieldbusOut.VisionError.svBool := FALSE;
+         WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+         iRetVal := Continue;            
+      END_IF;
+      myRobot.fieldbusOut.VisionError.svBool := FALSE;
+   END_IF;
+  
+   RETURN bResult;
+   
+END_ROUTINE
+
+// Überschreiben bzw. setzen der maximal zulässigen Alarm-/Warngrenze der Toolkorrektur
+ROUTINE TBOX_SetTolerance(LimitType : LIMIT_TYPE; x_min : REAL; x_max : REAL; y_min : REAL; y_max : REAL; z_min : REAL; z_max : REAL)
+VAR
+   diff       : REAL;
+   ok         : BOOL;
+   alarmLimit : BOOL;
+END_VAR
+
+   alarmLimit := (LimitType = AlarmLimit);
+   ok         := TRUE;
+   
+   diff := (x_max - x_min) / 2.0;
+   diff := rAbs(diff);
+   IF (diff > cToleranceLimit) THEN
+      RcuSetMessageOnce(TRcToolMeasure_ErrTolTooBig,myRobot.kinListInx, 1, 0, "TRcuToolMeasure.TBOX_SetTolerance", "X", STR(diff), STR(cToleranceLimit));
+      ok := FALSE;
+   END_IF;
+   
+   diff := (y_max - y_min) / 2.0;
+   diff := rAbs(diff);
+   IF (diff > cToleranceLimit) THEN
+      RcuSetMessageOnce(TRcToolMeasure_ErrTolTooBig,myRobot.kinListInx, 2, 0, "TRcuToolMeasure.TBOX_SetTolerance", "Y", STR(diff), STR(cToleranceLimit));
+      ok := FALSE;
+   END_IF;
+   
+   diff := (z_max - z_min) / 2.0;
+   diff := rAbs(diff);
+   IF (diff > cToleranceLimit) THEN
+      RcuSetMessageOnce(TRcToolMeasure_ErrTolTooBig,myRobot.kinListInx, 3, 0, "TRcuToolMeasure.TBOX_SetTolerance", "Z", STR(diff), STR(cToleranceLimit));
+      ok := FALSE;
+   END_IF;
+   
+   IF alarmLimit THEN
+      sAlarmLimits.bSetByEcoTalk := ok;
+      IF ok THEN
+         sAlarmLimits.rXmin_TP := x_min;
+         sAlarmLimits.rXmax_TP := x_max;
+         sAlarmLimits.rYmin_TP := y_min;
+         sAlarmLimits.rYmax_TP := y_max;
+         sAlarmLimits.rZmin_TP := z_min;
+         sAlarmLimits.rZmax_TP := z_max;
+         myRobot.DebugPrint(eTraceVision, "TBOX_SetTolerance - AlarmLimits = "+STR(x_min) + " , " + STR(x_max) + " , " + STR(y_min) + " , " + STR(y_max) + " , " + STR(z_min) + " , " + STR(z_max));
+      ELSE
+         sAlarmLimits.rXmin_TP := 0.0;
+         sAlarmLimits.rXmax_TP := 0.0;
+         sAlarmLimits.rYmin_TP := 0.0;
+         sAlarmLimits.rYmax_TP := 0.0;
+         sAlarmLimits.rZmin_TP := 0.0;
+         sAlarmLimits.rZmax_TP := 0.0;
+         myRobot.DebugPrint(eTraceVision, "TBOX_SetTolerance - AlarmLimits = "+STR(x_min) + " , " + STR(x_max) + " , " + STR(y_min) + " , " + STR(y_max) + " , " + STR(z_min) + " , " + STR(z_max) + " too big");
+      END_IF;
+   ELSE    
+      sWarnLimits.bSetByEcoTalk := ok;
+      IF ok THEN
+         sWarnLimits.rXmin_TP := x_min;
+         sWarnLimits.rXmax_TP := x_max;
+         sWarnLimits.rYmin_TP := y_min;
+         sWarnLimits.rYmax_TP := y_max;
+         sWarnLimits.rZmin_TP := z_min;
+         sWarnLimits.rZmax_TP := z_max;
+         myRobot.DebugPrint(eTraceVision, "TBOX_SetTolerance -WarnLimits = "+STR(x_min) + " , " + STR(x_max) + " , " + STR(y_min) + " , " + STR(y_max) + " , " + STR(z_min) + " , " + STR(z_max));
+      ELSE
+         sWarnLimits.rXmin_TP := 0.0;
+         sWarnLimits.rXmax_TP := 0.0;
+         sWarnLimits.rYmin_TP := 0.0;
+         sWarnLimits.rYmax_TP := 0.0;
+         sWarnLimits.rZmin_TP := 0.0;
+         sWarnLimits.rZmax_TP := 0.0;
+         myRobot.DebugPrint(eTraceVision, "TBOX_SetTolerance -WarnLimits = "+STR(x_min) + " , " + STR(x_max) + " , " + STR(y_min) + " , " + STR(y_max) + " , " + STR(z_min) + " , " + STR(z_max) + " too big");
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier werden Kommandos verschickt
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE TBOX_SendCMD(nRobID: INT; nCommand: INT; nToolNumber: INT; nPointId: INT; pFrameToSend: FRAME) PRIVATE
+VAR
+   timeOut      : BOOL;
+   timeOut2     : BOOL;
+   timeOut3     : BOOL;
+   RetryCounter : INT;
+   d            : DINT;
+END_VAR
+
+   myRobot.DebugPrint(eTraceVision, "TBOX_SendCMD nCommand = "+STR(nCommand)+" POINT = "+STR(nPointId));
+//   OutSignals.bBK_SIG_R2B_ACK.svBool    := FALSE;
+   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TOSend, timeOut);
+   WAIT NOT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut OR bTBoxSimulate;
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TBOX_SendCMD while waiting for NOT bBK_SIG_B2R_ACK for PointId: " + STR(nPointId));
+   END_IF;
+   //;BK_SIG_R2B_ID    := nRobID;
+   SysTimerClear(timeOut);
+   OutSignals.byteBK_SIG_R2B_CMD.svByte   := nCommand;
+   OutSignals.byteBK_SIG_R2B_TYPE.svByte  := nToolNumber;
+   OutSignals.byteBK_SIG_R2B_PATH.svByte  := nCommand;
+   OutSignals.byteBK_SIG_R2B_ROBID.svByte := nRobID;
+   
+   IF IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled THEN // SERCOS 3
+      OutSignals.wBK_SIG_R2B_POINT.svWord    := TurnByte(nPointId);
+   ELSE // Profibus
+      OutSignals.wBK_SIG_R2B_POINT.svWord    := nPointId;
+   END_IF;
+
+   //BK_SIG_R2B_FAC_T := 4;
+   //BK_SIG_R2B_FAC_R := 4;
+   OutSignals.byteBK_SIG_R2B_FAC.svByte := 3*16 + 3;
+   
+   // Absolute Position zur Kontrolle an VMT (3 Nachkommastellen)
+   OutSignals.dBK_SIG_R2B_X.svDword   := Turn4Bytes(DINT(pFrameToSend.X * 1000.0));
+   OutSignals.dBK_SIG_R2B_Y.svDword   := Turn4Bytes(DINT(pFrameToSend.Y * 1000.0));
+   OutSignals.dBK_SIG_R2B_Z.svDword   := Turn4Bytes(DINT(pFrameToSend.Z * 1000.0));
+   OutSignals.dBK_SIG_R2B_RX.svDword  := Turn4Bytes(DINT(pFrameToSend.A * 1000.0));
+   OutSignals.dBK_SIG_R2B_RY.svDword  := Turn4Bytes(DINT(pFrameToSend.B * 1000.0));
+   OutSignals.dBK_SIG_R2B_RZ.svDword  := Turn4Bytes(DINT(pFrameToSend.C * 1000.0));
+
+   RetryCounter := 0;
+   // ???????????WAIT SEC 0  ; Vorlaufstop   
+   
+   myRobot.WaitMcMainCycles(6); // to avoid problems with reading command=00 on VMT computer
+   
+   REPEAT
+      OutSignals.bBK_SIG_R2B_STROBE.svBool := TRUE;
+      timeOut2 := FALSE;
+      SysTimerSet(1000, timeOut2);
+//      WAIT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut2 OR bSimulateBK;
+      IF RetryCounter = 0 THEN
+         WAIT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut2 OR bTBoxSimulate; //Vorschlag VMT 09.03.2012
+      ELSE
+         WAIT InSignals.bBK_SIG_B2R_ACK.svBool OR InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut2 OR bTBoxSimulate; //Vorschlag VMT 09.03.2012
+      END_IF;
+      IF timeOut2 THEN
+         myRobot.DebugPrint(eTraceVision, "TimeOut in TBOX_SendCMD while waiting for bBK_SIG_B2R_ACK for PointId: " + STR(nPointId));
+         OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+         Sleep(200);
+         RetryCounter := RetryCounter + 1;
+      ELSE
+         RetryCounter := BK_MaxCommRetry;
+      END_IF;
+   UNTIL RetryCounter >= BK_MaxCommRetry;
+   
+   IF timeOut2 THEN
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutSend, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBOX_SendCMD", STR(RetryCounter));
+   END_IF;
+   OutSignals.byteBK_SIG_R2B_CMD.svByte    := 0;
+   myRobot.DebugPrint(eTraceVision, "BK_SendCMD: byteBK_SIG_R2B_CMD = 0");
+   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   SysTimerClear(timeOut2);
+   timeOut3 := FALSE;
+   SysTimerSet(BK_TOSend, timeOut3);
+   WAIT NOT InSignals.bBK_SIG_B2R_ACK.svBool OR timeOut3 OR bTBoxSimulate;
+   IF timeOut3 THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TBOX_SendCMD while waiting for NOT bBK_SIG_B2R_ACK");
+   END_IF;
+   myRobot.DebugPrint(eTraceVision, "TBOX_SendCMD ENDE nCommand = "+STR(nCommand)+" POINT = "+STR(nPointId));
+END_ROUTINE
+
+
+
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+// Hier werden der Status und die Verschiebedaten empfangen
+//;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ROUTINE TBOX_RecShiftData(commErr : BOOL; OPTIONAL toolAbs : BOOL) : BOOL PRIVATE
+VAR
+   iFactorRot    : INT;
+   iFactorTrl    : INT;
+   timeOut       : BOOL;
+   d             : DINT;
+   i             : INT;
+   bRangeOK      : BOOL := FALSE;
+   bWarnLimitOk  : BOOL;
+   sLogText      : STRING;
+   iToolNrLimits : INT;
+   rXmin         : REAL;
+   rXmax         : REAL;
+   rYmin         : REAL;
+   rYmax         : REAL;
+   rZmin         : REAL;
+   rZmax         : REAL;
+END_VAR
+
+
+//   OutSignals.bBK_SIG_R2B_ACK.svBool    := FALSE;
+   OutSignals.bBK_SIG_R2B_STROBE.svBool := FALSE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TORecv, timeOut);
+   WAIT InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut OR bTBoxSimulate; // Auf Signal vom BK warten
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TBOX_RecShiftData while waiting for bBK_SIG_B2R_STROBE");
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutReceive, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBOX_RecShiftData", "11");
+      commErr := TRUE;
+      RETURN FALSE;
+   END_IF;
+
+   // Zuordnung der Verschiebewerte
+   TBOX_Korr_X  := Turn4Bytes(InSignals.dBK_SIG_B2R_X.svDword);
+   TBOX_Korr_Y  := Turn4Bytes(InSignals.dBK_SIG_B2R_Y.svDword);
+   TBOX_Korr_Z  := Turn4Bytes(InSignals.dBK_SIG_B2R_Z.svDword);
+   TBOX_Korr_RX := Turn4Bytes(InSignals.dBK_SIG_B2R_RX.svDword);
+   TBOX_Korr_RY := Turn4Bytes(InSignals.dBK_SIG_B2R_RY.svDword);
+   TBOX_Korr_RZ := Turn4Bytes(InSignals.dBK_SIG_B2R_RZ.svDword);
+
+   // Skalierung / Vorzeichenkontrolle
+
+   TBOX_SCALE_FAC_R := 1;
+   iFactorRot := InSignals.byteBK_SIG_B2R_FAC.svByte AND 16#0F;
+   
+   CASE iFactorRot OF
+     0:
+       TBOX_SCALE_FAC_R := 1;
+     1:
+       TBOX_SCALE_FAC_R := 10;
+     2:
+       TBOX_SCALE_FAC_R := 100;
+     3:
+       TBOX_SCALE_FAC_R := 1000;
+     4:
+       TBOX_SCALE_FAC_R := 10000;
+   END_CASE;
+
+   TBOX_SCALE_FAC_T := 1;
+   iFactorTrl := SHR(InSignals.byteBK_SIG_B2R_FAC.svByte AND 16#F0, 4);
+
+   CASE iFactorTrl OF
+     0:
+       TBOX_SCALE_FAC_T := 1;
+     1:
+       TBOX_SCALE_FAC_T := 10;
+     2:
+       TBOX_SCALE_FAC_T := 100;
+     3:
+       TBOX_SCALE_FAC_T := 1000;
+     4:
+       TBOX_SCALE_FAC_T := 10000;
+   END_CASE;
+
+   TBOX_Korr_X  := TBOX_Korr_X / TBOX_SCALE_FAC_T;
+   TBOX_Korr_Y  := TBOX_Korr_Y / TBOX_SCALE_FAC_T;
+   TBOX_Korr_Z  := TBOX_Korr_Z / TBOX_SCALE_FAC_T;
+   TBOX_Korr_RX := TBOX_Korr_RX / TBOX_SCALE_FAC_R;
+   TBOX_Korr_RY := TBOX_Korr_RY / TBOX_SCALE_FAC_R;
+   TBOX_Korr_RZ := TBOX_Korr_RZ / TBOX_SCALE_FAC_R;
+   
+   TBOX_TOOL_NUM  := InSignals.byteBK_SIG_B2R_TYPE.svByte;
+   TBOX_PATH_ID   := InSignals.byteBK_SIG_B2R_PATH.svByte;
+   IF NOT(IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled) THEN // SERCOS 3
+      TBOX_STATE_VECTOR := InSignals.wBK_SIG_B2R_POINT.svWord AND 255; //Byte 4 der Schnittstelle = Lowbyte von wBK_SIG_B2R_POINT
+   ELSE // Profibus
+      TBOX_STATE_VECTOR := InSignals.wBK_SIG_B2R_POINT.svWord/256; // Byte 4 der Schnittstelle = Highbyte von wBK_SIG_B2R_POINT
+   END_IF;
+   sLogText := " X = " + STR(TBOX_Korr_X) + ", Y = " + STR(TBOX_Korr_Y) + ", Z = " + STR(TBOX_Korr_Z);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   myRobot.DebugPrint(eTraceVision, sLogText);
+   sLogText := " Rx = " + STR(TBOX_Korr_RX) + ", Ry = " + STR(TBOX_Korr_RY) + ", Rz = " + STR(TBOX_Korr_RZ);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   myRobot.DebugPrint(eTraceVision, sLogText);
+   sLogText := " State Positionvector = " + STR(TBOX_STATE_VECTOR);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   myRobot.DebugPrint(eTraceVision, sLogText);
+   //1 Shot command receives absolute TOOL --> no range check
+   IF IS_USED(toolAbs) AND toolAbs THEN
+      bRangeOK := TRUE;
+   ELSE
+      IF bUseWarningLimit THEN
+         SetLimitsUserPage(sWarnLimits, sWarnLimitsUserPage);
+      END_IF;
+      SetLimitsUserPage(sAlarmLimits, sAlarmLimitsUserPage);
+
+      //Check alarm limits
+      IF NOT (sAlarmLimits.bConfigured OR sAlarmLimits.bSetByEcoTalk) THEN
+         RcuSetMessageOnce(TRcToolMeasure_ErrNoTolerance, myRobot.kinListInx, 1, 0, "TRcuVisionBk.TBOX_RecShiftData");
+         bRangeOK := FALSE;
+      ELSIF sAlarmLimits.bSetByEcoTalk THEN
+         rXmin := sAlarmLimits.rXmin_TP;
+         rXmax := sAlarmLimits.rXmax_TP;
+         rYmin := sAlarmLimits.rYmin_TP;
+         rYmax := sAlarmLimits.rYmax_TP;
+         rZmin := sAlarmLimits.rZmin_TP;
+         rZmax := sAlarmLimits.rZmax_TP;
+         bRangeOK := TRUE;
+      ELSIF sAlarmLimits.bConfigured THEN   
+         rXmin := sAlarmLimits.rXmin_Cfg;
+         rXmax := sAlarmLimits.rXmax_Cfg;
+         rYmin := sAlarmLimits.rYmin_Cfg;
+         rYmax := sAlarmLimits.rYmax_Cfg;
+         rZmin := sAlarmLimits.rZmin_Cfg;
+         rZmax := sAlarmLimits.rZmax_Cfg;
+         bRangeOK := TRUE;
+      END_IF;
+      IF bRangeOK THEN
+         IF TBOX_Korr_X < rXmin THEN 
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_X)  + ") in X direction out of negative limit (" + STR(rXmin) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 1, 0, "TRcuVisionBk.TBOX_RecShiftData", "X", STR(TBOX_Korr_X));
+            bRangeOK := FALSE;
+         END_IF;
+         IF TBOX_Korr_X > rXmax THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_X)  + ") in X direction out of positive limit (" + STR(rXmax) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 2, 0, "TRcuVisionBk.TBOX_RecShiftData", "X", STR(TBOX_Korr_X));
+            bRangeOK := FALSE;
+         END_IF;
+         
+         IF TBOX_Korr_Y < rYmin THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Y)  + ") in Y direction out of negative limit (" + STR(rYmin) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 3, 0, "TRcuVisionBk.TBOX_RecShiftData", "Y", STR(TBOX_Korr_Y));
+            bRangeOK := FALSE;
+         END_IF;
+         IF TBOX_Korr_Y > rYmax THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Y)  + ") in Y direction out of positive limit (" + STR(rYmax) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 4, 0, "TRcuVisionBk.TBOX_RecShiftData", "Y", STR(TBOX_Korr_Y));
+            bRangeOK := FALSE;
+         END_IF;
+         
+         IF TBOX_Korr_Z < rZmin THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Z)  + ") in Z direction out of negative limit (" + STR(rZmin) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 5, 0, "TRcuVisionBk.TBOX_RecShiftData", "Z", STR(TBOX_Korr_Z));
+            bRangeOK := FALSE;
+         END_IF;
+         IF TBOX_Korr_Z > rZmax THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Z)  + ") in Z direction out of positive limit (" + STR(rZmax) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 6, 0, "TRcuVisionBk.TBOX_RecShiftData", "Z", STR(TBOX_Korr_Z));
+            bRangeOK := FALSE;
+         END_IF;
+         
+         IF (rAbs(TBOX_Korr_RX) > sAlarmLimits.rRotLimit) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_RX)  + ") in a direction out of positive limit (" + STR(sAlarmLimits.rRotLimit) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 7, 0, "TRcuVisionBk.TBOX_RecShiftData", "a", STR(TBOX_Korr_RX));
+            bRangeOK := FALSE;
+         END_IF;
+         IF (rAbs(TBOX_Korr_RY) > sAlarmLimits.rRotLimit) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_RY)  + ") in b direction out of positive limit (" + STR(sAlarmLimits.rRotLimit) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 7, 0, "TRcuVisionBk.TBOX_RecShiftData", "b", STR(TBOX_Korr_RY));
+            bRangeOK := FALSE;
+         END_IF;       
+         IF (rAbs(TBOX_Korr_RZ) > sAlarmLimits.rRotLimit) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_RZ)  + ") in c direction out of positive limit (" + STR(sAlarmLimits.rRotLimit) + "). Change nozzle!!!!");
+            RcuSetMessageOnce(TRcToolMeasure_WarMaxDeltaRched, myRobot.kinListInx, 7, 0, "TRcuVisionBk.TBOX_RecShiftData", "c", STR(TBOX_Korr_RZ));
+            bRangeOK := FALSE;
+         END_IF;         
+      END_IF;
+      //Check warning limits and lock outlet if not ok
+      bWarnLimitOk := TRUE;
+      IF bRangeOK AND bUseWarningLimit THEN
+         IF NOT (sWarnLimits.bConfigured OR sWarnLimits.bSetByEcoTalk) THEN
+            RcuSetMessageOnce(TRcToolMeasure_ErrNoTolerance, myRobot.kinListInx, 2, 0, "TRcuVisionBk.TBOX_RecShiftData");
+            bWarnLimitOk := FALSE;
+         ELSIF sWarnLimits.bSetByEcoTalk THEN
+            rXmin := sWarnLimits.rXmin_TP;
+            rXmax := sWarnLimits.rXmax_TP;
+            rYmin := sWarnLimits.rYmin_TP;
+            rYmax := sWarnLimits.rYmax_TP;
+            rZmin := sWarnLimits.rZmin_TP;
+            rZmax := sWarnLimits.rZmax_TP;
+         ELSIF sWarnLimits.bConfigured THEN   
+            rXmin := sWarnLimits.rXmin_Cfg;
+            rXmax := sWarnLimits.rXmax_Cfg;
+            rYmin := sWarnLimits.rYmin_Cfg;
+            rYmax := sWarnLimits.rYmax_Cfg;
+            rZmin := sWarnLimits.rZmin_Cfg;
+            rZmax := sWarnLimits.rZmax_Cfg;
+         END_IF;
+         IF bWarnLimitOk THEN
+            IF TBOX_Korr_X < rXmin THEN 
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_X)  + ") in X direction out of negative warniung limit (" + STR(rXmin) + "). Check application!!!");
+               RcuSetMessageOnce(TRcToolMeasure_WarnToolDelta, myRobot.kinListInx, 1, 0, "TRcuToolMeasure.SaveTool", STR(TBOX_Korr_X), "-X", STR(rXmin));
+               bWarnLimitOk := FALSE;
+            END_IF;
+            IF TBOX_Korr_X > rXmax THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_X)  + ") in X direction out of positive warniung limit (" + STR(rXmax) + "). Check application!!!");
+               RcuSetMessageOnce(TRcToolMeasure_WarnToolDelta, myRobot.kinListInx, 2, 0, "TRcuToolMeasure.SaveTool", STR(TBOX_Korr_X), "+X", STR(rXmax));
+               bWarnLimitOk := FALSE;
+            END_IF;
+            
+            IF TBOX_Korr_Y < rYmin THEN 
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Y)  + ") in Y direction out of negative warniung limit (" + STR(rYmin) + "). Check application!!!");
+               RcuSetMessageOnce(TRcToolMeasure_WarnToolDelta, myRobot.kinListInx, 3, 0, "TRcuToolMeasure.SaveTool", STR(TBOX_Korr_Y), "-Y", STR(rYmin));
+               bWarnLimitOk := FALSE;
+            END_IF;
+            IF TBOX_Korr_Y > rYmax THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Y)  + ") in Y direction out of positive warniung limit (" + STR(rYmax) + "). Check application!!!");
+               RcuSetMessageOnce(TRcToolMeasure_WarnToolDelta, myRobot.kinListInx, 4, 0, "TRcuToolMeasure.SaveTool", STR(TBOX_Korr_Y), "+Y", STR(rYmax));
+               bWarnLimitOk := FALSE;
+            END_IF;
+         
+            IF TBOX_Korr_Z < rZmin THEN 
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Z)  + ") in Z direction out of negative warniung limit (" + STR(rZmin) + "). Check application!!!");
+               RcuSetMessageOnce(TRcToolMeasure_WarnToolDelta, myRobot.kinListInx, 5, 0, "TRcuToolMeasure.SaveTool", STR(TBOX_Korr_Z), "-Z", STR(rXmin));
+               bWarnLimitOk := FALSE;
+            END_IF;
+            IF TBOX_Korr_Z > rZmax THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Tool curvature ("  + STR(TBOX_Korr_Z)  + ") in Z direction out of positive warniung limit (" + STR(rZmax) + "). Check application!!!");
+               RcuSetMessageOnce(TRcToolMeasure_WarnToolDelta, myRobot.kinListInx, 6, 0, "TRcuToolMeasure.SaveTool", STR(TBOX_Korr_Z), "+X", STR(rZmax));
+               bWarnLimitOk := FALSE;
+            END_IF;
+         END_IF;
+      END_IF;
+      IF bUseWarningLimit AND bWarnLimitOk THEN
+         bWarningToPLC := FALSE;  //release outlet
+      ELSIF bUseWarningLimit AND myRobot.mainModeMgr.externControl THEN
+         bWarningToPLC := TRUE;   //lock outlet
+      END_IF;
+   END_IF;
+
+    // Empfang bestaetigen
+   OutSignals.bBK_SIG_R2B_ACK.svBool := TRUE;
+   timeOut := FALSE;
+   SysTimerSet(BK_TORecv, timeOut);
+   WAIT NOT InSignals.bBK_SIG_B2R_STROBE.svBool OR timeOut OR bTBoxSimulate; // Auf Signal vom BK warten
+   IF timeOut THEN
+      myRobot.DebugPrint(eTraceVision, "TimeOut in TBOX_RecShiftData while waiting for NOT bBK_SIG_B2R_STROBE");
+      RcuSetMessageOnce(TRcVisionBk_ErrTimeOutReceive, myRobot.kinListInx, 2, instId, "TRcuVisionBk.TBOX_RecShiftData", "12");
+      commErr := TRUE;
+   END_IF;
+   OutSignals.bBK_SIG_R2B_ACK.svBool := FALSE;
+   RETURN bRangeOK;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------------------
+// Grenzwerte auf UserPage aktualisieren
+//------------------------------------------------------------------------------------------------------------------
+ROUTINE SetLimitsUserPage(limit : tLimits; limitUserPage : tLimitsUserPage) PRIVATE
+  IF NOT (limit.bConfigured OR limit.bSetByEcoTalk) THEN
+     limitUserPage.rXmin   := 0.0;
+     limitUserPage.rXmax   := 0.0;
+     limitUserPage.rYmin   := 0.0;
+     limitUserPage.rYmax   := 0.0;
+     limitUserPage.rZmin   := 0.0;
+     limitUserPage.rZmax   := 0.0;
+     limitUserPage.iLabel  := 0; //"ungueltig";
+  ELSIF limit.bSetByEcoTalk THEN
+     limitUserPage.rXmin   := limit.rXmin_TP;
+     limitUserPage.rXmax   := limit.rXmax_TP;
+     limitUserPage.rYmin   := limit.rYmin_TP ;
+     limitUserPage.rYmax   := limit.rYmax_TP;
+     limitUserPage.rZmin   := limit.rZmin_TP;
+     limitUserPage.rZmax   := limit.rZmax_TP;
+     limitUserPage.iLabel  := 1; //"Teachprogramm";
+  ELSIF limit.bConfigured THEN
+     limitUserPage.rXmin   := limit.rXmin_Cfg;
+     limitUserPage.rXmax   := limit.rXmax_Cfg;
+     limitUserPage.rYmin   := limit.rYmin_Cfg ;
+     limitUserPage.rYmax   := limit.rYmax_Cfg;
+     limitUserPage.rZmin   := limit.rZmin_Cfg;
+     limitUserPage.rZmax   := limit.rZmax_Cfg;
+     limitUserPage.iLabel  := 2; //"RobotControl.cfg";
+  END_IF;
+END_ROUTINE
+
+(******************************************************************************
+***  State bits from VMT Toolbox to Ecopaint Screen ***************************
+******************************************************************************)
+ROUTINE TBoxSignalsToEPS() PRIVATE
+VAR
+   bEpsInDisable      : MAPTO BOOL;
+   bMapOk             : BOOL;
+   bChg               : BOOL;
+   bChgAdjMode        : BOOL;
+   bChgAutoMode       : BOOL;
+   bChgSysFault       : BOOL;
+   bChgS3Fault        : BOOL;
+END_VAR   
+
+   bMapOk := TRUE;
+   tEPS_ToolCorrIn := MAPX(cSV_EPSInToolCorr[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(tEPS_ToolCorrIn) THEN
+      bMapOk := FALSE;
+      RcuSetMessageOnce(TRcVisionBk_ErrMapEpsVar, myRobot.kinListInx, 1, instId, "TRcuVisionBk.TBoxSignalsToEPS", cSV_EPSInToolCorr[myRobot.kinListInx]);
+   END_IF;
+   tEPS_ToolCorrOut := MAPX(cSV_EPSOutToolCorr[myRobot.kinListInx]);
+   IF NOT IS_MAPPED(tEPS_ToolCorrOut) THEN
+      bMapOk := FALSE;
+      RcuSetMessageOnce(TRcVisionBk_ErrMapEpsVar, myRobot.kinListInx, 7, instId, "TRcuVisionBk.TBoxSignalsToEPS", cSV_EPSOutToolCorr[myRobot.kinListInx]);
+   END_IF;
+   IF NOT bMapOk THEN
+      myRobot.DebugPrint(eTraceVision, "Visu from VMT Toolbox not running!!");
+      RETURN;
+   END_IF;
+      
+   tEPS_ToolCorrOut.bDisabled    := UPDATE(bDisabledHMI);
+   tEPS_ToolCorrOut.bAdjustMode  := UPDATE(bInAdjustMode);   
+   tEPS_ToolCorrOut.bAutoMode    := UPDATE(bInAutoMode);   
+   tEPS_ToolCorrOut.bSystemFault := UPDATE(bSystemFault);
+   tEPS_ToolCorrOut.bCommFault   := UPDATE(bS3CommFault);
+   bChgAdjMode                   := IS_CHANGED(bInAdjustMode);   
+   bChgAutoMode                  := IS_CHANGED(bInAutoMode);  
+   bChgSysFault                  := IS_CHANGED(bSystemFault);  
+   bChgS3Fault                   := IS_CHANGED(bS3CommFault);  
+   bChg                          := IS_CHANGED(tEPS_ToolCorrIn.bDisable);
+   
+   WHILE TRUE DO
+     IF tEPS_ToolCorrIn.bDisable AND NOT bDisabledHMI THEN
+        bDisabledHMI   := TRUE; 
+        bS3IgnoreError := TRUE;   //Sercos3Master is now setting warning instead of errors for this device
+     ELSIF (NOT tEPS_ToolCorrIn.bDisable) AND bDisabledHMI THEN
+        bDisabledHMI   := FALSE; 
+        bS3IgnoreError := FALSE;  //Sercos3Master is now allowed to set errors for this device
+     END_IF;  
+     IF bInAutoMode AND NOT (bSystemFault OR bS3CommFault OR bDisabledHMI) THEN
+        tEPS_ToolCorrOut.iSystemState := cgiHMI_Green;
+     ELSIF bSystemFault OR bS3CommFault THEN
+        tEPS_ToolCorrOut.iSystemState := cgiHMI_Red;
+     ELSIF bInAdjustMode AND NOT (bSystemFault OR bS3CommFault OR bDisabledHMI) THEN
+        tEPS_ToolCorrOut.iSystemState := cgiHMI_Yellow;
+     ELSE
+        tEPS_ToolCorrOut.iSystemState := cgiHMI_Grey;
+     END_IF;
+     bChg         := FALSE;
+     bChgAdjMode  := FALSE;
+     bChgAutoMode := FALSE;
+     bChgSysFault := FALSE;
+     bChgS3Fault  := FALSE;
+     WAIT bChg OR bChgAdjMode OR bChgAutoMode OR bChgSysFault OR bChgS3Fault;
+   END_WHILE;
+       
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map EcoTalk var KinX.SENSOR_CHECK when _GlobalVars.tid is reloaded at Teachpendant
+//----------------------------------------------------------------------------------------
+ROUTINE MapSensorCheck() PRIVATE
+ VAR
+   s : STRING;
+ END_VAR
+ 
+  WHILE TRUE DO
+     WAIT myRobot.fixPosReady;
+     s := "Kin"+STR(myRobot.kinListInx+1)+".SENSOR_CHECK";
+     bSensorCheck := MAPX(s);
+     IF NOT IS_MAPPED(bSensorCheck) THEN
+        myRobot.DebugPrint(eTraceVision,"SENSOR_CHECK = " + s + " not mapped");
+        RcuSetMessageOnce(TRcVisionBk_ErrBkInit, myRobot.kinListInx, 3, instId, "TRcuVisionBk.MapSensorCheck");
+     ELSIF IS_MAPPED(bOutSensorCheckHMI) THEN
+        bOutSensorCheckHMI := UPDATE(bSensorCheck);
+     END_IF;
+     WAIT NOT myRobot.fixPosReady;  
+     IF IS_MAPPED(bOutSensorCheckHMI) THEN
+        bOutSensorCheckHMI := UPDATE(FALSE);
+     END_IF; 
+  END_WHILE;
+END_ROUTINE
+
+ROUTINE SensorCheckHMI() PRIVATE
+  WHILE TRUE DO
+     WAIT bInSensorCheckHMI;
+     bInSensorCheckHMI := FALSE;
+     IF IS_MAPPED(bSensorCheck) THEN
+        bSensorCheck    := FALSE;  //mapped to EcoTalk _GlobalVars.tid SENSOR_CHECK
+     END_IF;
+     myRobot.DebugPrint(eTraceVision, "Order from HMI - execute sensor check at next programm start");
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------------------
+// set output to PLC when ToolCorrection exeeds warining limit (min. 1 sec.) - reset at prog end
+//------------------------------------------------------------------------------------------------------------------
+ROUTINE WarningToPLC() PRIVATE
+ VAR
+  chg              : BOOL;
+  fin              : BOOL;
+  bWarningToPLCSet : BOOL;
+ END_VAR
+    
+  chg := IS_CHANGED(bWarningToPLC);
+  WHILE TRUE DO
+    WAIT chg;
+    chg := FALSE;
+    IF bWarningToPLC AND NOT bWarningToPLCSet THEN
+       myRobot.fieldbusOut.bWarnToolRange.svBool := TRUE;
+       bWarningToPLCSet := TRUE;
+       fin := FALSE;
+       SysTimerSet(1000, fin);
+    ELSIF bWarningToPLCSet THEN
+       WAIT fin OR bWarningToPLC;
+       SysTimerClear(fin);
+       fin := FALSE;
+       IF NOT bWarningToPLC THEN
+          bWarningToPLCSet := FALSE;
+          myRobot.fieldbusOut.bWarnToolRange.svBool := FALSE;
+          myRobot.DebugPrint(eTraceVision, "T-Box: Warning to PLC reset");
+       END_IF;
+    END_IF; 
+  END_WHILE;
+END_ROUTINE
+
+
+(*
+;==========================================================
+; receive status and shift data (the correction(s))
+;==========================================================
+GLOBAL DEFFCT BOOL TBOX_RecShiftData( )
+;==========================================================
+
+
+WAIT SEC 0 ;advance stop  
+SetOutputBOOL(VMT_OUT_ACK, FALSE)
+
+
+IF (GetInputBool(VMT_IN_STROBE) == FALSE) THEN
+  VMT_START_TIMER(VMT_TIMERNR + 1, BK_TORecv)
+  WAIT FOR ((GetInputBool(VMT_IN_STROBE) == TRUE) OR $TIMER_FLAG[VMT_TIMERNR + 1])
+  VMT_STOP_TIMER(VMT_TIMERNR + 1)
+  IF $TIMER_FLAG[VMT_TIMERNR + 1] THEN
+    VMT_SET_ERROR_MSG(VMT_MSG_TOUT_RECV, 11)
+    RETURN (FALSE)
+  ENDIF
+ENDIF
+
+DoErrorQuitt()
+	
+;Recieve Stauts
+TBOX_STATUS = GetInputUInt(VMT_TBOX_IN_STATE)
+
+; Assign correction values
+TBOX_Corr_X  = GetInputInt(VMT_IN_X)
+TBOX_Corr_Y  = GetInputInt(VMT_IN_Y)
+TBOX_Corr_Z  = GetInputInt(VMT_IN_Z)
+TBOX_Corr_RX = GetInputInt(VMT_IN_RX)
+TBOX_Corr_RY = GetInputInt(VMT_IN_RY)
+TBOX_Corr_RZ = GetInputInt(VMT_IN_RZ)
+
+
+; scaling / signing
+BK_SCALE_FAC_R = GetScaleFactor(GetInputUInt(VMT_IN_FAC_R))
+BK_SCALE_FAC_T = GetScaleFactor(GetInputUInt(VMT_IN_FAC_T))
+
+TBOX_Corr_X = TBOX_Corr_X / BK_SCALE_FAC_T
+TBOX_Corr_Y = TBOX_Corr_Y / BK_SCALE_FAC_T
+TBOX_Corr_Z = TBOX_Corr_Z / BK_SCALE_FAC_T
+
+TBOX_Corr_RX = TBOX_Corr_RX / BK_SCALE_FAC_R
+TBOX_Corr_RY = TBOX_Corr_RY / BK_SCALE_FAC_R
+TBOX_Corr_RZ = TBOX_Corr_RZ / BK_SCALE_FAC_R
+
+;update correction frame
+TBOX_Correction.X = TBOX_Corr_X
+TBOX_Correction.Y = TBOX_Corr_Y
+TBOX_Correction.Z = TBOX_Corr_Z
+TBOX_Correction.C = TBOX_Corr_RX
+TBOX_Correction.B = TBOX_Corr_RY
+TBOX_Correction.A = TBOX_Corr_RZ
+
+
+TBOX_TOOL_NUM  = GetInputUInt(VMT_IN_TYPE)
+TBOX_PATH_ID  = GetInputUInt(VMT_IN_PATH)
+TBOX_POINT_ID = GetInputUInt(VMT_IN_POINT)
+
+
+; acknowledge 
+SetOutputBOOL(VMT_OUT_ACK, TRUE)
+IF (GetInputBool(VMT_IN_STROBE) == TRUE) THEN
+  VMT_START_TIMER(VMT_TIMERNR+1, BK_TORecv)
+  
+  WAIT FOR ((GetInputBool(VMT_IN_STROBE) == FALSE) OR $TIMER_FLAG[VMT_TIMERNR+1])
+  VMT_STOP_TIMER(VMT_TIMERNR+1)
+  IF $TIMER_FLAG[VMT_TIMERNR+1] THEN
+    VMT_SET_ERROR_MSG(VMT_MSG_TOUT_RECV,12)
+  ENDIF
+ENDIF
+SetOutputBOOL(VMT_OUT_ACK, FALSE)
+
+
+RETURN (TRUE)
+ENDFCT
+*)
+
+
+
+
+// *****************************************************************************
+//
+// ENDE Erweiterungen für VMT Toolbox
+//
+// *****************************************************************************
+
+(******************************************************************************
+* systemroutines
+******************************************************************************)
+ROUTINE NEW()
+   instId := RcuGetInstanceId(); // instance identification number (for alarms)
+END_ROUTINE
+
+ROUTINE RESERVE()
+   IF myRobot.bReleaseBlockedByHandler THEN   
+      myRobot.DebugPrint(eTraceAutoControl, "TRcuVisionBK.RESERVE: not executed - releaseBlockedByHandler");
+   ELSE
+      sAlarmLimits.rXmin_TP      := 0.0;
+      sAlarmLimits.rXmax_TP      := 0.0;
+      sAlarmLimits.rYmin_TP      := 0.0;
+      sAlarmLimits.rYmax_TP      := 0.0;
+      sAlarmLimits.rZmin_TP      := 0.0;
+      sAlarmLimits.rZmax_TP      := 0.0;
+      sAlarmLimits.bSetByEcoTalk := FALSE;
+      sWarnLimits.rXmin_TP       := 0.0;
+      sWarnLimits.rXmax_TP       := 0.0;
+      sWarnLimits.rYmin_TP       := 0.0;
+      sWarnLimits.rYmax_TP       := 0.0;
+      sWarnLimits.rZmin_TP       := 0.0;
+      sWarnLimits.rZmax_TP       := 0.0;
+      sWarnLimits.bSetByEcoTalk  := FALSE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE RELEASE()
+VAR
+   corrFrame : TMcuFrame;
+END_VAR
+
+   IF NOT bMappingOk THEN
+      RETURN;
+   END_IF;
+   IF myRobot.bReleaseBlockedByHandler THEN   
+      myRobot.DebugPrint(eTraceAutoControl, "TRcuVisionBK.RELEASE: not executed - releaseBlockedByHandler");
+   ELSE
+       corrFrame.mFrameTyp := eMcuFrameKardan;
+       corrFrame.mPos.mValues[0] := 0.0;
+       corrFrame.mPos.mValues[1] := 0.0;
+       corrFrame.mPos.mValues[2] := 0.0;
+       corrFrame.mOri.mValues[0] := 0.0;
+       corrFrame.mOri.mValues[1] := 0.0;
+       corrFrame.mOri.mValues[2] := 0.0;
+       RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrame, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+       myRobot.homing.StoreRefSystemVision(FALSE, corrFrame);
+       CalcActualObject(corrFrame, FALSE);
+       IF IS_MAPPED(myRobot.fieldbusOut.VisionError.svBool) THEN
+          myRobot.fieldbusOut.VisionError.svBool := FALSE;
+       END_IF;
+       BK_MODUS := Mode_Off;
+       bWarningToPLC              := FALSE;
+       iBKCntRetry   := 0;
+   END_IF;
+END_ROUTINE
+
+ROUTINE SETPC()
+
+   IF NOT bMappingOk OR NOT myRobot.vision.bBKBootUpOk THEN
+      RETURN;
+   END_IF;
+   IF (iBkPPNrPreRun <> 0) AND (BK_MODUS = ModeApplication) THEN // Prerun has executed BK_CORR macro
+       RcuRefSysSetKardan(myRobot.RcuRefSystemObject, corrFrameMR, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+       myRobot.homing.StoreRefSystemVision(FALSE, corrFrameMR);
+   END_IF;
+END_ROUTINE

@@ -1,0 +1,803 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : equipment.ttp
+*  First Author : pen
+*  Date         : 23.4.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  
+*------------------------------------------------------------------------------
+* 26.08.04 BMA: mainModeMgr.gbPLCPowerOn replaced by mainModeMgr.gbPLCRelease
+* 02.09.04 BMA: Bugfixing RobotAdjustAction and RobotStopAction. Replace
+*               gbPLCPowerOn with gbPLCRelease.
+* 18.09.04 nmr: Change order: GetDriveParameter before RcuReadConfigRob
+* 25.09.04 nmr: NEW and RobotAdjustAction corrected, because ReferenceLost
+*               and PowerApplied now included in statusword and
+*               parameterqueries invalid
+* 20.01.05 nmr: set view-coordinatesystem on global-teachkoordinatensystem
+* 29.03.05 nmr: New flag gbEquipmentReady for bootupcontrol
+* 08.04.05 nmr: RcuReadGeneralConfig deleted, should be better in NEW-Routine from
+*               _RcuConfiguration
+* 20.04.05 BMA: set Reference-coordinatesystem for Tracking
+* 08.06.05 nmr: Quit all errors now will also quit Sercos-errors
+* 17.06.05 sbj: Changes to configure number of axis
+* 04.07.05 kto: translated into english
+* 26.08.05 nmr: name-changes according to naming-conventions
+*)
+
+TYPE GLOBAL
+  TControlSystem : (IPC, Cube, RPC2);
+END_TYPE
+
+VAR GLOBAL
+   grPrewarnTime                    : REAL; // Prewarn time of triggers 
+   redPrewarnTime                   : REAL; 
+   PaintRobot                       : ARRAY [cgiRcuMaxKinematics] OF TRcuRobot;
+   gyDrives                         : ARRAY[32] OF TRcuDrive;
+   gyDosingDrives                   : ARRAY[12] OF TRcuDrive;
+   gmSercosRing                     : MAPTO TKSC_BusPhase;
+   gMsgInfoCounter                  : DINT;
+   mDataRecordingActive             : MAPTO BOOL;
+   mActivateDataRecording           : MAPTO BOOL;
+   mDataRecordingRequestedSignalset : MAPTO INT;
+   giDataRecRequestedSignalset      : MAPTO INT;
+   gbReadyForDRCommand              : MAPTO BOOL;
+   giDRCommand                      : MAPTO INT;
+   giResponseDRCommand              : MAPTO INT;
+   grStiffnessValue                 : MAPTO REAL;
+   giStiffnessForAxisNr             : MAPTO INT;
+   gbFBSSActive                     : MAPTO BOOL; //Fieldbus Simulation System (e.g. WinMOD)
+   gbSERCOSinSimu                   : MAPTO BOOL;
+   gbTvIsActive			            : BOOL; 
+   gbEstopFromBusMaster             : MAPTO BOOL;
+   firmwareVersion                  : STRING;
+   firmwareVersionNr                : DINT;
+   firmwareVersionSubChar           : STRING[1];
+   controlSystemName                : STRING;
+   controlSystem                    : TControlSystem;
+   gbSercos3Enabled                 : MAPTO BOOL;
+   yS3DeviceNames                   : MAPTO ARRAY [cgiMaxS3Devices] OF STRING[32];
+   gbEthercat                       : BOOL;
+   yECATDeviceNames                 : MAPTO ARRAY [cgiMaxECATDevices] OF STRING[32];
+END_VAR
+
+ROUTINE NEW()
+   VAR
+      i       : DINT;
+      j       : DINT;
+      k       : DINT;
+      l       : DINT;
+      str     : STRING;
+      str2    : STRING;
+      str3    : STRING;
+      rootHdl : DINT;
+      hdl     : DINT;
+      hdl2    : DINT;
+      frame   : TMcuFrame;
+      chg     : BOOL;
+      r       : DINT;
+      bAnyEcatDriveFound : BOOL;
+   END_VAR
+   
+   GetFirmwareVersion();
+   
+   IF CatalogGetHandle("IO.ONBOARD.ECAT:0", hdl) THEN
+      DebugPrint(eTraceEquipment, " ----- ETHERCAT is used -------------------");
+      gbEthercat := TRUE;
+   END_IF;
+   
+   FOR i:= 0 TO giNumberOfRobots -1 DO
+      PaintRobot[i].ReadConfigPrePBS();
+      MapFieldbusSlave(i);
+      // Activate message manager and map the error quit signal
+      // RcuMessageManager.resetErrors := MAP(PaintRobot[i].autoControl.bPLCErrorQuit);    
+      // mainmode-manager mappings
+      PaintRobot[i].mainModeMgr.PlcRelease := MAP(PaintRobot[i].autoControl.bPLCRelease);
+      PaintRobot[i].mainModeMgr.mainModeInput[1] := MAP(PaintRobot[i].autoControl.bBitAutoExt);
+      PaintRobot[i].mainModeMgr.mainModeInput[2] := MAP(PaintRobot[i].autoControl.bBitT1);
+      PaintRobot[i].mainModeMgr.mainModeInput[3] := MAP(PaintRobot[i].autoControl.bBitT2);
+      PaintRobot[i].mainModeMgr.mainModeInput[4] := MAP(PaintRobot[i].autoControl.bBitSleep);
+      PaintRobot[i].logger.InitProtocol(i);
+      PaintRobot[i].loggerDrive.Init(i);
+   END_FOR;
+   
+   gmSercosRing := MAPX("SERCOS");
+   IF NOT IS_MAPPED(gmSercosRing) THEN
+      gmSercosRing := MAPX("system.SERCOS");
+      IF NOT IS_MAPPED(gmSercosRing) THEN
+         RcuSetMessageOnce(equipment_FaErrSercosRing, -1, 1, 0, "equipment.NEW");
+      END_IF; 
+   END_IF;   
+  
+   IF IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled THEN  //sercos3 is used --> Phase change is done by AB_Sercos3Master
+      DebugPrint(eTraceEquipment, " ----- Bussystem - Sercos3 - is used, wait until phase 4 is reached ------------------");
+      WAIT gmSercosRing.actComPhase = 4;
+      DebugPrint(eTraceEquipment, " ----- Bussystem - Sercos3 - phase 4 is reached --------------------------------------");
+   ELSE  //sercos2 is used --> set target phase to 4
+      DebugPrint(eTraceEquipment, " ----- Bussystem - Sercos2 - is used, wait until phase 4 is reached ------------------");
+      gmSercosRing.targetComPhase := 4;
+      WAIT gmSercosRing.actComPhase = gmSercosRing.targetComPhase;
+      DebugPrint(eTraceEquipment, " ----- Bussystem - Sercos2 - phase 4 is reached --------------------------------------");
+   END_IF;
+   
+   
+   //WaitForIntValue(gmSercosRing.actComPhase, gmSercosRing.targetComPhase);
+   
+   Sleep(3000); // Workaround KEBA wegen shared memories
+   
+   //Read Axis names
+   FOR j:=0 TO giNumberOfRobots -1 DO
+       FOR i := 0 TO 20 DO                 
+           str := "RC.KINEMATIC:" + STR(gyIndexOfKinematics[j]) + ".Joint" + STR(i)  ;              
+           IF CatalogGetHandle(str, rootHdl) THEN                   
+              PaintRobot[j].yIndexOfJoints[l] := i;                    
+              str2 :=  "A" + STR(i);
+              
+              IF i > PaintRobot[j].kinematic.mNrOfMainJoints THEN
+                 // Aux joint
+                 str2 :=  "A" + STR(7 + i - PaintRobot[j].kinematic.mNrOfMainJoints-1);
+                 // axis 7 is rotatory => RP-L-053
+                 IF PaintRobot[j].kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN
+                    str2 :=  "A" + STR(7 + i - PaintRobot[j].kinematic.mNrOfMainJoints);
+                 END_IF;
+              END_IF;
+              
+              gRcDataRobot[j].jointName[l] := str2;
+              l := l+1;
+           END_IF;          
+        END_FOR;
+        IF IsPaintArm7VWrist(PaintRobot[j]) THEN
+           gRcDataRobot[j].jointName[0] := "A1";
+           gRcDataRobot[j].jointName[1] := "A2";
+           gRcDataRobot[j].jointName[2] := "A21";
+           gRcDataRobot[j].jointName[3] := "A3";
+           gRcDataRobot[j].jointName[4] := "A4";
+           gRcDataRobot[j].jointName[5] := "A5";
+           gRcDataRobot[j].jointName[6] := "A6";
+           gRcDataRobot[j].jointName[7] := "A7";
+        END_IF;
+        l := 0;
+   END_FOR;    
+     
+   r := 0;
+   FOR j:=0 TO giNumberOfRobots -1 DO
+       l := 0;
+       //Robot drives
+       FOR i:=0 TO PaintRobot[j].kinematic.mNrOfJoints - 1 DO
+        gyDrives[r].InitResourceName(PaintRobot[j], i);       
+           r := r + 1;
+       END_FOR;
+   END_FOR;
+   
+   IF gbEthercat THEN
+      bAnyEcatDriveFound := FALSE;
+      FOR i := 1 TO 15 DO
+         IF i > 9 THEN
+           str := "IO.ONBOARD.ECAT:0.DRVECATCOE:10" + STR(i);
+         ELSE
+           str := "IO.ONBOARD.ECAT:0.DRVECATCOE:100" + STR(i);
+         END_IF;
+         
+         IF CatalogGetHandle(str, hdl) THEN
+            DebugPrint(eTraceEquipment, "Entry "+str+" exists");
+            FOR j := 0 TO 2 DO
+               str2 := str+".AXIS:"+STR(j);
+               IF CatalogGetHandle(str2, hdl2) THEN
+                  DebugPrint(eTraceEquipment, "Entry AXIS:0"+STR(j)+" exists");
+                  IF CatalogReadString(hdl2, "name", str3, TRUE) THEN
+                     DebugPrint(eTraceEquipment, "name = "+str3);
+                     FOR l := 0 TO 31 DO
+                        IF gyDrives[l].resourceName = str3 THEN
+                           gyDrives[l].bEtherCAT := TRUE;
+                           bAnyEcatDriveFound := TRUE;
+                           gyDrives[l].sDrvEcat := str;
+                           gyDrives[l].hdlDrvEcat := hdl;
+                           gyDrives[l].iDriveIndex := j;
+                           DebugPrint(eTraceEquipment, "Axisnumber = "+STR(l));
+                        END_IF;
+                     END_FOR;
+                  END_IF;
+               END_IF;
+            END_FOR;
+         END_IF;
+      END_FOR;
+      gbEthercat := bAnyEcatDriveFound;
+      IF NOT bAnyEcatDriveFound THEN
+         DebugPrint(eTraceEquipment, "----- no Ethercat drive found: ETHERCAT is not used -------------------");
+      END_IF;
+   END_IF;
+   
+   //Robot drives
+   r := 0;
+   FOR j:=0 TO giNumberOfRobots -1 DO
+       l := 0;
+       FOR i:=0 TO PaintRobot[j].kinematic.mNrOfJoints - 1 DO
+        gyDrives[r].InitResourceName(PaintRobot[j], i);       
+          gyDrives[r].init(i);
+        r := r + 1;
+       END_FOR;
+       //Dosing drives
+       FOR i:=0 TO cMcuMaxJ - 1 DO
+          IF gyDosingDrives[k].InitDosingResourceName(PaintRobot[j], i) THEN
+             IF PaintRobot[j].ApplyDosingDrive(l, gyDosingDrives[k]) THEN
+                gyDosingDrives[k].initDosingDrive(i);
+             END_IF;
+             l := l + 1;
+             k := k + 1;
+          END_IF; 
+       END_FOR;
+   END_FOR;
+   
+//   Sleep(3000); // Workaround KEBA wegen shared memories
+   
+   // Drives are started in three steps
+   // 1) Connect all drives to kinematics
+   r := 0;
+   FOR j:=0 TO giNumberOfRobots -1 DO
+       FOR i:=0 TO PaintRobot[j].kinematic.mNrOfJoints - 1 DO
+          PaintRobot[j].ApplyDrive(i, gyDrives[r]);         
+          r := r + 1;
+       END_FOR;
+   END_FOR;
+   
+   // Read sercos parameter S111 and P51
+   // has to be done before ReadConfigRob (-> Start of VeloControl)
+   FOR j:=0 TO giNumberOfRobots - 1 DO
+      PaintRobot[j].bRcuSimulatesAllDrives := TRUE;
+      FOR i := 0 TO PaintRobot[j].kinematic.mNrOfJoints - 1 DO
+         PaintRobot[j].drive[i].GetDriveParameter();
+         IF NOT PaintRobot[j].drive[i].ioSimulated THEN
+            PaintRobot[j].bRcuSimulatesAllDrives := FALSE;
+         END_IF;
+      END_FOR;
+      PaintRobot[j].subDirName := "kin"+STR(j+1);
+      RcuReadConfigRob(PaintRobot[j]);
+      IF PaintRobot[j].bOldPosAfterRestart AND (gbSimulationOS OR gbFBSSActive) THEN
+         PaintRobot[j].ReadRetainPosition(PaintRobot[j]);
+      END_IF;
+      PaintRobot[j].SetCustomKinGripperId(PaintRobot[j].kinGripperMcuId);
+      IF (gsOsName = "Linux") OR (gsOsName = "LinuxSim") THEN
+          START PaintRobot[j].interfaceToSCP.Init(PaintRobot[j]);
+      END_IF;
+      //data recorder
+      START PaintRobot[j].dataRecorder.Create(PaintRobot[j]);  
+   END_FOR;      
+   
+   frame.mFrameTyp := gMcuFrameTyp;
+   
+   RcuReadConfigTrackingGeneral();
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      RcuReadConfigTrackingKin(PaintRobot[i]);
+      RcuReadConfigTrackingConvTab(PaintRobot[i]);
+      PaintRobot[i].vision.ReadConfig( PaintRobot[i]);
+      IF PaintRobot[i].vision.VisionSmartRay.ReadConfig(PaintRobot[i]) THEN
+         PaintRobot[i].vision.VisionSmartRay.InitSmartRay();
+      END_IF;
+   END_FOR;
+   IF PaintRobot[0].lineTracking THEN
+      // Conveyorbase succesfully read. Line-Tracking defined
+      IF PaintRobot[0].railTracking THEN
+         DebugPrint(eTraceEquipment, " --------------- RAIL TRACKING ---------------------");
+      ELSE
+         DebugPrint(eTraceEquipment, " --------------- LINE TRACKING ---------------------");
+      END_IF;
+   END_IF;
+   
+   giTvRefSysValidMask := 0;
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      IF PaintRobot[i].lineTracking THEN
+         RcuRefSysSet(PaintRobot[i].RcuRefSystemVisionAbs, frame, PaintRobot[i].RcuRefSystemConveyorPostLink, FALSE, "VisionAbs");
+      ELSE
+         RcuRefSysSet(PaintRobot[i].RcuRefSystemVisionAbs, frame, eRcuRefSystemWorld, FALSE, "VisionAbs");
+      END_IF;
+      RcuRefSysSet(PaintRobot[i].RcuRefSystemVisionRel, frame, PaintRobot[i].RcuRefSystemVisionAbs, FALSE, "VisionRel");
+      PaintRobot[i].homing.StoreRefSystemVision(TRUE, frame);
+      
+      IF PaintRobot[i].bOnlineCorr THEN
+         PRINT("--------------------- Start Tracking-Frame OnlineCorr --------------------");
+         RcuRefSysSet(PaintRobot[i].RcuRefSystemSensor, frame, PaintRobot[i].RcuRefSystemVisionRel, TRUE, "Sensor"); // TRUE = tracking
+         PaintRobot[i].homing.StoreRefSystemVision(FALSE, frame);
+         RcuRefSysActivate(PaintRobot[i].RcuRefSystemSensor);
+         RcuRefSysSet(PaintRobot[i].RcuRefSystemObject, frame, PaintRobot[i].RcuRefSystemSensor, FALSE, "Object");
+      ELSE
+         RcuRefSysSet(PaintRobot[i].RcuRefSystemObject, frame, PaintRobot[i].RcuRefSystemVisionRel, FALSE, "Object");
+         PaintRobot[i].homing.StoreRefSystemVision(FALSE, frame);
+      END_IF;
+
+   END_FOR;
+   giTvRefSysValidMask := giTvRefSysValidMask OR gyBits[eRcuRefSystemWorld];
+   
+   // frame = (0,0,0,0,0,0) => OBJECT = OBJECT-Vor-ISRA
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      IF PaintRobot[i].lineTracking THEN
+         PaintRobot[i].tracking.InitTracking(PaintRobot[i]);
+      END_IF;
+   END_FOR;
+
+   gRcuTeachRefSystem := eRcuRefSystemWorld;
+   
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      PaintRobot[i].TeachPendantMemories.selectedObjectSystem := PaintRobot[i].RcuRefSystemObject;
+   START RcUtils.SaveFocusedKin();
+   IF SavedFocusedKinListInx > (giNumberOfRobots - 1) THEN
+      SavedFocusedKinListInx := 0;
+   END_IF;
+   PaintRobot[SavedFocusedKinListInx].Focus();
+   START PaintRobot[i].TP_State();
+   END_FOR;
+   
+   IF NOT IS_MAPPED(gbSercos3Enabled) THEN
+      START ResetDriveErrors(); //when sercos3 is used the master sends error quit to each drive
+   ELSIF NOT gbSercos3Enabled THEN
+      START ResetDriveErrors(); //when sercos3 is used the master sends error quit to each drive
+   END_IF;
+   
+   FOR i:=0 TO giNumberOfRobots -1 DO
+      WAIT PaintRobot[i].initRobComplete;    
+   END_FOR;
+   
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      START PaintRobot[i].handler.init(PaintRobot[i]);
+      START PaintRobot[i].RcuTypeList.InitTypeList(PaintRobot[i]);
+      START PaintRobot[i].autoControl.Init(PaintRobot[i]);
+      PaintRobot[i].RcuInterfaceToProcess.InitProcessInterface(PaintRobot[i]);
+      START PaintRobot[i].fixpos.InitFixposData(PaintRobot[i]);
+      PaintRobot[i].stromag.ReadConfig(PaintRobot[i]);
+      START PaintRobot[i].vision.InitVision() PRIO 3;
+      IF PaintRobot[i].vision.BK_ReadConfig(PaintRobot[i]) THEN
+         START PaintRobot[i].vision.BK_Init();
+      END_IF;
+      IF PaintRobot[i].vision.TBox_ReadConfig(PaintRobot[i]) THEN
+         START PaintRobot[i].vision.InitTBox();
+      END_IF;
+      IF PaintRobot[i].vision.TC_ReadConfig(PaintRobot[i]) THEN
+         START PaintRobot[i].vision.TC_Init();
+      END_IF;
+      IF PaintRobot[i].objMeasure.ReadConfig(PaintRobot[i]) THEN
+         PaintRobot[i].objMeasure.Init();
+      END_IF;
+      IF PaintRobot[i].vision.VisionZeiss.ReadConfig(PaintRobot[i]) THEN
+         START PaintRobot[i].vision.VisionZeiss.Init();
+      END_IF;
+   
+//      START PaintRobot[i].vision.GetVisionDataPLC(PaintRobot[i]) PRIO 3;
+      START PaintRobot[i].ecoscreen.MapSystemVariables(PaintRobot[i]);
+      START PaintRobot[i].driveTool.Init(PaintRobot[i]);
+      PaintRobot[i].ManageAxisFilter();
+      PaintRobot[i].svDriveParam := MAPX(cSV_DriveParam[i]);
+      FOR j := 0 TO PaintRobot[i].kinematic.mNrOfJoints - 1 DO
+         PaintRobot[i].verifyDriveParam.ReadConfig(i, j);
+         PaintRobot[i].CopyDriveParam();
+      END_FOR;
+      START PaintRobot[i].torqueCheck.init(PaintRobot[i]);
+      
+      IF PaintRobot[i].gluingRobot THEN
+        START PaintRobot[i].gluing.init(PaintRobot[i]); 
+      END_IF;
+   
+      IF PaintRobot[i].sfaRobot THEN
+        START PaintRobot[i].sfa.init(PaintRobot[i]); 
+      END_IF;
+
+      START PaintRobot[i].torqueLogger.init(PaintRobot[i]);
+      START PaintRobot[i].homing.Init(PaintRobot[i]);
+
+      PaintRobot[i].paintChecker.ReadConfig(PaintRobot[i]);
+      IF (PaintRobot[i].paintChecker.type <> eRcuPaintCheckerOff) THEN
+        START PaintRobot[i].paintChecker.InitPaintChecker();
+      END_IF;
+      IF PaintRobot[i].bOldPosAfterRestart AND (gbSimulationOS OR gbFBSSActive) THEN
+         START PaintRobot[i].StoreRetainPosition();
+      ELSIF IS_MAPPED(PaintRobot[i].sv_PositionRetain) THEN
+         PaintRobot[i].sv_PositionRetain.bValid := FALSE;
+      END_IF;
+   END_FOR;
+   
+   // Winmod and real axis are not allowed !!!
+   IF (gbFBSSActive AND NOT gbSERCOSinSimu) THEN
+      RcuSetMessageOnce(equipment_FaErrWrongSimuCfg, -1, 1, 0, "equipment.NEW");
+   END_IF;
+   
+   IF (gbSimulationOS OR gbFBSSActive)THEN
+      START InitOnlyWindows();
+   END_IF;   
+   
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      PaintRobot[i].RobotAdjust();
+      PaintRobot[i].RobotStop();
+      PaintRobot[i].masterProg.Init(PaintRobot[i]);
+      START PaintRobot[i].ToolMeasure.Init(PaintRobot[i]);
+      PaintRobot[i].SetStartGripperAndStartTool();
+      IF PaintRobot[i].bRcuSimulatesAllDrives THEN
+         PaintRobot[i].DeactivateDragErrorObservation();
+      ELSE
+         PaintRobot[i].CheckDragErrorObservation();
+      END_IF;
+      PaintRobot[i].InitMasterSafeEncoders();
+      PaintRobot[i].nozzleChange.Init(PaintRobot[i]);
+   END_FOR;
+   
+   CopySystemCfgFiles();
+//   CopySystemTextFiles();
+   gbEquipmentReady := TRUE;
+   
+END_ROUTINE
+
+ROUTINE InitOnlyWindows() PRIVATE
+VAR
+   i : DINT;
+   j : DINT;
+   k : DINT;
+   l : DINT;
+   r : REAL;
+   pos : TMcuPosition;
+   bTimeOut : BOOL;
+   tmpMainDrives : TMcuVector;
+   tmpAuxDrives  : TMcuVector;
+   tmpMainJoints : TMcuVector;
+   tmpAuxJoints  : TMcuVector;
+END_VAR
+
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      IF NOT PaintRobot[i].bOldRetainPosValid THEN
+         WAIT PaintRobot[i].fixPosReady;
+         IF PaintRobot[i].fixpos.bMultiHome THEN
+            j := PaintRobot[i].fixpos.yDegradeHome[PaintRobot[i].fixpos.iDegradeRob].indexRcuInFix;
+            IF (PaintRobot[i].fixpos.yRcuFixpositions[j].Option = eHomeWithoutAux) THEN
+               bTimeOut := FALSE;
+               SysTimerSet(5000, bTimeOut);
+               WAIT (PaintRobot[i].fixpos.yRcuFixpositions[j].bPosIsValid) OR bTimeOut;
+               IF bTimeOut THEN
+                  PaintRobot[i].DebugPrint(eTraceEquipment, " home position not valid ");
+               ELSE
+                  PaintRobot[i].fixpos.yRcuFixpositions[j].FixPoint.GetMcuPos(pos, PaintRobot[i]);
+                  FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+                     tmpMainJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k];
+                  END_FOR;
+                  tmpMainJoints.mValidLen := PaintRobot[i].nrOfMainJoints;
+                  tmpMainDrives.mValidLen := PaintRobot[i].nrOfMainDrives;
+                  FOR k:=0 TO PaintRobot[i].nrOfAuxJoints-1 DO
+                     tmpAuxJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k+PaintRobot[i].nrOfMainJoints];
+                  END_FOR;
+                  tmpAuxJoints.mValidLen := PaintRobot[i].nrOfAuxJoints;
+                  tmpAuxDrives.mValidLen := PaintRobot[i].nrOfAuxDrives;
+                  McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, PaintRobot[i].kinematicMcuId);
+
+                  FOR k:=0 TO PaintRobot[i].nrOfJoints-1 DO
+                     r := pos.mPosJoints.mJoints.mValues[k];
+                     McuSetJointPosition(PaintRobot[i].kinematicMcuId, k, r, eMcuSetPosModeAbsolute);
+                     PaintRobot[i].drive[k].offset := - tmpMainDrives.mValues[k];
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis  "+PaintRobot[i].drive[k].axesName +" set to "+STR(r));
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[k].axesName +" set to "+STR(tmpMainDrives.mValues[k]));
+                  END_FOR;
+
+               END_IF;  
+            ELSIF (PaintRobot[i].fixpos.yRcuFixpositions[j].Option = eHomeWithAux) THEN
+               bTimeOut := FALSE;
+               SysTimerSet(5000, bTimeOut);
+               WAIT (PaintRobot[i].fixpos.yRcuFixpositions[j].bPosIsValid) OR bTimeOut;
+               IF bTimeOut THEN
+                  PaintRobot[i].DebugPrint(eTraceEquipment, " home position not valid ");
+               ELSE
+                  PaintRobot[i].fixpos.yRcuFixpositions[j].FixPoint.GetMcuPos(pos, PaintRobot[i]);
+                  FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+                     tmpMainJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k];
+                  END_FOR;
+                  tmpMainJoints.mValidLen := PaintRobot[i].nrOfMainJoints;
+                  tmpMainDrives.mValidLen := PaintRobot[i].nrOfMainDrives;
+                  FOR k:=0 TO PaintRobot[i].nrOfAuxJoints-1 DO
+                     tmpAuxJoints.mValues[k] := pos.mAuxJoints.mValues[k];
+                  END_FOR;
+                  tmpAuxJoints.mValidLen := PaintRobot[i].nrOfAuxJoints;
+                  tmpAuxDrives.mValidLen := PaintRobot[i].nrOfAuxDrives;
+                  McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, PaintRobot[i].kinematicMcuId);
+
+                  FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+                     r := pos.mPosJoints.mJoints.mValues[k];
+                     McuSetJointPosition(PaintRobot[i].kinematicMcuId, k, r, eMcuSetPosModeAbsolute);
+                     PaintRobot[i].drive[k].offset := -tmpMainDrives.mValues[k];
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis "+PaintRobot[i].drive[k].axesName +" set to "+STR(r));
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[k].axesName +" set to "+STR(tmpMainDrives.mValues[k]));
+                  END_FOR;
+                  FOR k:=0 TO PaintRobot[i].nrOfAuxJoints -1 DO
+                     r := pos.mAuxJoints.mValues[k];
+                     l := k + PaintRobot[i].nrOfMainJoints;
+                     McuSetJointPosition(PaintRobot[i].kinematicMcuId, l, r, eMcuSetPosModeAbsolute);
+                     PaintRobot[i].drive[l].offset := -tmpAuxDrives.mValues[k];
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis  "+PaintRobot[i].drive[l].axesName +" set to "+STR(r));
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[l].axesName +" set to "+STR(tmpAuxDrives.mValues[k]));
+                  END_FOR;
+               END_IF;
+            END_IF;
+         ELSE
+            FOR j:=0 TO PaintRobot[i].fixpos.maxFixpos-1 DO
+               IF (PaintRobot[i].fixpos.yRcuFixpositions[j].Option = eHomeWithoutAux) THEN
+                  bTimeOut := FALSE;
+                  SysTimerSet(5000, bTimeOut);
+                  WAIT (PaintRobot[i].fixpos.yRcuFixpositions[j].bPosIsValid) OR bTimeOut;
+                  IF bTimeOut THEN
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " home position not valid ");
+                  ELSE
+                     PaintRobot[i].fixpos.yRcuFixpositions[j].FixPoint.GetMcuPos(pos, PaintRobot[i]);
+                     FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+                        tmpMainJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k];
+                     END_FOR;
+                     tmpMainJoints.mValidLen := PaintRobot[i].nrOfMainJoints;
+                     tmpMainDrives.mValidLen := PaintRobot[i].nrOfMainDrives;
+                     FOR k:=0 TO PaintRobot[i].nrOfAuxJoints-1 DO
+                        tmpAuxJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k+PaintRobot[i].nrOfMainJoints];
+                     END_FOR;
+                     tmpAuxJoints.mValidLen := PaintRobot[i].nrOfAuxJoints;
+                     tmpAuxDrives.mValidLen := PaintRobot[i].nrOfAuxDrives;
+                     McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, PaintRobot[i].kinematicMcuId);
+
+                     FOR k:=0 TO PaintRobot[i].nrOfJoints-1 DO
+                        r := pos.mPosJoints.mJoints.mValues[k];
+                        McuSetJointPosition(PaintRobot[i].kinematicMcuId, k, r, eMcuSetPosModeAbsolute);
+                        PaintRobot[i].drive[k].offset := -tmpMainDrives.mValues[k];
+                        PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis k"+PaintRobot[i].drive[k].axesName +" set to "+STR(r));
+                        PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[k].axesName +" set to "+STR(tmpMainDrives.mValues[k]));
+                     END_FOR;
+                  END_IF;            
+               ELSIF (PaintRobot[i].fixpos.yRcuFixpositions[j].Option = eHomeWithAux) THEN
+                  bTimeOut := FALSE;
+                  SysTimerSet(5000, bTimeOut);
+                  WAIT (PaintRobot[i].fixpos.yRcuFixpositions[j].bPosIsValid) OR bTimeOut;
+                  IF bTimeOut THEN
+                     PaintRobot[i].DebugPrint(eTraceEquipment, " home position not valid ");
+                  ELSE
+                     PaintRobot[i].fixpos.yRcuFixpositions[j].FixPoint.GetMcuPos(pos, PaintRobot[i]);
+                     FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+                         tmpMainJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k];
+                     END_FOR;
+                     tmpMainJoints.mValidLen := PaintRobot[i].nrOfMainJoints;
+                     tmpMainDrives.mValidLen := PaintRobot[i].nrOfMainDrives;
+                     FOR k:=0 TO PaintRobot[i].nrOfAuxJoints-1 DO
+                        tmpAuxJoints.mValues[k] := pos.mAuxJoints.mValues[k];
+                     END_FOR;
+                     tmpAuxJoints.mValidLen := PaintRobot[i].nrOfAuxJoints;
+                     tmpAuxDrives.mValidLen := PaintRobot[i].nrOfAuxDrives;
+                     McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, PaintRobot[i].kinematicMcuId);
+
+                     FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+                        r := pos.mPosJoints.mJoints.mValues[k];
+                        McuSetJointPosition(PaintRobot[i].kinematicMcuId, k, r, eMcuSetPosModeAbsolute);
+                        PaintRobot[i].drive[k].offset := -tmpMainDrives.mValues[k];
+                        PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis "+PaintRobot[i].drive[k].axesName +" set to "+STR(r));
+                        PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[k].axesName +" set to "+STR(tmpMainDrives.mValues[k]));
+                     END_FOR;
+                     FOR k:=0 TO PaintRobot[i].nrOfAuxJoints -1 DO
+                        r := pos.mAuxJoints.mValues[k];
+                        l := k + PaintRobot[i].nrOfMainJoints;
+                        McuSetJointPosition(PaintRobot[i].kinematicMcuId, l, r, eMcuSetPosModeAbsolute);
+                        PaintRobot[i].drive[l].offset := -tmpAuxDrives.mValues[k];
+                        PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis "+PaintRobot[i].drive[l].axesName +" set to "+STR(r));
+                        PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[l].axesName +" set to "+STR(tmpAuxDrives.mValues[k]));
+                     END_FOR;
+                  END_IF;
+               END_IF;
+            END_FOR;
+         END_IF;
+      ELSE // PaintRobot[i].bOldRetainTestValid = TRUE
+         FOR k:=0 TO PaintRobot[i].nrOfMainJoints-1 DO
+            tmpMainJoints.mValues[k] := PaintRobot[i].oldRetainPosition.jointPos[k];
+         END_FOR;
+         PRINT("Restore retaindata jointpos as actual robotposition"); 
+         tmpMainJoints.mValidLen := PaintRobot[i].nrOfMainJoints;
+         tmpMainDrives.mValidLen := PaintRobot[i].nrOfMainDrives;
+         FOR k:=0 TO PaintRobot[i].nrOfAuxJoints-1 DO
+            tmpAuxJoints.mValues[k] := PaintRobot[i].oldRetainPosition.jointPos[k+PaintRobot[i].nrOfMainJoints];
+         END_FOR;
+         tmpAuxJoints.mValidLen := PaintRobot[i].nrOfAuxJoints;
+         tmpAuxDrives.mValidLen := PaintRobot[i].nrOfAuxDrives;
+         McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, PaintRobot[i].kinematicMcuId);
+
+         FOR k:=0 TO PaintRobot[i].nrOfJoints-1 DO
+            r := PaintRobot[i].oldRetainPosition.jointPos[k];
+            McuSetJointPosition(PaintRobot[i].kinematicMcuId, k, r, eMcuSetPosModeAbsolute);
+            PaintRobot[i].DebugPrint(eTraceEquipment, " initial position axis "+PaintRobot[i].drive[k].axesName +" set to "+STR(r));
+            IF k < PaintRobot[i].nrOfMainJoints THEN
+               PaintRobot[i].drive[k].offset := -tmpMainDrives.mValues[k];
+               PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[k].axesName +
+                                                         " set to "+STR(tmpMainDrives.mValues[k]));
+            ELSE   
+               PaintRobot[i].drive[k].offset := -tmpAuxDrives.mValues[k-PaintRobot[i].nrOfMainJoints];
+               PaintRobot[i].DebugPrint(eTraceEquipment, " initial position drive "+PaintRobot[i].drive[k].axesName +
+                                                         " set to "+STR(tmpAuxDrives.mValues[k-PaintRobot[i].nrOfMainJoints]));
+            END_IF;
+         END_FOR;
+      
+      END_IF;
+   END_FOR;
+
+   FOR i:=0 TO giNumberOfRobots - 1 DO
+      START ResetFixposInterlocks(i);
+   END_FOR;
+   
+END_ROUTINE
+
+ROUTINE ResetFixposInterlocks(robot : DINT) PRIVATE
+ VAR
+  sProg    : STRING;
+  iProgHdl : DINT;
+  progState : TFlowState;
+  rob       : DINT;
+ END_VAR
+ 
+   rob := robot;
+   PaintRobot[rob].DebugPrint(eTraceEquipment, " ResetFixposInterlocks started - waiting for updateActive");
+   WAIT PaintRobot[rob].RcuInterfaceToBCU.bNewBodyData AND PaintRobot[rob].updateActive;
+   sProg := "kin" + STR(PaintRobot[rob].kinListInx+1) + ".fixpos.resetinterlocks";
+   PaintRobot[rob].DebugPrint(eTraceEquipment, " ResetFixposInterlocks - Start teach program = " + sProg);
+   iProgHdl := StartProg(sProg);
+   progState := GetFlowState(iProgHdl);            
+   WHILE progState <> eFlowInvalid DO            
+      Sleep(200);            
+      progState := GetFlowState(iProgHdl);            
+   END_WHILE;
+   PaintRobot[rob].DebugPrint(eTraceEquipment, " ResetFixposInterlocks - Teach program = " + sProg + " finished - progState = " + STR(progState));
+      
+END_ROUTINE
+
+ROUTINE ResetDriveErrors() PRIVATE
+   VAR
+      oldError : BOOL;
+      i : DINT;
+      j : SINT;
+      errorQuit : MAPTO BOOL;
+   END_VAR
+   
+   errorQuit := MAPX(cSV_ErrorQuit);
+   IF NOT IS_MAPPED(errorQuit) THEN
+      RcuSetMessageOnce(equipment_ErrMapToHwFailed, -1, 1, 0, "equipment.ResetDriveErrors", cSV_ErrorQuit);
+   END_IF;
+   
+   IF IS_MAPPED(errorQuit) THEN
+      WHILE TRUE DO       
+         WAIT errorQuit;
+         errorQuit := FALSE;    
+         PRINT("Error quit drives from IEC");
+         FOR j:=0 TO giNumberOfRobots - 1 DO
+            IF PaintRobot[j].allDrivesConnected AND NOT PaintRobot[j].updateActive THEN
+               // check for error states and reset them
+               oldError := TRUE;
+               WHILE oldError DO
+                  oldError := FALSE;
+                  FOR i := 0 TO PaintRobot[j].kinematic.mNrOfJoints - 1 DO
+                      START PaintRobot[j].drive[i].ResetError(oldError);
+                      PRINT("Quit error on drive " + STR(i+1));
+                  END_FOR;
+                  WAIT IS_FINISHED;
+                  IF oldError THEN
+                     PaintRobot[j].WaitMcMicroCycles(2);
+                  END_IF;
+               END_WHILE;
+            END_IF;
+         END_FOR;   
+      END_WHILE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE CopySystemCfgFiles() PRIVATE
+   VAR
+      sApplPath   : STRING;
+      sSystemPath : STRING;
+      len         : DINT;
+      pos         : DINT;
+      srcfileName : STRING;
+      dstfileName : STRING;
+      fileName    : STRING;
+      bFound      : BOOL;
+   END_VAR;
+   
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   len := StrLen(sApplPath)+1;
+   sApplPath := StrInsert(sApplPath, "application/control/SysConfig/", len);
+   CatalogReadString(giSysBaseHdl, "rootPath", sSystemPath, FALSE);
+   len := StrLen(sSystemPath)+1;
+   sSystemPath := StrInsert(sSystemPath, "system/config/setup/", len);
+   IF RmDir(sApplPath) THEN
+      MkDir(sApplPath);
+   END_IF;
+   IF  FileGetFirst(sSystemPath, srcfileName) THEN
+      bFound := TRUE;
+      WHILE bFound DO         
+         pos := StrFindRight (srcfileName, "/");
+         len := StrLen(srcfileName);
+         len := len-pos;      
+         fileName := StrRight (srcfileName, len);
+         dstfileName := sApplPath;
+         len := StrLen(dstfileName)+1;
+         dstfileName := StrInsert(sApplPath, fileName, len);
+         FileCopy(srcfileName, dstfileName);
+         bFound := FileGetNext (srcfileName, srcfileName);
+      END_WHILE;
+   END_IF;
+   
+END_ROUTINE
+
+ROUTINE CopySystemTextFiles()
+   VAR
+      sApplPath   : STRING;
+      sSystemPath : STRING;
+      len         : DINT;
+      pos         : DINT;
+      srcfileName : STRING;
+      dstfileName : STRING;
+      fileName    : STRING;
+      bFound      : BOOL;
+   END_VAR;
+   
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   len := StrLen(sApplPath)+1;
+   sApplPath := StrInsert(sApplPath, "application/control/SysText/", len);
+   CatalogReadString(giSysBaseHdl, "rootPath", sSystemPath, FALSE);
+   len := StrLen(sSystemPath)+1;
+   sSystemPath := StrInsert(sSystemPath, "system/text/", len);
+   IF RmDir(sApplPath) THEN
+      MkDir(sApplPath);
+   END_IF;
+   IF  FileGetFirst(sSystemPath, srcfileName) THEN
+      bFound := TRUE;
+      WHILE bFound DO         
+         pos := StrFindRight (srcfileName, "/");
+         len := StrLen(srcfileName);
+         len := len-pos;      
+         fileName := StrRight (srcfileName, len);
+         dstfileName := sApplPath;
+         len := StrLen(dstfileName)+1;
+         dstfileName := StrInsert(sApplPath, fileName, len);
+         FileCopy(srcfileName, dstfileName);
+         bFound := FileGetNext (srcfileName, srcfileName);
+      END_WHILE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE GetFirmwareVersion()
+   VAR
+      handle    : DINT;
+      pos       : DINT;
+      length    : DINT;
+      strLeft   : STRING;
+      strRight  : STRING;
+      strRight1 : STRING;
+      strRight2 : STRING[1];
+      string    : STRING;
+   END_VAR
+   
+   IF CatalogGetHandle("System/versions", handle) THEN
+      IF CatalogReadString(handle, "name", controlSystemName, TRUE) THEN
+         IF (StrLeft(controlSystemName, 13) = "KeMotion-7000") THEN
+            controlSystem := IPC;
+         ELSIF (StrLeft(controlSystemName, 13) = "KeMotion-6000") THEN
+            controlSystem := Cube;
+         ELSIF (gsOsName = "Linux") OR (gsOsName = "LinuxSim") THEN
+            controlSystem := RPC2;
+         END_IF;
+      END_IF;
+      
+      IF CatalogReadString(handle, "systemVersionString", firmwareVersion, TRUE) THEN
+         pos := StrFindRight(firmwareVersion, ".");
+         length := StrLen(firmwareVersion);
+         strLeft := StrLeft(firmwareVersion, pos-1);
+         strRight := StrRight(firmwareVersion, length-pos);
+         length := StrLen(strRight);
+         strRight1 := StrLeft(strRight, 2);
+         strRight2 := StrRight(strRight, length-2);
+         string := strLeft + strRight1;
+         firmwareVersionNr := StrToDint(string);
+         firmwareVersionSubChar := strRight2;
+         IF controlSystem = RPC2 THEN
+            firmwareVersionNr := firmwareVersionNr + 600;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+END_ROUTINE

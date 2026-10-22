@@ -1,0 +1,2730 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuRobot.tts
+*  First Author : pen
+*  Date         : 12.2.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Representation of a Roboter, consists of a kinematic and drives
+*------------------------------------------------------------------------------
+* 28.08.04 nmr: Generate info in StartAllDrives, if not all drives could be 
+*               applied to kinematic
+* 30.08.04 BMA: New funkcion UpdatePositions to copy actualvalues periodic into
+*               variable SV_ActualPositions. This variable can be accessed via
+*               OPC-Server,
+* 19.09.04 nmr: Chec2 SW-3505tsw5tch and set variables for TeachView
+* 25.09.04 nmr: Correction of CheckPower, because differentiation between AB and
+*               bb with statusword possible
+* 05.10.04 BMA: VeloControl now waits until initRobComplete
+* 08.10.04 BMA: Changes in StartDriveUpdate because of problems with ContinueProg
+* 16.02.05 nmr: Check for allDrivesReady removed in routine Reference
+* 25.04.05 BMA: Parameters for mastering inserted
+* 17.06.05 sbj: Change-over for configurability of numbers of axis
+* 20.01.06 BMA: Actual TCP Position and actual Object to Systemvariables
+*)
+
+
+INHERIT TRcuKinematic;
+
+TYPE
+   TDriveParamJoint : STRUCT
+      driveIndex     : INT;
+      P51            : REAL;
+      S109           : REAL;
+      S111           : REAL;
+      maxTorqueMotor : REAL;
+      maxTorqueDrive : REAL;
+      gearRatio      : REAL;
+      TempLimit      : REAL;
+      TempLimitEnc   : REAL;
+      Node1Vel       : REAL;
+      Node1Torque    : REAL;
+      Node2Vel       : REAL;
+      Node2Torque    : REAL;
+      Node3Vel       : REAL;
+      Node3Torque    : REAL;
+      Gain           : REAL;
+      EnableEncTemp  : BOOL;
+   END_STRUCT;
+   
+   TDriveParam : ARRAY[32] OF TDriveParamJoint;
+END_TYPE
+
+CONSTANT PRIVATE
+  cMaxFilterTime : INT := 105; // ms
+END_CONSTANT
+
+(*******************************************************************************
+* members
+*)
+
+VAR
+   disableDriveStart : BOOL;
+   bBrakeRelDevPlugged     : BOOL;
+
+   // array of references to drives, contains base, wrist and auxiliary axis
+   drive : ARRAY [cMcuMaxJ] OF MAPTO TRcuDrive;
+   // array of references to dosingdrives
+   dosingDrive : ARRAY [cgiMaxDosingDrive] OF MAPTO TRcuDrive;
+
+   allDrivesConnected : BOOL;     // drives are connected for every axis
+   allDrivesReady     : BOOL;     // all drives are ready for operation
+   anyDriveError      : BOOL;     // switches to TRUE if any connected drive signals an error
+   allDrivesBB        : BOOL;
+   anySercosError     : BOOL; 
+   initRobComplete    : BOOL;
+   
+   associatedPCU : DINT;
+   simulatePlc   : TRcuSimulatePLC;
+   iSerialNr     : DINT;
+   // All drives are simulated. It is not necessary to switch between the
+   // drivestates.
+   bRcuSimulatesAllDrives    : BOOL;
+    // Decide whether the RCU simulates Drivestates, useful if drive shared
+   // memories are present but not maintained by the IO-system
+   bRcuSimulatesDriveState   : BOOL;
+   // indicates whether golden repos should be used
+   bUseGoldenRepos       : BOOL; 
+   nrOfJogDimensions    : DINT := 7;    // number of hardkeys for jogging    
+   triggerPlaneDiameter : REAL := 99900.0;  // mm, set as if it were infinite
+   minDist              : REAL := 30.0; // mm
+   eps                  : REAL:= 0.50;  // all triggers are segment triggers
+   masterProg           : TRcuMasterProg;
+   
+   bUseATEXbrakeCheck       : BOOL;
+   bBrakeRelDevIsUsed       : BOOL;
+   brakeCheck               : TRcuBrakeCheck;   // ATEX-BrakeCheck
+   verifyDriveParam         : TRcuVerifyDriveParam;
+   bFieldbusSlaveReady      : BOOL;
+   fieldbusIn               : tsFieldbusInputs;
+   fieldbusOut              : tsFieldbusOutputs;
+   areasChecked             : BOOL;  //working-area have been checked at bootup
+   fixPosReady              : BOOL;
+   bUseDragErrorObservation : BOOL;  //start drag error observation
+   iDriveControlTime        : DINT;  //time-delay between set- and actvalue in ms for drag-error observation. 0 means no observation
+   bUseLagErrorObservation  : BOOL;  //start lag error observation
+   iDriveInPositionLagTime  : DINT;  //time to reach to the stall position
+   yIndexOfJoints           : ARRAY[20] OF DINT;
+   torqueReductionT1        : BOOL;
+   setNewStiffness          : INT;
+   stiffnessMacroHdl        : DINT;
+   newStiffnessCase         : BOOL;
+   svDriveParam             : MAPTO TDriveParam;
+   torqueCheck              : TRcuTorqueCheck;
+   torqueLogger             : TRcuTorqueLogger;
+   ybShowAxisMastern        : ARRAY [1..cMcuMaxJ] OF BOOL;
+   iHighestJointNumber      : INT;   
+   iActualPageTracking      : INT;
+   ybShowFifoPage           : ARRAY [1..20] OF BOOL;   
+   bRobotIsInFocus          : BOOL;
+   gluingRobot              : BOOL;
+   bEnablePlcOrderByte      : BOOL;
+   bEnableA7ToPlc           : BOOL;
+   rOverrideForHoming       : REAL;
+   chgMaskingDevice         : BOOL;
+   iI                       : DINT;
+   iI2                      : DINT;
+   iI3                      : DINT;
+   iI4                      : DINT;
+   Sem                      : BOOL := TRUE;
+   sfaRobot                 : BOOL;
+   bBccActive               : BOOL; 
+   bActivatePlacePlug       : BOOL;
+   iMaxToolDesks_BCC        : INT;
+   iMaxTool_BCC             : INT;
+   driveTorqueUnitNm        : BOOL;
+   followingErrorDelay      : DINT;
+   followingErrorLimits     : TMcuVector;
+   timeCounterSecs          : DINT;
+   timeCounterMins          : DINT SAVE;
+   timeCounterHours         : DINT SAVE;
+   svCounterMins            : MAPTO DINT;
+   svCounterHours           : MAPTO DINT;
+   bVoltageReductionBrake   : BOOL;
+   bHWOVoltRedBrake         : MAPTO BOOL;
+   maxStopTimeMs            : REAL := 350; // maximum robot stopping time in ms
+   robotAdjustActive        : BOOL;
+END_VAR
+
+
+// starts the Observation of the fullSpeed flag in the mainmodemanager with
+// corresponding restrictions to the dynamic-limits
+ROUTINE StartVeloControl()
+
+   IF veloControlActive THEN
+      RcuSetMessageOnce(TRcuRobot_ErrKinRepStrtVelo, kinListInx, 1, instId, "TRcuRobot.StartVeloControl", robotName);
+      RETURN;
+   END_IF;
+   START VeloControl();
+END_ROUTINE
+
+
+// Connect an axis with a given drive. Allows reconnection but does not check
+// whether drives for different axis are different. Returns false for invalid
+// axis indizes.
+ROUTINE ApplyDrive(VAR_IN inx : DINT; newDrive : TRcuDrive) : BOOL
+   VAR
+      resourceName : STRING;
+   END_VAR
+
+   // return false when index is not valid
+   IF (inx >= kinematic.mNrOfJoints) OR (inx < 0) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrRobInvAxis, kinListInx, 1, instId, "TRcuRobot.ApplyDrive", robotName, STR(inx));
+      RETURN FALSE;
+   END_IF;
+
+   // reconnection is not allowed
+   IF IS_MAPPED(drive[inx]) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrRobDrConnected, kinListInx, 1, instId, "TRcuRobot.ApplyDrive", robotName, STR(inx));
+      RETURN FALSE;
+   END_IF;
+
+   // when the Mcu does the Update, inform the Mcu about the drive
+   IF NOT gbRcuManagesDriveUpdate THEN
+      resourceName := newDrive.resourceName;
+      
+      IF NOT McuApplyServo(kinematicMcuId, resourceName, inx) THEN
+         RcuSetMessageOnce(TRcuRobot_ErrApplyServo, kinListInx, 1, instId, "TRcuRobot.ApplyDrive", robotName, resourceName);
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+
+   // create connections
+   drive[inx] := MAP(newDrive);
+   newDrive.error := MAP(anyDriveError);
+   newDrive.type := kinematic.mJoints[inx].mDHParam.mTyp;
+
+   // maintain connectedCount and allDrivesConnected
+   connectedCount := connectedCount + 1;
+   IF connectedCount = kinematic.mNrOfJoints THEN
+      IF NOT gbRcuManagesDriveUpdate THEN
+         McuSetServoCtrl(kinematicMcuId, TRUE);
+         WaitMcMainCycles(2);
+      END_IF;
+      allDrivesConnected := TRUE;
+   END_IF;
+
+   // maintain referencedCount and allDrivesReferenced
+   START ObserveReference(inx);
+
+   WAIT TRUE; // supply point for coroutine-switch
+   RETURN TRUE;
+END_ROUTINE
+
+//Connect to dosing drive
+ROUTINE ApplyDosingDrive(VAR_IN inx : DINT; newDrive : TRcuDrive) : BOOL
+   // create connections
+   dosingDrive[inx] := MAP(newDrive);
+   IF IS_MAPPED(dosingDrive[inx]) THEN
+      RETURN TRUE;
+   ELSE   
+      RETURN FALSE;
+   END_IF;   
+END_ROUTINE
+
+// check if power is applied for all drives
+ROUTINE PowerApplied() : BOOL
+   VAR
+      i : DINT;
+   END_VAR
+
+   IF allDrivesSimulated THEN
+      RETURN autoControl.bPLCPowerOn;
+   END_IF;
+
+   FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+      IF NOT drive[i].powerApplied THEN
+         RETURN FALSE;
+      END_IF;
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// bring all drives to a state ready for operation (i.e. eDriveSwitchedOn)
+ROUTINE StartAllDrives() : BOOL
+   VAR
+      i : DINT;
+      failure : BOOL;
+   END_VAR
+   
+   // simultanously activate the drives
+   IF NOT allDrivesSimulated THEN
+   FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+      START drive[i].DriveStartUp(failure);
+   END_FOR;
+   END_IF;
+
+   WAIT IS_FINISHED;
+
+   // check for success
+   IF failure THEN
+      allDrivesReady := FALSE;
+   ELSE
+      allDrivesReady := TRUE;
+      IF NOT gbRcuManagesDriveUpdate THEN
+         WaitMcMainCycles(2);
+         //Sleep(100); // @? Mcu need some time to notice ready-state, should be removed later
+      END_IF;
+   END_IF;
+   RETURN allDrivesReady;
+END_ROUTINE
+
+
+// activate the throughput of values from the MCU to the drives
+ROUTINE StartDriveUpdate() : BOOL
+   VAR
+      i : DINT;
+      failure : BOOL;
+      implaus : BOOL;
+     mainDrives : TMcuVector;
+     auxDrives  : TMcuVector;
+   END_VAR
+
+   // check required conditions
+   IF (NOT allDrivesConnected) OR (NOT allDrivesReady) OR updateActive OR 
+           disableDriveStart OR bBrakeRelDevPlugged OR stromag.bBrakeError THEN
+      RETURN FALSE;
+   END_IF;
+
+   //set robot to HOME position on start of GhostNoMotion
+   IF ghostNoMotion.bSetStartPos THEN
+      ghostNoMotion.bSetStartPos := FALSE;
+      IF NOT fixpos.GetDrivePosOfHome(mainDrives, auxDrives) THEN
+         DebugPrint(eTraceEquipment, "GetDrivePosOfHome - couldn't load HOME position");
+         RETURN FALSE;
+      END_IF;   
+      IF RcuStartInterpolator(mainDrives, auxDrives) THEN
+         DebugPrint(eTraceEquipment, "Set joint position of Fixpos-HOME");
+      ELSE
+         PRINT("DDDDDDDDDDDDDDDDDDDDD RcuStartInterpolator   --FALSE - 3");
+         RETURN FALSE;
+      END_IF;   
+   ELSE
+      ghostNoMotion.bSetStartPos     := FALSE;
+      ghostNoMotion.bSwitchingDrives := FALSE;
+      IF NOT RcuRestartMcu() THEN
+         PRINT("DDDDDDDDDDDDDDDDDDDDD RcuRestart   --FALSE - 3");
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+
+   // check plausibility of joint values
+   FOR i := 0 TO kinematic.mNrOfMainJoints - 1 DO
+      IF NOT CheckPlausibility(i, actJoints.mPos[i]) THEN
+         drive[i].DeclareUnreferenced();
+         implaus := TRUE;
+      END_IF;
+   END_FOR;
+   FOR i := 0 TO kinematic.mNrOfAuxJoints - 1 DO
+      IF NOT CheckPlausibility(i + kinematic.mNrOfMainJoints, actJoints.mPos[i + kinematic.mNrOfMainJoints]) THEN
+         drive[i + kinematic.mNrOfMainJoints].DeclareUnreferenced();
+         implaus := TRUE;
+      END_IF;
+   END_FOR;
+   IF implaus THEN
+      RcuStopInterpolator();
+      RcuSetMessageOnce(TRcuRobot_ErrStartPlausi, kinListInx, 1, instId, "TRcuRobot.StartDriveUpdate", robotName);
+      RETURN FALSE;
+   END_IF;
+
+   // this is the moment to bring the drives to the eDriveOpEnabled state
+   IF NOT allDrivesSimulated THEN
+
+      FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+         START drive[i].DriveEnableOperation(failure);
+      END_FOR;
+   END_IF;
+   WAIT IS_FINISHED;
+   IF failure THEN
+      StopAllDrives();
+      RcuStopInterpolator();
+      RETURN FALSE;
+   END_IF;
+
+   // start update
+   IF gbRcuManagesDriveUpdate THEN
+      cyclicUpdateRequest := TRUE;
+   END_IF;
+
+   chgModeAllowed := TRUE;
+   updateActive := TRUE;
+   RETURN TRUE;
+END_ROUTINE
+
+// set mcu-positions to mark drives as referenced for mc 
+// (not required at the moment, but in future mcu may check this to 
+// inhibit cartesian movement with unreferenced drives)
+// joint pos has to be set before disabling servo-control 
+// to avoid errors when re-enabling servo-control
+ROUTINE SetJointPositions()
+   VAR
+      i : DINT;
+      posSet : BOOL := TRUE;
+   END_VAR
+
+   // set positions if mc is not referenced
+   IF NOT McuIsReferenced(kinematicMcuId) THEN
+      FOR i := 0 TO kinematic.mNrOfJoints-1 DO
+         McuSetJointPosition(kinematicMcuId, i, 0.0, eMcuSetPosModeRelative);
+      END_FOR;
+      PRINT("Positions set: " + STR(McuIsReferenced(kinematicMcuId)));
+   END_IF;
+END_ROUTINE
+
+
+// send a Quickstop command to all connected drives
+ROUTINE QuickstopAllDrives()
+   VAR
+      i : DINT;
+   END_VAR
+
+   // request Quickstop for all connected drives
+   FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+      IF IS_MAPPED(drive[i]) THEN
+         START drive[i].Quickstop();
+      END_IF;
+   END_FOR;
+
+   // wait for completion of the Quickstopfunctions
+   WAIT IS_FINISHED;
+
+   // if necessary stop update
+   IF updateActive THEN
+      StopUpdate();
+   END_IF;
+
+   // reset updateActive (late)
+   updateActive := FALSE;
+   // force restart (in principle all drives could still be ready in spite of the
+   // Quickstop but this is not worth checking)
+   allDrivesReady := FALSE;
+END_ROUTINE
+
+
+// send a Stop command to all connected drives
+ROUTINE StopAllDrives()
+   VAR
+      i : DINT;
+   END_VAR
+
+   // request DriveStop for all connected drives
+   FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+      IF IS_MAPPED(drive[i]) THEN
+         START drive[i].DriveStop();
+      END_IF;
+   END_FOR;
+
+   // wait for completion of the Stopfunctions
+   WAIT IS_FINISHED;
+
+   // if necessary stop update
+   IF updateActive THEN
+      StopUpdate();
+   END_IF;
+
+   // reset updateActive (late)
+   updateActive := FALSE;
+END_ROUTINE
+
+
+// give a reference value for one of the drives, only when all drives are ready
+// and not moving
+ROUTINE ReferenceDrive(CONST inx : DINT; CONST pos : REAL) : BOOL
+
+   RETURN Reference(inx, FALSE, pos, 0);
+END_ROUTINE
+
+
+// start an automatic referencing run for one of the drives, only when all drives
+// are ready and not moving
+ROUTINE ReferenceDriveSelf(CONST inx : DINT; CONST mode : DINT) : BOOL
+
+   RETURN Reference(inx, TRUE, 0.0, mode);
+END_ROUTINE
+
+
+// Switch between Simulation modes for one of the drives
+ROUTINE SimulateDrive(CONST inx : DINT; CONST on : BOOL) : BOOL
+   VAR
+      wasReferenced : BOOL;
+   END_VAR
+
+   wasReferenced := drive[inx].referenced;
+   IF drive[inx].SetSimulationMode(on) THEN
+      IF NOT on THEN
+         // when simulation is left then stop all drives, resets allDrivesReady
+         QuickstopAllDrives();
+      END_IF;
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+// send a simulation-command to all connected drives
+ROUTINE SimulateAllDrives(CONST simulation : BOOL) : BOOL
+   VAR
+      i : DINT;
+   END_VAR
+
+   // request QuickStop for all connected drives
+   QuickstopAllDrives();
+   //simulation --> no drives
+   IF (gbSimulationOS OR gbFBSSActive) THEN
+      //switching drives to sim
+      IF (NOT ghostNoMotion.bActiveInSim) AND simulation THEN
+         ghostNoMotion.bSetStartPos := TRUE;                               //StartDriveUpdate sets the HOME position to the joints
+         ghostNoMotion.jointsBeforeStart.mValidLen := actJoints.mValidLen; //store current position to be restored after Ghost
+         FOR i:=0 TO actJoints.mValidLen-1 DO
+             ghostNoMotion.jointsBeforeStart.mValues[i] := actJoints.mPos[i];
+         END_FOR;
+      //switching drives to real mode   
+      ELSIF ghostNoMotion.bActiveInSim AND NOT simulation THEN
+         ghostNoMotion.bSetStartPos     := FALSE;
+         ghostNoMotion.bSwitchingDrives := FALSE;
+         WAIT NOT updateActive;
+         FOR i:=0 TO actDrives.mValidLen-1 DO  //restore joint position from beginning of Ghost usually FlowCheck
+             McuSetJointPosition(kinematicMcuId, i, ghostNoMotion.jointsBeforeStart.mValues[i], eMcuSetPosModeAbsolute);
+             DebugPrint(eTraceEquipment, " RestoreJointPosition drive " + drive[i].axesName + " pos=" + STR(ghostNoMotion.jointsBeforeStart.mValues[i]));
+         END_FOR;
+      END_IF;
+      ghostNoMotion.bActiveInSim := simulation;
+      IF ghostNoMotion.bActiveInSim THEN
+         DebugPrint(eTraceEquipment, "All drives switched to simulation mode - in simulation");
+      ELSE
+         ResetEcoTalkVarList(TRUE);
+         DebugPrint(eTraceEquipment, "Drives switched to real mode - in simulation");
+      END_IF;
+   //real drives
+   ELSE   
+      //switching drives to sim
+      IF (NOT allDrivesSimulated) AND simulation THEN
+         ghostNoMotion.bSetStartPos := TRUE;  //StartDriveUpdate sets the HOME position to the joints
+      //switching drives to real mode
+      ELSIF allDrivesSimulated AND NOT simulation THEN
+         ghostNoMotion.bSetStartPos     := FALSE;
+         ghostNoMotion.bSwitchingDrives := FALSE;
+      END_IF;
+      //connect or disconnect drives from MCU
+      McuSetServoCtrl(kinematicMcuId, (NOT simulation));
+      allDrivesSimulated := simulation;
+      RcData.MapMcValues(SELF); // update mappings because there are no readBackValues in simulation
+      IF allDrivesSimulated THEN
+         DebugPrint(eTraceEquipment, "All drives switched to simulation mode");
+      ELSE
+         ResetEcoTalkVarList(TRUE);
+         DebugPrint(eTraceEquipment, "Drives switched to real mode");
+      END_IF;
+   END_IF;
+  
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+
+VAR PRIVATE
+   connectedCount : DINT;   // number of drives already connected
+   referencedCount : DINT;  // number of drives already referenced
+   limitSwitchCount : DINT; // number of set limitswitches
+   cyclicUpdateRequest : BOOL; // request for the CyclicUpdateFunction
+   confirm : BOOL;
+   adjustActive : BOOL; // indicate whether RobotAdjust is already running
+   stopActive : BOOL;   // indicate whether RobotStop is already running
+   sercosRingBootup    : BOOL;   // indicate whether sercosring has gone down below phase4
+END_VAR
+
+
+// handling of drive errors
+ROUTINE CatchDriveError() PRIVATE
+
+   WHILE TRUE DO
+      WAIT anyDriveError;
+      anyDriveError := FALSE;
+      QuickstopAllDrives();
+      // avoid multiple calls to QuickstopAllDrives on simultanous drive errors
+      WaitMcMainCycles(2);
+      //Sleep(100);
+   END_WHILE;
+END_ROUTINE
+
+
+// check actual joint position against sw-limit-switches
+ROUTINE CheckActJoints() PRIVATE
+   VAR
+      i : DINT;
+      j : DINT;
+   END_VAR
+
+   FOR i := 0 TO kinematic.mNrOfMainJoints - 1 DO
+      IF actJoints.mPos[i] <= kinematic.mJoints[i].mMinPos THEN
+         drive[i].limitSwitchMinSW := TRUE;
+         drive[i].limitSwitchMaxSW := FALSE;
+      ELSIF actJoints.mPos[i] >= kinematic.mJoints[i].mMaxPos THEN
+         drive[i].limitSwitchMinSW := FALSE;
+         drive[i].limitSwitchMaxSW := TRUE;
+      ELSE
+         drive[i].limitSwitchMinSW := FALSE;
+         drive[i].limitSwitchMaxSW := FALSE;
+      END_IF;
+   END_FOR;
+
+   FOR i := 0 TO kinematic.mNrOfAuxJoints - 1 DO
+      j := kinematic.mNrOfMainJoints + i;
+      IF actJoints.mPos[j] <= kinematic.mJoints[j].mMinPos THEN
+         drive[j].limitSwitchMinSW := TRUE;
+         drive[j].limitSwitchMaxSW := FALSE;
+      ELSIF actJoints.mPos[j] >= kinematic.mJoints[j].mMaxPos THEN
+         drive[j].limitSwitchMinSW := FALSE;
+         drive[j].limitSwitchMaxSW := TRUE;
+      ELSE
+         drive[j].limitSwitchMinSW := FALSE;
+         drive[j].limitSwitchMaxSW := FALSE;
+      END_IF;
+   END_FOR;
+END_ROUTINE
+
+
+// function to give values from the Motioncontrolunit to the drives
+ROUTINE CyclicUpdateFunction() PRIVATE
+   VAR
+      oldUpdCnt : DINT;
+      newUpdCnt : DINT;
+      updCntChg : BOOL;
+      i : DINT;
+      loopLimMain : DINT;
+      loopLimAux : DINT;
+   END_VAR
+
+   // Loop Limits
+   loopLimMain := kinematic.mNrOfMainJoints - 1;
+   loopLimAux := kinematic.mNrOfAuxJoints - 1;
+   // initialize update registration
+   updCntChg := IS_CHANGED(actDrives.mUpdateCounterDrives);
+
+   WHILE TRUE DO
+      WAIT cyclicUpdateRequest;
+      oldUpdCnt := actDrives.mUpdateCounterDrives;
+      WHILE cyclicUpdateRequest DO
+         WAIT updCntChg OR NOT cyclicUpdateRequest;
+            IF cyclicUpdateRequest THEN
+               updCntChg := FALSE;
+               newUpdCnt := actDrives.mUpdateCounterDrives;
+//               IF newUpdCnt > oldUpdCnt + 1 THEN
+//                  RcuSetInfo(instId, eRcuInfoRobCycleMissed, INSTANCE_NAME());
+//               END_IF;
+               oldUpdCnt := newUpdCnt;
+
+               // transfer values
+               FOR i := 0 TO loopLimMain DO
+                  drive[i].SetPos(actDrives.mPos[i]);
+               END_FOR;
+            END_IF;
+      END_WHILE;
+   END_WHILE;
+END_ROUTINE
+
+
+// leave the update state
+ROUTINE StopUpdate() PRIVATE
+   VAR
+      hdl : DINT;
+   END_VAR
+
+   hdl := GetProgHdl();
+   // reset chgModeAllowed to exclude all motionrequests
+   chgModeAllowed := FALSE;
+   // stop selecting Flow to inhibit motioncommands (if not currentflow)
+   IF hdl <> selectingFlow.flowId THEN
+      InterruptFlow();
+   END_IF;
+
+   // inform Motionmanager (direct because chgModeAllowed already FALSE)
+   motionRequest := eRcuMMgrModeStopJoints;
+
+   // Give Time to allow for completion of motioncommands (at least one Mc-
+   // updatecycle)
+   WaitMcMainCycles(2);
+   //Sleep(100);
+
+   // stop Mcu
+   RcuStopInterpolator();
+   IF gbRcuManagesDriveUpdate THEN
+      cyclicUpdateRequest := FALSE;
+   END_IF;
+
+   // stop self to inhibit motioncommands (if selectingFlow)
+   IF hdl = selectingFlow.flowId THEN
+      InterruptProgSelf();
+   END_IF;
+END_ROUTINE
+
+
+// common referencing routine, used by ReferenceDrive and ReferenceDriveSelf
+// only when all drives are ready and not moving
+ROUTINE Reference(CONST inx : DINT; CONST self : BOOL; CONST pos : REAL; CONST
+   mode : DINT) : BOOL PRIVATE
+   VAR
+      success : BOOL;
+   END_VAR
+
+   //IF NOT allDrivesReady THEN
+   //   RETURN FALSE;
+   //END_IF;
+   IF updateActive THEN
+      IF isStopped THEN
+         QuickstopAllDrives();
+      ELSE
+         RcuSetMessageOnce(TRcuRobot_ErrRobRefMoving, kinListInx, 1, instId, "TRcuRobot.Reference", robotName);
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   //SCP - EncoderBox-Alarm --> mastering not possible
+   IF interfaceToSCP.bSafeRobotic AND interfaceToSCP.svSCP_RCU.sScpToRcu.bSMM12Alarm THEN 
+      RcuSetMessageOnce(TRcuRobot_ErrEncBoxFault, kinListInx, 1, instId, "TRcuRobot.Reference");
+      RETURN FALSE;
+   END_IF;
+      
+   IF self THEN
+      success := drive[inx].ReferenceSelf(mode);
+   ELSE
+      success := drive[inx].ReferenceValue(pos);
+   END_IF;
+
+   RETURN success;
+END_ROUTINE
+
+
+// routines for keeping the referenced count and the allDrivesReferenced flag
+// up to date
+ROUTINE ObserveReference(VAR_IN inx : DINT) PRIVATE
+VAR
+   refState : TMcuReferenceState;
+   pos : REAL;
+   bSetJointPosOk : BOOL;
+END_VAR
+
+   WAIT allDrivesConnected;
+   WHILE TRUE DO
+      McuSetJointPosCheck(kinematicMcuId, inx, FALSE);
+
+      WAIT drive[inx].referenced; // AND NOT drive[inx].bDriveFlags[eDriveComMalf] ;
+      IF McuGetJointReferenceState(kinematicMcuId, inx, refState) AND 
+            (refState <> eMcuReferenced) THEN
+         IF inx < readBackVals.mJoints.mMainJoints.mValidLen THEN
+            pos := readBackVals.mJoints.mMainJoints.mValues[inx];
+         ELSE
+            pos := readBackVals.mJoints.mAuxJoints.mValues[inx - readBackVals.mJoints.mMainJoints.mValidLen];
+         END_IF;
+          
+         bSetJointPosOk := FALSE;
+         WHILE NOT bSetJointPosOk DO
+            bSetJointPosOk := McuSetJointPosition(kinematicMcuId, inx, 0.0, eMcuSetPosModeRelative);
+            IF NOT bSetJointPosOk THEN
+               PRINT("McuSetJointPosition in ObserveReference - drive " + STR(inx) + " failed");
+               WaitMcMainCycles(150);
+            END_IF;
+         END_WHILE;
+         PRINT("McuSetJointPosition in ObserveReference - drive " + STR(inx) + " ok");
+      END_IF;
+      McuSetJointPosCheck(kinematicMcuId, inx, TRUE);
+      referencedCount := referencedCount + 1;
+      IF referencedCount = kinematic.mNrOfJoints THEN
+         allDrivesReferenced := TRUE;
+      END_IF;
+
+      WAIT NOT drive[inx].referenced;
+      referencedCount := referencedCount - 1;
+      allDrivesReferenced := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE CheckSlavesValidS3() PRIVATE
+   VAR
+      i : DINT;
+   END_VAR
+      
+   allSlavesValidS3 := TRUE;         
+   IF gbEthercat THEN
+      RETURN;
+   END_IF;
+   IF IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled THEN         
+      FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+          IF NOT drive[i].bCommOK THEN
+             allSlavesValidS3       := FALSE;
+             RETURN;
+          END_IF;
+      END_FOR;
+   END_IF;
+END_ROUTINE
+
+ROUTINE CheckDriveOperationAdmissible() PRIVATE
+   VAR
+      i : DINT;
+      fullSpeedAllowed : BOOL;
+   END_VAR
+   
+   // only if all Drives are connected
+   IF NOT allDrivesConnected THEN
+      RcuSetMessageOnce(TRcuRobot_InfNotAllDrivesConn, kinListInx, 1, instId, "TRcuRobot.CheckDriveOperationAdmissible", robotName);
+      RETURN;
+   END_IF;
+   
+   IF brakeCheck.bDisableDrives THEN
+      RcuSetMessageOnce(TRcuRobot_ErrBrakeCheckNotReady, kinListInx, 1, instId, "TRcuRobot.CheckDriveOperationAdmissible");
+      RETURN;
+   END_IF;
+   
+   IF NOT allDrivesReferenced AND NOT disableDriveStart THEN
+      FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+         IF NOT drive[i].referenced THEN
+            RcuSetMessageOnce(TRcuRobot_ErrDriveNotRef, kinListInx, 1, instId, "TRcuRobot.CheckDriveOperationAdmissible",drive[i].axesName);
+         END_IF;
+      END_FOR;
+      RETURN;
+   END_IF;
+   
+   IF gbEthercat THEN
+      IF interfaceToSCP.bSafeRobotic AND NOT interfaceToSCP.svSCP_RCU.sScpToRcu.bRefSet THEN  
+         IF NOT IS_MAPPED(mainModeMgr.actMainModeDef) THEN 
+            fullSpeedAllowed := TRUE;
+         ELSIF mainModeMgr.actMainModeDef.actions.fullSpeed THEN
+            fullSpeedAllowed := TRUE;
+         END_IF;
+         IF fullSpeedAllowed THEN
+            RcuSetMessageOnce(TRcuRobot_ErrSCPNotRef, kinListInx, 1, instId, "TRcuRobot.CheckDriveOperationAdmissible");
+         END_IF;         
+      END_IF;
+      
+      allDriveParamValid := TRUE;
+      FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+          IF drive[i].EncParamChanged() THEN
+             allDriveParamValid := FALSE;
+             RETURN;
+          END_IF;
+      END_FOR;
+   END_IF;
+   
+   //check parameters only if sercos ring has been rebooted
+   IF sercosRingBootup THEN
+      FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+         allDriveParamValid := TRUE;
+         IF NOT verifyDriveParam.GetDataValid(i, drive[i].sercHdl) THEN
+            allDriveParamValid := FALSE;
+            RETURN;
+         END_IF;
+      END_FOR;
+      IF allDriveParamValid THEN
+         sercosRingBootup := FALSE;
+      END_IF;      
+  ELSE
+     allDriveParamValid := TRUE;
+  END_IF;
+END_ROUTINE
+
+//observe if ring has gone down below phase4, then check driveparameters again
+ROUTINE ObserveSercosRingPhase() PRIVATE 
+ VAR
+  chgPhase : BOOL;
+ END_VAR
+   
+  IF IS_MAPPED(gmSercosRing)THEN
+     sercosRingBootup := TRUE;
+     chgPhase := IS_CHANGED(gmSercosRing.actComPhase);
+     WHILE TRUE DO
+       IF (gmSercosRing.actComPhase < 4) THEN
+          sercosRingBootup := TRUE;
+       END_IF;
+       chgPhase := FALSE;
+       WAIT chgPhase;
+     END_WHILE;
+  END_IF;
+END_ROUTINE
+
+
+// check the plausibility of initial joint values for referenced drives
+ROUTINE CheckPlausibility(VAR_IN jointNr : DINT; CONST value : REAL) : BOOL
+   VAR
+      interval : REAL;
+   END_VAR
+
+   IF NOT drive[jointNr].referenced THEN
+      RETURN TRUE; // cannot check plausibility for not referenced joints
+   END_IF;
+
+   // valid range for this joint
+   interval := kinematic.mJoints[jointNr].mMaxPos - kinematic.mJoints[jointNr].mMinPos;
+
+   // check against maximum value
+   IF value > kinematic.mJoints[jointNr].mMaxPos THEN
+      IF (value - kinematic.mJoints[jointNr].mMaxPos) > (0.5 * interval) THEN
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+
+   // check against minimum value
+   IF value < kinematic.mJoints[jointNr].mMinPos THEN
+      IF (kinematic.mJoints[jointNr].mMinPos - value) > (0.5 * interval) THEN
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+
+   RETURN TRUE;
+END_ROUTINE
+
+
+// observe the fullSpeed-flag of the mainmodemanager, set maximalvelocities
+// accordingly
+ROUTINE VeloControl() PRIVATE
+   VAR
+      i                : DINT;
+      chgFullspeed     : BOOL;
+      reducedSettings  : BOOL;
+      fullSpeedAllowed : BOOL;
+      chgMode          : BOOL;
+      chgSCP           : BOOL;
+      firstRun         : BOOL;
+   END_VAR
+   
+   WAIT initRobComplete;
+
+   McuActivateMaxVelocity(kinematicMcuId, FALSE); // initially deactivate
+   veloControlActive := TRUE;
+   chgMode := IS_CHANGED(mainModeMgr.mode);
+   chgSCP  := IS_CHANGED(interfaceToSCP.bFullSpeedAllowed);
+   reducedSettings := FALSE;
+   
+   FOR i:=0 TO kinematic.mNrOfJoints-1 DO
+      drive[i].SetMaxTorque();
+   END_FOR;
+
+   WHILE TRUE DO
+      WAIT chgMode OR chgSCP;
+      chgMode := FALSE;
+      chgSCP  := FALSE;
+      
+      // 18.09.04 nmr: added check to avoid access of unmapped variable
+      IF IS_MAPPED(mainModeMgr.actMainModeDef) THEN  // False if no mode active
+         fullSpeedAllowed := mainModeMgr.actMainModeDef.actions.fullSpeed AND interfaceToSCP.bFullSpeedAllowed;
+      ELSE
+         fullSpeedAllowed := FALSE;
+      END_IF;
+      //run through on boot-up de-/activate virtual walls
+      IF NOT firstRun THEN
+         firstRun := TRUE;
+         reducedSettings := fullSpeedAllowed;
+      END_IF;
+      IF NOT fullSpeedAllowed AND NOT reducedSettings THEN
+         // set reduced speed
+         DebugPrint(eTraceRcuDrive, "set reduced speed set reduced torques");
+         reducedSettings := TRUE;
+         McuActivateMaxVelocity(kinematicMcuId, TRUE); 
+         START ObserveT1Speed() PRIO 1;
+
+         FOR i := 0 TO nrOfWallBlocks DO
+            IF VirtualWall[i].cfgActive THEN
+               IF (VirtualWall[i].cfgSpecial = 1) THEN
+                  IF VirtualWall[i].Deactivate() THEN
+                     DebugPrint(eTraceAreaJob, "Working-/NogoArea " + VirtualWall[i].areaName + " deactivated");
+                  ELSE
+                     RcuSetMessageOnce(TRcuKinematic_ErrAreaActivate, kinListInx, 1, instId, "TRcuKinematic.VeloControl", VirtualWall[i].areaName);
+                  END_IF;
+               END_IF;
+            END_IF;
+         END_FOR;
+         
+         // set reduced torques
+         IF torqueReductionT1 THEN
+            FOR i:=0 TO kinematic.mNrOfJoints-1 DO
+               drive[i].SetReducedTorque();
+            END_FOR;
+         END_IF;
+      ELSIF fullSpeedAllowed AND reducedSettings  THEN
+         // set full speed
+         DebugPrint(eTraceRcuDrive, "set full speed set maximal torques");
+         reducedSettings := FALSE;
+         McuActivateMaxVelocity(kinematicMcuId, FALSE);
+         STOP ObserveT1Speed;
+
+         FOR i := 0 TO nrOfWallBlocks DO
+            IF VirtualWall[i].cfgActive THEN
+               IF (VirtualWall[i].cfgSpecial = 1) THEN
+                  IF VirtualWall[i].Activate() THEN
+                     DebugPrint(eTraceAreaJob, "Working-/NogoArea " + VirtualWall[i].areaName + " activated");
+                  ELSE
+                     RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, kinListInx, 1, instId, "TRcuKinematic.VeloControl", "McuActivateArea");
+                  END_IF;
+               END_IF;
+            END_IF;
+         END_FOR;
+         
+         // set maximal torques
+         FOR i:=0 TO kinematic.mNrOfJoints-1 DO
+            drive[i].SetMaxTorque();
+         END_FOR;
+      END_IF;
+      // stop upon changes
+      SetMotionMode(eRcuMMgrModeStop);
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveT1Speed()
+VAR
+   OldCartPos : TMcuVector3;
+   actSpeed   : REAL;
+   lengthSqr  : REAL;
+   length     : REAL;
+   iLast      : INT;
+END_VAR 
+   
+   WHILE TRUE DO
+      OldCartPos.mValues := readBackVals.mCartPos.mValues;
+      WaitMcMainCycles(1);
+//      WaitMcMicroCycles(1);
+      lengthSqr := (OldCartPos.mValues[0] - readBackVals.mCartPos.mValues[0]) * (OldCartPos.mValues[0] - readBackVals.mCartPos.mValues[0]) +
+                   (OldCartPos.mValues[1] - readBackVals.mCartPos.mValues[1]) * (OldCartPos.mValues[1] - readBackVals.mCartPos.mValues[1]) +
+                   (OldCartPos.mValues[2] - readBackVals.mCartPos.mValues[2]) * (OldCartPos.mValues[2] - readBackVals.mCartPos.mValues[2]);
+      Sqrt(lengthSqr, length);
+      actSpeed := length / (grCycleTime * giRatioMainToMicroIP);
+//      actSpeed := length / (grCycleTime);
+      IF (actSpeed > 300.0) AND (iLast >= 2) AND allDrivesReady THEN
+         // Fehler
+         RcuSetMessageOnce(TRcuRobot_ErrT1Speed, kinListInx, 1, instId, "TRcuRobot.ObserveT1Speed");
+         DebugPrint(eTraceMotionModesFine, " Error T1-Velocity");
+         DebugPrint(eTraceMotionModesFine, " Velocity = " + STR(actSpeed));
+         IF NOT gStarepWriteFlag THEN
+             gStarepWriteFlag := TRUE;
+         END_IF;
+       ELSIF (actSpeed > 300.0) AND allDrivesReady THEN
+         iLast := iLast + 1;
+         DebugPrint(eTraceMotionModesFine, " Warning T1-Velocity");
+         DebugPrint(eTraceMotionModesFine, " Velocity = " + STR(actSpeed));
+      ELSE
+         iLast := 0;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// observe the difference between values of the main interpolator and the values of the
+// fine interpolator
+ROUTINE ObserveInterpolatorValues() PRIVATE
+   VAR
+      chg          : BOOL;
+      difference   : ARRAY [cMcuMaxJ] OF REAL;
+      iAuxDrive    : INT;
+      s            : STRING;
+      yDelayBuffer : ARRAY [25, cMcuMaxJ] OF REAL;
+      i            : INT;
+      j            : INT;
+      bWasActive   : BOOL;
+      iDelayCycles : INT;
+      cop12        : REAL;
+      cop34        : REAL;
+      cop35        : REAL;
+      cop45        : REAL;
+      cop46        : REAL;
+      cop56        : REAL;
+      rJoint       : REAL;
+      bFrozen      : BOOL;
+      rMax         : REAL;
+   END_VAR
+
+   //wait until MCU handles drive update
+   WAIT updateActive;
+   
+   //kemroscope variables
+   FOR j := 0 TO nrOfJoints-1 DO
+      s := kinematic.mName + ".JointDifference."+STR(j);
+      SwoAddRealVariable(difference[j], s);
+   END_FOR;
+   s := kinematic.mName + ".MainInterpol";
+   SwoAddRealVariable(GetActCartValJoints(SELF, 0), s);
+   s := kinematic.mName + ".FineInterpol";
+   SwoAddRealVariable(actDrives.mPos[0], s);
+
+   iDelayCycles := orderOfAxisFilter / 2 + 2; // empirisch ermittelt. Bei konstanter Geschwindigkeit wird Differenz minimal.
+   IF iDelayCycles >= 25 THEN
+      RcuSetMessageOnce(TRcuDrive_ErrDrDrgErrLaunched, kinListInx, 4, instId, "TRcuDrive.ObserveAbsoluteDragError"); // andere Fehlermeldung
+      RETURN;
+   END_IF;
+   IF kinematic.mGearTrafo THEN
+      IF NOT CatalogReadReal(mcCatHdl, "cop12", cop12, TRUE) THEN
+         cop12 := 0.0;
+      END_IF;
+      IF NOT CatalogReadReal(mcCatHdl, "cop34", cop34, TRUE) THEN
+         cop34 := 0.0;
+      END_IF;
+      IF NOT CatalogReadReal(mcCatHdl, "cop35", cop35, TRUE) THEN
+         cop35 := 0.0;
+      END_IF;
+      IF NOT CatalogReadReal(mcCatHdl, "cop45", cop45, TRUE) THEN
+         cop45 := 0.0;
+      END_IF;
+      IF NOT CatalogReadReal(mcCatHdl, "cop45", cop45, TRUE) THEN
+         cop45 := 0.0;
+      END_IF;
+      IF NOT CatalogReadReal(mcCatHdl, "cop46", cop46, TRUE) THEN
+         cop46 := 0.0;
+      END_IF;
+      IF NOT CatalogReadReal(mcCatHdl, "cop56", cop56, TRUE) THEN
+         cop56 := 0.0;
+      END_IF;
+   END_IF;
+            
+   WHILE TRUE DO
+      WaitMcMainCycles(1);
+      FOR j := 0 TO nrOfJoints-1 DO
+         IF updateActive AND (actDrivesExt.mMicroIPState = eRcuMicroIPStateNormal) THEN  //drive is in AF THEN
+            rJoint := actDrives.mPos[j];
+            // Drive -> Joint
+            IF kinematic.mGearTrafo THEN
+               IF IsPaintArm7VWrist(SELF) THEN
+                  CASE j OF
+                    0 : ;
+                    1 : ;
+                    2 : rJoint := rJoint + actDrives.mPos[1] * cop12;
+                    3 : ;
+                    4 : ;
+                    5 : rJoint := rJoint + actDrives.mPos[4] * cop45;
+                    6 : rJoint := rJoint + actDrives.mPos[4] * cop46 + actDrives.mPos[5]*cop56;
+                  ELSE
+                     ;
+                  END_CASE;
+               ELSE
+                  CASE j OF
+                    0 : ;
+                    1 : ;
+                    2 : rJoint := rJoint + actDrives.mPos[1] * cop12;
+                    3 : ;
+                    4 : rJoint := rJoint + actDrives.mPos[3] * cop34;
+                    5 : rJoint := rJoint + actDrives.mPos[3] * cop35 + actDrives.mPos[4]*cop45;
+                  ELSE
+                     ;
+                  END_CASE;
+               END_IF;
+            END_IF;
+            IF bWasActive THEN
+               IF i = iDelayCycles THEN
+                  difference[j] := yDelayBuffer[0][j] - rJoint;
+               ELSE   
+                  difference[j] := yDelayBuffer[i][j] - rJoint;
+               END_IF;
+               IF kinematic.mJoints[j].mDHParam.mTyp = eMcuJointRot THEN
+                  rMax := kinematic.mJoints[j].mDynLimits.mVelo/kinematic.mJoints[0].mDynLimits.mVelo; // Normierung auf Geschwindigkeit Achse 1
+                  // Grenze Achse 1 = 1°. Wenn z.B. Geschwindigkeit Achse 6 5 mal so hoch, dann ist die Grenze bei Achse 6 entsprechend bei 5°
+                  IF rAbs(difference[j]) > rMax THEN
+                     RcuSetMessageOnce(TRcuRobot_ErrMain2FineIpo, kinListInx, 0, instId, "TRcuRobot.ObserveInterpolatorValues", STR(j), STR(difference[j]));
+                  END_IF;
+               ELSE   
+                  IF rAbs(difference[j]) > 10.0 THEN
+                     RcuSetMessageOnce(TRcuRobot_ErrMain2FineIpo, kinListInx, 2, instId, "TRcuRobot.ObserveInterpolatorValues", STR(j), STR(difference[j]));
+                  END_IF;
+               END_IF;
+            END_IF;
+         ELSIF (actDrivesExt.mMicroIPState <> eRcuMicroIPStateNormal) THEN
+            bWasActive := FALSE;
+            difference[j] := 0;
+            i := 0;
+         END_IF;
+         IF i >= iDelayCycles THEN
+            yDelayBuffer[0][j] := GetActCartValJoints(SELF, j);
+         ELSE
+            yDelayBuffer[i][j] := GetActCartValJoints(SELF, j);
+         END_IF;
+      END_FOR;
+      
+      IF NOT bWasActive THEN
+         IF i = iDelayCycles-1 THEN
+             bWasActive := TRUE;
+         END_IF;
+      END_IF;
+      IF i >= iDelayCycles THEN
+         i := 0;
+      END_IF;
+      i := i + 1;
+         
+   END_WHILE;
+      
+END_ROUTINE
+
+(*
+ROUTINE ObserveMcuUpdate()
+VAR
+   oldCnt : DINT;
+   t      : DINT;
+   s      : STRING;
+END_VAR 
+
+   WAIT gbBootupFinished;
+   t := 2*grCycleTime*1000;
+   WHILE TRUE DO
+      oldCnt := actExecData.mUpdateCounterMain;
+      Sleep(t);
+      IF actExecData.mUpdateCounterMain = oldCnt THEN
+         s := "MCU-Zyklus Problem ";
+         RcuSetMessageOnce(Dummy_Error, kinListInx, 4, instId, "TRcuDrive.ObserveMcuUpdate", s); // andere Fehlermeldung
+         
+      END_IF;
+      
+   END_WHILE;
+  
+END_ROUTINE
+
+
+
+   McuSetFaultInjection: ROUTINE(CONST kinID: TMcuDbObjID; CONST faultInjectionData: TMcuFaultInjectionData): BOOL := MAPX("Mc/McuSetFaultInjection");
+      
+   TMcuFaultInjectionPlace: (
+      eMcuFIServoWriteSetValues,
+      eMcuFIServoReadActValues,
+      eMcuFIMainIPFinalDrives
+   );
+
+   TMcuFaultInjectionType: (
+      eMcFINone,
+      eMcFIEndlessLoop,
+      eMcFIAssertion,
+      eMcFIAccessViolation,
+      eMcFIFloatDivZero,
+      eMcFIJointFreeze,
+      eMcFIJointAdd,
+      eMcFIJointReplace,
+      eMcFIJointAccumulatedAdd
+   );
+   TMcuFaultInjectionData: STRUCT
+      mFIPlace: TMcuFaultInjectionPlace;
+      mFIType: TMcuFaultInjectionType;
+      mJointNr: DINT;
+      mJointValue: REAL;
+   END_STRUCT;
+*)
+(*
+VAR PRIVATE
+   bFlagFault   : BOOL;
+   bFlagAll     : BOOL;
+   iAnzAxes     : INT := 6;
+   FaultData    : TMcuFaultInjectionData;
+   FaultDataArr : ARRAY [9] OF TMcuFaultInjectionData;
+   FaultPlace   : TMcuFaultInjectionPlace;
+   FaultType    : TMcuFaultInjectionType;
+END_VAR
+
+ROUTINE SetFaultToMcu() PRIVATE
+VAR
+   bChg: BOOL;
+   i   : INT;
+END_VAR
+
+   bChg := IS_CHANGED(bFlagFault);
+   FOR i := 0 TO 8 DO
+      FaultDataArr[i].mJointNr := i;
+   END_FOR;
+   WHILE TRUE DO
+      WAIT bChg;
+      IF bFlagAll THEN
+         FOR i := 0 TO iAnzAxes-1  DO
+            FaultDataArr[i].mFIPlace := FaultPlace;
+            FaultDataArr[i].mFIType  := FaultType;
+            //FaultDataArr[i].mJointValue über Debugger setzen
+            McuSetFaultInjection(kinematicMcuId, FaultDataArr[i]);
+         END_FOR;
+      ELSE
+         McuSetFaultInjection(kinematicMcuId, FaultData);
+      END_IF;
+      bChg := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+*)
+
+ROUTINE DeleteMcuRefFiles()
+ VAR
+  sFile   : STRING;
+  sDelete : STRING;
+  bFound  : BOOL;
+ END_VAR
+
+  IF CatalogReadString(giSysBaseHdl, "applPath", sFile, TRUE) THEN
+     sFile := sFile + "systemsettings/";
+     IF FileGetFirst(sFile, sFile) THEN
+        bFound := TRUE;
+        WHILE bFound DO
+           sDelete := "";
+           //check if file is a ref file --> reset write protection and delete it
+           IF (StrFindRight (sFile, ".ref") > 0) THEN
+              SetReadOnly(sFile, FALSE);
+              sDelete := sFile;
+           END_IF;
+           bFound := FileGetNext (sFile, sFile);
+           IF (sDelete <> "") THEN
+              IF FileDelete(sDelete) THEN
+                 RcuSetMessageOnce(TRcuRobot_ErrRefFileDelete, kinListInx, 1, instId, "TRcuRobot.DeleteMcuRefFiles", sDelete);
+              END_IF;
+           END_IF;
+        END_WHILE;
+     END_IF;
+  END_IF;
+
+END_ROUTINE
+
+
+ROUTINE UpdatePositions() PRIVATE
+   VAR
+      updCntChg   : BOOL;
+      svPositions : MAPTO TMcuAllJoints;
+      svTcp       : MAPTO TMcuFrame;
+      svObject    : MAPTO TMcuFrame;
+      svTool      : MAPTO TMcuFrame;
+      svExtTool   : MAPTO TMcuFrame;
+      svExtToolActive : MAPTO BOOL;
+   END_VAR
+    
+   svPositions := MAPX(cSV_ActualPositions[kinListInx]);
+   IF NOT IS_MAPPED(svPositions) THEN
+        RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 1, instId, "TRcuRobot.UpdatePositions", robotName, cSV_ActualPositions[kinListInx]);
+      RETURN;
+   END_IF;
+   updCntChg := IS_CHANGED(actExecData.mUpdateCounterMain);
+
+   svTcp := MAPX(cSV_ActualTcp[kinListInx]);
+   IF NOT IS_MAPPED(svTcp) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx,  2, instId, "TRcuRobot.UpdatePositions", robotName, cSV_ActualTcp[kinListInx]);
+      RETURN;
+   END_IF;
+   
+   svObject := MAPX(cSV_ActualObject[kinListInx]);
+   IF NOT IS_MAPPED(svObject) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 3, instId, "TRcuRobot.UpdatePositions", robotName, cSV_ActualObject[kinListInx]);
+      RETURN;
+   END_IF;
+
+   svTool := MAPX(cSV_ActualTool[kinListInx]);
+   IF NOT IS_MAPPED(svTool) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 4, instId, "TRcuRobot.UpdatePositions", robotName, cSV_ActualTool[kinListInx]);
+      RETURN;
+   END_IF;
+
+   svExtTool := MAPX(cSV_ActualExtTool[kinListInx]);
+   IF NOT IS_MAPPED(svExtTool) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 5, instId, "TRcuRobot.UpdatePositions", robotName, cSV_ActualExtTool[kinListInx]);
+      RETURN;
+   END_IF;
+
+   svExtToolActive := MAPX(cSV_ExtToolActive[kinListInx]);
+   IF NOT IS_MAPPED(svExtToolActive) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 6, instId, "TRcuRobot.UpdatePositions", robotName, cSV_ExtToolActive[kinListInx]);
+      RETURN;
+   END_IF;
+
+   WAIT gbEquipmentReady;
+   svExtToolActive := UPDATE(extToolActive);
+   WHILE TRUE DO
+      // axis positions
+      svPositions := readBackVals.mJoints;
+      //tcp position
+//      ActPosInObjectCoord(svTcp);
+      svTcp := actObjectPos.mFrame;
+      // actual object
+      IF extToolActive THEN
+         ActPosInWorldCoord(svObject);
+      ELSE
+         svObject := actObject;
+      END_IF;
+      // actual tool
+      svTool := actTool;
+      // actual external tool
+      svExtTool := actExtTool;
+      WAIT updCntChg;
+      updCntChg := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+//cyclic update of readBackVals in OBJECT-Coord
+ROUTINE UpdateActPosInObject() PRIVATE
+ VAR
+  chg : BOOL;
+ END_VAR
+ 
+   chg := IS_CHANGED(actDrives.mUpdateCounterDrives);
+   WHILE TRUE DO
+      ActPosInObjectCoord(readBackObjectPos);
+      WAIT chg;
+      chg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+// workaround because readBackVals is in OBJECT or in WORLD depending of 
+// the coordinate system chosen by the PHG
+ROUTINE ActPosInObjectCoord(tcp : TMcuFrame) PRIVATE
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := readBackVals.mCartPos;
+   actPos.mFrame.mOri := readBackVals.mCartOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(RcuRefSystemObject, refSysId) THEN
+      tcp := actPos.mFrame;
+      RETURN;
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         PRINT("Fehler bei McuTransformPosCart in TRcuRobot");
+      END_IF;
+      tcp := calcPos.mFrame;
+   ELSE
+      tcp := actPos.mFrame;
+   END_IF;
+END_ROUTINE
+
+// workaround because readBackVals is in OBJECT or in WORLD depending of 
+// the coordinate system chosen by the PHG
+ROUTINE ActPosInWorldCoord(tcp : TMcuFrame)
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := readBackVals.mCartPos;
+   actPos.mFrame.mOri := readBackVals.mCartOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF gMcuWorldRefSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, gMcuWorldRefSysId) THEN
+         PRINT("Fehler bei McuTransformPosCart in TRcuRobot");
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         //ERROR
+      END_IF;
+      tcp := calcPos.mFrame;
+   ELSE
+      tcp := actPos.mFrame;
+   END_IF;
+END_ROUTINE
+
+ROUTINE ActPosInVisAbsCoord(tcp : TMcuFrame)
+VAR
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := readBackVals.mCartPos;
+   actPos.mFrame.mOri := readBackVals.mCartOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(RcuRefSystemVisionRel, refSysId) THEN
+      PRINT("ActPosInObjectCoord RcuRefSystemVisionAbs = "+STR(RcuRefSystemVisionAbs)+" refSysId = "+STR(refSysId));
+      // ERROR
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         PRINT("Fehler bei McuTransformPosCart in TRcuRobot");
+      END_IF;
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         //ERROR
+      END_IF;
+      tcp := calcPos.mFrame;
+   ELSE
+      tcp := actPos.mFrame;
+   END_IF;
+END_ROUTINE
+
+// observe updateActive, if the update is not active
+// actual values for visualisation are provided by rc
+ROUTINE ObserveUpdate() PRIVATE
+
+   WAIT initRobComplete;
+   WHILE TRUE DO
+      IOAuxJoints.mValidLen := nrOfAuxJoints;
+      IOMainJoints.mJoints.mValidLen := nrOfMainJoints;
+      IOMainDrives.mValidLen := nrOfMainDrives;
+      IOAuxDrives.mValidLen := nrOfAuxDrives;
+      IF updateActive THEN
+         START UpdateObjectValues() PRIO 3;
+         //Update Teachview correctly on GhostNoMotion
+         IF NOT allDrivesSimulated THEN
+            STOP UpdateIOValues;
+            RcData.MapMcValues(SELF);
+         END_IF;
+         //PRINT("MC-DATA MAPPED");
+         WAIT NOT updateActive;
+      ELSE
+         STOP UpdateObjectValues;
+         //Update Teachview correctly on GhostNoMotion
+         IF NOT allDrivesSimulated THEN
+            START UpdateIOValues() PRIO 3;
+            RcData.MapIOValues(SELF);
+         END_IF;
+         //PRINT("IO-DATA MAPPED");
+         WAIT updateActive;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// update values for rcData-interface for the case that mc-update is not running
+ROUTINE UpdateIOValues()
+VAR
+   timer    : BOOL;
+   interval : DINT := 50; // update interval [ms]
+   i        : DINT;
+   //refSysId : TMcuDbObjID;
+   mInvPosWorld : TMcuFrame;
+   extToolPos   : TMcuFrame;
+   invExtTool   : TMcuFrame;
+   tmpAuxJoints : TMcuVector;
+   j        : DINT;
+   b        : BOOL;
+END_VAR
+
+   WHILE TRUE DO
+      SysTimerSet(interval, timer);
+      FOR i := 0 TO nrOfMainDrives-1 DO
+         drive[i].GetPos(IOMainDrives.mValues[i]);
+         drive[i].SetPos(IOMainDrives.mValues[i]);
+      END_FOR;
+      FOR i := 0 TO nrOfAuxDrives-1 DO
+         drive[i+nrOfMainDrives].GetPos(IOAuxDrives.mValues[i]);
+         drive[i+nrOfMainDrives].SetPos(IOAuxDrives.mValues[i]);
+      END_FOR;
+      McuDrivesToJoints(IOMainJoints.mJoints, IOAuxJoints, IOMainDrives, 
+         IOAuxDrives,kinematicMcuId);
+      //refSysId := McuGetRefSysForActCartVals(kinematicMcuId);
+      IF kinematic.mForwCoordTrafo THEN
+         McuForwardTrafoAux(IOWorldPos, IOMainJoints, IOAuxJoints, gMcuWorldRefSysId, 
+            kinematicMcuId, kinToolMcuId);
+         (* Test 2 *)
+         IF extToolActive THEN
+            FOR j:=0 TO IOAuxJoints.mValidLen-1 DO
+               tmpAuxJoints.mValues[j] := IOAuxJoints.mValues[j] * gcPi/180; // Grad -> RAD
+            END_FOR;         
+            b := McuInvertFrame(mInvPosWorld, IOWorldPos.mFrame );
+            IF extTool.mRefChainOfJointsID <> 0 THEN               
+//               b := McuExternalToolForwardTrafo(extToolPos, tmpAuxJoints, kinExtToolMcuId, kinematicMcuId);
+// Test 3
+               b := McuCalcFrameFromTrsf(extToolPos, tmpAuxJoints, extTool.mRefChainOfJointsID, kinematicMcuId);
+               b := McuMultiplyFrames(IOObjectPos.mFrame, mInvPosWorld, extToolPos);
+            ELSE
+               b := McuMultiplyFrames(IOObjectPos.mFrame, mInvPosWorld, actExtTool);
+            END_IF;
+         (* Ende Test 2*)
+         (* Test 3
+         IF extToolActive THEN
+            McuForwardTrafoAux(IOObjectPos, IOMainJoints, IOAuxJoints, actObjectSystem, 
+               kinematicMcuId, kinToolMcuId);
+            b := McuInvertFrame(IOObjectPos.mFrame, IOObjectPos.mFrame );
+         Ende Test 3 *)
+         ELSE
+         McuForwardTrafoAux(IOObjectPos, IOMainJoints, IOAuxJoints, actObjectSystem, 
+            kinematicMcuId, kinToolMcuId);
+      END_IF;
+         // external tool data
+         (* Test 2 *)
+         IF extToolActive THEN
+            IF extTool.mRefChainOfJointsID <> 0 THEN               
+               FOR j:=0 TO IOAuxJoints.mValidLen-1 DO
+                  tmpAuxJoints.mValues[j] := IOAuxJoints.mValues[j] * gcPi/180; // Grad -> RAD
+               END_FOR;         
+// Test 2               b := McuExternalToolForwardTrafo(extToolPos, tmpAuxJoints, kinExtToolMcuId, kinematicMcuId);
+// Test 3
+               b := McuCalcFrameFromTrsf(extToolPos, tmpAuxJoints, extTool.mRefChainOfJointsID, kinematicMcuId);
+               b := McuInvertFrame(invExtTool, extToolPos );
+               b := McuMultiplyFrames(IOExtToolPos.mFrame, invExtTool, IOWorldPos.mFrame);
+            ELSE
+               b := McuInvertFrame(invExtTool, actExtTool );
+               b := McuMultiplyFrames(IOExtToolPos.mFrame, invExtTool, IOWorldPos.mFrame);
+            END_IF;
+         END_IF;        
+         (* Ende Test 2*)
+         (* Test 3
+         IF extToolActive THEN
+            McuForwardTrafoAux(IOExtToolPos, IOMainJoints, IOAuxJoints, actObjectSystem, 
+               kinematicMcuId, kinToolMcuId);
+         END_IF;   
+         Ende Test 3 *)
+
+      END_IF;
+      WAIT timer;
+      timer := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+// activate the observation of the key for starting the robot
+ROUTINE RobotAdjust() : BOOL 
+
+   IF adjustActive THEN
+      RETURN FALSE;
+   ELSE
+      START RobotAdjustAction();
+      START ObserveSercosRingPhase();
+      adjustActive := TRUE;
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// the actual action upon the robot start-key
+ROUTINE RobotAdjustAction()
+   VAR
+      focusChg : BOOL; 
+      i : DINT;
+      firstTryEnable : BOOL;
+      hasError : BOOL;
+      retVal : BOOL;
+      dCrc : DWORD;
+      bCrcError : BOOL := FALSE;
+      fullSpeed : BOOL;
+   END_VAR
+   
+   WAIT areasChecked;
+   
+   // indicator for changing the focused kinematic
+   focusChg := IS_CHANGED(gbRcuFocusFlipFlop);
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      WAIT focusChg;
+   END_IF;
+   firstTryEnable := TRUE;
+   
+   McuSetTimeOverrideFactor(kinematicMcuId, defaultTimeOverrideFactor);
+   DebugPrint(eTraceCommon, "TimeOverrideFactor 8 : " + STR(defaultTimeOverrideFactor));
+   
+   WHILE TRUE DO
+      // robot := MAP(gRcuFocusedKinematic);  // receive actual kinematic
+      // robot := MAP(SELF);  // receive actual kinematic
+      // IF IS_MAPPED(robot) THEN
+      // WAIT autoControl.bPLCPowerOn AND ((kinListInx = gRcuFocusedKinematic.kinListInx) OR autoControl.bBitAutoExt);     
+      WAIT autoControl.bPLCPowerOn;
+      robotAdjustActive := TRUE;
+      //check if drives connected to sercos3, otherwise the will give no feedback power on and PLC never sends movement release
+      CheckSlavesValidS3();
+      IF allSlavesValidS3 THEN
+         WAIT autoControl.bPLCRelease;
+         CheckDriveOperationAdmissible();
+         IF allDrivesConnected AND allDrivesReferenced AND allDriveParamValid AND allSlavesValidS3 AND NOT brakeCheck.bDisableDrives
+            AND NOT disableDriveStart THEN
+            // check for error states and reset them
+            hasError := TRUE;
+            WHILE hasError AND autoControl.bPLCPowerOn AND NOT allDrivesSimulated DO
+               hasError := FALSE;
+               FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+                  START drive[i].ResetError(hasError);
+               END_FOR;
+               WAIT IS_FINISHED;
+               IF hasError THEN
+                  WaitMcMainCycles(5);
+               END_IF;
+            END_WHILE;
+
+            WHILE NOT PowerApplied() AND autoControl.bPLCRelease DO
+               WaitMcMainCycles(5);
+            END_WHILE;
+
+            // set drives to simulation mode on GhostNoMotion
+            IF NOT (gbSimulationOS OR gbFBSSActive) THEN
+               IF fieldbusIn.GhostNoMotion.svBool AND NOT allDrivesSimulated THEN
+                  SimulateAllDrives(TRUE);
+               ELSIF NOT fieldbusIn.GhostNoMotion.svBool AND allDrivesSimulated THEN
+                  SimulateAllDrives(FALSE);
+               END_IF;
+            ELSE
+               IF fieldbusIn.GhostNoMotion.svBool AND NOT ghostNoMotion.bActiveInSim THEN
+                  SimulateAllDrives(TRUE);
+               ELSIF NOT fieldbusIn.GhostNoMotion.svBool AND ghostNoMotion.bActiveInSim THEN
+                  SimulateAllDrives(FALSE);
+               END_IF;
+            END_IF;
+            
+            fullSpeed := IS_MAPPED(mainModeMgr.actMainModeDef) AND mainModeMgr.actMainModeDef.actions.fullSpeed AND interfaceToSCP.bFullSpeedAllowed;
+            IF VirtualWallSafeCfg.bEpsMapped AND VirtualWallSafeCfg.svSafety.bUseSafeConfiguration AND fullSpeed AND NOT gbSimulationOS THEN
+               dCrc := VirtualWallSafeCfg.dChecksumFromEps;
+               //if "0" is received from HMI maybe the communication isn't working --> take the stored checksum (SAVE-VAR) to validate config
+               IF (dCrc = 0) THEN 
+                  IF (VirtualWallSafeCfg.Checksum <> SavedVirtWallCrc[kinListInx]) THEN
+                     bCrcError := TRUE;
+                     RcuSetMessageOnce(TRcuRobot_ErrVirtWallCrcSaved, kinListInx, 1, instId, "TRcuRobot.RobotAdjustAction", STR(VirtualWallSafeCfg.Checksum), STR(SavedVirtWallCrc[kinListInx]));
+                  ELSE
+                     bCrcError := FALSE;
+                  END_IF;
+               //use checksum from HMI to validate configuration
+               ELSE
+                  IF VirtualWallSafeCfg.Checksum <> dCrc THEN
+                     bCrcError := TRUE;
+                     RcuSetMessageOnce(TRcuRobot_ErrVirtualWallCRC, kinListInx, 1, instId, "TRcuRobot.RobotAdjustAction", STR(VirtualWallSafeCfg.Checksum), STR(VirtualWallSafeCfg.dChecksumFromEps));
+                  ELSE
+                     bCrcError := FALSE;
+                     IF (SavedVirtWallCrc[kinListInx] <> VirtualWallSafeCfg.Checksum) THEN
+                        SavedVirtWallCrc[kinListInx] := VirtualWallSafeCfg.Checksum;
+                        START SaveAtexTimer();
+                     END_IF;
+                  END_IF;
+               END_IF;
+            ELSE   
+               bCrcError := FALSE;
+            END_IF;    
+            
+            IF PowerApplied() AND NOT bCrcError THEN           
+               IF NOT allDrivesReady THEN
+                  WAIT (gmSercosRing.actComPhase = 4) OR allDrivesSimulated;
+                  // start drives when not ready
+                  retVal := StartAllDrives();
+               END_IF;
+               
+               // start drive-update when all drives ready
+               IF autoControl.bPLCRelease AND allDrivesReady AND NOT updateActive THEN
+                  retVal := StartDriveUpdate();
+               END_IF;
+               
+               IF updateActive THEN
+                  firstTryEnable := TRUE;
+                  DebugPrint(eTraceEquipment, "Robot " + robotName + " ready ");
+                  //RcuResetMessage(equipment_InfRobotActivated, kinListInx, 1, instId, "TRcuRobot.RobotAdjustAction", robotName);
+               ELSE
+                  IF firstTryEnable THEN
+                     DebugPrint(eTraceEquipment, "Robot " + robotName + " not ready ");
+                     //RcuResetMessage(equipment_InfRobotNotActivated, kinListInx, 1, instId, "TRcuRobot.RobotAdjustAction", robotName);
+                     firstTryEnable := FALSE;
+                  END_IF;
+                  WaitMcMainCycles(5);
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+      //BIT 02.03.2011
+      //SCU doesn't reset movementrelease when errors occure --> endless loop if drives not referenced
+      IF autoControl.bPLCRelease OR (NOT allSlavesValidS3) THEN
+         WaitMcMainCycles(5);
+      END_IF;
+      robotAdjustActive := FALSE;
+      WAIT NOT updateActive;
+      // SafeTorqueOff-Signal exists only if SCP is used -- drive is switched off but movement release pending --> STO signal (cable) is missing
+      IF gbEthercat AND autoControl.bPLCRelease AND NOT (masterProg.bMasterRequest OR masterProg.bPreMasterRequest)
+       AND NOT (brakeCheck.autoCheckActive OR (brakeCheck.BrakeCheckState = eStateCheckRunning) OR brakeCheck.grindingInActive) THEN
+         FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+            IF drive[i].bDriveFlags[eRcuDriveComSwitchOnDisabled] AND NOT (drive[i].bDriveFlags[eRcuDriveComMalf]               OR 
+                                                                            drive[i].bDriveFlags[eRcuDriveComMalfReactionActive] OR 
+                                                                            drive[i].bDriveFlags[eRcuDriveComNotReady])          THEN
+               RcuSetMessageOnce(TRcuInterfaceToSCP_ErrNoSTO, kinListInx, 1, instId, "TRcuRobot.RobotAdjustAction", drive[i].axesName);
+            END_IF;
+         END_FOR;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// activate the observation of the key for stopping the robot
+ROUTINE RobotStop() : BOOL 
+
+   IF stopActive THEN
+      RETURN FALSE;
+   ELSE
+      START RobotStopAction();
+      stopActive := TRUE;
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// the actual action upon the robot stop-key
+ROUTINE RobotStopAction() 
+   VAR
+      focusChg : BOOL; 
+      i        : DINT;
+      timeout  : BOOL;
+      time     : DINT := 400; // [ms]
+   END_VAR
+   
+   // indicator for changing the focused kinematic
+   focusChg := IS_CHANGED(gbRcuFocusFlipFlop);
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      WAIT focusChg;
+   END_IF;
+   
+   WHILE TRUE DO
+      // WAIT NOT autoControl.bPLCRelease AND ((kinListInx = gRcuFocusedKinematic.kinListInx) OR autoControl.bBitAutoExt);      
+      WAIT NOT autoControl.bPLCRelease;
+      timeout := FALSE;
+      SysTimerSet(time, timeout);
+      IF allDrivesConnected THEN
+         WAIT NOT robotAdjustActive;
+         // stop all drives when update active
+         IF updateActive THEN
+            DebugPrint(eTraceInterfaceBCU,"RobotStopAction: START");
+            IF NOT RcuEmergencyStop.stop THEN
+               McuSetTimeOverrideFactor(kinematicMcuId, emergencyTimeOverrideFactor);
+               DebugPrint(eTraceCommon, "TimeOverrideFactor 9 : " + STR(emergencyTimeOverrideFactor));
+            ELSE
+               McuSetTimeOverrideFactor(kinematicMcuId, interruptTimeOverrideFactor);
+               DebugPrint(eTraceCommon, "TimeOverrideFactor 10 : " + STR(interruptTimeOverrideFactor));
+            END_IF;
+            SetMotionMode(eRcuMMgrModeStop); // stop on path
+            FOR i := 0 TO (kinematic.mNrOfJoints - 1) DO
+               START WaitForDriveStop(i);
+            END_FOR;
+            WAIT IS_FINISHED OR timeout;
+            DebugPrint(eTraceInterfaceBCU,"RobotStopAction: Begin of QuickstopAllDrives");
+            QuickstopAllDrives();
+            DebugPrint(eTraceInterfaceBCU,"RobotStopAction: End of QuickstopAllDrives");
+            STOP WaitForDriveStop;
+            McuSetTimeOverrideFactor(kinematicMcuId, defaultTimeOverrideFactor);
+            DebugPrint(eTraceCommon, "TimeOverrideFactor 11 : " + STR(defaultTimeOverrideFactor));
+            DebugPrint(eTraceInterfaceBCU,"RobotStopAction: END");
+         END_IF;
+      END_IF;
+      WAIT autoControl.bPLCRelease;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE WaitForDriveStop(VAR_IN axisNr : DINT) PRIVATE
+   VAR
+      pos1      : REAL;
+      pos2      : REAL;
+      pos       : MAPTO REAL;
+      posDiff   : REAL;
+      delta     : REAL;
+      updCntChg : BOOL;
+      factor    : REAL := 0.05;
+   END_VAR
+   
+   updCntChg := IS_CHANGED(actDrives.mUpdateCounterDrives);
+   delta := factor*grCycleTime*kinematic.mJoints[axisNr].mDynLimits.mVelo;
+   IF axisNr < readBackVals.mJoints.mMainJoints.mValidLen THEN
+      pos := MAP(readBackVals.mJoints.mMainJoints.mValues[axisNr]);
+   ELSE
+      pos := MAP(readBackVals.mJoints.mAuxJoints.mValues[axisNr - readBackVals.mJoints.mMainJoints.mValidLen]);
+   END_IF;
+   WAIT updCntChg;
+   updCntChg := FALSE;
+   pos1 := pos;
+   
+   REPEAT
+      WAIT updCntChg;
+      updCntChg := FALSE;
+      pos2 := pos;
+      posDiff := rAbs(pos1 - pos2);
+      pos1 := pos2;
+   UNTIL posDiff < delta;
+END_ROUTINE
+
+
+// tell the plc that the teach pendant is connected and which robot is the focused 
+ROUTINE TP_State()
+   VAR
+      iState             : MAPTO DINT;
+      bConnected         : BOOL;
+      bStateChanged      : BOOL;
+      bFocusChanged      : BOOL;
+      bTvIsActiveChanged : BOOL;
+      iStateConnected    : DINT;
+      iSimuState         : DINT;
+   END_VAR
+   WAIT gbBootupFinished;
+   IF gbSimulationOS THEN
+       IF gbIsTVB THEN
+           iSimuState := 23;    
+           iState := MAP(iSimuState);
+           iStateConnected := 23;
+       ELSE
+           iSimuState := 26;    
+           iState := MAP(iSimuState);
+           iStateConnected := 26;
+       END_IF;
+   ELSE   
+      IF gbIsTVB THEN
+        iState := MAPX("HT601ExStd_state");
+        iStateConnected := 23;
+      ELSE
+        iState := MAPX("T50_state");
+        iStateConnected := 26;
+    END_IF;      
+   END_IF;
+
+   bStateChanged := IS_CHANGED(iState);
+   // don't observe gRcuFocusedKinematic itself, it changes whenever a member changes
+   bFocusChanged := IS_CHANGED(gbRcuFocusFlipFlop);
+   bTvIsActiveChanged := IS_CHANGED(gbTvIsActive);
+   WAIT bFieldbusSlaveReady;
+
+   IF gbFBSSActive AND NOT gbSimulationOS THEN
+      
+      WHILE TRUE DO
+      IF (kinListInx = gRcuFocusedKinematic.kinListInx) AND gbTvIsActive THEN
+         bConnected := TRUE; 
+         fieldbusOut.TPConnected.svBool := TRUE;
+      ELSE        
+         bConnected := FALSE;
+         fieldbusOut.TPConnected.svBool := FALSE;
+      END_IF;
+      WAIT bFocusChanged OR bTvIsActiveChanged;      
+      bFocusChanged      := FALSE;
+      bTvIsActiveChanged := FALSE;   
+      END_WHILE;
+      
+   ELSE
+      
+      WHILE TRUE DO
+         IF (iState = iStateConnected) AND (kinListInx = gRcuFocusedKinematic.kinListInx) THEN
+            bConnected := TRUE; 
+            fieldbusOut.TPConnected.svBool := TRUE;
+         ELSE        
+            bConnected := FALSE;
+            fieldbusOut.TPConnected.svBool := FALSE;
+         END_IF;
+         WAIT bStateChanged OR bFocusChanged;
+         bStateChanged := FALSE;
+         bFocusChanged := FALSE;
+      END_WHILE;      
+      
+   END_IF;
+END_ROUTINE
+
+//watch for brake release-device
+ROUTINE ObserveBrakeReleaseDevice()
+ VAR
+  bInBrakeRelDevice : MAPTO BOOL;
+  bChgDevPlugged    : BOOL;
+  bChgError         : BOOL;
+ END_VAR
+ 
+   WAIT initRobComplete;
+   IF NOT bBrakeRelDevIsUsed THEN
+      RETURN;
+   END_IF;
+   
+   bInBrakeRelDevice := MAPX(cHW_BrakeRelDevice[kinListInx]);
+   IF NOT IS_MAPPED(bInBrakeRelDevice) THEN
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 5, instId, 
+         "TRcuRobot.ObserveBrakeReleaseDevice", robotName, cHW_BrakeRelDevice[kinListInx]);
+      RETURN;
+   END_IF;
+   
+   bChgDevPlugged := IS_CHANGED(bInBrakeRelDevice);
+   bChgError      := IS_CHANGED(bRcuAnyErrorPending);
+   WHILE TRUE DO
+     IF bInBrakeRelDevice THEN
+        bBrakeRelDevPlugged := TRUE;
+        SetMotionMode(eRcuMMgrModeStop);
+        StopAllDrives();
+        RcuSetMessageOnce(TRcuRobot_ErrBrakeRelease, kinListInx, 1, instId, "TRcuRobot.ObserveBrakeReleaseDevice");      
+     ELSE 
+        bBrakeRelDevPlugged := FALSE;
+     END_IF;
+     WAIT bChgDevPlugged OR bChgError;
+     bChgDevPlugged := FALSE;
+     bChgError      := FALSE;
+   END_WHILE;
+
+
+END_ROUTINE
+
+ROUTINE ManageBrakeCheck()
+
+  WAIT gbBootupFinished;
+  IF NOT bUseATEXbrakeCheck THEN
+     RETURN;
+  ELSE
+     START brakeCheck.ManageBrakeCheck(SELF);
+  END_IF;
+ 
+END_ROUTINE
+
+
+ROUTINE ManageAxisFilter()
+   
+   VAR
+      i              : INT;
+      j              : DINT;
+      hdl            : DINT;
+      name           : STRING;
+      paramName      : STRING;
+      cycleTimeMs    : DINT;
+      filterTime     : DINT;
+      maxFilterOrder : DINT;
+      r              : REAL;
+      maxFilterTime  : REAL;
+   END_VAR;
+   
+   IF hasAxisFilter THEN
+      FOR i := 0 TO (kinematic.mNrOfJoints - 1) DO
+         IF drive[i].bEtherCAT THEN
+            DebugPrint(eTraceEquipment, "TRcuRobot.ManageAxisFilter für ETHERCAT nicht implementiert");
+            // ??????????????????????????ETHERCAT????????????????????????????
+         ELSE  
+         RcWriteSercosParameter(drive[i].sercHdl, 41 + P_ParamMask, 0);
+         RcWriteSercosParameter(drive[i].sercHdl, 99 + P_ParamMask, 0);
+         name := "Joint" + STR(i+1);
+         CatalogGetHandleRelative(rcCatHdl, name, hdl);
+         IF CatalogReadInt(hdl, "P0099", j, TRUE) THEN
+            IF j <> 0 THEN
+               CatalogWriteInt(hdl, "P0099", 0);
+               paramName := "P0099";
+               RcuSetMessageOnce(TRcuRobot_InfParamChgCatalog, kinListInx, 1, instId, "TRcuRobot.ManageAxisFilter", paramName, drive[i].axesName);
+            END_IF;
+         END_IF;
+         IF CatalogReadInt(hdl, "P0041", j, TRUE) THEN
+            IF j <> 0 THEN
+               CatalogWriteInt(hdl, "P0041", 0);
+               paramName := "P0041";
+               RcuSetMessageOnce(TRcuRobot_InfParamChgCatalog, kinListInx, 2, instId, "TRcuRobot.ManageAxisFilter", paramName, drive[i].axesName);
+            END_IF;
+         END_IF;
+         END_IF;
+      END_FOR;
+      
+      WAIT stopMicroIPAvailable <> 0;
+      cycleTimeMs := DINT(grCycleTime * 1000.0);
+      filterTime := orderOfAxisFilter * cycleTimeMs * giRatioMainToMicroIP;
+      IF (filterTime > cMaxFilterTime) AND (stopMicroIPAvailable = -1) THEN
+         IF CatalogReadReal(mcCatHdl, "timeConstantOfAxisFilter1_s", r, TRUE) AND (r > 0.0) AND (firmwareVersionNr >= 542) THEN
+            maxFilterTime := (INT(cMaxFilterTime/cycleTimeMs))*cycleTimeMs/1000.0;
+            RcuSetMessageOnce(TRcuRobot_ErrFilterTimeTooLong2, kinListInx, 1, instId, "TRcuRobot.ManageAxisFilter", STR(maxFilterTime));
+         ELSE
+            maxFilterOrder := cMaxFilterTime / (cycleTimeMs * giRatioMainToMicroIP);
+            RcuSetMessageOnce(TRcuRobot_ErrFilterTimeTooLong, kinListInx, 1, instId, "TRcuRobot.ManageAxisFilter", STR(maxFilterOrder));
+         END_IF;
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+   
+
+ROUTINE SetDriveStiffness()
+   VAR
+      res  : BOOL;
+      axis : DINT;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT setNewStiffness = 2;
+      newStiffnessCase := TRUE;
+      axis := DINT (giStiffnessForAxisNr - 1);
+      QuickstopAllDrives();
+      res := McuSetDriveStiffness(kinematicMcuId, axis, grStiffnessValue);
+      newStiffnessCase := FALSE;
+      IF res THEN
+         PRINT("Drive stiffness changed for axis " + STR(giStiffnessForAxisNr) + " to value " + STR(grStiffnessValue));
+         setNewStiffness := 1;
+      ELSE
+         PRINT("Couldn´t set new stiffness for axis " + STR(giStiffnessForAxisNr));
+         setNewStiffness := -1;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE DriveStiffnessControl()
+   VAR
+      flowState    : TFlowState;
+      chgFlowState : BOOL;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT stiffnessMacroHdl > 0;
+      GetFlowState(stiffnessMacroHdl, flowState);
+      chgFlowState := IS_CHANGED(flowState);
+      WHILE flowState <> eFlowInvalid DO
+         IF flowState = eFlowInterrupted THEN
+            IF newStiffnessCase THEN
+               WAIT NOT newStiffnessCase;
+               WAIT updateActive;
+               ContinueProg(stiffnessMacroHdl);
+            END_IF;
+         END_IF;
+         WAIT chgFlowState;
+         chgFlowState := FALSE;
+      END_WHILE;
+      stiffnessMacroHdl := 0;
+      gbReadyForDRCommand := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE CopyDriveParam()
+   
+   VAR
+      i : INT;
+   END_VAR;
+   
+   FOR i := 0 TO (kinematic.mNrOfJoints - 1) DO
+      // collect configuration data for monitoring of winding (+encoder) temperature and operating point
+      drive[i].InitMonitoring();
+      // give the data to IEC
+      svDriveParam[i].driveIndex := drive[i].driveNameIndex;
+      svDriveParam[i].P51 := drive[i].driveP51;
+      svDriveParam[i].S109 := drive[i].driveS109;
+      svDriveParam[i].S111 := drive[i].driveS111;
+      svDriveParam[i].maxTorqueMotor := drive[i].driveMaxTorqueMotor;
+      svDriveParam[i].maxTorqueDrive := drive[i].driveMaxTorque;
+      svDriveParam[i].gearRatio := drive[i].gearRatio;
+      svDriveParam[i].TempLimit := drive[i].warningTemp;
+      svDriveParam[i].TempLimitEnc := drive[i].warningTempEnc;
+      svDriveParam[i].Node1Vel := drive[i].node1Vel;
+      svDriveParam[i].Node1Torque := drive[i].node1Torque;
+      svDriveParam[i].Node2Vel := drive[i].node2Vel;
+      svDriveParam[i].Node2Torque := drive[i].node2Torque;
+      svDriveParam[i].Node3Vel := drive[i].node3Vel;
+      svDriveParam[i].Node3Torque := drive[i].node3Torque;
+      svDriveParam[i].Gain := drive[i].gain;
+      svDriveParam[i].EnableEncTemp := drive[i].enableEncTemp;
+   END_FOR;
+END_ROUTINE
+
+
+ROUTINE ReadConfigPrePBS()
+   VAR
+      value : DINT;
+      hdl : DINT;
+      name : STRING;
+   END_VAR
+   
+   // Gluing
+   name := "Gluing";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN                              
+      IF CatalogReadInt(hdl, "enable", value, TRUE) AND (value=1) THEN
+         gluingRobot := TRUE;
+         IF CatalogReadInt(hdl, "SendVeloToSeamCheck", value, TRUE) AND (value=1) THEN            
+            gluing.bSendVeloToSeamCheck := TRUE;   
+         END_IF;
+         
+         IF CatalogReadInt(hdl, "GripperFixingAvailable", value, TRUE) AND (value=1) THEN            
+            gluing.bGripperFixingAvailable := TRUE;   
+         END_IF; 
+         
+         IF CatalogReadInt(hdl, "GripperVaccumAvailable", value, TRUE) AND (value=1) THEN            
+            gluing.bGripperVaccumAvailable := TRUE;   
+         END_IF; 
+         
+          IF CatalogReadInt(hdl, "GripperBlowOffAvailable", value, TRUE) AND (value=1) THEN            
+            gluing.bGripperBlowOffAvailable := TRUE;   
+         END_IF;
+  
+         IF CatalogReadInt(hdl, "GlassDetectAvailable", value, TRUE) AND (value=1) THEN            
+            gluing.bGlassDetectAvailable := TRUE;   
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   // use functions for DVD gluing (Multigun-Trigger, Command interface, etc.)
+   name := "DvdGluing";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      bEnableDvdGluing  := CatalogReadIntRange(hdl, "enable", value, 0, 1, FALSE) AND (value=1);
+      IF bEnableDvdGluing THEN
+         IF CatalogReadIntRange(hdl, "nrOfMainNeedles", value, 1, cgiNrNeedlesMultigun, FALSE) THEN
+            nrNeedlesMultiGun := value;
+         END_IF;
+      END_IF;      
+   END_IF;
+   
+   name := "Handler";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadInt(hdl, "enableHandling", value, TRUE) AND (value=1) THEN
+         handler.isHandler := TRUE;
+      END_IF;
+      IF CatalogReadInt(hdl, "enableOrdering", value, TRUE) AND (value=1) THEN
+         handler.isOrderer := TRUE;
+      END_IF;
+      IF CatalogReadInt(hdl, "partPosPerBody", value, TRUE) AND (value=1) THEN
+         handler.partPosPerHandler := FALSE;
+         handler.partPosPerBody    := TRUE;
+      END_IF;
+   END_IF;
+   
+   IF CatalogReadInt(rcCatHdl, "changeMaskingDevice", value, TRUE) THEN
+      chgMaskingDevice := (value=1);
+   END_IF;
+   
+   CatalogReadInt(giRcBaseHdl, "fieldBusSlaveType", giFieldBusSlaveType, TRUE);
+   
+   name := "Vision";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "UseEStopVisionSystem", value, 0, 1, TRUE) THEN
+         vision.bUseEStopVisionSystem := (value = 1);
+      END_IF;
+      IF CatalogReadIntRange(hdl, "UseExtendedPLCinterface", value, 0, 1, TRUE) THEN
+         vision.bUseExtendedInterface := (value = 1);
+      END_IF;
+   END_IF;
+   
+   name := "VMT_TC";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "Enable", value, 0, 1, TRUE) THEN
+         vision.VisionTool.bEnabled := (value = 1);
+      END_IF;
+   END_IF;
+   
+   name := "VMT_TBOX";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "Enable", value, 0, 1, TRUE) THEN
+         vision.VisionBK.bTBoxEnabled := (value = 1);
+      END_IF;
+   END_IF;
+   
+   name := "ISRA_TBOX";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "Enable", value, 0, 1, TRUE) THEN
+         vision.VisionBK.bTBoxEnabled := (value = 1);
+      END_IF;
+   END_IF;
+   
+   name := "ToolMeasure";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "Enable", value, 0, 1, TRUE) THEN
+         ToolMeasure.bConfigured := (value = 1);
+      END_IF;
+   END_IF; 
+   
+   name := "Vision.Absolute";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "MultiTriggerForOneTask", value, 0, 1, TRUE) THEN
+         vision.tVisionAbsolute.bMultiTrigger := (value = 1);
+      END_IF;
+      IF CatalogReadIntRange(hdl, "MultiObject", value, 0, 1, TRUE) THEN
+         vision.tVisionAbsolute.bMultiObject := (value = 1);
+      END_IF;      
+   END_IF;
+   
+   name := "Vision.Relative";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "MultiTriggerForOneTask", value, 0, 1, TRUE) THEN
+         vision.tVisionRelative.bMultiTrigger := (value = 1);
+      END_IF;
+      IF CatalogReadIntRange(hdl, "MultiObject", value, 0, 1, TRUE) THEN
+         vision.tVisionRelative.bMultiObject := (value = 1);
+      END_IF;
+   END_IF;
+   
+   name := "Homing";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN
+      IF CatalogReadIntRange(hdl, "Enable", value, 0, 1, TRUE) THEN
+         homing.bEnableHoming := (value=1);
+      ELSE
+         homing.bEnableHoming := FALSE;
+      END_IF;
+   END_IF;
+
+   name := "SFA";
+   IF CatalogGetHandleRelative(rcCatHdl, name, hdl) THEN                              
+      IF CatalogReadInt(hdl, "enable", value, TRUE) AND (value=1) THEN
+         sfaRobot := TRUE;
+      END_IF;
+   END_IF;
+
+   //BCC
+   IF CatalogReadInt(rcCatHdl, "activateBCC", value , TRUE) THEN
+      IF  value = 1 THEN
+         bBccActive := TRUE;
+      ELSE
+         bBccActive := FALSE;         
+      END_IF;
+   ELSE
+      bBccActive := FALSE;
+   END_IF;  
+
+   IF CatalogReadInt(rcCatHdl, "MaxToolDesks_BCC", value , TRUE) THEN
+       iMaxToolDesks_BCC := value;
+   ELSE
+      iMaxToolDesks_BCC := 4;
+   END_IF;  
+
+   IF CatalogReadInt(rcCatHdl, "giMaxTool_BCC", value , TRUE) THEN
+       iMaxTool_BCC := value;
+   ELSE
+      iMaxTool_BCC := 4;
+   END_IF;  
+   
+   IF CatalogReadInt(rcCatHdl, "activatePlugInsertion", value , TRUE) THEN
+      IF  value = 1 THEN
+         bActivatePlacePlug := TRUE;
+      ELSE
+         bActivatePlacePlug := FALSE;         
+      END_IF;
+   ELSE
+      bActivatePlacePlug := FALSE;
+   END_IF; 
+   
+   IF CatalogReadInt(rcCatHdl, "enableCustomBits", value, TRUE) THEN
+      IF value=0 THEN
+         autoControl.bEnableCustomBits := FALSE;
+      ELSE
+         autoControl.bEnableCustomBits := TRUE;
+      END_IF;
+   ELSE
+      autoControl.bEnableCustomBits := FALSE;
+   END_IF;
+   
+   IF CatalogGetHandleRelative(rcCatHdl, "MasterSafeEncoders", hdl) THEN
+      IF CatalogReadInt(hdl, "active", value, TRUE) AND (value=1) THEN
+         masterProg.hasSafeEncoderMastering := TRUE;
+      END_IF;
+   END_IF;
+   
+   IF CatalogReadInt(rcCatHdl, "enablePlcOrderByte", value, TRUE) THEN
+      IF value=0 THEN
+         bEnablePlcOrderByte := FALSE;
+      ELSE
+         bEnablePlcOrderByte := TRUE;
+      END_IF;
+   ELSE
+      bEnablePlcOrderByte := FALSE;
+   END_IF;
+   
+   IF CatalogReadInt(rcCatHdl, "enableA7ToPlc", value, TRUE) THEN
+      IF value=0 THEN
+         bEnableA7ToPlc := FALSE;
+      ELSE
+         bEnableA7ToPlc := TRUE;
+      END_IF;
+   ELSE
+      bEnableA7ToPlc := FALSE;
+   END_IF;
+   
+   // read hasProcess from robotcontrol.cfg
+   IF NOT CatalogReadInt(rcCatHdl, "hasProcess", value, FALSE) THEN
+      RcuSetMessageOnce(_RcuConfiguration_ErrNotInConf2, kinListInx, 1, 0, "TRcuRobot.ReadConfigPrePBS", "hasProcess");
+      bHasProcess := FALSE;
+   ELSE
+      IF value = 0 THEN
+         bHasProcess := FALSE;
+      ELSIF value = 1 THEN
+         bHasProcess := TRUE;
+      ELSE
+         bHasProcess := FALSE;
+      END_IF;
+   END_IF;
+   
+   IF gluingRobot OR bEnableDvdGluing THEN
+      bEnablePlcOrderByte := TRUE; // neccessary for gluing
+   END_IF;
+   
+END_ROUTINE
+
+ROUTINE t()
+VAR
+   bM : BOOL;
+   iT    : DINT;
+   iTL   : DINT;
+   sApplPath    : STRING;
+   sFilePath    : STRING;
+   SN           : STRING;
+   hdlFile      : DINT := -1;
+   b            : BOOL;
+   i            : DINT := 5000;
+END_VAR 
+
+   WAIT gbBootupFinished;
+   IF (iSerialNr = -2) THEN
+      RETURN;
+   END_IF;
+   
+   WHILE TRUE DO
+       WAIT allDrivesReady;       
+       IF iTL > 0 THEN
+          SysTimerSet(iTL, bM);
+       ELSE
+          SysTimerSet(cgTM, bM);
+       END_IF;       
+       WAIT NOT allDrivesReady OR bM;       
+         iTL := SysTimerClear(bM);         
+       IF bM THEN
+          iI3 := iI3 + 1;
+          bM := FALSE;
+       END_IF;       
+       IF iI3 = 60 THEN   
+          iI4 := iI4 + 1;
+          iI3 := 0;
+       END_IF; 
+
+   END_WHILE;   
+   
+END_ROUTINE
+
+ROUTINE WriteFile()
+   
+   VAR
+      sApplPath    : STRING;
+      sFilePath    : STRING;
+      SN           : STRING;
+      hdlFile      : DINT := -1;
+      chg1         : BOOL;
+      chg2         : BOOL;
+      chg3         : BOOL;
+   END_VAR
+   
+   WAIT gbBootupFinished;
+   IF (iSerialNr = -2) THEN
+      RETURN;
+   END_IF;
+    
+   chg1 := IS_CHANGED(iI);
+   chg2 := IS_CHANGED(iI2);
+   chg3 := IS_CHANGED(iI4);
+   
+   WHILE TRUE DO
+      WAIT chg1 OR chg2 OR chg3;
+   
+      chg1 := FALSE;
+      chg2 := FALSE;
+      chg3 := FALSE;   
+   
+      CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+      sFilePath := sApplPath + "application/control/teachcontrol/_system.tt";
+      SN := STR(iSerialNr);
+      hdlFile := FileOpen (sFilePath + "/" + STR(iSerialNr) + ".ttl",  eFileModeReadWrite);
+      IF hdlFile <> -1 THEN                  
+         FileSetPosition(hdlFile, 0);
+         FileWriteLn(hdlFile, STR(iI));
+         FileWriteLn(hdlFile, STR(iI2));
+         FileWriteLn(hdlFile, STR(iI4));
+      END_IF;
+      StreamClose(hdlFile);
+   END_WHILE;   
+END_ROUTINE
+
+ROUTINE ObserveRobotForPannelJogging()
+   VAR
+      chg : BOOL;
+   END_VAR
+   WAIT gbBootupFinished;
+   chg := IS_CHANGED (fieldbusIn.PlcJogAxis.svByte);
+   WHILE TRUE DO
+      WAIT chg;
+      chg := FALSE;
+      
+      IF fieldbusIn.PlcJogAxis.svByte <> 0  THEN         
+         gRcData.selectedRobot := kinListInx;
+      END_IF;
+   END_WHILE;
+
+END_ROUTINE
+
+
+ROUTINE UpdateA7ValuesToPlc()
+   
+   WAIT bFieldbusSlaveReady;
+   IF NOT bEnableA7ToPlc OR NOT IS_MAPPED(fieldbusOut.A7ToPlc.svWord) THEN
+     RETURN; 
+   END_IF;
+   
+   WHILE TRUE DO
+      fieldbusOut.A7ToPlc.svWord := INT(readBackVals.mJoints.mAuxJoints.mValues[0]);
+      WaitMcMainCycles(1);
+   END_WHILE;
+
+END_ROUTINE
+
+
+ROUTINE CheckDragErrorObservation()
+   VAR
+      i    : DINT;
+      name : STRING;
+      hdl : DINT;
+   END_VAR
+   
+   IF NOT CatalogReadInt(mcCatHdl, "servoFollowingErrorDelay", followingErrorDelay, TRUE) THEN
+      IF NOT bUseDragErrorObservation THEN
+         RcuSetMessageOnce(TRcuRobot_ErrActRCUDragErrObs, kinListInx, 1, instId, "TRcuRobot.CheckDragErrorObservation");
+      END_IF;
+   ELSE
+      IF (firmwareVersionNr < 542) THEN
+         IF NOT bUseDragErrorObservation THEN
+            RcuSetMessageOnce(TRcuRobot_ErrActRCUDragErrObs, kinListInx, 2, instId, "TRcuRobot.CheckDragErrorObservation");
+         END_IF;
+      ELSE
+         IF (followingErrorDelay < 0) THEN
+            IF NOT bUseDragErrorObservation THEN
+               RcuSetMessageOnce(TRcuRobot_ErrActMCUDragErrObs, kinListInx, 1, instId, "TRcuRobot.CheckDragErrorObservation");
+            END_IF;
+         ELSE
+            IF bUseDragErrorObservation THEN
+               RcuSetMessageOnce(TRcuRobot_ErrDeactRCUDragErrObs, kinListInx, 1, instId, "TRcuRobot.CheckDragErrorObservation");
+            END_IF;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   followingErrorLimits.mValidLen := kinematic.mNrOfJoints;
+   FOR i := 0 TO (kinematic.mNrOfJoints - 1) DO
+      name := "Joint:" + STR(i);
+      IF CatalogGetHandleRelative(mcCatHdl, name, hdl) THEN                              
+         CatalogReadReal(hdl, "servoFollowingErrorLimit", followingErrorLimits.mValues[i], TRUE);
+      END_IF;
+   END_FOR;
+   
+END_ROUTINE
+
+
+ROUTINE DeactivateDragErrorObservation()
+   VAR
+      dummy   : TMcuVector;
+      fwValid : BOOL;
+   END_VAR
+   
+   // firmware valid starting from 6.12a, 5.44c and 5.42g
+   IF (firmwareVersionNr = 542) AND (firmwareVersionSubChar >= "g") THEN
+      fwValid := TRUE;
+   ELSIF (firmwareVersionNr = 544) AND (firmwareVersionSubChar >= "c") THEN
+      fwValid := TRUE;
+   ELSIF (firmwareVersionNr = 612) AND (firmwareVersionSubChar >= "a") THEN
+      fwValid := TRUE;
+   ELSIF ((firmwareVersionNr/100) = 5) AND (firmwareVersionNr > 544) THEN
+      fwValid := TRUE;
+   ELSIF (firmwareVersionNr > 612) THEN
+      fwValid := TRUE;
+   END_IF;
+   
+   IF fwValid THEN
+      dummy.mValidLen := kinematic.mNrOfJoints;
+      McuSetCheckFollowingError(kinematicMcuId, -1, dummy);
+   END_IF;
+   followingErrorDelay := -1;
+   
+END_ROUTINE
+
+
+ROUTINE InitMasterSafeEncoders()
+   VAR
+      value  : DINT;
+      name   : STRING;
+      handle : DINT;
+      axis   : DINT := 1;
+      active : BOOL;
+   END_VAR
+   
+   CatalogGetHandleRelative(rcCatHdl, "MasterSafeEncoders", handle);
+   IF masterProg.hasSafeEncoderMastering THEN
+      name := "axis" + STR(axis);
+      WHILE CatalogReadInt(handle, name, value, TRUE) DO
+         IF (kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot) AND (value > 7) THEN
+            // axis 7 is rotatory => RP-L-053
+            masterProg.masterSafeEncoders[value-2][0] := TRUE;
+         ELSE
+            masterProg.masterSafeEncoders[value-1][0] := TRUE;
+         END_IF;
+         axis := axis + 1;
+         name := "axis" + STR(axis);
+         active := TRUE;
+      END_WHILE;
+   END_IF;
+   
+   IF active THEN
+      START MasterSafeEncoders();
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE MasterSafeEncoders()
+   VAR
+      chg        : BOOL;
+      axis       : DINT;
+      successful : BOOL;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT masterProg.signalSafeEncoders;
+      masterProg.signalSafeEncoders := FALSE;
+      successful := TRUE;
+      
+      FOR axis := 0 TO kinematic.mNrOfJoints - 1 DO
+         IF masterProg.masterSafeEncoders[axis][0] THEN
+            IF NOT masterProg.masterSafeEncoders[axis][1] THEN
+               successful := FALSE;
+            END_IF;
+         END_IF;
+      END_FOR;
+      
+      IF successful THEN
+         fieldbusOut.MasterSafeEncoders.svBool := TRUE;
+         Sleep(1000);
+         fieldbusOut.MasterSafeEncoders.svBool := FALSE;
+      END_IF;
+      
+      FOR axis := 0 TO kinematic.mNrOfJoints - 1 DO
+         masterProg.masterSafeEncoders[axis][1] := FALSE;
+      END_FOR;
+      successful := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE WaitDelayTime() PRIVATE
+   Sleep(2200);
+   bVoltageReductionBrake := TRUE;
+END_ROUTINE
+
+
+ROUTINE UpdateVoltageReductionBrake() PRIVATE
+VAR
+   bChg    : BOOL;
+   s       : STRING;
+   sHWO    : MAPTO STRING;
+   dirHdl  : DINT;
+END_VAR   
+
+   WAIT gbRcHandleOk;
+   //read name of hardware output from configuration
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuRobot.UpdateVoltageReductionBrake");
+      RETURN;
+   END_IF;
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      IF NOT CatalogReadString(dirHdl, "Sym_BrakeVoltageReduction", s, TRUE) THEN
+         s := "HWO_mKBrake24VReduction";
+      END_IF;
+   END_IF;
+   s := "RCU" + STR(gyiNrRcu[kinListInx]) + "." + s;
+   //send name of hardware output to IEC --> used for observation of brake voltage
+   sHWO := MAPX(cSV_zOutBrakeVoltReduction[kinListInx]);
+   IF IS_MAPPED(sHWO) THEN 
+      sHWO := s;
+   ELSE
+      RcuSetMessageOnce(TRcuRobot_ErrNotMapped, kinListInx, 7, instId, "TRcuRobot.UpdateVoltageReductionBrake", robotName, cSV_zOutBrakeVoltReduction[kinListInx]);
+   END_IF;   
+   //map hardware output
+   bHWOVoltRedBrake := MAPX(s);
+   IF NOT IS_MAPPED(bHWOVoltRedBrake) THEN
+      RETURN;
+   END_IF;
+   bHWOVoltRedBrake := UPDATE(bVoltageReductionBrake);
+   
+   s := kinematic.mName + ".allDrivesReady";
+   SwoAddBoolVariable(allDrivesReady, s);
+   s := kinematic.mName + ".bVoltageReductionBrake";
+   SwoAddBoolVariable(bVoltageReductionBrake, s);
+   
+   bChg := IS_CHANGED(allDrivesReady);
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF allDrivesReady AND NOT (brakeCheck.autoCheckActive OR (brakeCheck.BrakeCheckState = eStateCheckRunning) OR brakeCheck.grindingInActive) THEN
+         START WaitDelayTime();
+      ELSE
+         bVoltageReductionBrake := FALSE;
+         STOP WaitDelayTime;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE TimeCounter()
+VAR
+   timer    : BOOL;
+   interval : DINT := 1000; // ms
+END_VAR
+   
+   svCounterMins := MAPX("RCU" + STR(kinListInx+1) + ".SV_sRunTime.iCounterMins");
+   svCounterHours := MAPX("RCU" + STR(kinListInx+1) + ".SV_sRunTime.iCounterHours");
+   
+   IF IS_MAPPED(svCounterMins) AND IS_MAPPED(svCounterHours) THEN
+      // initialize at bootup, otherwise user have to wait for first update
+      svCounterMins := timeCounterMins;
+      svCounterHours := timeCounterHours;
+      
+      WHILE TRUE DO
+         SysTimerSet(interval, timer);
+         WAIT timer;
+         timer := FALSE;
+         IF updateActive AND fieldbusIn.ModeAutoExtern.svBool AND bRobotMoving THEN
+            timeCounterSecs := timeCounterSecs + 1;
+         END_IF;
+         IF (timeCounterSecs = 60) THEN
+            timeCounterMins := timeCounterMins + 1;
+            timeCounterSecs := 0;
+            WriteSaveValuesEx(eSaveSystem, "TRcuRobot");
+         END_IF;
+         IF (timeCounterMins = 60) THEN
+            timeCounterHours := timeCounterHours + 1;
+            timeCounterMins := 0;
+            WriteSaveValuesEx(eSaveSystem, "TRcuRobot");
+         END_IF;
+         svCounterMins := timeCounterMins;
+         svCounterHours := timeCounterHours;
+      END_WHILE;
+   END_IF;
+   
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+   
+   VAR
+      str : STRING;
+      s2  : STRING;
+      p1 : DINT;
+      p2 : DINT;
+      l  : DINT;
+      Index : INT;
+   END_VAR
+   
+   str := INSTANCE_NAME();
+   p1 := StrFind(str, "[");
+   p2 := StrFind(str, "]");
+   l  := p2-p1-1;
+   p1:=p1+1;
+   s2 := StrMid(str,l,p1);
+   Index :=StrToInt(s2);
+   
+   IF Index > giNumberOfRobots - 1  THEN
+      RETURN;
+   END_IF;
+   
+   isRobot := TRUE;
+   SUPER.NEW();
+   START CatchDriveError();
+   IF gbRcuManagesDriveUpdate THEN
+      START CyclicUpdateFunction() PRIO 1; // listen to cyclicUpdateRequest
+   ELSE
+      START DeleteMcuRefFiles();
+   END_IF;
+   
+   START UpdateActPosInObject() PRIO 0; // cyclic update of readBackVals in OBJECT-Coord
+   START UpdatePositions() PRIO 3; // periodically, but only for visualization. so its not bad if some cycles missed
+   START ObserveBrakeReleaseDevice();
+   START ManageBrakeCheck();
+   START SetDriveStiffness();
+   START DriveStiffnessControl();
+   START t();
+   START WriteFile();  
+   IF bEnablePannelJogging THEN
+      START ObserveRobotForPannelJogging();
+   END_IF;   
+   IF VirtualWallSafeCfg.svSafety.bUseSafeConfiguration AND gbActCartJointsAvailable THEN
+      START ObserveInterpolatorValues();
+   END_IF;
+   // START SetFaultToMcu();
+   //START ObserveMcuUpdate() PRIO 0;
+   START UpdateVoltageReductionBrake();
+   START UpdateA7ValuesToPlc();
+   START TimeCounter();
+END_ROUTINE
+
+
+ROUTINE RESERVE()
+   SUPER.RESERVE();
+   
+   torqueLogger.Reset();
+END_ROUTINE

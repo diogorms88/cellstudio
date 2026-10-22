@@ -1,0 +1,73 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2004 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuSemaphore.tts
+*  First Author : nmr
+*  Date         : 12.01.2004
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Provides routines to lock certain program-parts 
+*------------------------------------------------------------------------------
+*)
+
+
+(* -----------------------------------------------------------------------------
+* members
+*)
+
+
+// set global samaphore flag
+ROUTINE Lock(VAR_IN sema : TRcuSemaphoreEnum) : BOOL
+
+   IF (sema = eInvalidSemaphore) OR (sema = eMaxSemaphore) THEN
+      RcuSetMessageOnce(TRcuSemaphore_ErrInvalidSema, -1, 1, sema, "TRcuSemaphore.Lock", STR(sema));
+      RETURN FALSE;
+   END_IF;
+   // semaphore = eInvalidSemaphore ... this instance is not used in another lock
+   // NOT gyRcuSemaphore[sema]      ... the target semaphore is not lock
+   WAIT (semaphore = eInvalidSemaphore) AND NOT gyRcuSemaphore[sema];
+   LOCK;
+      semaphore := sema;
+      gyRcuSemaphore[semaphore] := TRUE;
+   UNLOCK;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// release global samaphore flag
+ROUTINE Unlock()
+
+   LOCK;
+   // semaphore <> eInvalidSemaphore ... instance is locked
+   IF (semaphore <> eInvalidSemaphore) AND (semaphore <> eMaxSemaphore) THEN
+      gyRcuSemaphore[semaphore] := FALSE;
+      semaphore := eInvalidSemaphore;
+   END_IF;
+   UNLOCK;
+END_ROUTINE
+
+
+(* -----------------------------------------------------------------------------
+* private members
+*)
+
+
+VAR PRIVATE
+   semaphore : TRcuSemaphoreEnum;
+END_VAR
+
+
+(* -----------------------------------------------------------------------------
+* systemroutines
+*)
+
+
+// it is necessary to release the flag when the semaphore-instance is deleted
+ROUTINE DELETE()
+
+   Unlock();
+END_ROUTINE

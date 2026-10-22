@@ -1,0 +1,114 @@
+VAR PRIVATE
+   myRobot               : MAPTO TRcuRobot;
+   
+   bUploadNewData        : MAPTO BOOL;
+   bUploadNewDataAck     : MAPTO BOOL;
+   strUploadFileName     : MAPTO STRING[255];
+   
+   bSetErrorTimeout		 : BOOL;
+END_VAR
+
+
+ROUTINE Init(locRobot : TRcuRobot;
+              strUploadNewDataVariableName : STRING;
+              strUploadNewDataAckVariableName : STRING;
+              strUploadFileNameVariableName : STRING)
+   VAR
+      handle      : DINT;
+      str         : STRING;
+      value       : DINT;
+      i           : INT;
+      iCatalogHdl : DINT;
+      iTemp       : DINT;
+   END_VAR
+   
+   myRobot := MAP(locRobot);
+   
+   bUploadNewData := MAPX(strUploadNewDataVariableName);
+   IF NOT IS_MAPPED(bUploadNewData) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 1, 0, 
+                        "TRcuUploadHandshake.init", strUploadNewDataVariableName);
+      RETURN;
+   END_IF;
+   
+   bUploadNewDataAck := MAPX(strUploadNewDataAckVariableName);
+   IF NOT IS_MAPPED(bUploadNewDataAck) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 2, 0, 
+                        "TRcuUploadHandshake.init", strUploadNewDataAckVariableName);
+      RETURN;
+   END_IF;
+
+   strUploadFileName := MAPX(strUploadFileNameVariableName);
+   IF NOT IS_MAPPED(strUploadFileName) THEN
+      RcuSetMessageOnce(RcuAutoCtrl_ErrNotMapped, myRobot.kinListInx, 3, 0, 
+                        "TRcuUploadHandshake.init", strUploadFileNameVariableName);
+      RETURN;
+   END_IF;
+   
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "PaintChecker", iCatalogHdl) THEN
+      IF NOT CatalogReadIntRange(iCatalogHdl, "UploadMsgType", iTemp, 0, 1, FALSE) THEN
+         bSetErrorTimeout := FALSE;
+      ELSE
+         bSetErrorTimeout := (iTemp = 1);
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+   
+ROUTINE UploadFile(strFileName : STRING)
+   
+   IF strFileName = "" THEN
+      RETURN;
+   END_IF;
+   
+   IF NOT IS_MAPPED(bUploadNewData) THEN
+      RETURN;
+   END_IF;
+   
+   IF NOT IS_MAPPED(bUploadNewDataAck) THEN
+      RETURN;
+   END_IF;
+   
+   IF NOT IS_MAPPED(strUploadFileName) THEN
+      RETURN;
+   END_IF;
+
+   DebugPrint(eTraceUploadHandshake, "UploadFile " + strFileName);
+   
+   // Reset flag NewData
+   DebugPrint(eTraceUploadHandshake, "Reset flag NewData");
+   SetFlagAndWaitForAck(FALSE);
+   
+   // Set flag NewData
+   DebugPrint(eTraceUploadHandshake, "Set flag NewData");
+   strUploadFileName := strFileName;
+   SetFlagAndWaitForAck(TRUE);
+   
+   // Reset flag NewData
+   DebugPrint(eTraceUploadHandshake, "Reset flag NewData");
+   SetFlagAndWaitForAck(FALSE);   
+END_ROUTINE
+
+ROUTINE SetFlagAndWaitForAck(bNewValue : BOOL)
+   VAR
+      bTimeOut : BOOL;
+   END_VAR;
+   
+   bUploadNewData := bNewValue;
+
+   bTimeOut := FALSE;
+   SysTimerSet(15000, bTimeOut);
+
+   WAIT (bUploadNewDataAck = bUploadNewData) OR bTimeOut;
+   SysTimerClear( bTimeOut);   
+   
+   IF bTimeOut THEN
+      DebugPrint(eTraceUploadHandshake, "Timeout while upload file to EcoScreen");
+      
+      IF bSetErrorTimeout THEN
+         RcuSetMessageOnce(TRcuPaintChecker_ErrUpload, myRobot.kinListInx, 1, 0, "TRcuUploadHandshake.SetFlagAndWaitForAck");
+      ELSE
+         RcuSetMessageOnce(TRcuPaintChecker_MsgUpload, myRobot.kinListInx, 1, 0, "TRcuUploadHandshake.SetFlagAndWaitForAck");
+      END_IF;
+   END_IF;
+END_ROUTINE

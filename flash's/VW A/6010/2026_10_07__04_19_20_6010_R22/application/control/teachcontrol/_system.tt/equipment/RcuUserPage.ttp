@@ -1,0 +1,3203 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2006 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       RcuUserPage.ttp                                              *
+*   Description: stuff of the userpages from TeachView                        *
+*-----------------------------------------------------------------------------*
+*  
+*)
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                       L O G G E R  -  logger.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tLogEntry             : STRUCT
+     sText              : STRING;
+     rTime              : REAL;
+  END_STRUCT;
+  tLogger : STRUCT
+     ySelected          : ARRAY [cMaxLoggers] OF BOOL;
+     sCurrentLoggerName : STRING;
+     bButtonUp          : BOOL;
+     bButtonDown        : BOOL;
+     bButtonShowStep    : BOOL;
+     yStepText          : ARRAY [10] OF tLogEntry;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   iUserLogger          : INT;
+   Logger               : tLogger;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Map the data of the loggers to userpage
+//------------------------------------------------------------------------------
+ROUTINE MapLogger() PRIVATE
+   
+  WAIT gbEquipmentReady;
+  IF gRcuFocusedRobot.logger.bLoggingActive THEN
+     iUserLogger := 1;
+     START LoggerSelection();
+     
+     IF gbIsTVB THEN
+        START UpdateLoggerPage_ex();
+     ELSE
+        START UpdateLoggerPage();
+     END_IF;    
+  END_IF; 
+   
+END_ROUTINE
+//------------------------------------------------------------------------------
+// watch which logger is selected from user 
+//------------------------------------------------------------------------------
+ROUTINE LoggerSelection() PRIVATE
+  VAR
+    yChg : ARRAY [cMaxLoggers] OF BOOL;
+    bChg : BOOL;
+    I    : INT;
+  END_VAR
+    
+  FOR I:=0 TO (cMaxLoggers-1) DO
+    yChg[I] := IS_CHANGED(Logger.ySelected[I]);
+  END_FOR;
+  bChg    := IS_CHANGED(yChg);
+  
+  WHILE TRUE DO
+    WAIT bChg;
+    FOR I:=0 TO (cMaxLoggers-1) DO
+      IF (yChg[I] AND Logger.ySelected[I]) THEN
+         iUserLogger := I+1;
+      END_IF;   
+      Logger.ySelected[I] := FALSE;
+      yChg[I]             := FALSE;
+    END_FOR;
+    bChg := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// manage the loggerpage  
+//------------------------------------------------------------------------------
+ROUTINE UpdateLoggerPage() PRIVATE
+  VAR
+    bChgButtonUp      : BOOL;
+    bChgButtonDown    : BOOL;
+    bChgShowCurrStep  : BOOL;
+    bChgLogger        : BOOL;
+    bChgTime          : BOOL;
+    iDisplayEntry     : INT;
+    I                 : INT;
+    J                 : INT;
+  END_VAR
+      
+
+  bChgButtonUp       := IS_CHANGED(Logger.bButtonUp);
+  bChgButtonDown     := IS_CHANGED(Logger.bButtonDown);
+  bChgShowCurrStep   := IS_CHANGED(Logger.bButtonShowStep);
+  bChgLogger         := IS_CHANGED(iUserLogger); 
+  bChgTime           := IS_CHANGED(gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].bTimeOut);
+  bChgLogger         := TRUE;
+  
+  WHILE TRUE DO  
+    IF bChgLogger OR bChgShowCurrStep THEN
+       Logger.sCurrentLoggerName := gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].sName;
+       IF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 0) AND 
+          (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 10) THEN
+           iDisplayEntry :=  0;
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 10) AND 
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep <  20) THEN
+           iDisplayEntry := 10;                                                                       
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 20) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 30)  THEN
+           iDisplayEntry := 20;                                                                        
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 30) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 40)  THEN
+           iDisplayEntry := 30;                                                                       
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 40) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 50)  THEN
+           iDisplayEntry := 40;                                                                       
+       END_IF;
+    END_IF;
+    
+    IF bChgButtonUp THEN
+       IF (iDisplayEntry >= (10)) THEN
+           iDisplayEntry := iDisplayEntry - 10;
+       ELSE
+           iDisplayEntry := 40;
+       END_IF;
+    END_IF;
+    
+    IF bChgButtonDown THEN
+       IF (iDisplayEntry < (cMaxLogSteps - 10)) THEN
+           iDisplayEntry := iDisplayEntry + 10;
+       ELSE
+           iDisplayEntry := 0;
+       END_IF;
+    END_IF;
+     
+    J := 0;
+    FOR I:=iDisplayEntry TO (iDisplayEntry+9) DO
+       Logger.yStepText[J].sText := gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].yLogSteps[I].sText;
+       Logger.yStepText[J].rTime := gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].yLogSteps[I].rTime;
+       J := J + 1;
+    END_FOR;
+    
+    bChgLogger        := FALSE;
+    bChgShowCurrStep  := FALSE;
+    bChgButtonUp      := FALSE;
+    bChgButtonDown    := FALSE;
+    bChgTime          := FALSE;
+    WAIT bChgLogger OR bChgTime 
+                    OR(bChgShowCurrStep AND Logger.bButtonShowStep)
+                    OR (bChgButtonUp AND Logger.bButtonUp)
+                    OR (bChgButtonDown AND Logger.bButtonDown);
+    
+    Logger.bButtonShowStep := FALSE;
+    Logger.bButtonUp       := FALSE;
+    Logger.bButtonDown     := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+         SCP Reference -  scpref_popup.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+
+VAR
+ bContinueMastering : BOOL;
+ bReferenceSCP      : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Show userpage for SCP reference after mastering if requested
+//------------------------------------------------------------------------------
+ROUTINE MapMastering() PRIVATE
+ VAR
+   chgMastering : BOOL;
+   chgRefScp    : BOOL;   
+ END_VAR
+
+  WAIT gbEquipmentReady;
+  chgMastering  := IS_CHANGED(bContinueMastering);
+  chgRefScp     := IS_CHANGED(bReferenceSCP);
+  WHILE TRUE DO
+     IF bContinueMastering OR bReferenceSCP THEN
+        gRcuFocusedRobot.masterProg.bShowInfoScpRef := FALSE;
+        bContinueMastering := FALSE;
+        bReferenceSCP      := FALSE;
+     END_IF;
+     WAIT chgMastering OR chgRefScp;
+     chgMastering  := FALSE;
+     chgRefScp     := FALSE; 
+  END_WHILE;
+END_ROUTINE  
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                       Toolkorrektur  -  ToolAdjustment.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tToolMeasure : STRUCT
+     ySelected            : ARRAY [cgiRcuMaxGuns] OF BOOL;
+     yEnabled             : ARRAY [cgiRcuMaxGuns] OF BOOL;
+     refToolUserPage      : MAPTO TOOL;
+     mess_valUserPage     : MAPTO POS;
+     corrToolUserPage     : MAPTO TOOL;
+     deltaFlangeUserPage  : MAPTO POS;
+     deltaTCPUserPage     : MAPTO POS;
+     REF_VAL              : MAPTO POS;
+     bShowWarnLockOutlet  : MAPTO BOOL;
+     iToolAdjLabel        : MAPTO INT;
+     rMaxToolAdj_X_Minus  : MAPTO REAL;
+     rMaxToolAdj_X_Plus   : MAPTO REAL;
+     rMaxToolAdj_Y_Minus  : MAPTO REAL;
+     rMaxToolAdj_Y_Plus   : MAPTO REAL;
+     rMaxToolAdj_Z_Minus  : MAPTO REAL;
+     rMaxToolAdj_Z_Plus   : MAPTO REAL;
+     rWarnToolAdj_X_Minus : MAPTO REAL;
+     rWarnToolAdj_X_Plus  : MAPTO REAL;
+     rWarnToolAdj_Y_Minus : MAPTO REAL;
+     rWarnToolAdj_Y_Plus  : MAPTO REAL;
+     rWarnToolAdj_Z_Minus : MAPTO REAL;
+     rWarnToolAdj_Z_Plus  : MAPTO REAL;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   iUserToolMeasure     : INT := 1;
+   UserToolMeasure      : tToolMeasure;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Map the data of the loggers to userpage
+//------------------------------------------------------------------------------
+ROUTINE MapToolMeasure() PRIVATE
+VAR
+   bChgRobot: BOOL;
+END_VAR
+
+  WAIT gbEquipmentReady;
+  bChgRobot := IS_CHANGED(gbRcuFocusFlipFlop);
+  IF gRcuFocusedRobot.ToolMeasure.bConfigured  THEN
+     START ToolSelection();
+     WHILE TRUE DO
+        UserToolMeasure.refToolUserPage     := MAP(gRcuFocusedRobot.ToolMeasure.refToolUserPage[iUserToolMeasure]);
+        UserToolMeasure.mess_valUserPage    := MAP(gRcuFocusedRobot.ToolMeasure.mess_valUserPage[iUserToolMeasure]);
+        UserToolMeasure.corrToolUserPage    := MAP(gRcuFocusedRobot.ToolMeasure.corrToolUserPage[iUserToolMeasure]);
+        UserToolMeasure.deltaFlangeUserPage := MAP(gRcuFocusedRobot.ToolMeasure.deltaFlangeUserPage[iUserToolMeasure]);
+        UserToolMeasure.deltaTCPUserPage    := MAP(gRcuFocusedRobot.ToolMeasure.deltaTCPUserPage[iUserToolMeasure]);
+        UserToolMeasure.REF_VAL             := MAP(gRcuFocusedRobot.ToolMeasure.REF_VAL[iUserToolMeasure]);       
+        UserToolMeasure.bShowWarnLockOutlet  := MAP(gRcuFocusedRobot.ToolMeasure.bShowWarnLockOutlet);
+        IF UserToolMeasure.bShowWarnLockOutlet THEN
+           UserToolMeasure.iToolAdjLabel     := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].iLabel);
+        ELSE
+           UserToolMeasure.iToolAdjLabel     := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].iLabel);
+        END_IF;
+        UserToolMeasure.rMaxToolAdj_X_Minus  := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rXmin);
+        UserToolMeasure.rMaxToolAdj_X_Plus   := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rXmax);
+        UserToolMeasure.rMaxToolAdj_Y_Minus  := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rYmin);
+        UserToolMeasure.rMaxToolAdj_Y_Plus   := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rYmax);
+        UserToolMeasure.rMaxToolAdj_Z_Minus  := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rZmin);
+        UserToolMeasure.rMaxToolAdj_Z_Plus   := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rZmax);
+        UserToolMeasure.rWarnToolAdj_X_Minus := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rXmin);
+        UserToolMeasure.rWarnToolAdj_X_Plus  := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rXmax);
+        UserToolMeasure.rWarnToolAdj_Y_Minus := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rYmin);
+        UserToolMeasure.rWarnToolAdj_Y_Plus  := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rYmax);
+        UserToolMeasure.rWarnToolAdj_Z_Minus := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rZmin);
+        UserToolMeasure.rWarnToolAdj_Z_Plus  := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rZmax);
+        bChgRobot     := FALSE;
+        WAIT bChgRobot;
+     END_WHILE;
+  END_IF; 
+END_ROUTINE
+//------------------------------------------------------------------------------
+// watch which tool is selected from user 
+//------------------------------------------------------------------------------
+ROUTINE ToolSelection() PRIVATE
+  VAR
+    yChg : ARRAY [cgiRcuMaxGuns] OF BOOL;
+    bChg : BOOL;
+    I    : INT;
+  END_VAR
+    
+  FOR I:=0 TO (cgiRcuMaxGuns-1) DO
+    yChg[I] := IS_CHANGED(UserToolMeasure.ySelected[I]);
+  END_FOR;
+  bChg    := IS_CHANGED(yChg);
+  
+  UserToolMeasure.yEnabled[0] := FALSE;
+  UserToolMeasure.yEnabled[1] := TRUE;
+  UserToolMeasure.yEnabled[2] := TRUE;
+  
+  WHILE TRUE DO
+    WAIT bChg;
+    FOR I:=0 TO (cgiRcuMaxGuns-1) DO
+      IF (yChg[I] AND UserToolMeasure.ySelected[I]) THEN
+         UserToolMeasure.yEnabled[I] := FALSE;
+         iUserToolMeasure := I+1;
+         UserToolMeasure.refToolUserPage     := MAP(gRcuFocusedRobot.ToolMeasure.refToolUserPage[iUserToolMeasure]);
+         UserToolMeasure.mess_valUserPage    := MAP(gRcuFocusedRobot.ToolMeasure.mess_valUserPage[iUserToolMeasure]);
+         UserToolMeasure.corrToolUserPage    := MAP(gRcuFocusedRobot.ToolMeasure.corrToolUserPage[iUserToolMeasure]);
+         UserToolMeasure.deltaFlangeUserPage := MAP(gRcuFocusedRobot.ToolMeasure.deltaFlangeUserPage[iUserToolMeasure]);
+         UserToolMeasure.deltaTCPUserPage    := MAP(gRcuFocusedRobot.ToolMeasure.deltaTCPUserPage[iUserToolMeasure]);
+         UserToolMeasure.REF_VAL             := MAP(gRcuFocusedRobot.ToolMeasure.REF_VAL[iUserToolMeasure]);  
+         UserToolMeasure.rMaxToolAdj_X_Minus  := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rXmin);
+         UserToolMeasure.rMaxToolAdj_X_Plus   := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rXmax);
+         UserToolMeasure.rMaxToolAdj_Y_Minus  := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rYmin);
+         UserToolMeasure.rMaxToolAdj_Y_Plus   := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rYmax);
+         UserToolMeasure.rMaxToolAdj_Z_Minus  := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rZmin);
+         UserToolMeasure.rMaxToolAdj_Z_Plus   := MAP(gRcuFocusedRobot.ToolMeasure.yAlarmLimitsUserPage[iUserToolMeasure].rZmax);
+         UserToolMeasure.rWarnToolAdj_X_Minus := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rXmin);
+         UserToolMeasure.rWarnToolAdj_X_Plus  := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rXmax);
+         UserToolMeasure.rWarnToolAdj_Y_Minus := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rYmin);
+         UserToolMeasure.rWarnToolAdj_Y_Plus  := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rYmax);
+         UserToolMeasure.rWarnToolAdj_Z_Minus := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rZmin);
+         UserToolMeasure.rWarnToolAdj_Z_Plus  := MAP(gRcuFocusedRobot.ToolMeasure.yWarnLimitsUserPage[iUserToolMeasure].rZmax);
+      ELSE
+         UserToolMeasure.yEnabled[I] := TRUE;
+      END_IF;   
+      UserToolMeasure.ySelected[I] := FALSE;
+      yChg[I]             := FALSE;
+    END_FOR;
+    bChg := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      D R I V E  -  DriveParam.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tDrive : STRUCT
+     rMaxPosDrive       : REAL;
+     rMaxPosCfg         : REAL;
+     rMinPosDrive       : REAL;
+     rMinPosCfg         : REAL;
+     rZeroPosDrive      : REAL;
+     rMaxDiffDriveCfg   : REAL;
+     rMinDiffDriveCfg   : REAL;
+     bButtonRefresh     : BOOL;
+     bButtonStore       : BOOL;
+     bButtonUp          : BOOL;
+     bButtonDown        : BOOL;
+     bDataChanged       : BOOL;
+     sUserInfo          : DINT := eText19;
+  END_STRUCT;
+  eStateEndPosition : (eText1, eText2, eText3, eText4, eText5, eText6, eText7, eText8, eText9, eText10, eText11, eText12, eText13, eText14, eText15, eText16, eText17, eText18, eText19); 
+END_TYPE
+
+VAR PRIVATE
+   iUsedDrive           : INT;
+   Drive                : tDrive;
+END_VAR
+//------------------------------------------------------------------------------
+// Map the data of the drive to userpage
+//------------------------------------------------------------------------------
+ROUTINE MapDrive() PRIVATE
+  
+  WAIT gbEquipmentReady; 
+  START DriveSelection();
+  START WatchUserInputs();
+  START WatchStoreButton();
+  iUsedDrive         := 1;
+   
+END_ROUTINE
+//------------------------------------------------------------------------------
+// watch which drive is selected from user 
+//------------------------------------------------------------------------------
+ROUTINE DriveSelection() PRIVATE
+ VAR
+  bChgButtonUp      : BOOL;
+  bChgButtonDown    : BOOL;
+  bChgButtonRefresh : BOOL;
+  bChgDrive         : BOOL;
+  bChgRobot         : BOOL;
+  iOldDrive         : INT;
+ END_VAR
+ 
+ iUsedDrive         := 1;
+ bChgButtonUp       := IS_CHANGED(Drive.bButtonUp);
+ bChgButtonDown     := IS_CHANGED(Drive.bButtonDown);
+ bChgButtonRefresh  := IS_CHANGED(Drive.bButtonRefresh);
+ bChgDrive          := IS_CHANGED(iUsedDrive);
+ bChgRobot          := IS_CHANGED(gbRcuFocusFlipFlop);
+ WHILE TRUE DO
+   IF bChgRobot THEN
+      iUsedDrive := 1;
+      iOldDrive  := iUsedDrive;
+   END_IF;
+   IF bChgButtonUp THEN
+      IF (iUsedDrive < gRcuFocusedRobot.kinematic.mNrOfJoints) THEN
+         iUsedDrive := iUsedDrive + 1;
+      ELSE
+         iUsedDrive := 1;
+      END_IF;
+   ELSIF bChgButtonDown THEN
+      IF (iUsedDrive > 1) THEN
+         iUsedDrive := iUsedDrive - 1;
+      ELSE
+         iUsedDrive := gRcuFocusedRobot.kinematic.mNrOfJoints;
+      END_IF;
+   ELSIF bChgDrive THEN
+      IF ((iUsedDrive < 1) OR (iUsedDrive > gRcuFocusedRobot.kinematic.mNrOfJoints)) THEN
+          iUsedDrive := iOldDrive;
+      END_IF;
+   END_IF;
+   
+   IF gRcuFocusedRobot.drive[iUsedDrive - 1].simulated OR gRcuFocusedRobot.drive[iUsedDrive - 1].ioSimulated THEN
+      Drive.rMaxPosDrive     := gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMaxPos;
+      Drive.rMinPosDrive     := gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMinPos;
+   ELSE
+      Drive.rMaxPosDrive     := gRcuFocusedRobot.drive[iUsedDrive - 1].driveMaxPos;
+      Drive.rMinPosDrive     := gRcuFocusedRobot.drive[iUsedDrive - 1].driveMinPos;
+   END_IF;
+   Drive.rMaxPosCfg       := gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMaxPos;
+   Drive.rMinPosCfg       := gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMinPos;
+   Drive.rZeroPosDrive    := gRcuFocusedRobot.drive[iUsedDrive - 1].driveZeroOffset;
+   Drive.rMaxDiffDriveCfg := gRcuFocusedRobot.drive[iUsedDrive - 1].diffMaxDriveCfg;
+   Drive.rMinDiffDriveCfg := gRcuFocusedRobot.drive[iUsedDrive - 1].diffMinDriveCfg;
+   
+   bChgButtonUp         := FALSE;
+   bChgButtonDown       := FALSE;
+   bChgDrive            := FALSE;
+   bChgButtonRefresh    := FALSE;
+   bChgRobot            := FALSE;
+   iOldDrive            := iUsedDrive;
+   WAIT bChgButtonUp OR bChgButtonDown OR bChgDrive OR bChgButtonRefresh OR bChgRobot; 
+   Drive.bButtonUp      := FALSE;
+   Drive.bButtonDown    := FALSE;
+   Drive.bButtonRefresh := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+//------------------------------------------------------------------------------
+// watch user if has changed some data and sign it on the page
+//------------------------------------------------------------------------------
+ROUTINE WatchUserInputs() PRIVATE
+ VAR
+   bChgMaxPosDrive  : BOOL;
+   bChgMaxPosCfg    : BOOL;
+   bChgMinPosDrive  : BOOL;
+   bChgMinPosCfg    : BOOL;
+   bChgZeroPosDrive : BOOL;
+ END_VAR
+
+  bChgMaxPosDrive  := IS_CHANGED(Drive.rMaxPosDrive);
+  bChgMaxPosCfg    := IS_CHANGED(Drive.rMaxPosCfg);
+  bChgMinPosDrive  := IS_CHANGED(Drive.rMinPosDrive);
+  bChgMinPosCfg    := IS_CHANGED(Drive.rMinPosCfg);
+  bChgZeroPosDrive := IS_CHANGED(Drive.rZeroPosDrive);
+  
+  WHILE TRUE DO 
+    WAIT bChgMaxPosDrive OR bChgMaxPosCfg OR bChgMinPosDrive OR bChgMinPosCfg OR bChgZeroPosDrive;
+    Drive.bDataChanged := FALSE;
+    
+    IF NOT (gRcuFocusedRobot.drive[iUsedDrive - 1].simulated OR gRcuFocusedRobot.drive[iUsedDrive - 1].ioSimulated) THEN
+       IF (Drive.rMaxPosDrive <> gRcuFocusedRobot.drive[iUsedDrive - 1].driveMaxPos) THEN
+          Drive.bDataChanged := TRUE;
+       END_IF;
+       IF (Drive.rMinPosDrive <> gRcuFocusedRobot.drive[iUsedDrive - 1].driveMinPos) THEN
+          Drive.bDataChanged := TRUE;
+       END_IF;
+    ELSE   
+       IF (Drive.rMaxPosDrive <> gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMaxPos) THEN
+          Drive.bDataChanged := TRUE;
+       END_IF;
+       IF (Drive.rMinPosDrive <> gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMinPos) THEN
+          Drive.bDataChanged := TRUE;
+       END_IF;
+    END_IF;
+    IF (Drive.rMaxPosCfg <> gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMaxPos) THEN
+       Drive.bDataChanged := TRUE;
+    END_IF;
+    IF (Drive.rMinPosCfg <> gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMinPos) THEN
+       Drive.bDataChanged := TRUE;
+    END_IF;
+    IF (Drive.rZeroPosDrive <> gRcuFocusedRobot.drive[iUsedDrive - 1].driveZeroOffset) THEN
+       Drive.bDataChanged := TRUE;
+    END_IF;
+    
+    bChgMaxPosDrive  := FALSE;
+    bChgMaxPosCfg    := FALSE;
+    bChgMinPosDrive  := FALSE;
+    bChgMinPosCfg    := FALSE;
+    bChgZeroPosDrive := FALSE;
+  END_WHILE;
+
+END_ROUTINE  
+//------------------------------------------------------------------------------
+// watch if user has pressed the store-button
+//------------------------------------------------------------------------------
+ROUTINE WatchStoreButton() PRIVATE
+ VAR
+   bChgButton  : BOOL;
+   s           : STRING;
+   hdl         : DINT;
+   paramValue  : DINT;
+ END_VAR
+ 
+  bChgButton := IS_CHANGED(Drive.bButtonStore);
+  WHILE TRUE DO
+    WAIT bChgButton;
+    IF Checkplausibility() THEN
+       IF NOT (gRcuFocusedRobot.drive[iUsedDrive - 1].simulated OR gRcuFocusedRobot.drive[iUsedDrive - 1].ioSimulated) THEN
+          DESELECT gRcuFocusedRobot;
+          gRcuFocusedRobot.disableDriveStart := TRUE;
+          Drive.sUserInfo := eText1;
+          WAIT gRcuFocusedRobot.isStopped;            
+          IF gRcuFocusedRobot.updateActive THEN
+             gRcuFocusedRobot.QuickstopAllDrives();
+          END_IF;
+          // Lage-Grenzwert positiv
+          IF (Drive.rMaxPosDrive <> gRcuFocusedRobot.drive[iUsedDrive - 1].driveMaxPos) THEN
+             Drive.sUserInfo := eText2;
+             IF gRcuFocusedRobot.drive[iUsedDrive - 1].bEtherCAT THEN
+                IF NOT gRcuFocusedRobot.drive[iUsedDrive - 1].WriteDrive_CoE_Object(16#607D, 2, Drive.rMaxPosDrive) THEN
+                   Drive.sUserInfo := eText3;
+                END_IF;
+                gRcuFocusedRobot.drive[iUsedDrive - 1].ReadDrive_CoE_Object(16#607D, 2, paramValue, gRcuFocusedRobot.drive[iUsedDrive - 1].driveMaxPos);
+             ELSE
+             IF NOT gRcuFocusedRobot.drive[iUsedDrive - 1].WriteDrive_S_Param(49, Drive.rMaxPosDrive) THEN
+                Drive.sUserInfo := eText3;
+             END_IF;
+             gRcuFocusedRobot.drive[iUsedDrive - 1].ReadDrive_S_Param(49, paramValue, gRcuFocusedRobot.drive[iUsedDrive - 1].driveMaxPos);
+          END_IF;   
+          END_IF;   
+          // Lage-Grenzwert negativ
+          IF (Drive.rMinPosDrive <> gRcuFocusedRobot.drive[iUsedDrive - 1].driveMinPos) THEN
+             Drive.sUserInfo := eText4;
+             IF gRcuFocusedRobot.drive[iUsedDrive - 1].bEtherCAT THEN
+                IF NOT gRcuFocusedRobot.drive[iUsedDrive - 1].WriteDrive_CoE_Object(16#607D, 1, Drive.rMinPosDrive) THEN
+                   Drive.sUserInfo := eText5;
+                END_IF;
+                gRcuFocusedRobot.drive[iUsedDrive - 1].ReadDrive_CoE_Object(16#607D, 1, paramValue, gRcuFocusedRobot.drive[iUsedDrive - 1].driveMinPos);
+             ELSE
+             IF NOT gRcuFocusedRobot.drive[iUsedDrive - 1].WriteDrive_S_Param(50, Drive.rMinPosDrive) THEN
+                Drive.sUserInfo := eText5;
+             END_IF;
+             gRcuFocusedRobot.drive[iUsedDrive - 1].ReadDrive_S_Param(50, paramValue, gRcuFocusedRobot.drive[iUsedDrive - 1].driveMinPos);
+          END_IF;
+          END_IF;
+          // Referenzmass 1, bzw. Homeoffset
+          IF (Drive.rZeroPosDrive <> gRcuFocusedRobot.drive[iUsedDrive - 1].driveZeroOffset) THEN
+             Drive.sUserInfo := eText6;
+             IF gRcuFocusedRobot.drive[iUsedDrive - 1].bEtherCAT THEN
+                IF NOT gRcuFocusedRobot.drive[iUsedDrive - 1].WriteDrive_CoE_Object(16#607C, 0, Drive.rZeroPosDrive) THEN
+                   Drive.sUserInfo := eText7;
+                END_IF;
+                gRcuFocusedRobot.drive[iUsedDrive - 1].ReadDrive_CoE_Object(16#607C, 0, paramValue, gRcuFocusedRobot.drive[iUsedDrive - 1].driveZeroOffset);
+             ELSE
+             IF NOT gRcuFocusedRobot.drive[iUsedDrive - 1].WriteDrive_S_Param(52, Drive.rZeroPosDrive) THEN
+                Drive.sUserInfo := eText7;
+             END_IF;
+             gRcuFocusedRobot.drive[iUsedDrive - 1].ReadDrive_S_Param(52, paramValue, gRcuFocusedRobot.drive[iUsedDrive - 1].driveZeroOffset);
+          END_IF;
+          END_IF;
+          //Paramter maxPos McRobot.cfg
+          IF (Drive.rMaxPosCfg <> gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMaxPos) THEN
+             Drive.sUserInfo := eText8;
+             s := "Joint:" + STR(iUsedDrive-1);    
+             IF CatalogGetHandleRelative(gRcuFocusedRobot.mcCatHdl, s, hdl) THEN
+                paramValue := Drive.rMaxPosCfg;
+                IF CatalogWriteInt(hdl, "maxPos", paramValue) THEN
+                   WriteCatalogFile();
+                   CatalogReadReal(hdl, "maxPos", gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMaxPos, FALSE);                   
+                ELSE
+                   Drive.sUserInfo := eText9;
+                END_IF;
+             ELSE
+                Drive.sUserInfo := eText9;
+             END_IF;  
+          END_IF;     
+          //Paramter minPos McRobot.cfg
+          IF (Drive.rMinPosCfg <> gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMinPos) THEN
+             Drive.sUserInfo := eText10;
+             s := "Joint:" + STR(iUsedDrive-1);
+             IF CatalogGetHandleRelative(gRcuFocusedRobot.mcCatHdl, s, hdl) THEN
+                paramValue := Drive.rMaxPosCfg;
+                IF CatalogWriteInt(hdl, "minPos", paramValue) THEN
+                   WriteCatalogFile();
+                   CatalogReadReal(hdl, "minPos", gRcuFocusedRobot.kinematic.mJoints[iUsedDrive - 1].mMinPos, FALSE);
+                ELSE
+                   Drive.sUserInfo := eText11;
+                END_IF;
+             ELSE
+                Drive.sUserInfo := eText11;
+             END_IF;  
+          END_IF;
+          Drive.sUserInfo := eText12;
+          gRcuFocusedRobot.disableDriveStart := FALSE;
+          Drive.bDataChanged           := FALSE;
+       ELSE
+          Drive.sUserInfo := eText13;
+       END_IF;
+    END_IF;
+    Drive.bButtonStore   := FALSE;
+    bChgButton           := FALSE;
+    Drive.bButtonRefresh := TRUE;
+  END_WHILE;
+  
+END_ROUTINE
+//------------------------------------------------------------------------------
+// check the plausibility of the user paramters
+//------------------------------------------------------------------------------
+ROUTINE Checkplausibility() : BOOL PRIVATE
+  
+  //Check max/min drive
+  IF (Drive.rMaxPosDrive <= Drive.rMinPosDrive) THEN
+     Drive.sUserInfo := eText14;
+     Drive.bButtonRefresh := TRUE;
+     RETURN FALSE;
+  END_IF;
+  //Check cfg-Values
+  IF (Drive.rMaxPosCfg > (Drive.rMaxPosDrive - Drive.rMaxDiffDriveCfg)) THEN
+      Drive.rMaxPosCfg := Drive.rMaxPosDrive - Drive.rMaxDiffDriveCfg;
+      Drive.sUserInfo := eText15;
+  END_IF;
+  IF (Drive.rMinPosCfg < (Drive.rMinPosDrive + Drive.rMinDiffDriveCfg)) THEN
+      Drive.rMinPosCfg := Drive.rMinPosDrive + Drive.rMinDiffDriveCfg;
+      Drive.sUserInfo := eText16;
+  END_IF;
+  IF (Drive.rMaxPosCfg <= Drive.rMinPosCfg) THEN
+     Drive.sUserInfo := eText17;
+     Drive.bButtonRefresh := TRUE;
+     RETURN FALSE;
+  END_IF;
+  
+  //Check zero-offset    
+  IF (Drive.rZeroPosDrive > Drive.rMaxPosCfg) OR (Drive.rZeroPosDrive < Drive.rMinPosCfg) THEN
+     Drive.sUserInfo := eText18;
+     Drive.bButtonRefresh := TRUE;
+     RETURN FALSE;
+  END_IF;
+ 
+  RETURN TRUE;
+  
+END_ROUTINE
+//------------------------------------------------------------------------------
+// Write the catalog-values into cfg-file
+//------------------------------------------------------------------------------
+ROUTINE WriteCatalogFile() PRIVATE
+ VAR
+   sName : STRING;
+   line  : DINT;
+   hdl   : DINT;
+ END_VAR
+ 
+  //handle for catalog McRobot
+  sName := "Joint:1";
+  IF CatalogGetHandleRelative(gRcuFocusedRobot.mcCatHdl, sName, hdl) THEN
+     IF CatalogGetFile(hdl, "maxPos", sName, line) THEN
+        IF NOT CatalogSave(sName) THEN  
+           RcuSetMessageOnce(RcuUserPage_ErrWriteCatalogFile, gRcuFocusedKinematic.kinListInx, 1, 0, "RcuUserPage.WriteCatalogFile", "McRobot.cfg");
+        END_IF;
+     ELSE
+        RcuSetMessageOnce(RcuUserPage_ErrWriteCatalogFile, gRcuFocusedKinematic.kinListInx, 2, 0, "RcuUserPage.WriteCatalogFile", "McRobot.cfg");
+     END_IF;   
+  ELSE   
+     RcuSetMessageOnce(RcuUserPage_ErrWriteCatalogFile, gRcuFocusedKinematic.kinListInx, 3, 0, "RcuUserPage.WriteCatalogFile", "McRobot.cfg");
+  END_IF;
+    
+END_ROUTINE
+
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      V I S I O N  -  vision.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tVision : STRUCT
+     bShowMenu               : BOOL;
+     tVisionDataAbs          : MAPTO OBJECT;
+     tVisionDataRel          : MAPTO OBJECT;
+     tObjectDataAbs          : MAPTO OBJECT;
+     tObjectDataRel          : MAPTO OBJECT;
+     tTeachInObject          : MAPTO OBJECT;
+     iInfoAbs                : DINT;
+     iInfoRel                : DINT;
+     bSetDataAbs             : BOOL;
+     bSetDataRel             : BOOL;
+     bReadDataAbs            : BOOL;
+     bReadDataRel            : BOOL;
+     bCalcObjectAbs          : BOOL;
+     bCalcObjectRel          : BOOL;
+     bResetDataAbs           : BOOL;
+     bResetDataRel           : BOOL;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   Vision                : tVision;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Map the data of the visionsystem to userpage
+//------------------------------------------------------------------------------
+ROUTINE MapVision() PRIVATE
+ VAR
+   chgCameraAbs  : BOOL;
+   chgCameraRel  : BOOL;
+   chgUserAbs    : BOOL;
+   chgUserRel    : BOOL;
+   chgRobot      : BOOL;
+ END_VAR
+
+  WAIT gbEquipmentReady;
+  chgRobot := IS_CHANGED(gbRcuFocusFlipFlop);
+  chgRobot := TRUE;
+  START ObserveSetData();
+  START ObserveReadData();
+  START ObserveCalcData();
+  START ObserveResetData();
+  WHILE TRUE DO 
+    //focused robot has changed
+    IF chgRobot THEN
+       Vision.bShowMenu      := UPDATE(gRcuFocusedRobot.vision.bShowVisionUserPage OR 
+                                       gRcuFocusedRobot.vision.bBKBootUpOk OR
+                                       gRcuFocusedRobot.vision.VisionSmartRay.bCfgDataRead OR
+                                       gRcuFocusedRobot.ToolMeasure.bConfigured OR
+                                       gRcuFocusedRobot.vision.VisionTool.bBootUpOk OR
+                                       gRcuFocusedRobot.vision.bTBoxBootUpOk);
+       chgCameraAbs          := IS_CHANGED(gRcuFocusedRobot.vision.bDataAbsSetByCamera);
+       chgCameraRel          := IS_CHANGED(gRcuFocusedRobot.vision.bDataRelSetByCamera);
+       chgUserAbs            := IS_CHANGED(gRcuFocusedRobot.vision.bDataAbsSetByUser);
+       chgUserRel            := IS_CHANGED(gRcuFocusedRobot.vision.bDataRelSetByUser);
+       Vision.tVisionDataAbs := MAP(gRcuFocusedRobot.vision.tVisionDataAbs);
+       Vision.tVisionDataRel := MAP(gRcuFocusedRobot.vision.tVisionDataRel);
+       Vision.tObjectDataAbs := MAP(gRcuFocusedRobot.vision.tObjectDataAbs);
+       Vision.tObjectDataRel := MAP(gRcuFocusedRobot.vision.tObjectDataRel);
+       Vision.tTeachInObject := MAP(gRcuFocusedRobot.vision.tTeachInObject);
+    END_IF;
+    //absolute
+    IF gRcuFocusedRobot.vision.bDataAbsSetByUser THEN
+       Vision.iInfoAbs := 0;
+    ELSIF gRcuFocusedRobot.vision.bDataAbsSetByCamera THEN
+       Vision.iInfoAbs := 1;
+    ELSE
+       Vision.iInfoAbs := 2;
+    END_IF;
+    //relative
+    IF gRcuFocusedRobot.vision.bDataRelSetByUser THEN
+       Vision.iInfoRel := 0;
+    ELSIF gRcuFocusedRobot.vision.bDataRelSetByCamera THEN
+       Vision.iInfoRel := 1;
+    ELSE
+       Vision.iInfoRel := 2;
+    END_IF;
+    chgRobot     := FALSE;
+    chgCameraAbs := FALSE;
+    chgCameraRel := FALSE;
+    chgUserAbs   := FALSE;
+    chgUserRel   := FALSE;
+    WAIT chgCameraAbs OR chgCameraRel OR chgUserAbs OR chgUserRel OR chgRobot;
+  END_WHILE; 
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//     set the data 
+//------------------------------------------------------------------------------
+ROUTINE ObserveSetData() PRIVATE
+ VAR
+  object  : TMcuFrame;
+  iTmp    : INT;
+ END_VAR
+
+   WHILE TRUE DO
+      WAIT Vision.bSetDataAbs OR Vision.bSetDataRel;
+      IF Vision.bSetDataAbs THEN
+         gRcuFocusedRobot.vision.SetVisionDataFromTeachview(Vision.tVisionDataAbs, FALSE);
+      ELSIF Vision.bSetDataRel THEN
+         gRcuFocusedRobot.vision.SetVisionDataFromTeachview(Vision.tVisionDataRel, TRUE);
+      END_IF;
+      Vision.bSetDataAbs := FALSE;
+      Vision.bSetDataRel := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  read global data 
+//------------------------------------------------------------------------------
+ROUTINE ObserveReadData() PRIVATE
+   
+   WHILE TRUE DO
+      WAIT Vision.bReadDataAbs OR Vision.bReadDataRel;
+      IF Vision.bReadDataAbs THEN
+         Vision.tVisionDataAbs := gRcuFocusedRobot.vision.ReadOutVisionDataToTeachview(FALSE);
+      ELSIF Vision.bReadDataRel THEN
+         Vision.tVisionDataRel := gRcuFocusedRobot.vision.ReadOutVisionDataToTeachview(TRUE);
+      END_IF;
+      Vision.bReadDataAbs := FALSE;
+      Vision.bReadDataRel := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  calculate the data
+//------------------------------------------------------------------------------
+ROUTINE ObserveCalcData() PRIVATE
+
+   WHILE TRUE DO
+      WAIT Vision.bCalcObjectAbs OR Vision.bCalcObjectRel;
+      IF Vision.bCalcObjectAbs THEN
+          gRcuFocusedRobot.DebugPrint(eTraceAutoControl,  "TEACHVIEW - CALCULATE VISION OBJECT ABS");
+//          gRcuFocusedRobot.vision.CalcActualObject(Vision.tVisionDataAbs, FALSE);
+          gRcuFocusedRobot.vision.CalcActualObject();
+      ELSIF Vision.bCalcObjectRel THEN
+          gRcuFocusedRobot.DebugPrint(eTraceAutoControl,  "TEACHVIEW - CALCULATE VISION OBJECT Rel");
+//          gRcuFocusedRobot.vision.CalcActualObject(Vision.tVisionDataRel, TRUE);
+          gRcuFocusedRobot.vision.CalcActualObject();
+      END_IF;
+      Vision.bCalcObjectAbs := FALSE;
+      Vision.bCalcObjectRel := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  reset data
+//------------------------------------------------------------------------------
+ROUTINE ObserveResetData() PRIVATE
+
+   WHILE TRUE DO
+      WAIT Vision.bResetDataAbs OR Vision.bResetDataRel;
+      IF Vision.bResetDataAbs THEN
+         gRcuFocusedRobot.vision.ResetDataFromTeachview(FALSE);
+      ELSIF Vision.bResetDataRel THEN
+         gRcuFocusedRobot.vision.ResetDataFromTeachview(TRUE);
+   END_IF;
+      Vision.bResetDataAbs := FALSE;
+      Vision.bResetDataRel := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+            H A N D L E R T O O L  -  handlertool.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tOrdersToSensor : STRUCT
+    bSetInactive          : BOOL;
+    bSetPartPresent       : BOOL;
+    bResetPart            : BOOL;
+    bCalibSensor          : BOOL;
+    bRaiseGain            : BOOL;
+    bLowerGain            : BOOL;
+    bReset                : BOOL;
+    bLearnInMan           : BOOL;
+    bStoreValue           : BOOL;
+    bCancelValue          : BOOL;
+    ySelected             : ARRAY [cgiMaxSeachCycles] OF BOOL;
+  END_STRUCT;
+  
+  tOrdersToSwitch : STRUCT
+    bDeactPartCtrl        : BOOL;
+    bDeactMaxCtrl         : BOOL;
+    bDeactMinCtrl         : BOOL;
+  END_STRUCT;
+
+  tPneuUnitCylinder : STRUCT
+    iState : DINT;
+    bShow  : BOOL;
+    bUp    : BOOL;
+    bDown  : BOOL;
+  END_STRUCT;
+  tPneuUnitFoot : STRUCT
+    iState : DINT;
+    bShow  : BOOL;
+    bFront : BOOL;
+    bBack  : BOOL;
+  END_STRUCT;
+  tOrdersToPneuUnit : STRUCT
+    yCylinder  : ARRAY [cgiMaxCylUnit] OF tPneuUnitCylinder;
+    sAllFeet   : tPneuUnitFoot;
+    yFoot      : ARRAY [cgiMaxFeetUnit] OF tPneuUnitFoot;
+  END_STRUCT;
+  tStatesPneuUnit : STRUCT
+    yCylinder  : ARRAY [cgiMaxCylUnit] OF tPneuUnitCylinder;
+    yFoot      : ARRAY [cgiMaxFeetUnit] OF tPneuUnitFoot;
+  END_STRUCT;
+
+
+  tHandlerTool : STRUCT
+    hdlText            : DINT;
+    yInfoText          : ARRAY [16] OF STRING;
+    iSensorNr          : SINT := -1; 
+    sUnitActive        : STRING;
+    sPartState         : STRING;
+    sensor             : MAPTO TRcuSensor;
+    ordersSensor       : tOrdersToSensor;
+    ordersSwitch       : tOrdersToSwitch;
+    bSensorStarted     : BOOL;
+    bShowSensorPage    : BOOL;
+    bShowSwitchPage    : BOOL;
+    bShowPneuUnitPage  : BOOL;
+    bBodyNrUp          : BOOL;
+    bBodyNrDown        : BOOL;
+    bActLearn1         : BOOL;  //start - stop learning this position 1
+    bActLearn2         : BOOL;  //start - stop learning this position 2
+    bActLearn3         : BOOL;  //start - stop learning this position 3
+    bActLearn4         : BOOL;  //start - stop learning this position 4
+    bActLearn5         : BOOL;  //start - stop learning this position 5
+    bActLearn6         : BOOL;  //start - stop learning this position 6
+    iBodyNr            : SINT;
+    BodyToLearn        : MAPTO tBodyToLearn;
+    AutolearnValue1    : MAPTO tPosMove;    // learned values of position 1 mapped to userpage
+    AutolearnValue2    : MAPTO tPosMove;    // learned values of position 2 mapped to userpage
+    AutolearnValue3    : MAPTO tPosMove;    // learned values of position 3 mapped to userpage
+    AutolearnValue4    : MAPTO tPosMove;    // learned values of position 4 mapped to userpage
+    AutolearnValue5    : MAPTO tPosMove;    // learned values of position 5 mapped to userpage
+    AutolearnValue6    : MAPTO tPosMove;    // learned values of position 6 mapped to userpage
+    yShowLearnPart     : ARRAY [cgiMaxNumOfParts] OF BOOL; // values of which part are mapped to userpage
+    bListUp            : BOOL;
+    bListDown          : BOOL;
+    iTypeListNr        : INT;
+    sProjName          : STRING;
+    bTypeOk            : BOOL;
+    bAutoLearnPageOpen : BOOL;
+    bShowUserInfoSmall : BOOL;
+    bShowUserInfoBig   : BOOL;
+    bShowNoBoostBox    : BOOL;
+    bShow2BitBoostBox  : BOOL;
+    bShow1BitBoostBox  : BOOL;
+    iSeachCycles       : DINT;
+    iSearchCounter     : DINT; 
+    bTeachModeRelease  : MAPTO BOOL;
+    yOrdersToPneuUnit  : ARRAY [cMaxPneuUnits] OF tOrdersToPneuUnit;
+    yStatesPneuUnit    : ARRAY [cMaxPneuUnits] OF tStatesPneuUnit;
+  END_STRUCT;
+    
+END_TYPE
+
+VAR PRIVATE
+  handlerTool : tHandlerTool;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Map the data of the handlersensor to userpage 
+//------------------------------------------------------------------------------   
+ROUTINE MapHandlerPneuUnit() PRIVATE
+ VAR
+  i : SINT;
+  j : SINT;
+  chgRobot : BOOL;
+ END_VAR
+ 
+   WAIT gbEquipmentReady;
+   chgRobot := IS_CHANGED(gbRcuFocusFlipFlop);
+   WHILE TRUE DO
+      STOP WatchOrdersPneuUnit;
+      STOP BuildStatesPneuUnit;
+      handlerTool.bShowPneuUnitPage := FALSE;
+      FOR i:=0 TO cMaxPneuUnits-1 DO
+          IF gRcuFocusedRobot.handler.tool.yPneuUnit[i].iUnitNr > -1 THEN
+             FOR j:=0 TO cgiMaxCylUnit-1 DO
+                 handlerTool.yStatesPneuUnit[i].yCylinder[j].bShow := FALSE;
+             END_FOR;
+             FOR j:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[i].iNumberOfCylinders-1 DO
+                 handlerTool.yStatesPneuUnit[i].yCylinder[j].bShow := TRUE;
+             END_FOR;
+             FOR j:=0 TO cgiMaxFeetUnit-1 DO
+                 handlerTool.yStatesPneuUnit[i].yFoot[j].bShow := FALSE;
+             END_FOR;
+             FOR j:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[i].iNumberOfFeet-1 DO
+                 handlerTool.yStatesPneuUnit[i].yFoot[j].bShow := TRUE;
+             END_FOR;
+             START WatchOrdersPneuUnit(i);
+             START BuildStatesPneuUnit(i);
+         END_IF;
+      END_FOR;
+      chgRobot := FALSE;
+      WAIT chgRobot;
+   END_WHILE;   
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  look for orders to pneu unit 
+//------------------------------------------------------------------------------
+ROUTINE BuildStatesPneuUnit(inUnit : SINT) PRIVATE
+ VAR
+  unit  : SINT;
+  i     : SINT;
+  iSig  : SINT;
+  bChg  : BOOL;
+  yChg  : ARRAY [cgiMaxPneuDev] OF BOOL; 
+ END_VAR
+  
+  unit := inUnit;
+  FOR i:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfCylinders-1 DO
+      yChg[iSig] := IS_CHANGED(gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yCylinder[i].sHWI_IsUp.bSignal);
+      iSig := iSig + 1;
+      yChg[iSig] := IS_CHANGED(gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yCylinder[i].sHWI_IsDown.bSignal);
+      iSig := iSig + 1;
+  END_FOR;
+  FOR i:=0 TO (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet-1) DO
+      yChg[iSig] := IS_CHANGED(gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yFeet[i].sHWI_IsInFront.bSignal);
+      iSig := iSig + 1;
+      yChg[iSig] := IS_CHANGED(gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yFeet[i].sHWI_IsInBack.bSignal); 
+      iSig := iSig + 1;
+  END_FOR;
+  bChg := IS_CHANGED(yChg);
+  
+  WHILE TRUE DO
+    FOR i:=0 TO (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfCylinders-1) DO 
+       IF gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yCylinder[i].sHWI_IsUp.bSignal THEN
+          handlerTool.yStatesPneuUnit[unit].yCylinder[i].iState := 1;
+       ELSIF gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yCylinder[i].sHWI_IsDown.bSignal THEN
+          handlerTool.yStatesPneuUnit[unit].yCylinder[i].iState := 2;
+       ELSE
+          handlerTool.yStatesPneuUnit[unit].yCylinder[i].iState := 0;
+       END_IF;
+    END_FOR;
+    FOR i:=0 TO (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet-1) DO
+        IF gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yFeet[i].sHWI_IsInBack.bSignal THEN
+           handlerTool.yStatesPneuUnit[unit].yFoot[i].iState := 1;
+        ELSIF gRcuFocusedRobot.handler.tool.yPneuUnit[unit].yFeet[i].sHWI_IsInFront.bSignal THEN
+           handlerTool.yStatesPneuUnit[unit].yFoot[i].iState := 2;
+        ELSE 
+           handlerTool.yStatesPneuUnit[unit].yFoot[i].iState := 0;
+        END_IF; 
+    END_FOR;
+    WAIT bChg;
+    FOR i:=0 TO (cgiMaxPneuDev-1) DO
+        yChg[i] := FALSE;
+    END_FOR;
+    bChg := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  look for orders to pneu unit 
+//------------------------------------------------------------------------------
+ROUTINE WatchOrdersPneuUnit(inUnit : SINT) PRIVATE
+ VAR
+  unit  : SINT;
+  i     : SINT;
+  j     : SINT;
+  iSig  : SINT;
+  bChg  : BOOL;
+  yChg  : ARRAY [cgiMaxPneuDev] OF BOOL; 
+ END_VAR
+ 
+  unit := inUnit;
+  handlerTool.bShowPneuUnitPage := TRUE;
+  FOR i:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfCylinders-1 DO
+      yChg[iSig] := IS_CHANGED(handlerTool.yOrdersToPneuUnit[unit].yCylinder[i].bUp);
+      iSig := iSig + 1;
+      yChg[iSig] := IS_CHANGED(handlerTool.yOrdersToPneuUnit[unit].yCylinder[i].bDown);
+      iSig := iSig + 1;
+  END_FOR;
+  FOR i:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet-1 DO
+      yChg[iSig] := IS_CHANGED(handlerTool.yOrdersToPneuUnit[unit].yFoot[i].bFront);
+      iSig := iSig + 1;
+      yChg[iSig] := IS_CHANGED(handlerTool.yOrdersToPneuUnit[unit].yFoot[i].bBack);
+      iSig := iSig + 1;
+  END_FOR;
+  yChg[iSig] := IS_CHANGED(handlerTool.yOrdersToPneuUnit[unit].sAllFeet.bFront);
+  iSig := iSig + 1;
+  yChg[iSig] := IS_CHANGED(handlerTool.yOrdersToPneuUnit[unit].sAllFeet.bBack);
+  iSig := iSig + 1;
+  
+  bChg      := IS_CHANGED(yChg);
+  WHILE TRUE DO
+    WAIT bChg;
+    FOR i:=0 TO (cgiMaxPneuDev-1) DO
+       yChg[i] := FALSE;
+    END_FOR;
+    bChg := FALSE;
+    IF gRcuFocusedRobot.handler.tool.yPneuUnit[unit].bTeachModeRelease THEN
+       IF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfCylinders > 0) AND handlerTool.yOrdersToPneuUnit[unit].yCylinder[0].bUp THEN
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(CylinderUp);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfCylinders > 0) AND handlerTool.yOrdersToPneuUnit[unit].yCylinder[0].bDown THEN
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(CylinderDown);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 0) AND handlerTool.yOrdersToPneuUnit[unit].yFoot[0].bFront THEN  
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(Foot1Front);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 0) AND handlerTool.yOrdersToPneuUnit[unit].yFoot[0].bBack THEN
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(Foot1Back);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;   
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 1) AND handlerTool.yOrdersToPneuUnit[unit].yFoot[1].bFront THEN  
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(Foot2Front);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 1) AND handlerTool.yOrdersToPneuUnit[unit].yFoot[1].bBack THEN
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(Foot2Back);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 2) AND handlerTool.yOrdersToPneuUnit[unit].yFoot[2].bFront THEN  
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(Foot3Front);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 2) AND handlerTool.yOrdersToPneuUnit[unit].yFoot[2].bBack THEN
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(Foot3Back);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;  
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 0) AND handlerTool.yOrdersToPneuUnit[unit].sAllFeet.bFront THEN  
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(AllFeetFront);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;   
+       ELSIF (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet > 0) AND handlerTool.yOrdersToPneuUnit[unit].sAllFeet.bBack THEN  
+          gRcuFocusedRobot.handler.tool.yPneuUnit[unit].HmiSetOrder(AllFeetBack);
+          WAIT (gRcuFocusedRobot.handler.tool.yPneuUnit[unit].eOrder = NoOrder) OR bChg;
+       END_IF;  
+    END_IF;
+    FOR i:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfCylinders-1 DO
+        handlerTool.yOrdersToPneuUnit[unit].yCylinder[i].bUp   := FALSE;
+        handlerTool.yOrdersToPneuUnit[unit].yCylinder[i].bDown := FALSE;
+    END_FOR;
+    FOR i:=0 TO gRcuFocusedRobot.handler.tool.yPneuUnit[unit].iNumberOfFeet-1 DO
+        handlerTool.yOrdersToPneuUnit[unit].yFoot[i].bFront := FALSE;
+        handlerTool.yOrdersToPneuUnit[unit].yFoot[i].bBack  := FALSE;
+    END_FOR;
+    handlerTool.yOrdersToPneuUnit[unit].sAllFeet.bFront := FALSE;
+    handlerTool.yOrdersToPneuUnit[unit].sAllFeet.bBack  := FALSE;
+  END_WHILE;
+END_ROUTINE 
+
+//------------------------------------------------------------------------------
+// Map the data of the handlersensor to userpage 
+//------------------------------------------------------------------------------   
+ROUTINE MapHandlerSensor() PRIVATE
+ VAR
+  i : SINT;
+  chgRobot : BOOL;
+ END_VAR
+ 
+   WAIT gbBootupFinished;
+   chgRobot := IS_CHANGED(gbRcuFocusFlipFlop);
+   WHILE TRUE DO
+      handlerTool.iSensorNr := -1;
+      FOR i:=0 TO cMaxSensors-1 DO
+          IF gRcuFocusedRobot.handler.tool.ySensor[i].iUnitNr > -1 THEN
+             handlerTool.iSensorNr := i;
+          END_IF;
+      END_FOR;
+      IF handlerTool.iSensorNr > -1 THEN
+         STOP ObserveAutoLearnTypeList;
+         handlerTool.bShowNoBoostBox   := (gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].BoostBoxType = eRcuNoBoostBox);
+         handlerTool.bShow2BitBoostBox := (gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].BoostBoxType = eRcu2GainBits);
+         handlerTool.bShow1BitBoostBox := (gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].BoostBoxType = eRcu1GainBit);
+         handlerTool.sensor            := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr]);
+         IF NOT handlerTool.bSensorStarted THEN
+            START WatchOrdersSensor();
+            handlerTool.iTypeListNr := 1;
+            START ObserveTypeList();
+            handlerTool.bSensorStarted := TRUE;
+         END_IF;
+         START ObserveAutoLearnTypeList();
+         handlerTool.bShowSensorPage := TRUE;
+      ELSE   
+         STOP WatchOrdersSensor;
+         STOP ObserveTypeList;
+         STOP ObserveAutoLearnTypeList;
+         handlerTool.bSensorStarted  := FALSE;
+         handlerTool.bShowSensorPage := FALSE;
+      END_IF;
+      chgRobot := FALSE;
+      WAIT chgRobot;
+   END_WHILE;
+   
+END_ROUTINE   
+
+//------------------------------------------------------------------------------
+//  look for orders to sensor 
+//------------------------------------------------------------------------------
+ROUTINE WatchOrdersSensor()
+  VAR     
+    chgOrder       : BOOL;
+    I               : SINT;
+    bOneSelected    : BOOL;
+  END_VAR
+  
+  chgOrder := IS_CHANGED (handlerTool.ordersSensor);
+  WHILE TRUE DO
+    WAIT (chgOrder);
+     chgOrder := FALSE;
+     //Calibrate the sensor
+     IF handlerTool.ordersSensor.bCalibSensor THEN
+        handlerTool.ordersSensor.bCalibSensor := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].Calibrate();
+     //Set the unit inactive
+     ELSIF handlerTool.ordersSensor.bSetInactive THEN
+        handlerTool.ordersSensor.bSetInactive := FALSE;
+        IF gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bInactive THEN
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bInactive  := FALSE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iInactive  := 1;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bDoMeasure := TRUE;        
+        ELSE
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bInactive := TRUE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iInactive := 0;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bDoMeasure := FALSE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bDoMaxCheck := FALSE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bDoMinCheck := FALSE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bDoPartCheck := FALSE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bPartShiftUsed    := FALSE;
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bSetPartPresent  := FALSE; 
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bResetPart       := FALSE; 
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iForcedPartState := 0;     
+        END_IF;
+     //Set the part present manually
+     ELSIF handlerTool.ordersSensor.bSetPartPresent THEN
+        handlerTool.ordersSensor.bSetPartPresent := FALSE;
+        IF gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bSetPartPresent THEN
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].SetPart(FALSE);
+        ELSE
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].SetPart(TRUE);
+        END_IF;
+     //Reset the part present manually
+     ELSIF handlerTool.ordersSensor.bResetPart THEN
+        handlerTool.ordersSensor.bResetPart   := FALSE;
+        IF gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bResetPart THEN
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].ResetPart(FALSE);
+        ELSE
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].ResetPart(TRUE);
+        END_IF;
+     //raise the gain-factor
+     ELSIF handlerTool.ordersSensor.bRaiseGain THEN
+        handlerTool.ordersSensor.bRaiseGain := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].ManSetGain(TRUE);
+     //lower the gain factor
+     ELSIF handlerTool.ordersSensor.bLowerGain THEN
+        handlerTool.ordersSensor.bLowerGain := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].ManSetGain(FALSE);
+     //reset the hole sensor, useful for teaching
+     ELSIF handlerTool.ordersSensor.bReset THEN
+        handlerTool.ordersSensor.bReset := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].SetActive(TRUE);
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].SetPart(FALSE);
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].ResetPart(FALSE);
+     //start or stop manual learning
+     ELSIF handlerTool.ordersSensor.bLearnInMan THEN
+        handlerTool.ordersSensor.bLearnInMan := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bLearnMan := 
+        NOT gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bLearnMan;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iSearchCounter := 1;
+     END_IF;
+     //Store Values
+     IF handlerTool.ordersSensor.bStoreValue THEN
+        handlerTool.ordersSensor.bStoreValue := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bStoreValue    := TRUE;
+        FOR I:=0 TO cgiMaxSeachCycles - 1 DO
+            handlerTool.ordersSensor.ySelected[I]     := FALSE;
+        END_FOR;
+     END_IF; 
+     //Select Values
+     bOneSelected := FALSE;
+     FOR I:=0 TO cgiMaxSeachCycles - 1 DO
+        IF (handlerTool.ordersSensor.ySelected[I] AND NOT bOneSelected) THEN
+           gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].ySelectedToStore[I] := TRUE;
+           bOneSelected := TRUE;
+        ELSE
+           handlerTool.ordersSensor.ySelected[I] := FALSE;
+        END_IF;
+     END_FOR;
+     IF NOT bOneSelected THEN
+        FOR I:=0 TO cgiMaxSeachCycles - 1 DO
+            handlerTool.ordersSensor.ySelected[I]     := FALSE;
+        END_FOR;
+     END_IF;
+     //Cancel Values
+     IF handlerTool.ordersSensor.bCancelValue THEN
+        handlerTool.ordersSensor.bCancelValue := FALSE;
+        gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bCancelValue    := TRUE;
+        FOR I:=0 TO cgiMaxSeachCycles - 1 DO
+            handlerTool.ordersSensor.ySelected[I]     := FALSE;
+        END_FOR;
+     END_IF;
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   look for typelist from BCU
+//------------------------------------------------------------------------------
+ROUTINE ObserveTypeList() PRIVATE
+ VAR
+  chgNr   : BOOL;
+  chgUp   : BOOL;
+  chgDown : BOOL;
+  s       : STRING;
+  i       : SINT;
+  learnNr : SINT;
+  ok      : BOOL;
+ END_VAR
+ 
+  chgNr   := IS_CHANGED(handlerTool.iTypeListNr);
+  chgUp   := IS_CHANGED(handlerTool.bListUp);
+  chgDown := IS_CHANGED(handlerTool.bListDown);
+  WHILE TRUE DO
+    IF chgUp THEN
+       IF handlerTool.iTypeListNr < giNoOfTypes THEN
+          handlerTool.iTypeListNr := handlerTool.iTypeListNr + 1;
+       ELSE
+          handlerTool.iTypeListNr := 1;
+       END_IF;
+    ELSIF chgDown THEN
+       IF handlerTool.iTypeListNr > 1 THEN
+          handlerTool.iTypeListNr := handlerTool.iTypeListNr - 1;
+       ELSE
+          handlerTool.iTypeListNr := giNoOfTypes-1;
+       END_IF;
+    END_IF;
+    IF (handlerTool.iTypeListNr > 0) OR (handlerTool.iTypeListNr < giNoOfTypes) THEN
+       handlerTool.bTypeOk := gRcuFocusedRobot.RcuTypeList.ReadTypeListEntry(handlerTool.iTypeListNr, handlerTool.sProjName, s);
+       IF handlerTool.sProjName = "" THEN
+          handlerTool.bTypeOk := FALSE;
+       ELSE
+          ok := FALSE;
+          FOR i:=0 TO cgiMaxAutoLearnBodies-1 DO
+             IF gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[i].sProjectName = handlerTool.sProjName THEN
+                learnNr := i;
+                ok := TRUE;
+             END_IF;
+          END_FOR;
+          IF NOT ok THEN
+             FOR i:=0 TO cgiMaxAutoLearnBodies-1 DO
+                IF gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[i].sProjectName = "" THEN
+                   IF NOT ok THEN
+                      learnNr := i;
+                      ok := TRUE;
+                   END_IF;
+                END_IF;
+             END_FOR;
+          END_IF;
+          IF ok THEN
+            handlerTool.iBodyNr := learnNr;
+          ELSE
+            PRINT("Maximale Anzahl der zu lernenden Typen erreicht");
+          END_IF;
+       END_IF;
+    ELSE
+       handlerTool.iTypeListNr := 0;
+       handlerTool.sProjName   := "";
+    END_IF;
+    handlerTool.bListUp   := FALSE;
+    handlerTool.bListDown := FALSE;
+    chgNr   := FALSE;
+    chgUp   := FALSE;
+    chgDown := FALSE;
+    WAIT chgNr OR chgUp OR chgDown;
+  END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------
+// look if user has opened auto learn page and storerequest then show corresponding data
+//---------------------------------------------------------------------------------------
+ROUTINE ObserveAutoLearnPageOpen() PRIVATE
+  VAR
+   bChgPage : BOOL;
+   iPart    : SINT;
+   i        : SINT;
+  END_VAR
+  
+  bChgPage := IS_CHANGED(handlerTool.bAutoLearnPageOpen);
+  IF gRcuFocusedRobot.handler.partPosPerHandler THEN
+     handlerTool.bShowUserInfoSmall := TRUE;
+     WHILE TRUE DO
+       IF handlerTool.bAutoLearnPageOpen AND gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bStoreReleaseAuto THEN
+          handlerTool.iBodyNr := gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iBody;
+          iPart := gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iPosition / 6;
+          FOR i:=0 TO (cgiMaxNumberOfParts-1) DO
+             IF (i = iPart) THEN
+                handlerTool.yShowLearnPart[i] := TRUE;
+             ELSE
+                handlerTool.yShowLearnPart[i] := FALSE;
+             END_IF;
+          END_FOR;
+          handlerTool.bShowUserInfoSmall      := TRUE;
+          WHILE handlerTool.bAutoLearnPageOpen AND gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bStoreReleaseAuto DO
+            Sleep(1000);
+            handlerTool.bShowUserInfoSmall := NOT handlerTool.bShowUserInfoSmall;
+          END_WHILE;   
+       END_IF;
+       handlerTool.bShowUserInfoSmall := TRUE;
+       bChgPage := FALSE;
+       WAIT bChgPage;
+     END_WHILE;
+  ELSE
+     handlerTool.bShowUserInfoBig := TRUE;
+     WHILE TRUE DO
+       IF handlerTool.bAutoLearnPageOpen AND gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bStoreReleaseAuto THEN
+          handlerTool.iBodyNr := gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iBody;
+          iPart := gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].iPosition;
+          FOR i:=0 TO (cgiMaxNumOfParts-1) DO
+             IF (i = iPart) THEN
+                handlerTool.yShowLearnPart[i] := TRUE;
+             ELSE
+                handlerTool.yShowLearnPart[i] := FALSE;
+             END_IF;
+          END_FOR;
+          handlerTool.bShowUserInfoBig      := TRUE;
+          WHILE handlerTool.bAutoLearnPageOpen AND gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bStoreReleaseAuto DO
+            Sleep(1000);
+            handlerTool.bShowUserInfoBig := NOT handlerTool.bShowUserInfoBig;
+          END_WHILE;
+       END_IF;
+       handlerTool.bShowUserInfoBig := TRUE;
+       bChgPage := FALSE;
+       WAIT bChgPage;
+     END_WHILE;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   look for user-inputs or typelist-changes
+//------------------------------------------------------------------------------
+ROUTINE ObserveAutoLearnTypeList() PRIVATE
+ VAR
+  pos           : SINT;
+  part          : SINT;
+  chgBody       : BOOL;
+  i             : SINT;
+  yChgPart      : ARRAY [cgiMaxNumOfParts] OF BOOL;
+  chgPart       : BOOL;
+  actShownPart  : SINT;
+  oldShownPart  : SINT;
+  shownPartSel  : BOOL;
+ END_VAR
+  
+  START ObserveAutoLearnPageOpen();
+  IF gRcuFocusedRobot.handler.partPosPerHandler THEN
+     //find first used part of the handler and select it on page
+     FOR i:=0 TO cgiMaxNumberOfParts-2 DO
+         handlerTool.yShowLearnPart[i] := FALSE;
+         IF (NOT shownPartSel) AND gRcuFocusedRobot.handler.tool.usedParts[i+1] THEN
+            handlerTool.yShowLearnPart[i] := gRcuFocusedRobot.handler.tool.usedParts[i+1];
+            actShownPart                  := i * 6;
+            oldShownPart                  := actShownPart;
+            shownPartSel                  := TRUE;
+         END_IF;
+         yChgPart[i]                      := IS_CHANGED(handlerTool.yShowLearnPart[i]);
+     END_FOR;
+     handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+     handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+     handlerTool.AutolearnValue2 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+1]);
+     handlerTool.AutolearnValue3 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+2]);
+     handlerTool.AutolearnValue4 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+3]);
+     handlerTool.AutolearnValue5 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+4]);
+     handlerTool.AutolearnValue6 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+5]);
+     chgBody                     := IS_CHANGED(handlerTool.iBodyNr);
+     chgPart                     := IS_CHANGED(yChgPart);  
+     
+     WHILE TRUE DO
+       WAIT handlerTool.bBodyNrUp OR handlerTool.bBodyNrDown OR 
+            handlerTool.bActLearn1 OR handlerTool.bActLearn2 OR handlerTool.bActLearn3 OR
+            handlerTool.bActLearn4 OR handlerTool.bActLearn5 OR handlerTool.bActLearn6 OR
+            gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bUpdateUserPage OR chgBody OR chgPart;
+            
+       gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bUpdateUserPage := FALSE;
+       
+       //find out which part is shown
+       IF chgPart THEN
+          shownPartSel := FALSE;
+          FOR i:=0 TO (cgiMaxNumberOfParts-2) DO
+              IF handlerTool.yShowLearnPart[i] THEN
+                 actShownPart := i * 6;
+              END_IF;
+          END_FOR;
+          IF (actShownPart <> oldShownPart) THEN
+             handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+             handlerTool.AutolearnValue2 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+1]);
+             handlerTool.AutolearnValue3 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+2]);
+             handlerTool.AutolearnValue4 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+3]);
+             handlerTool.AutolearnValue5 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+4]);
+             handlerTool.AutolearnValue6 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+5]);
+          END_IF;
+          oldShownPart := actShownPart;
+          FOR i:=0 TO (cgiMaxNumberOfParts-1) DO
+              yChgPart[i] := FALSE;
+          END_FOR;
+          chgPart := FALSE;
+       END_IF;
+       
+       //selection of typelist has changed, so show it's learned values if existing
+       IF chgBody THEN
+          chgBody := FALSE;
+          handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+          handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+          handlerTool.AutolearnValue2 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+1]);
+          handlerTool.AutolearnValue3 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+2]);
+          handlerTool.AutolearnValue4 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+3]);
+          handlerTool.AutolearnValue5 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+4]);
+          handlerTool.AutolearnValue6 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+5]);
+       END_IF;
+       IF handlerTool.bBodyNrUp THEN
+          handlerTool.bBodyNrUp := FALSE;
+          IF handlerTool.iBodyNr < (cgiMaxAutoLearnBodies-1) THEN
+             handlerTool.iBodyNr := handlerTool.iBodyNr + 1;
+          ELSE
+             handlerTool.iBodyNr := 0;
+          END_IF;
+          handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+          handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+          handlerTool.AutolearnValue2 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+1]);
+          handlerTool.AutolearnValue3 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+2]);
+          handlerTool.AutolearnValue4 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+3]);
+          handlerTool.AutolearnValue5 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+4]);
+          handlerTool.AutolearnValue6 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+5]);
+       END_IF;
+       IF handlerTool.bBodyNrDown THEN
+          handlerTool.bBodyNrDown := FALSE;
+          IF handlerTool.iBodyNr > 0 THEN
+             handlerTool.iBodyNr := handlerTool.iBodyNr - 1;
+          ELSE
+             handlerTool.iBodyNr := cgiMaxAutoLearnBodies-1;
+          END_IF;
+          handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+          handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+          handlerTool.AutolearnValue2 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+1]);
+          handlerTool.AutolearnValue3 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+2]);
+          handlerTool.AutolearnValue4 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+3]);
+          handlerTool.AutolearnValue5 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+4]);
+          handlerTool.AutolearnValue6 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart+5]);
+       END_IF;
+       IF handlerTool.bActLearn1 THEN
+          handlerTool.bActLearn1 := FALSE;
+          IF handlerTool.AutolearnValue1.bUsed THEN
+             IF handlerTool.AutolearnValue1.bLearnActive THEN
+                handlerTool.AutolearnValue1.bLearnActive := FALSE;
+                handlerTool.AutolearnValue1.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue1.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue1.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 1");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;
+       IF handlerTool.bActLearn2 THEN
+          handlerTool.bActLearn2 := FALSE;
+          IF handlerTool.AutolearnValue2.bUsed THEN
+             IF handlerTool.AutolearnValue2.bLearnActive THEN
+                handlerTool.AutolearnValue2.bLearnActive := FALSE;
+                handlerTool.AutolearnValue2.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue2.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue2.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 2");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;
+       IF handlerTool.bActLearn3 THEN
+          handlerTool.bActLearn3 := FALSE;
+          IF handlerTool.AutolearnValue3.bUsed THEN
+             IF handlerTool.AutolearnValue3.bLearnActive THEN
+                handlerTool.AutolearnValue3.bLearnActive := FALSE;
+                handlerTool.AutolearnValue3.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue3.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue3.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 3");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;
+       IF handlerTool.bActLearn4 THEN
+          handlerTool.bActLearn4 := FALSE;
+          IF handlerTool.AutolearnValue4.bUsed THEN
+             IF handlerTool.AutolearnValue4.bLearnActive THEN
+                handlerTool.AutolearnValue4.bLearnActive := FALSE;
+                handlerTool.AutolearnValue4.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue4.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue4.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 4");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;
+       IF handlerTool.bActLearn5 THEN
+          handlerTool.bActLearn5 := FALSE;
+          IF handlerTool.AutolearnValue5.bUsed THEN
+             IF handlerTool.AutolearnValue5.bLearnActive THEN
+                handlerTool.AutolearnValue5.bLearnActive := FALSE;
+                handlerTool.AutolearnValue5.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue5.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue5.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 5");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;
+       IF handlerTool.bActLearn6 THEN
+          handlerTool.bActLearn6 := FALSE;
+          IF handlerTool.AutolearnValue6.bUsed THEN
+             IF handlerTool.AutolearnValue6.bLearnActive THEN
+                handlerTool.AutolearnValue6.bLearnActive := FALSE;
+                handlerTool.AutolearnValue6.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue6.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue6.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 6");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;
+     END_WHILE;
+  ELSE
+     //find first used part of the handler and select it on page
+     FOR i:=0 TO cgiMaxNumOfParts-1 DO
+         handlerTool.yShowLearnPart[i] := FALSE;
+         IF (NOT shownPartSel) AND gRcuFocusedRobot.handler.tool.usedParts[i] THEN
+            actShownPart                  := i;
+            oldShownPart                  := actShownPart;
+            shownPartSel                  := TRUE;
+         END_IF;
+         yChgPart[i]                      := IS_CHANGED(handlerTool.yShowLearnPart[i]);
+     END_FOR;
+     handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+     handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+     chgBody                     := IS_CHANGED(handlerTool.iBodyNr);
+     chgPart                     := IS_CHANGED(yChgPart);
+     
+     WHILE TRUE DO
+       WAIT handlerTool.bBodyNrUp OR handlerTool.bBodyNrDown OR handlerTool.bActLearn1 OR 
+            gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bUpdateUserPage OR chgBody OR chgPart;
+            
+       gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].bUpdateUserPage := FALSE;
+       //find out which part is shown
+       IF chgPart THEN
+          shownPartSel := FALSE;
+          FOR i:=0 TO cgiMaxNumOfParts-1 DO
+              IF handlerTool.yShowLearnPart[i] THEN
+                 actShownPart := i;
+              END_IF;
+          END_FOR;
+          IF (actShownPart <> oldShownPart) THEN
+             handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+          END_IF;
+          oldShownPart := actShownPart;
+          FOR i:=0 TO (cgiMaxNumberOfParts-1) DO
+              yChgPart[i] := FALSE;
+          END_FOR;
+          chgPart := FALSE;
+       END_IF;
+       //selection of typelist has changed, so show it's learned values if existing
+       IF chgBody THEN
+          chgBody := FALSE;
+          handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+          handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+       END_IF;
+       IF handlerTool.bBodyNrUp THEN
+          handlerTool.bBodyNrUp := FALSE;
+          IF handlerTool.iBodyNr < (cgiMaxAutoLearnBodies-1) THEN
+             handlerTool.iBodyNr := handlerTool.iBodyNr + 1;
+          ELSE
+             handlerTool.iBodyNr := 0;
+          END_IF;
+          handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+          handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+       END_IF;
+       IF handlerTool.bBodyNrDown THEN
+          handlerTool.bBodyNrDown := FALSE;
+          IF handlerTool.iBodyNr > 0 THEN
+             handlerTool.iBodyNr := handlerTool.iBodyNr - 1;
+          ELSE
+             handlerTool.iBodyNr := cgiMaxAutoLearnBodies-1;
+          END_IF;
+          handlerTool.BodyToLearn     := MAP(gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].yAutoLearn[handlerTool.iBodyNr]);
+          handlerTool.AutolearnValue1 := MAP(handlerTool.BodyToLearn.yPosMoves[actShownPart]);
+       END_IF;
+       IF handlerTool.bActLearn1 THEN
+          handlerTool.bActLearn1 := FALSE;
+          IF handlerTool.AutolearnValue1.bUsed THEN
+             IF handlerTool.AutolearnValue1.bLearnActive THEN
+                handlerTool.AutolearnValue1.bLearnActive := FALSE;
+                handlerTool.AutolearnValue1.iLearnState  := 0;
+                gRcuFocusedRobot.handler.tool.ySensor[handlerTool.iSensorNr].DeleteLearnedBody(handlerTool.iBodyNr);
+             ELSE   
+                IF handlerTool.bTypeOk THEN
+                   handlerTool.BodyToLearn.iProgNr      := handlerTool.iTypeListNr;
+                   handlerTool.BodyToLearn.sProjectName := handlerTool.sProjName;
+                   handlerTool.AutolearnValue1.bLearnActive := TRUE;
+                   handlerTool.AutolearnValue1.iLearnState  := 1;
+                ELSE
+                   PRINT("Keine Daten von typelist 1");
+                END_IF;
+             END_IF;   
+          END_IF;
+       END_IF;       
+     END_WHILE;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  look for orders to switches
+//------------------------------------------------------------------------------
+ROUTINE MapHandlerSwitch() PRIVATE
+  VAR     
+    i        : SINT;
+    chgOrder : BOOL;
+    devFound : BOOL;
+    chgRobot : BOOL;
+    iUnit    : SINT;
+  END_VAR
+  
+  WAIT gbEquipmentReady;
+  chgRobot := IS_CHANGED(gbRcuFocusFlipFlop);
+  WHILE TRUE DO
+     devFound := FALSE; 
+     handlerTool.bShowSwitchPage := FALSE;
+     FOR i:=0 TO cgiMaxSwitches-1 DO
+        IF gRcuFocusedRobot.handler.tool.ySwitch[i].iUnitNr >= 0 THEN
+           START ObserveSearchCounterSwitch(i);
+           devFound := TRUE;
+        END_IF;    
+     END_FOR;
+     IF devFound THEN
+        chgOrder := IS_CHANGED (handlerTool.ordersSwitch);
+        WHILE NOT chgRobot DO
+           handlerTool.bShowSwitchPage := TRUE;
+           IF handlerTool.ordersSwitch.bDeactMaxCtrl THEN
+              handlerTool.ordersSwitch.bDeactMaxCtrl := FALSE;
+              FOR i:=0 TO cgiMaxSwitches-1 DO
+                  gRcuFocusedRobot.handler.tool.ySwitch[i].bDoMaxCheck := FALSE;
+              END_FOR;
+           ELSIF handlerTool.ordersSwitch.bDeactPartCtrl THEN
+              handlerTool.ordersSwitch.bDeactPartCtrl := FALSE;
+              FOR i:=0 TO cgiMaxSwitches-1 DO
+                  iUnit := gRcuFocusedRobot.handler.tool.ySwitch[i].iUnitNr;
+                  gRcuFocusedRobot.handler.tool.ySwitch[i].bPartShiftUsed := FALSE;
+                  gRcuFocusedRobot.handler.tool.ySwitch[i].bSearchActive  := FALSE;
+                  gRcuFocusedRobot.handler.tool.ySwitch[i].iSearchCounter := 1;
+                  gRcuFocusedRobot.handler.tool.ySwitch[i].bDoPartCheck := FALSE;
+              END_FOR;
+           ELSIF handlerTool.ordersSwitch.bDeactMinCtrl THEN
+              handlerTool.ordersSwitch.bDeactMinCtrl := FALSE;
+              FOR i:=0 TO cgiMaxSwitches-1 DO
+                  gRcuFocusedRobot.handler.tool.ySwitch[i].bDoMinCheck := FALSE;
+              END_FOR;   
+           END_IF;
+           WAIT (chgOrder OR chgRobot);
+           chgOrder := FALSE;
+        END_WHILE;
+     ELSE
+        handlerTool.bShowSwitchPage := FALSE;
+     END_IF;
+     WAIT chgRobot;
+     STOP ObserveSearchCounterSwitch;
+     chgRobot := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+ROUTINE ObserveSearchCounterSwitch(iSwitch : SINT)
+ VAR
+  chgCnt   : BOOL;
+  chgCycle : BOOL;
+  iNr      : SINT;
+ END_VAR
+  
+  iNr      := iSwitch;
+  chgCnt   := IS_CHANGED(gRcuFocusedRobot.handler.tool.ySwitch[iNr].iSearchCounter);
+  chgCycle := IS_CHANGED(gRcuFocusedRobot.handler.tool.ySwitch[iNr].iSeachCycles);
+  WHILE TRUE DO
+    handlerTool.iSearchCounter := gRcuFocusedRobot.handler.tool.ySwitch[iNr].iSearchCounter;
+    handlerTool.iSeachCycles   := gRcuFocusedRobot.handler.tool.ySwitch[iNr].iSeachCycles;
+    WAIT chgCnt OR chgCycle;
+    chgCnt   := FALSE;
+    chgCycle := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      D R I V E U T I L  -  driveutil.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tDriveUtil : STRUCT
+    iSercosRingState   : DINT;
+    bEnableButPhase2   : BOOL := TRUE;
+    bButtonPhase2      : BOOL;
+    bEnableButPhase4   : BOOL := TRUE;
+    bButtonPhase4      : BOOL;
+    bWorking           : BOOL;
+    sInProgress        : STRING; 
+    str                : STRING;
+  END_STRUCT;
+  eStateSercos : (eUndefined, ePhase1, ePhase2, ePhase3, ePhase4); 
+END_TYPE
+
+VAR PRIVATE
+   DriveUtil         : tDriveUtil;
+END_VAR
+
+CONSTANT PRIVATE
+  cTimeLimit   : INT := 2000; //2000ms
+END_CONSTANT
+
+//------------------------------------------------------------------------------
+// Map the data of the masterprog to userpage
+//------------------------------------------------------------------------------
+ROUTINE RunDriveUtil() PRIVATE
+  
+   WAIT gbEquipmentReady;
+   START UserChangePhase();
+   START UpdateProgress();
+   START UpdateSercosRingState();
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// Show the actual state of the sercosring
+//------------------------------------------------------------------------------
+ROUTINE UpdateSercosRingState() PRIVATE
+ VAR
+   bChgState : BOOL;  
+ END_VAR  
+   
+   bChgState := IS_CHANGED(gmSercosRing.actComPhase);
+   WHILE TRUE DO
+     CASE gmSercosRing.actComPhase OF
+       0: DriveUtil.iSercosRingState := eUndefined;
+          DriveUtil.bEnableButPhase2 := TRUE;
+          DriveUtil.bEnableButPhase4 := TRUE;
+       1: DriveUtil.iSercosRingState := ePhase1;
+          DriveUtil.bEnableButPhase2 := TRUE;
+          DriveUtil.bEnableButPhase4 := TRUE;   
+       2: DriveUtil.iSercosRingState := ePhase2;
+          DriveUtil.bEnableButPhase2 := FALSE;
+          DriveUtil.bEnableButPhase4 := TRUE;
+       3: DriveUtil.iSercosRingState := ePhase3;
+          DriveUtil.bEnableButPhase2 := TRUE;
+          DriveUtil.bEnableButPhase4 := TRUE;    
+       4: DriveUtil.iSercosRingState := ePhase4;
+          DriveUtil.bEnableButPhase2 := TRUE;
+          DriveUtil.bEnableButPhase4 := FALSE;       
+     ELSE 
+       DriveUtil.iSercosRingState := eUndefined;
+       DriveUtil.bEnableButPhase2 := TRUE;
+       DriveUtil.bEnableButPhase4 := TRUE;
+     END_CASE;
+     bChgState := FALSE;
+     WAIT bChgState;
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// Look if user wants to change the sercos com phase
+//------------------------------------------------------------------------------
+ROUTINE UserChangePhase()
+ VAR
+   bChgPhase2 : BOOL;
+   bChgPhase4 : BOOL; 
+ END_VAR
+   
+   bChgPhase2 := IS_CHANGED(DriveUtil.bButtonPhase2);
+   bChgPhase4 := IS_CHANGED(DriveUtil.bButtonPhase4);
+   WHILE TRUE DO
+      WAIT bChgPhase2 OR bChgPhase4;
+      IF DriveUtil.bButtonPhase2 THEN
+         DriveUtil.bWorking := TRUE;
+         RcChangeSercosPhase(gRcuFocusedKinematic.kinListInx, 2);
+         DriveUtil.bWorking := FALSE;
+      END_IF;
+      IF DriveUtil.bButtonPhase4 THEN
+         DriveUtil.bWorking := TRUE;
+         RcChangeSercosPhase(gRcuFocusedKinematic.kinListInx, 4);
+         DriveUtil.bWorking := FALSE;
+      END_IF;
+      DriveUtil.bButtonPhase2 := FALSE;
+      DriveUtil.bButtonPhase4 := FALSE;
+      bChgPhase2 := FALSE;
+      bChgPhase4 := FALSE; 
+   END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// Signal for the user that phase changing works
+//------------------------------------------------------------------------------
+ROUTINE UpdateProgress()
+ VAR
+  i : DINT;
+ END_VAR;
+ 
+ WHILE TRUE DO
+    WAIT DriveUtil.bWorking;
+    i := 1;
+    DriveUtil.sInProgress := "";
+    WHILE DriveUtil.bWorking DO
+       DriveUtil.sInProgress := DriveUtil.sInProgress + "| ";
+       IF i < 27 THEN
+          i := i + 1;
+       ELSE    
+          i := 1;
+          DriveUtil.sInProgress := "";
+       END_IF;
+       Sleep(200);
+    END_WHILE;
+    WAIT NOT DriveUtil.bWorking;
+    DriveUtil.sInProgress := "";
+ END_WHILE;
+  
+END_ROUTINE
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                D R I V E U P L O A D  -  driveupload.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+VAR PRIVATE
+  bDriveUploadPageOpen : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Look if user has opened page
+//------------------------------------------------------------------------------
+ROUTINE WatchDriveUploadPageOpen() PRIVATE
+ VAR
+  bChgPage : BOOL;
+  i        : SINT;
+  j        : SINT;
+ END_VAR
+
+ WAIT gbEquipmentReady; 
+ bChgPage := IS_CHANGED(bDriveUploadPageOpen);
+ WHILE TRUE DO
+   gRcuFocusedRobot.driveTool.bSercosIIused  := FALSE;
+   gRcuFocusedRobot.driveTool.bSercosIIIused := FALSE;
+   gRcuFocusedRobot.driveTool.bEtherCatUsed  := FALSE;
+   
+   IF gbEthercat THEN // do not run this function
+      gRcuFocusedRobot.driveTool.bEtherCatUsed  := TRUE;
+   ELSE
+   FOR i:=0 TO cMaxDrive-1 DO
+       IF i < cMaxRobDrive THEN
+          IF IS_MAPPED(gRcuFocusedRobot.drive[i]) THEN
+             IF (gRcuFocusedRobot.drive[i].busType = eRcuSercos3) OR (gbSimulationOS AND IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled) THEN
+                gRcuFocusedRobot.driveTool.bSercosIIIused := TRUE;
+             END_IF; 
+          END_IF;
+       ELSE
+          j := i - cMaxRobDrive;
+          IF IS_MAPPED(gRcuFocusedRobot.dosingDrive[j]) THEN
+             IF (gRcuFocusedRobot.dosingDrive[j].busType = eRcuSercos3) OR (gbSimulationOS AND IS_MAPPED(gbSercos3Enabled) AND gbSercos3Enabled) THEN
+                gRcuFocusedRobot.driveTool.bSercosIIIused := TRUE;
+             END_IF;
+          END_IF; 
+       END_IF;
+   END_FOR;
+   END_IF;
+   
+   gRcuFocusedRobot.driveTool.bSercosIIused  := NOT (gRcuFocusedRobot.driveTool.bSercosIIIused OR gRcuFocusedRobot.driveTool.bEtherCatUsed);
+   
+   IF bDriveUploadPageOpen AND gRcuFocusedRobot.driveTool.bButtonRelease THEN
+      FOR i:=0 TO cMaxDrive-1 DO
+          gRcuFocusedRobot.driveTool.yProgress[i]    := 0;
+          gRcuFocusedRobot.driveTool.yActualState[i] := eRcuStateInactive;
+      END_FOR;
+      gRcuFocusedRobot.driveTool.bSaveAllParam := FALSE;
+   END_IF;
+   bChgPage := FALSE;
+   WAIT bChgPage;
+ END_WHILE;
+ 
+END_ROUTINE
+
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      B R A K E C H E C K  -  brakecheck.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+VAR PRIVATE
+  bBrakeCheckPageOpen : BOOL;   
+END_VAR
+
+//------------------------------------------------------------------------------
+// init page when opened by user
+//------------------------------------------------------------------------------
+ROUTINE WatchBrakeCheckPageOpen() PRIVATE
+ VAR
+  i    : INT;
+  bChg : BOOL;
+ END_VAR
+ 
+  WAIT gbEquipmentReady; 
+  bChg := IS_CHANGED(bBrakeCheckPageOpen);
+   WHILE TRUE DO
+    IF bBrakeCheckPageOpen AND (gRcuFocusedRobot.brakeCheck.iBrakeCheckState <> 1) THEN
+       FOR i:=0 TO cMcuMaxJ-1 DO
+          IF IS_MAPPED(gRcuFocusedRobot.drive[i]) THEN
+             gRcuFocusedRobot.drive[i].brakeCheck.iExecState := 0;
+             gRcuFocusedRobot.drive[i].brakeCheck.iSymbol    := 0;
+          END_IF;
+       END_FOR;
+       gRcuFocusedRobot.brakeCheck.iBrakeCheckState := 0;
+    END_IF;
+    WAIT bChg;
+    bChg := FALSE;
+   END_WHILE;
+  
+END_ROUTINE
+
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                 T I M E T A B L E  -  ProgramTimeTable.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+TYPE PRIVATE
+  tTimeTable : STRUCT
+    data         : MAPTO TRcuTimeTable;
+    bButtonAct   : BOOL;
+    bButtonLast  : BOOL;
+    bShowActual  : BOOL;
+    bShowLast    : BOOL;
+    bPageOpen    : BOOL;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  timeTable : tTimeTable;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Map the data of programtimetable to userpage
+//------------------------------------------------------------------------------
+ROUTINE MapTimeTable() PRIVATE
+ VAR
+  chgRobot      : BOOL;
+  chgIdxBody    : BOOL;
+  chgPageOpen   : BOOL;
+  indexAct      : SINT;
+  indexLast     : SINT;
+ END_VAR
+  
+  WAIT gbEquipmentReady;
+  indexAct              := 0;
+  indexLast             := 1;
+  timeTable.bShowActual := TRUE;
+  timeTable.bShowLast   := FALSE;
+  timeTable.bButtonAct  := FALSE;
+  timeTable.bButtonLast := FALSE;
+  chgRobot              := IS_CHANGED(gbRcuFocusFlipFlop);
+  chgPageOpen           := IS_CHANGED(timeTable.bPageOpen);
+  
+  WHILE TRUE DO 
+    chgIdxBody := IS_CHANGED(gRcuFocusedRobot.indexBody);
+    WHILE NOT chgRobot DO
+       //user has opened the page   
+       IF chgPageOpen AND timeTable.bPageOpen THEN   
+          timeTable.bShowActual := TRUE;
+          timeTable.bShowLast   := FALSE;
+       //new body started --> map display to new tablefield
+       ELSIF NOT (timeTable.bButtonAct OR timeTable.bButtonLast) THEN
+          indexAct := gRcuFocusedRobot.indexBody;
+          IF (indexAct = 0) THEN
+             indexLast := 1;
+          ELSE
+             indexLast := 0;
+          END_IF;
+       //user has pressed button actual body and last is open --> map display to actual tablefield   
+       ELSIF (timeTable.bButtonAct AND timeTable.bShowLast) THEN
+          timeTable.bShowActual := TRUE;
+          timeTable.bShowLast   := FALSE;
+       //user has pressed button last body and actual is open --> map display to last tablefield   
+       ELSIF (timeTable.bButtonLast AND timeTable.bShowActual) THEN
+          timeTable.bShowActual := FALSE;
+          timeTable.bShowLast   := TRUE;
+       END_IF; 
+       //now remap display to selected tablefield
+       IF timeTable.bShowActual THEN 
+         timeTable.data := MAP(gRcuFocusedRobot.TimeTable[indexAct]);
+       ELSE
+         timeTable.data := MAP(gRcuFocusedRobot.TimeTable[indexLast]);
+       END_IF;   
+       
+       timeTable.bButtonAct  := FALSE;
+       timeTable.bButtonLast := FALSE;
+       chgIdxBody            := FALSE;
+       chgPageOpen           := FALSE;
+       WAIT chgIdxBody OR timeTable.bButtonAct OR timeTable.bButtonLast OR chgPageOpen;
+    END_WHILE;
+    chgRobot       := FALSE;
+  END_WHILE;
+
+END_ROUTINE
+
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      T R A C K I N G  -  tracking.xml
+-------------------------------------------------------------------------------
+******************************************************************************)
+VAR PRIVATE
+  bSetPos                     : BOOL;
+  bSetVel                     : BOOL;
+  rPosFromUserpage            : REAL; 
+  rVelFromUserpage            : REAL;
+  bTrackingOnFromUserpage     : BOOL;
+  bTrackingOffFromUserpage    : BOOL;
+  bTrackingFinishFromUserpage : BOOL;
+  bTrackingResumeFromUserpage : BOOL;    
+  iSlot                       : ARRAY [10] OF INT;
+  //TV-Basic
+  bButtonRightTracking        : BOOL;
+  bButtonLeftTracking         : BOOL;
+  bButtonActiveTracking       : BOOL; 
+END_VAR
+
+//------------------------------------------------------------------------------
+// Control tracking from userpage
+//------------------------------------------------------------------------------
+ROUTINE SetTrackingStates () PRIVATE
+ VAR
+   i          :DINT;
+   bChgOn     :  BOOL;
+   bChgOff    :  BOOL;
+   bChgFinish :  BOOL;
+   bChgResume :  BOOL;
+ END_VAR 
+ 
+  FOR i:=0 TO 9  DO
+      iSlot[i] := i+1;
+  END_FOR;
+
+  bChgOn     := IS_CHANGED (bTrackingOnFromUserpage);
+  bChgOff    := IS_CHANGED (bTrackingOffFromUserpage);
+  bChgFinish := IS_CHANGED (bTrackingFinishFromUserpage);
+  bChgResume := IS_CHANGED (bTrackingResumeFromUserpage);
+  
+  WHILE TRUE  DO  
+    WAIT  bChgOn OR bChgOff OR bChgFinish OR bChgResume;
+    IF bTrackingOnFromUserpage = TRUE THEN    
+        gRcuFocusedRobot.tracking.rTrackingOffFromUserpage    := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingFinishFromUserpage := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingResumeFromUserpage := FALSE;  
+        gRcuFocusedRobot.tracking.rTrackingOnFromUserpage     := TRUE;
+        bTrackingOnFromUserpage                               := FALSE;
+        bChgOn                                                := FALSE;
+    ELSIF bTrackingOffFromUserpage = TRUE THEN
+        gRcuFocusedRobot.tracking.rTrackingOnFromUserpage     := FALSE;    
+        gRcuFocusedRobot.tracking.rTrackingFinishFromUserpage := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingResumeFromUserpage := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingOffFromUserpage    := TRUE;
+        bTrackingOffFromUserpage                              := FALSE;
+        bChgOff                                               := FALSE;
+    ELSIF bTrackingFinishFromUserpage = TRUE THEN
+        gRcuFocusedRobot.tracking.rTrackingOnFromUserpage     := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingOffFromUserpage    := FALSE;    
+        gRcuFocusedRobot.tracking.rTrackingResumeFromUserpage := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingFinishFromUserpage := TRUE;
+        bTrackingFinishFromUserpage                           := FALSE;
+        bChgFinish                                            := FALSE;
+    ELSIF bTrackingResumeFromUserpage = TRUE THEN
+        gRcuFocusedRobot.tracking.rTrackingOnFromUserpage     := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingOffFromUserpage    := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingFinishFromUserpage := FALSE;
+        gRcuFocusedRobot.tracking.rTrackingResumeFromUserpage := TRUE;
+        bTrackingResumeFromUserpage                           := FALSE;
+        bChgResume                                            := FALSE;
+    ELSE 
+        PRINT ("Unhandled ELSE");
+    END_IF;
+  END_WHILE;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// Set trackingpos from userpage
+//------------------------------------------------------------------------------
+ROUTINE SetTrackingPos()  
+ VAR      
+  bChgSetPos :  BOOL;     
+  bChgSetVel : BOOL;
+ END_VAR
+ 
+  WAIT gbEquipmentReady;
+  bChgSetPos    := IS_CHANGED (bSetPos);
+  bChgSetVel    := IS_CHANGED (bSetVel);
+   
+  WHILE TRUE  DO
+    WAIT  bChgSetPos OR bChgSetVel;
+    IF bChgSetPos THEN    
+        gRcuFocusedRobot.tracking.rPosFromUserpage    := rPosFromUserpage;
+        gRcuFocusedRobot.tracking.bSetPosFromUserpage := TRUE;
+        bSetPos                                       := FALSE;
+        bChgSetPos                                    := FALSE;
+    ELSIF bChgSetVel THEN
+        rVelFromUserpage                              := rVelFromUserpage;  
+        bSetVel                                       := FALSE; 
+        bChgSetVel                                    := FALSE;
+    ELSE 
+        PRINT ("Unhandled ELSE");
+    END_IF;    
+  END_WHILE;   
+   
+END_ROUTINE
+
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      stuff for TV-Basic (Ex-Teachpandent)
+-------------------------------------------------------------------------------
+******************************************************************************)
+
+//------------------------------------------------------------------------------
+// Select tracking Page on TV-Basic
+//------------------------------------------------------------------------------
+ROUTINE ObserveTrackingPage()
+    
+ VAR 
+   bChgButtonRight  : BOOL;
+   bChgButtonLeft   : BOOL;
+   bChgButtonActive : BOOL;
+   nrOfPages : DINT;
+   i : INT;
+   i2: INT;
+ END_VAR
+
+  WAIT gbBootupFinished; 
+  IF NOT gbIsTVB THEN
+     RETURN; 
+  END_IF;
+  
+  IF NOT CatalogReadInt (giRcBaseHdl, "nrOfFiFoPages", nrOfPages, TRUE) THEN
+     nrOfPages := giNoBodydata;
+  END_IF;
+  
+  FOR i :=1 TO cgiRcuMaxKinematics DO;
+     PaintRobot[i-1].iActualPageTracking := 1;   
+     PaintRobot[i-1].ybShowFifoPage[1] := TRUE;
+  END_FOR;
+
+  bChgButtonRight  := IS_CHANGED(bButtonRightTracking);
+  bChgButtonLeft   := IS_CHANGED(bButtonLeftTracking);
+  bChgButtonActive := IS_CHANGED(bButtonActiveTracking); 
+  
+  WHILE TRUE DO
+     WAIT bChgButtonRight OR bChgButtonLeft OR bChgButtonActive OR chg;
+     
+     IF bChgButtonRight THEN        
+        bButtonRightTracking := FALSE;
+        bChgButtonRight := FALSE;
+        IF gRcuFocusedRobot.iActualPageTracking  = nrOfPages THEN
+           gRcuFocusedRobot.iActualPageTracking := 1;
+           gRcuFocusedRobot.ybShowFifoPage[1] := TRUE;
+           gRcuFocusedRobot.ybShowFifoPage[nrOfPages] := FALSE;
+        ELSE
+           gRcuFocusedRobot.ybShowFifoPage[gRcuFocusedRobot.iActualPageTracking] := FALSE;
+           gRcuFocusedRobot.iActualPageTracking := gRcuFocusedRobot.iActualPageTracking + 1;
+           gRcuFocusedRobot.ybShowFifoPage[gRcuFocusedRobot.iActualPageTracking] := TRUE;
+        END_IF; 
+        
+     ELSIF bChgButtonLeft THEN
+        bButtonLeftTracking := FALSE;
+        bChgButtonLeft := FALSE;
+        IF gRcuFocusedRobot.iActualPageTracking  = 1 THEN
+           gRcuFocusedRobot.iActualPageTracking := nrOfPages;
+           gRcuFocusedRobot.ybShowFifoPage[1] := FALSE;
+           gRcuFocusedRobot.ybShowFifoPage[nrOfPages] := TRUE;
+        ELSE 
+           gRcuFocusedRobot.ybShowFifoPage[gRcuFocusedRobot.iActualPageTracking] := FALSE;
+           gRcuFocusedRobot.iActualPageTracking := gRcuFocusedRobot.iActualPageTracking - 1;
+           gRcuFocusedRobot.ybShowFifoPage[gRcuFocusedRobot.iActualPageTracking] := TRUE;            
+        END_IF; 
+          
+     ELSE
+        bButtonActiveTracking := FALSE;
+        bChgButtonActive := FALSE;        
+        IF gRcuFocusedRobot.RcuInterfaceToBCU.iMotionIndexFifoZone <> 0  THEN
+         gRcuFocusedRobot.ybShowFifoPage[gRcuFocusedRobot.iActualPageTracking] := FALSE;   
+         gRcuFocusedRobot.iActualPageTracking := gRcuFocusedRobot.RcuInterfaceToBCU.iMotionIndexFifoZone;
+         gRcuFocusedRobot.ybShowFifoPage[gRcuFocusedRobot.iActualPageTracking] := TRUE;
+        END_IF;
+     END_IF;       
+  END_WHILE;
+     
+END_ROUTINE
+
+//-------------------------------------------------------------------------------
+//                      master pages on TV-Basic
+//-------------------------------------------------------------------------------
+
+TYPE PRIVATE
+  tMasterpage : STRUCT
+      jointName        : String8;
+      jointPosValue    : REAL; 
+      yOffset          : REAL;
+      last_value       : REAL;
+      bMasterSensor1_duerr : MAPTO BOOL;
+      bMasterSensorExists : BOOL;
+      yMasterAxis : MAPTO BOOL;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  bButtonRightMasterpage    : BOOL;
+  bButtonLeftMasterpage     : BOOL;
+  Masterpage                : tMasterpage;
+  bMasterPageIsSelected     : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------------
+// Select tracking Page on TV-Basic
+//------------------------------------------------------------------------------
+ROUTINE ObserveMasterPages()
+    
+ VAR 
+   bChgButtonRight : BOOL;
+   bChgButtonLeft  : BOOL;
+   iActualPage     : ARRAY [1..cgiRcuMaxKinematics] OF INT; 
+   nrOfJoints      : DINT;
+   i               : INT;
+   i2              : INT;
+   i3              : INT;
+   i4              : INT;
+   bLocalChg       : BOOL;
+ END_VAR
+  
+  WAIT gbBootupFinished;
+  WAIT gRcuFocusedRobot.masterProg.bSensorsMapped;
+  IF NOT gbIsTVB THEN
+     RETURN; 
+  END_IF;
+  
+  bLocalChg := IS_CHANGED (gbRcuFocusFlipFlop);
+  FOR i :=1 TO cgiRcuMaxKinematics DO;
+     iActualPage[i] := 1; 
+     PaintRobot[i-1].ybShowAxisMastern[1] := TRUE;
+     
+     FOR i4 := 0 TO giNumberOfRobots -1 DO
+         WAIT gRcuKinList[i4].initDone;
+     END_FOR;
+
+     FOR i4 := 0 TO cMcuMaxJ-1 DO
+        IF  gRcDataRobot[i-1].showJoint[i4] THEN
+           PaintRobot[i-1].iHighestJointNumber := i4 + 1;    
+        END_IF;        
+     END_FOR;
+  END_FOR;
+  IF gRcuFocusedRobot.drive[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1].masteringDuerr THEN
+     Masterpage.bMasterSensor1_duerr := MAP(gRcuFocusedRobot.masterProg.bMasterSensor1_duerr[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1]);
+  END_IF; 
+  Masterpage.yMasterAxis := MAP(gRcuFocusedRobot.masterProg.yMasterAxis[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1]);
+  
+  
+  bChgButtonRight := IS_CHANGED(bButtonRightMasterpage);
+  bChgButtonLeft  := IS_CHANGED(bButtonLeftMasterpage);
+  WHILE TRUE DO
+     WHILE NOT (bChgButtonRight OR bChgButtonLeft OR bLocalChg) DO
+         Sleep(100);
+         Masterpage.jointName := gRcSelectedRobotData.jointName[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1];
+         Masterpage.jointPosValue := gRcSelectedRobotData.jointPosValue[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1];
+         Masterpage.yOffset := gRcuFocusedRobot.masterProg.yOffset[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1];
+         Masterpage.last_value := gRcuFocusedRobot.masterProg.last_value[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1];
+         Masterpage.bMasterSensorExists := gRcuFocusedRobot.drive[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1].masteringExist;
+         
+         WAIT ((bMasterPageIsSelected AND NOT gRcuFocusedRobot.autoControl.bBitAutoExt)) OR (bChgButtonRight OR bChgButtonLeft) OR bLocalChg;
+     END_WHILE; 
+   
+     nrOfJoints := gRcuFocusedKinematic.nrOfJoints;
+     IF bChgButtonRight THEN
+         bButtonRightMasterpage := FALSE;
+         bChgButtonRight := FALSE;
+         IF (iActualPage[gRcuFocusedKinematic.kinListInx + 1] = gRcuFocusedRobot.iHighestJointNumber) OR NOT (gRcSelectedRobotData.showJoint[iActualPage[gRcuFocusedKinematic.kinListInx + 1]]) THEN
+             IF iActualPage[gRcuFocusedKinematic.kinListInx + 1] = gRcuFocusedRobot.iHighestJointNumber THEN
+                iActualPage[gRcuFocusedKinematic.kinListInx + 1] := 1;
+             ELSE 
+                i3 := iActualPage[gRcuFocusedKinematic.kinListInx + 1]  + 1;
+                WHILE NOT gRcSelectedRobotData.showJoint[i3-1] DO
+                    i3 := i3 + 1;                
+                END_WHILE;
+                iActualPage[gRcuFocusedKinematic.kinListInx + 1] := i3;
+             END_IF;
+         ELSE
+             iActualPage[gRcuFocusedKinematic.kinListInx + 1] := iActualPage[gRcuFocusedKinematic.kinListInx + 1] + 1;
+         END_IF;       
+         FOR i2 :=1 TO nrOfJoints DO
+            IF i2 = iActualPage[gRcuFocusedKinematic.kinListInx + 1] THEN
+                gRcuFocusedRobot.ybShowAxisMastern[i2] := TRUE;
+            ELSE
+                gRcuFocusedRobot.ybShowAxisMastern[i2] := FALSE;
+            END_IF;
+         END_FOR;
+     
+     ELSIF bChgButtonLeft THEN
+         bButtonLeftMasterpage := FALSE;
+         bChgButtonLeft := FALSE;
+         IF (iActualPage[gRcuFocusedKinematic.kinListInx + 1] = 1) OR NOT (gRcSelectedRobotData.showJoint[iActualPage[gRcuFocusedKinematic.kinListInx + 1]]) THEN
+             IF  iActualPage[gRcuFocusedKinematic.kinListInx + 1] = 1 THEN
+                 iActualPage[gRcuFocusedKinematic.kinListInx + 1] := gRcuFocusedRobot.iHighestJointNumber;
+             ELSE 
+             i3 := iActualPage[gRcuFocusedKinematic.kinListInx + 1] - 2;
+             WHILE NOT gRcSelectedRobotData.showJoint[i3] DO
+                 i3 := i3 - 1;                
+             END_WHILE;
+             iActualPage[gRcuFocusedKinematic.kinListInx + 1] := i3 + 1;
+             END_IF;  
+         ELSE
+             iActualPage[gRcuFocusedKinematic.kinListInx + 1] := iActualPage[gRcuFocusedKinematic.kinListInx + 1] - 1;
+         END_IF;       
+     END_IF;   
+        
+     FOR i2 :=1 TO nrOfJoints DO
+        IF i2 = iActualPage[gRcuFocusedKinematic.kinListInx + 1] THEN
+           gRcuFocusedRobot.ybShowAxisMastern[i2] := TRUE;
+        ELSE
+           gRcuFocusedRobot.ybShowAxisMastern[i2] := FALSE;
+        END_IF;
+     END_FOR;
+    
+     IF gRcuFocusedRobot.drive[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1].masteringDuerr THEN        
+         IF gRcuFocusedRobot.drive[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1].masteringExist THEN
+            Masterpage.bMasterSensor1_duerr := MAP(gRcuFocusedRobot.masterProg.bMasterSensor1_duerr[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1]);    
+         END_IF;        
+     END_IF;     
+     Masterpage.yMasterAxis := MAP(gRcuFocusedRobot.masterProg.yMasterAxis[iActualPage[gRcuFocusedKinematic.kinListInx + 1]-1]);
+     bLocalChg := FALSE;
+  END_WHILE;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// manage the loggerpage on TV-Basic
+//------------------------------------------------------------------------------
+ROUTINE UpdateLoggerPage_ex() PRIVATE
+  VAR
+    bChgButtonUp      : BOOL;
+    bChgButtonDown    : BOOL;
+    bChgShowCurrStep  : BOOL;
+    bChgLogger        : BOOL;
+    bChgTime          : BOOL;
+    iDisplayEntry     : INT;
+    I                 : INT;
+    J                 : INT;
+    sTextZero         : STRING;    
+    rTimeZero         : REAL;
+  END_VAR
+      
+  bChgButtonUp       := IS_CHANGED(Logger.bButtonUp);
+  bChgButtonDown     := IS_CHANGED(Logger.bButtonDown);
+  bChgShowCurrStep   := IS_CHANGED(Logger.bButtonShowStep);
+  bChgLogger         := IS_CHANGED(iUserLogger); 
+  bChgTime           := IS_CHANGED(gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].bTimeOut);
+  bChgLogger         := TRUE;
+  
+  WHILE TRUE DO  
+    IF bChgLogger OR bChgShowCurrStep THEN
+       Logger.sCurrentLoggerName := gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].sName;
+       IF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 0) AND 
+          (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 4) THEN
+           iDisplayEntry :=  0;
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 4) AND 
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep <  8) THEN
+           iDisplayEntry := 4;                                                                       
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 8) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 12)  THEN
+           iDisplayEntry := 8;                                                                        
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 12) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 16)  THEN
+           iDisplayEntry := 12;                                                                       
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 16) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 20)  THEN
+           iDisplayEntry := 16;  
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 20) AND 
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep <  34) THEN
+           iDisplayEntry := 20;                                                                       
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 24) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 28)  THEN
+           iDisplayEntry := 24;                                                                        
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 28) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 32)  THEN
+           iDisplayEntry := 28;                                                                       
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 32) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 36)  THEN
+             iDisplayEntry := 32; 
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 36) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 40)  THEN
+             iDisplayEntry := 36; 
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 40) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 44)  THEN
+             iDisplayEntry := 40; 
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 44) AND
+             (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 48)  THEN
+             iDisplayEntry := 44;
+       ELSIF (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep >= 48) AND
+            (gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].iLogStep < 50)  THEN
+             iDisplayEntry := 48; 
+       END_IF;
+    END_IF;
+    
+    IF bChgButtonUp THEN
+       IF (iDisplayEntry >= 4) THEN
+           iDisplayEntry := iDisplayEntry - 4;
+       ELSE
+           iDisplayEntry := 48;
+       END_IF;
+    END_IF;
+    
+    IF bChgButtonDown THEN
+       IF (iDisplayEntry < (cMaxLogSteps - 2)) THEN
+           iDisplayEntry := iDisplayEntry + 4;
+       ELSE
+           iDisplayEntry := 0;
+       END_IF;
+    END_IF;
+     
+    J := 0;
+    FOR I:=iDisplayEntry TO (iDisplayEntry+3) DO
+       IF I < 50 THEN
+          Logger.yStepText[J].sText := gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].yLogSteps[I].sText;
+          Logger.yStepText[J].rTime := gRcuFocusedRobot.logger.yLogger[iUserLogger - 1].yLogSteps[I].rTime;
+          J := J + 1;  
+       ELSE
+          Logger.yStepText[J].sText := sTextZero;
+          Logger.yStepText[J].rTime := rTimeZero;
+          J := J + 1;
+       END_IF;
+    END_FOR;
+    
+    bChgLogger        := FALSE;
+    bChgShowCurrStep  := FALSE;
+    bChgButtonUp      := FALSE;
+    bChgButtonDown    := FALSE;
+    bChgTime          := FALSE;
+    WAIT bChgLogger OR bChgTime 
+                    OR(bChgShowCurrStep AND Logger.bButtonShowStep)
+                    OR (bChgButtonUp AND Logger.bButtonUp)
+                    OR (bChgButtonDown AND Logger.bButtonDown)
+                    OR chg;
+    Logger.bButtonShowStep := FALSE;
+    Logger.bButtonUp       := FALSE;
+    Logger.bButtonDown     := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                      TeachView User-Management
+-------------------------------------------------------------------------------
+******************************************************************************)
+
+CONSTANT PRIVATE
+  cPermissionT2     : SINT := 10; //Min. user-level to run T2-Mode
+  cMaxSessions      : SINT :=  5; //Amount of different session
+  cMaxUserConfig    : SINT := 30; //Amount of users configured in AAd.dat
+  cIpVpnGateway     : STRING := "192.168.0.40";
+  cIpLocalHost      : STRING := "127.0.0.1";
+END_CONSTANT
+
+TYPE PRIVATE
+  tSession : STRUCT 
+    data   : KAAD_GetSessionData;
+    bLocal : BOOL;
+  END_STRUCT;
+  tUser : STRUCT 
+    data  : KAAD_GetUserAttrsData;
+    sName : STRING;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+ ySession               : ARRAY [cMaxSessions] OF tSession;
+ iCntSessions           : SINT;
+ yUser                  : ARRAY [cMaxUserConfig] OF tUser;
+ iCntUser               : SINT;
+ currentUser            : KAAD_LoginData;
+ bOpcUserManagement     : BOOL;
+ bLevel_16_LoggedIn     : BOOL;
+ bLogoutUser            : BOOL;
+ bAnyLocalUserLoggedIn  : BOOL;
+ sLocalUser             : STRING;
+ bKeepUserLoggedIn      : BOOL;
+ bRequestUserLogoutRuns : BOOL;
+ iTimeoutLogoutDialog   : DINT;
+ iIntervalLogoutDialog  : DINT;
+ iTimerProgress         : DINT;
+END_VAR
+
+//------------------------------------------------------------------------------
+// observe user from EcoScreen for TechView
+//------------------------------------------------------------------------------
+ROUTINE ObserveUserEcoScreen() PRIVATE
+ VAR
+   catHandle               : DINT;
+   yChgLevel               : ARRAY [cgiRcuMaxKinematics] OF BOOL;
+   chgLevel                : BOOL;
+   chgRob                  : BOOL;
+   chgOpcSvrOk             : BOOL;
+   i                       : DINT;
+   userFound               : BOOL;
+   iUser                   : SINT;
+   oldUser                 : SINT := -1;
+   userToLogIn             : KAAD_LoginData;
+   bTimeOut                : BOOL;
+   noOpcUserThenTvUser     : BOOL;
+   catHdl                  : DINT;
+   LocalWriteSessionCount  : DINT := -1;
+   RemoteWriteSessionCount : DINT := -1;
+   bLogoutDialogUsed       : BOOL;
+ END_VAR
+   
+   WAIT gbEquipmentReady;
+   //optional parameter to switch usermanagement to TV if no user logged in from OPC
+   CatalogReadIntRange(giRcBaseHdl, "noOpcUserThenTvUserManagement", i, 0, 1, TRUE);
+   noOpcUserThenTvUser := (i=1);
+   
+   IF NOT CatalogGetHandleRelative(giRcBaseHdl, "UserManagement", catHandle) THEN
+      iTimeoutLogoutDialog  := 120000;  // 2min =   120000ms
+      iIntervalLogoutDialog := 3600000; // 1h   =  3600000ms
+   ELSE
+      IF CatalogReadIntRange(catHandle, "noOpcUserThenTvUserManagement", i, 0, 1, TRUE) THEN
+         noOpcUserThenTvUser := (i=1);
+      END_IF;
+      IF NOT CatalogReadIntRange(catHandle, "TimeoutLogoutDialog", i, 0, 10800000, TRUE) THEN
+         iTimeoutLogoutDialog  := 120000;  // 2min =   120000ms
+      ELSE
+         iTimeoutLogoutDialog := i * 1000; //cfg in sec --> timer uses milliseconds
+      END_IF;
+      IF NOT CatalogReadIntRange(catHandle, "TimeIntervalLogoutDialog", i, 0, 10800000, TRUE) THEN
+         iIntervalLogoutDialog := 3600000; // 1h   =  3600000ms
+      ELSE
+         iIntervalLogoutDialog := i * 1000; //cfg in sec --> timer uses milliseconds
+      END_IF; 
+   END_IF;
+   bLogoutDialogUsed := (iTimeoutLogoutDialog <> 0) OR (iIntervalLogoutDialog <> 0);
+   
+   //check if configuration of maxLocalWriteSessionCount and maxRemoteWriteSessionCount is valid
+   IF NOT (gbSimulationOS OR gbFBSSActive) THEN
+      IF CatalogGetHandle("AAd", catHdl) THEN
+         CatalogReadInt(catHdl, "maxLocalWriteSessionCount",  LocalWriteSessionCount,  FALSE);
+         CatalogReadInt(catHdl, "maxRemoteWriteSessionCount", RemoteWriteSessionCount, FALSE);
+      END_IF;
+      IF (LocalWriteSessionCount <> 1) THEN
+         RcuSetMessageOnce(RcuUserPage_FaErrWriteSession, gRcuFocusedRobot.kinListInx, 1, 1, 
+                           "RcuUserPage.ObserveUserEcoScreen", "maxLocalWriteSessionCount",
+                           STR(LocalWriteSessionCount),"1");
+      END_IF;
+      IF (RemoteWriteSessionCount <> 0) THEN
+         RcuSetMessageOnce(RcuUserPage_FaErrWriteSession, gRcuFocusedRobot.kinListInx, 2, 1, 
+                           "RcuUserPage.ObserveUserEcoScreen", "maxRemoteWriteSessionCount",
+                           STR(RemoteWriteSessionCount),"0");
+      END_IF;
+   END_IF;
+   
+   //Visu does not support this function or SV is wrong, so leave usermanagement
+   WAIT gRcuFocusedRobot.ecoscreen.iManageUserForTV <> 0;
+   IF (gRcuFocusedRobot.ecoscreen.iManageUserForTV <> 2) THEN
+      gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "EcoScreen does not support usermanagement for TeachView");
+      //usermanagement on teach pendant
+      bOpcUserManagement := FALSE;
+      RETURN;
+   END_IF;
+   
+   GetUserList();          //Get the list of configured users in AAd.dat   
+   START GetSessionList(); //Get the list of current logged-on users
+   
+   FOR i:=0 TO cgiRcuMaxKinematics - 1 DO
+       yChgLevel[i] := IS_CHANGED(PaintRobot[i].ecoscreen.iUserLevelForTV);
+   END_FOR;
+   chgLevel    := IS_CHANGED(yChgLevel);
+   chgRob      := IS_CHANGED(gbRcuFocusFlipFlop);
+   chgOpcSvrOk := IS_CHANGED(gRcuFocusedRobot.RcuInterfaceToBCU.sMotionInterface.tBCUtoMotion.mConnection2HMIOK);
+   
+   WHILE TRUE DO    
+     IF ((gRcuFocusedRobot.ecoscreen.iManageUserForTV = 2) AND 
+          gRcuFocusedRobot.RcuInterfaceToBCU.sMotionInterface.tBCUtoMotion.mConnection2HMIOK AND NOT bLogoutUser) OR gbSimulationOS THEN
+        IF gbSimulationOS THEN
+           iUser    := 16;     //Administrator or Dürr user
+           chgLevel := FALSE;  //don't run loop a second time
+        ELSE
+           iUser := gRcuFocusedRobot.ecoscreen.iUserLevelForTV; 
+        END_IF;
+        IF (iUser > 0) AND (iUser <= 16) THEN
+            IF NOT bOpcUserManagement THEN 
+               bOpcUserManagement := TRUE;
+               gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for eco screen 1");
+            END_IF;
+            IF bRequestUserLogoutRuns THEN
+               //close usermanagement.xml --> new used is required from eco screen
+               STOP ObserveRequestUserLogout;
+               bRequestUserLogoutRuns           := FALSE;
+               rcuuserpagevars.bShowMsgBoxLogIn := FALSE;
+            END_IF;
+            
+            //check if an opc-user exists for the userlevel set by ecoscreen
+            userFound := FALSE;
+            i := 0;
+            REPEAT
+               IF (StrFind(yUser[i].sName, ".opc") <> 0) AND (yUser[i].data.localLevel = iUser) THEN
+                   userFound := TRUE;
+               ELSE
+                   i := i + 1;
+               END_IF;
+            UNTIL userFound OR (i >= iCntUser);
+            
+            //no opc user found, search for next lower level
+            IF NOT userFound THEN
+               REPEAT
+                  iUser := iUser - 1;
+                  i := 0;
+                  REPEAT
+                     IF (StrFind(yUser[i].sName, ".opc") <> 0) AND (yUser[i].data.localLevel = iUser) THEN
+                        userFound := TRUE;
+                     ELSE
+                        i := i + 1;
+                     END_IF;
+                  UNTIL userFound OR (i >= iCntUser);
+               UNTIL userFound OR (iUser = 0);
+            END_IF;
+            
+            //new user set from ecoscreen
+            IF userFound AND (oldUser <> i) THEN  
+               //usermanagement on eco screen
+               IF NOT bOpcUserManagement THEN
+                  gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for eco screen 2");
+               END_IF;
+               bOpcUserManagement := TRUE;                                            
+               LogoutUser(currentUser);
+               Sleep(5000); //Wait until old user is logged out to get write access for new user, KEBA does not know 
+                            //how long it takes to log out the old user.                                         
+               userToLogIn.name             := yUser[i].data.name;
+               userToLogIn.password         := yUser[i].data.password;
+               userToLogIn.passWordLen      := yUser[i].data.passwordLen;
+               //userToLogIn.wantsWriteAccess := TRUE;
+               //userToLogIn.wantsOverride    := TRUE;
+               IF (gsOsName = "Linux") OR (gsOsName = "LinuxSim") THEN
+                  userToLogIn.wantsLocalLevel  := TRUE;
+                  userToLogIn.station          := cIpLocalHost;
+               ELSIF NOT gbSimulationOS THEN 
+                  userToLogIn.wantsLocalLevel  := TRUE;
+                  userToLogIn.station          := cIpVpnGateway;
+               END_IF;
+               gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Order from EcoScreen to login TeachView-user " + userToLogIn.name);
+               IF KAAD_Login(userToLogIn) THEN
+                  //login succeed at once
+                  IF userToLogIn.status = KAAD_LoginStatus_StatusGranted THEN
+                     currentUser := userToLogIn;
+                     oldUser     := i;
+                     gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "TeachView-user " + userToLogIn.name + " logged in successful 1");
+                  //login in progress
+                  ELSIF userToLogIn.status = KAAD_LoginStatus_StatusPending THEN
+                     bTimeOut := FALSE;
+                     SysTimerSet(3000, bTimeOut);
+                     WAIT (userToLogIn.status = KAAD_LoginStatus_StatusGranted) OR
+                          (userToLogIn.status = KAAD_LoginStatus_StatusDenied) OR bTimeOut;
+                     IF userToLogIn.status = KAAD_LoginStatus_StatusGranted THEN
+                        LogoutUser(currentUser);
+                        currentUser := userToLogIn;
+                        oldUser     := i;
+                        gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "TeachView-user " + userToLogIn.name + " logged in successful 2");    
+                     ELSIF userToLogIn.status = KAAD_LoginStatus_StatusDenied THEN 
+                        LogoutUser(userToLogIn);   // try to logoff - cancel loginprogress
+                        oldUser := -1;
+                        RcuSetMessageOnce(RcuUserPage_WarLoginDenied, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.ObserveUserEcoScreen", userToLogIn.name);
+                     ELSE
+                        LogoutUser(userToLogIn); //login-timeout so try to logoff - cancel loginprogress
+                        oldUser := -1;
+                        RcuSetMessageOnce(RcuUserPage_WarLoginTimeout, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.ObserveUserEcoScreen", userToLogIn.name);
+                     END_IF;
+                  //login failed
+                  ELSIF userToLogIn.status = KAAD_LoginStatus_StatusDenied THEN   
+                     IF noOpcUserThenTvUser AND bOpcUserManagement THEN
+                        //usermanagement on teach pendant
+                        gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 1");
+                        bOpcUserManagement := FALSE;
+                     END_IF;   
+                     LogoutUser(userToLogIn);   // try to logoff - cancel loginprogress
+                     oldUser := -1;
+                     RcuSetMessageOnce(RcuUserPage_WarLoginDenied, gRcuFocusedRobot.kinListInx, 1, 2, "RcuUserPage.ObserveUserEcoScreen", userToLogIn.name);    
+                  ELSE
+                     oldUser := -1;
+                     gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "KAAD_Login of TeachViewUser " + userToLogIn.name + " returned unknown state");
+                  END_IF;    
+               ELSE
+                  RcuSetMessageOnce(RcuUserPage_WarLoginErr, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.ObserveUserEcoScreen", userToLogIn.name);
+               END_IF;
+            ELSE   
+               IF oldUser <> i THEN
+                  IF noOpcUserThenTvUser AND bOpcUserManagement THEN
+                     //usermanagement on teach pendant
+                     gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 2");
+                     bOpcUserManagement := FALSE;
+                  END_IF;
+                  LogoutUser(currentUser); //invalid userlevel set default-user
+                  oldUser := -1;
+                  RcuSetMessageOnce(RcuUserPage_WarNoUserFound, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.ObserveUserEcoScreen");
+               END_IF;
+            END_IF; 
+            
+        ELSE //invalid userlevel set default-user
+           IF NOT bLevel_16_LoggedIn THEN
+              IF noOpcUserThenTvUser AND bOpcUserManagement THEN
+                 IF bLogoutDialogUsed THEN              
+                    //show usermanagement.xml and watch user request
+                    IF NOT bRequestUserLogoutRuns THEN
+                       START ObserveRequestUserLogout();
+                       bRequestUserLogoutRuns := TRUE;
+                    END_IF;
+                 ELSE
+                   //usermanagement on teach pendant
+                   gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 3");
+                   bOpcUserManagement := FALSE;
+                   LogoutUser(currentUser);
+                   oldUser := -1;
+                 END_IF;                 
+              ELSE
+                 LogoutUser(currentUser);
+                 oldUser := -1;
+              END_IF;
+           END_IF; 
+        END_IF;
+     ELSE    
+        //No communikation to opc server, then release user login at TV
+        //usermanagement on teach pendant
+        IF NOT bLevel_16_LoggedIn THEN
+           IF bOpcUserManagement THEN
+              gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 4");
+              bOpcUserManagement := FALSE;
+           END_IF;
+           LogoutUser(currentUser);
+           oldUser := -1;
+        END_IF;
+        IF bLogoutUser THEN
+           gRcuFocusedRobot.ecoscreen.ResetUserForTeachView();
+           bLogoutUser := FALSE;
+        END_IF;
+     END_IF;  //tBCUtoMotion.mConnection2HMIOK
+     
+     WAIT chgLevel OR chgRob OR chgOpcSvrOk OR bLogoutUser;
+     FOR i:=0 TO cgiRcuMaxKinematics - 1 DO
+         yChgLevel[i] := FALSE;
+     END_FOR;
+     chgLevel    := FALSE;
+     chgRob      := FALSE;
+     chgOpcSvrOk := FALSE;
+     userFound   := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// opc user logged out --> show usermanagement.xml and watch user request
+//------------------------------------------------------------------------------
+ROUTINE ObserveRequestUserLogout() PRIVATE
+ VAR
+  bTimeOut  : BOOL;
+  iTime     : DINT;
+  rTime     : REAL;
+  bInterval : BOOL;
+ END_VAR
+
+  bKeepUserLoggedIn                := FALSE;
+  bLogoutUser                      := FALSE;  
+  rcuuserpagevars.bShowMsgBoxLogIn := TRUE;
+  gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement show usermanagement.xml and watch user request 1");
+  
+  //Timeout for user to select keep logged in or timeout. No user action means logout user an release local user management
+  bTimeOut := FALSE;
+  SysTimerSet(iTimeoutLogoutDialog, bTimeOut);
+  iTimerProgress := 100;
+  
+  LABEL Timer1;
+    bInterval := FALSE;
+    SysTimerSet(500, bInterval);
+    WAIT bTimeOut OR bKeepUserLoggedIn OR bLogoutUser OR bInterval;
+    IF bInterval AND NOT (bTimeOut OR bKeepUserLoggedIn OR bLogoutUser) THEN
+       iTime := SysTimerClear(bTimeOut);
+       rTime := REAL(iTime) / REAL(iTimeoutLogoutDialog);
+       iTimerProgress := DINT(rTime * 100.0);
+       SysTimerSet(iTime, bTimeOut);
+       SysTimerClear(bInterval);
+       GOTO Timer1;
+    END_IF;
+  
+  IF bTimeOut OR bLogoutUser THEN
+     rcuuserpagevars.bShowMsgBoxLogIn := FALSE;
+     bLogoutUser                      := TRUE;
+     bOpcUserManagement               := FALSE;
+     bRequestUserLogoutRuns           := FALSE;
+     SysTimerClear(bTimeOut);
+     gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 6");
+     RETURN;
+  END_IF;
+  bTimeOut          := FALSE;
+  bKeepUserLoggedIn := FALSE;
+  SysTimerClear(bTimeOut);
+   
+  //show usermanagement.xml frequently by timer to check if anybody is using teach pendant
+  WHILE NOT bLogoutUser DO
+  
+    rcuuserpagevars.bShowMsgBoxLogIn := FALSE;     //close user page
+    SysTimerSet(iIntervalLogoutDialog, bTimeOut);  //wait some time until dialog is shown again
+    
+    WAIT bTimeOut OR bKeepUserLoggedIn OR bLogoutUser; //show page again to check if user is still using teach pendant 
+    rcuuserpagevars.bShowMsgBoxLogIn := TRUE;
+    gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement show usermanagement.xml and watch user request 2");
+    SysTimerClear(bTimeOut);
+    
+    //Timeout for user to select keep logged in or timeout. No user action means logout user an release local user management
+    bTimeOut := FALSE;
+    SysTimerSet(iTimeoutLogoutDialog, bTimeOut);
+    iTimerProgress := 100;
+    
+    LABEL Timer2;
+      bInterval := FALSE;
+      SysTimerSet(500, bInterval);
+      WAIT bTimeOut OR bKeepUserLoggedIn OR bLogoutUser OR bInterval;
+      IF bInterval AND NOT (bTimeOut OR bKeepUserLoggedIn OR bLogoutUser) THEN
+         iTime := SysTimerClear(bTimeOut);
+         rTime := REAL(iTime) / REAL(iTimeoutLogoutDialog);
+         iTimerProgress := DINT(rTime * 100.0);
+         SysTimerSet(iTime, bTimeOut);
+         SysTimerClear(bInterval);
+         GOTO Timer2;
+      END_IF;
+    
+    IF bTimeOut OR bLogoutUser THEN
+       bLogoutUser                      := TRUE;
+       bOpcUserManagement               := FALSE;
+       bRequestUserLogoutRuns           := FALSE;
+       SysTimerClear(bTimeOut);
+       gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 7");
+       Sleep(2000);
+       rcuuserpagevars.bShowMsgBoxLogIn := FALSE;
+       RETURN;
+    ELSE
+       Sleep(2000);
+       rcuuserpagevars.bShowMsgBoxLogIn := FALSE;
+    END_IF;
+    bTimeOut          := FALSE;
+    bKeepUserLoggedIn := FALSE;
+    SysTimerClear(bTimeOut);
+  END_WHILE;
+  
+  //user has pressed logout --> release local user management
+  IF bLogoutUser THEN
+     gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "Teachview-Usermanagement activated for teach pendant 8");
+     bOpcUserManagement := FALSE;
+     RETURN;
+  END_IF;
+      
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// logout user if existing session
+//------------------------------------------------------------------------------
+ROUTINE LogoutUser(user : KAAD_LoginData) PRIVATE
+
+  IF currentUser.userId <> 0 THEN
+     IF KAAD_Logout(user.userId) THEN
+        gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "TeachView-user " + user.name + " logged out successful");
+        user.name             := "";
+        user.password         := "";
+        user.passWordLen      := 0;
+        user.wantsLocalLevel  := FALSE;
+        user.wantsWriteAccess := FALSE;
+        user.wantsOverride    := FALSE;
+        user.station          := "";
+        user.groupId          := 0;                 
+        user.userId           := 0;
+     ELSE   
+        RcuSetMessageOnce(RcuUserPage_WarLogoutUser, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.ObserveUserEcoScreen", user.name);
+     END_IF;
+  END_IF;
+  bLogoutUser := FALSE;
+     
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// get the list of configured users (AAd.dat)
+//------------------------------------------------------------------------------
+ROUTINE GetUserList() PRIVATE
+ VAR
+   i          : DINT;
+   j          : DINT;
+   users      : DINT;
+   userFound  : BOOL;
+   sApplPath  : STRING;
+   tmpUser    : tUser;
+ END_VAR
+ 
+ FOR i:=0 TO iCntUser-1 DO
+   yUser[i].sName                     := "";
+   yUser[i].data.name                 := "";
+   yUser[i].data.password             := "";
+   yUser[i].data.passwordLen          := 0;
+   yUser[i].data.localLevel           := 0;
+   yUser[i].data.remoteLevel          := 0;
+   yUser[i].data.deletable            := FALSE;
+   yUser[i].data.locale               := "";
+   yUser[i].data.unit                 := eKAAD_Unit_UnitIso;
+   yUser[i].data.functionMask         := 0;
+   yUser[i].data.textPattern          := "";
+   yUser[i].data.beginDate            := 0;
+   yUser[i].data.endDate              := 0;
+   yUser[i].data.selectedClassesCount := 0;
+   yUser[i].data.selectedClasses      := FALSE;  
+ END_FOR;
+ 
+ i        :=0;
+ iCntUser := 0;
+ REPEAT
+    IF KAAD_GetUserName(yUser[i].sName, j, users) THEN
+       IF NOT KAAD_GetUserAttrs(yUser[i].sName, yUser[i].data, userFound) THEN
+          gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "KAAD_GetUserAttrs failed for user - " + yUser[i].sName);
+       ELSIF NOT userFound THEN
+          gRcuFocusedRobot.DebugPrint(eTraceHotPlug, "KAAD_GetUserAttrs user not found - " + yUser[i].sName);
+       ELSE
+          IF (yUser[i].sName = "Dürr.opc") AND (i > 0) THEN
+              tmpUser.sName  := yUser[0].sName; //copy first user to tmp
+              tmpUser.data   := yUser[0].data;
+              yUser[0].sName := yUser[i].sName; //Dürr.opc to first place
+              yUser[0].data  := yUser[i].data; 
+              yUser[i].sName := tmpUser.sName;  //copy tmp to actual field
+              yUser[i].data  := tmpUser.data; 
+          END_IF;    
+          iCntUser := users;
+       END_IF;
+    END_IF;   
+    i := i + 1;
+ UNTIL (j = -1) OR (i >= cMaxUserConfig);
+ IF (iCntUser < 10) THEN
+    CatalogReadString(giSysBaseHdl, "applPath", sApplPath, TRUE);
+    sApplPath := sApplPath + "systemsettings";
+    RcuSetMessageOnce(RcuUserPage_ErrWrongAADdat, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.GetUserList", "AAd.dat", sApplPath);
+ END_IF;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// get the list of current logged-on users
+//------------------------------------------------------------------------------
+ROUTINE GetSessionList() PRIVATE
+ VAR
+   i               : DINT;
+   j               : DINT;
+   bT2Ok           : BOOL;
+ END_VAR
+ 
+ //Wait 10 sec. at bootup until TV logged in a valid user
+ Sleep(10000);
+ 
+ WHILE TRUE DO 
+    FOR i:=0 TO  iCntSessions-1 DO
+      ySession[i].bLocal               := FALSE;
+      ySession[i].data.mName           := "";
+      ySession[i].data.mStation        := 0;
+      ySession[i].data.mLevel          := 0;
+      ySession[i].data.mHasWriteAccess := FALSE;
+      ySession[i].data.mWasOverridden  := FALSE;
+    END_FOR;
+    
+    i                     := 0;
+    j                     := 0;
+    iCntSessions          := 0;
+    bT2Ok                 := FALSE;
+    gbTvIsActive          := FALSE;
+    bLevel_16_LoggedIn    := FALSE;
+    bAnyLocalUserLoggedIn := FALSE;
+    sLocalUser            := "---";
+    REPEAT
+       IF KAAD_GetSessions(ySession[i].data, j, ySession[i].bLocal) THEN
+          iCntSessions := iCntSessions + 1;
+          //In simulation look only for level because if TV is not started only OPC-users were logged in
+          //later if TV is started the local user is logged in
+          IF (ySession[i].bLocal OR gbSimulationOS OR gbFBSSActive) AND (ySession[i].data.mLevel >= cPermissionT2) THEN
+             bT2Ok := TRUE;
+          END_IF;
+          IF ySession[i].bLocal THEN
+             sLocalUser            := ySession[i].data.mName;
+             bAnyLocalUserLoggedIn := TRUE;
+          END_IF;
+       END_IF;   
+       
+       IF NOT (ySession[i].bLocal OR (ySession[i].data.mName="")) AND (StrFind(ySession[i].data.mName,"opc")=0) THEN
+         gbTvIsActive := TRUE;
+       END_IF;
+       //check if OPCuser with level 16 is logged in --> Visu has logged in with user rights 9999 --> commissioning
+       IF bOpcUserManagement AND (StrFind(ySession[i].data.mName,"opc") > 0) AND (ySession[i].data.mLevel = 16) THEN
+          bLevel_16_LoggedIn := TRUE;
+       END_IF;
+       i := i + 1;
+    UNTIL (j = -1) OR (i >= cMaxSessions);
+    
+    //Permission for TestMode 2
+    IF (gRcuFocusedRobot.mainModeMgr.mode = ciT2) AND NOT bT2Ok THEN
+       RcuSetMessageOnce(RcuUserPage_ErrPasswordT2, gRcuFocusedRobot.kinListInx, 1, 1, "RcuUserPage.GetSessionList"); 
+    END_IF;
+    
+    Sleep(1000);
+ END_WHILE;
+  
+END_ROUTINE  
+
+(******************************************************************************
+-------------------------------------------------------------------------------
+                    Observe Focused Robot
+-------------------------------------------------------------------------------
+******************************************************************************)
+VAR PRIVATE
+  chg : BOOL;
+END_VAR
+
+ROUTINE ObserveFocusedRobot() PRIVATE
+ VAR
+   i : DINT;
+ END_VAR
+   
+  WAIT gbBootupFinished;  
+  chg := IS_CHANGED (gbRcuFocusFlipFlop);
+  WHILE TRUE DO
+    FOR i:=0 TO cgiRcuMaxKinematics - 1 DO  
+       IF PaintRobot[i].isRobot THEN         
+          IF PaintRobot[i].kinListInx = gRcuFocusedRobot.kinListInx THEN
+             PaintRobot[i].bRobotIsInFocus := TRUE;
+          ELSE 
+             PaintRobot[i].bRobotIsInFocus := FALSE;
+          END_IF; 
+       ELSE
+          PaintRobot[i].bRobotIsInFocus := FALSE;
+       END_IF;
+    END_FOR;
+    chg := FALSE;
+    WAIT chg;   
+  END_WHILE;
+
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+******************************************************************************)
+ROUTINE NEW()
+  START ObserveUserEcoScreen() PRIO 3;
+  START SetTrackingStates();
+  START SetTrackingPos();
+  START MapLogger();
+  START MapToolMeasure();
+  START MapTimeTable();
+  START MapVision();
+  START MapHandlerSensor();
+  START MapHandlerSwitch();
+  START MapHandlerPneuUnit();
+  START MapDrive();
+  START RunDriveUtil();
+  START ObserveFocusedRobot();
+  START MapMastering();
+  START ObserveMasterPages();
+  START ObserveTrackingPage();
+  START WatchDriveUploadPageOpen();
+  START WatchBrakeCheckPageOpen();
+END_ROUTINE

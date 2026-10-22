@@ -1,0 +1,85 @@
+; GSD-File for ELOTECH modular controller series R....
+; Revision : 1.12.1 Modified by Duerr 20.05.2010 KLCH/HJ
+; Revision : 1.12 / 03.08.2009 Zsch: 2-channel-modules added
+; Revision : 1.11 / 18.07.2008 Zsch: SC-extended modules added
+; Revision : 1.10 / 30.04.2008 Zsch: SBC-modules added
+; Revision : 1.09 / 08.01.2008 Zsch: Modulname SVL... changed to SVL/SC...
+; Revision : 1.08 / 12.02.2004 Zsch: 12-channel-modules added
+; Revision : 1.07 / 18.08.2003 Zsch: 1-channel-modules added
+; Revision : 1.06 / 05.08.2003 Zsch: 9.6_supp/19.2_supp = 0
+; Revision : 1.05 / 18.06.2003 Zsch: SVL-modules added
+; Revision : 1.04 / 12.12.2002 Zsch: 4+6-channel-modules added
+; Revision : 1.03 / 18.09.2002 Zsch: 10-channel-modules added
+#Profibus_DP
+GSD_Revision        = 1
+;
+Vendor_Name         = "Duerr Systems GmbH"
+Model_Name          = "Single Controller"
+Revision            = "V1.12.1"
+Ident_Number        = 0x06A6
+Protocol_Ident      = 0      ;Profibus DP
+Station_Type        = 0      ;DP-Slave
+FMS_supp            = 0
+Hardware_Release    = "Revision A"
+Software_Release    = ">= 10/02"
+;
+9.6_supp            = 0
+19.2_supp           = 0
+93.75_supp          = 1
+187.5_supp          = 1
+500_supp            = 1
+1.5M_supp           = 1
+3M_supp             = 1
+6M_supp             = 1
+12M_supp            = 1
+;
+MaxTsdr_9.6         = 60
+MaxTsdr_19.2        = 60
+MaxTsdr_93.75       = 60
+MaxTsdr_187.5       = 60
+MaxTsdr_500         = 100
+MaxTsdr_1.5M        = 150
+MaxTsdr_3M          = 250
+MaxTsdr_6M          = 450
+MaxTsdr_12M         = 800
+;
+Redundancy          = 0
+Repeater_Ctrl_Sig   = 2      ;TTL
+24V_Pins            = 0
+Implementation_Type = "VPC3 asic solution"
+Bitmap_Device       = "ELO_NORM"
+;
+Freeze_Mode_supp    = 1
+Sync_Mode_supp      = 1
+Auto_Baud_supp      = 1
+Set_Slave_Add_supp  = 0
+Min_Slave_Intervall = 10
+;
+Modular_Station     = 1
+Max_Module          = 1
+Max_Input_Len       = 244
+Max_Output_Len      = 244
+Max_Data_Len        = 432
+Modul_Offset        = 0
+;
+Fail_Safe           = 0
+Slave_Family        = 5     ;Controller
+Max_Diag_Data_Len   = 6     ;no external diagnosis;
+;
+Module            = "SBC process data + parameter" \
+                  0x10,\              ; set-SP1-status        1 byte in
+                  0x50,\              ; Istwert Vorlauf       1 word in  
+                  0x50,\              ; Istwert Ruecklauf     1 word in  
+                  0x50,\              ; Istwert Durchfluss    1 word in  
+                  0x50,\              ; Istwert Druck         1 word in  
+                  0x50,\              ; Istwert Leistung      1 word in  
+                  0x50,\              ; Istwert Filmtemp.     1 word in  
+                  0x10,\              ; Aktueller Stellgrad   1 byte in  
+                  0x10,\              ; Status 1              1 byte in  
+                  0x10,\              ; Status 2              1 byte in  
+                  0x10,\              ; Status Alarm          1 byte in  
+                  0x60,\              ; Sollwert              1 word out 
+                  0x20,\              ; Steuerwort 1          1 byte out 
+                  0xB7                ; Parameterchannel      8 byte in/out
+EndModule
+;

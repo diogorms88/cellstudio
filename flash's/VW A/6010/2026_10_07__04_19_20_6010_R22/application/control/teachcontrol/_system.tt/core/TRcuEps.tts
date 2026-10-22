@@ -1,0 +1,1068 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuEps.tts                                                  *
+*   Description: interface to ecoscreen                                       *
+*-----------------------------------------------------------------------------*
+* 07.04.06  BIT: Added Indramatstate to show the Indramat-Display on EcoScreen
+* 11.05.06  BIT: Added Fixpos-programmnumber
+* 21.02.07  BIT: Brake check included
+*)
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT PRIVATE
+  cCycleTime        : INT := 300; //300ms
+  cMaxUserLevel     : SINT := 16; //Max number of userlevels
+END_CONSTANT
+
+
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE PRIVATE
+   
+   tInputs : STRUCT
+    bWriteStarep       : MAPTO BOOL;
+    sCurrentLanguage   : MAPTO STRING[2];
+    yUserLevel         : MAPTO ARRAY [1..cMaxUserLevel] OF BOOL;
+  END_STRUCT;
+
+  tAxisPosition : STRUCT
+    iDriveState   : WORD;
+    rActPos       : REAL;
+    rMinPos       : REAL;
+    rMaxPos       : REAL;
+    mAxisLimitMax : BOOL;
+    mAxisLimitMin : BOOL;
+   END_STRUCT;
+   
+   tsAxis : STRUCT
+      tsOut : tAxisPosition;
+   END_STRUCT;
+   
+   tAxis : ARRAY[1..9] OF tsAxis; 
+   
+   tOutputs : STRUCT
+      iModeRobot        : MAPTO INT;
+      zActualModulName  : MAPTO STRING;
+      iDrivesState      : MAPTO INT;
+      svPositions       : MAPTO tAxis;
+      iStarepProgress   : MAPTO DINT;
+      yDriveState       : MAPTO ARRAY [1..9] OF DINT;
+      svFixposNumber    : MAPTO INT;
+      iActBrushNumber   : MAPTO INT;
+      yCollisionBits    : MAPTO ARRAY [16] OF BOOL;
+      bRobotMoving      : MAPTO BOOL;
+      bBypass           : MAPTO BOOL;
+      bUnselect         : MAPTO BOOL;
+      yAtomCollision    : MAPTO ARRAY [2] OF BOOL;
+   END_STRUCT;
+   
+   tHandlerOrder : STRUCT
+     mShow   : BOOL;
+     iRobot1 : INT;
+     iRobot2 : INT;
+     iPart   : INT;
+     iPos    : INT;
+   END_STRUCT;
+   
+   tPneuUnitFoot : STRUCT
+     bShow  : BOOL;
+     bFront : BOOL;
+     bBack  : BOOL;
+   END_STRUCT;
+   
+   tPneuUnitCylinder : STRUCT
+     bShow : BOOL;
+     bUp   : BOOL;
+     bDown : BOOL;
+   END_STRUCT;
+   
+   tPneuUnitInputs : STRUCT
+     sAllFeet  : tPneuUnitFoot;
+     yCylinder : ARRAY [cgiMaxCylSystem] OF tPneuUnitCylinder;
+     yFoot     : ARRAY [cgiMaxFeetSystem] OF tPneuUnitFoot;
+   END_STRUCT;
+   
+   tPneuUnitOutputs : STRUCT
+     mRelease  : BOOL;
+     yCylinder : ARRAY [cgiMaxCylSystem] OF tPneuUnitCylinder;
+     yFoot     : ARRAY [cgiMaxFeetSystem] OF tPneuUnitFoot;
+   END_STRUCT;
+   
+   tHandlerInputs : STRUCT
+    bCalibSensor       : MAPTO BOOL;
+    bDeactivateSensor  : MAPTO BOOL;
+    bSetPartFound      : MAPTO BOOL;
+    bDeactivateSwitch  : MAPTO BOOL;
+    yPneuUnit          : ARRAY [cMaxPneuUnits] OF MAPTO tPneuUnitInputs;
+  END_STRUCT;
+    
+  tHandlerOutputs : STRUCT
+    bCalibRuns         : MAPTO BOOL;
+    bSensorInactive    : MAPTO BOOL;
+    bSensorPartSet     : MAPTO BOOL;
+    bActValDir0        : MAPTO DINT;
+    bActValDir1        : MAPTO DINT;  
+    bSwitchInactive    : MAPTO BOOL;
+    ySwitchSignal      : MAPTO ARRAY [cgiMaxSwitches] OF BOOL;
+    bIgnorePartCtrl    : MAPTO BOOL;
+    yOrders            : MAPTO ARRAY [3] OF tHandlerOrder;
+    sReqPartPos        : MAPTO tHandlerOrder;
+    sReqOrder          : MAPTO tHandlerOrder;
+    bIsOrderer         : MAPTO BOOL;
+    bIsHandler         : MAPTO BOOL;
+    yPneuUnit          : ARRAY [cMaxPneuUnits] OF MAPTO tPneuUnitOutputs;
+  END_STRUCT;
+  
+  tsBrakeCheckIn : STRUCT
+    mMoveRel    : BOOL; 
+    mStartCheck : BOOL;
+  END_STRUCT;
+  
+  tsBrakeCheckOut : STRUCT
+    iCheckState     : INT;
+    yAxisState      : ARRAY[1..9] OF INT;
+    mReadyForCheck  : BOOL;
+    mRequestMoveRel : BOOL;
+    zIntervallTime  : STRING[5];
+    zMoveRelTime    : STRING[4];
+    yAxisCheckDate  : ARRAY[1..9] OF STRING;
+    yAxisAutoCheck  : ARRAY[1..9] OF BOOL;
+  END_STRUCT;
+  
+  tsBrakeCheck : STRUCT
+    sOut : tsBrakeCheckOut;
+    sIn  : tsBrakeCheckIn;
+  END_STRUCT;
+  
+  tsRobotOverride : STRUCT
+     actValue       : INT;
+     setValue       : INT;
+     setNewOverride : BOOL;
+  END_STRUCT;
+END_TYPE
+    
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  Inputs           : tInputs;
+  Outputs          : tOutputs;
+  HandlerInputs    : tHandlerInputs;
+  HandlerOutputs   : tHandlerOutputs;
+  sBrakeCheck      : MAPTO tsBrakeCheck;
+  instId           : DINT;           // instance identification number
+  ProgInfo         : TUserProgStackInfo;
+  sourceInfo       : STRING;
+  iManageUserForTV : SINT;
+  iUserLevelForTV  : SINT;
+  robotOverride    : MAPTO tsRobotOverride;
+END_VAR
+
+VAR PRIVATE
+  locKinematic     : MAPTO TRcuRobot;
+END_VAR    
+
+
+(******************************************************************************
+***  Map all systemvariables from IEC for EcoScreen ***************************
+******************************************************************************)
+ROUTINE MapSystemVariables(myKinematic : TRcuRobot)
+ VAR
+   bMapKinAtom  : BOOL := TRUE;
+   bMapStarep   : BOOL := TRUE;
+   i            : INT; 
+ END_VAR;
+ 
+  locKinematic := MAP(myKinematic);
+  IF (NOT IS_MAPPED(locKinematic)) THEN
+     PRINT("Mapping of kinematic for ecoscreen failed");
+     RETURN;
+  END_IF;
+  
+  Outputs.iDrivesState := MAPX(cSV_EPSOutDrivesState[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.iDrivesState) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 1, instId, "TRcuEps.MapSystemVariables", cSV_EPSOutDrivesState[locKinematic.kinListInx]);
+  ELSE
+     START UpdateDriveStates() PRIO 3;
+  END_IF;
+  (*
+  Outputs.yDriveState := MAPX(cSV_EPSOutDriveState);
+  IF NOT IS_MAPPED(Outputs.yDriveState) THEN
+     RcuSetMessage( PneuCylinder_ErrMapsEpsVar, instId, cSV_EPSOutDriveState);
+  ELSE
+     START UpdateDriveState(locKinematic) PRIO 3;
+  END_IF;
+  *)
+  Outputs.iModeRobot := MAPX(cSV_RcMode[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.iModeRobot) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 2, instId, "TRcuEps.MapSystemVariables", cSV_RcMode[locKinematic.kinListInx]);
+  ELSE
+     START UpdateRobotMode() PRIO 3;
+  END_IF;
+  
+  Outputs.zActualModulName := MAPX(cSV_EPSOutActualModulName[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.zActualModulName) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 3, instId, "TRcuEps.MapSystemVariables", cSV_EPSOutActualModulName[locKinematic.kinListInx]);
+  ELSE
+     START UpdateProgInfo() PRIO 3;
+  END_IF;
+  
+  Outputs.svPositions := MAPX(cSV_EPSOutAxisPos[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.svPositions) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 4, instId, "TRcuEps.MapSystemVariables", cSV_EPSOutAxisPos[locKinematic.kinListInx]);
+  ELSE
+     START UpdateJointPos() PRIO 3;
+  END_IF;
+    
+  Outputs.svFixposNumber := MAPX(cSV_FixposNumber[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.svFixposNumber) THEN
+      RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 5, instId, "TRcuEps.MapSystemVariables", cSV_FixposNumber[locKinematic.kinListInx]);
+  ELSE
+      START FixposNumber() PRIO 3;
+  END_IF;
+  
+  Inputs.bWriteStarep := MAPX(cSV_EPSInWriteStarep[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Inputs.bWriteStarep) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 6, instId, "TRcuEps.MapSystemVariables", cSV_EPSInWriteStarep[locKinematic.kinListInx]);
+  ELSE
+     Outputs.iStarepProgress := MAPX(cSV_EPSOutStarepProgress[locKinematic.kinListInx]);
+     IF NOT IS_MAPPED(Outputs.iStarepProgress) THEN
+        RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 7, instId, "TRcuEps.MapSystemVariables", cSV_EPSOutStarepProgress[locKinematic.kinListInx]);
+     ELSE
+        START WritingStarep() PRIO 3;
+     END_IF;     
+  END_IF;
+  
+  Outputs.iActBrushNumber := MAPX(cSV_iActBrushNumber[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.iActBrushNumber) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 8, instId, "TRcuEps.MapSystemVariables", cSV_iActBrushNumber[locKinematic.kinListInx]);
+  ELSE
+     START UpdateBrushNumber() PRIO 3;
+  END_IF;
+  
+  Outputs.yCollisionBits := MAPX(cSV_Collisionbits[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.yCollisionBits) THEN
+      RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 9, instId, "TRcuEps.MapSystemVariables", cSV_Collisionbits[locKinematic.kinListInx]);
+  ELSE
+      START CollisionBits() PRIO 3;
+  END_IF;
+  
+  Inputs.yUserLevel := MAPX(cSV_UserPermission[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Inputs.yUserLevel) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 10, instId, "TRcuEps.MapSystemVariables", cSV_UserPermission[locKinematic.kinListInx]);
+     iManageUserForTV := 1;
+  ELSE
+     START ObserveUserForTeachView() PRIO 3;
+  END_IF;
+
+  Inputs.sCurrentLanguage := MAPX(cSV_CurrentLanguageSystem);
+  IF IS_MAPPED(Inputs.sCurrentLanguage) THEN
+     START ObserveLanguage() PRIO 3;
+  ELSE
+     Inputs.sCurrentLanguage := MAPX(cSV_CurrentLanguage[locKinematic.kinListInx]);
+     IF NOT IS_MAPPED(Inputs.sCurrentLanguage) THEN
+        RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 11, instId, "TRcuEps.MapSystemVariables", cSV_CurrentLanguageSystem);
+     ELSE
+        START ObserveLanguage() PRIO 3;
+     END_IF;
+  END_IF;
+
+  Outputs.bRobotMoving := MAPX(cSV_RobotMoving[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.bRobotMoving) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 12, instId, "TRcuEps.MapSystemVariables", cSV_RobotMoving[locKinematic.kinListInx]);
+  ELSE
+     START UpdateRobotMoving() PRIO 3;
+  END_IF;
+
+  Outputs.bBypass := MAPX(cSV_Bypass[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.bBypass) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 26, instId, "TRcuEps.MapSystemVariables", cSV_Bypass[locKinematic.kinListInx]);
+  ELSE
+     START UpdateBypass() PRIO 3;
+  END_IF;
+
+  Outputs.bUnselect := MAPX(cSV_Unselect[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(Outputs.bUnselect) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 27, instId, "TRcuEps.MapSystemVariables", cSV_Unselect[locKinematic.kinListInx]);
+  ELSE
+     START UpdateUnselect() PRIO 3;
+  END_IF;
+
+  IF (locKinematic.RcuEmergencyStop.iCntAtomSensors > 0) THEN
+     Outputs.yAtomCollision := MAPX(cSV_AtomCollision[locKinematic.kinListInx]);
+     IF NOT IS_MAPPED(Outputs.yAtomCollision) THEN
+        RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 13, instId, "TRcuEps.MapSystemVariables", cSV_AtomCollision[locKinematic.kinListInx]);
+     ELSE
+        START UpdateAtomCollision() PRIO 3;
+     END_IF;
+  END_IF;
+  
+  robotOverride := MAPX(cSV_RobotOverride[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(robotOverride) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 14, instId, "TRcuEps.MapSystemVariables", cSV_RobotOverride[locKinematic.kinListInx]);
+  ELSE
+     IF (gRcuStationType = eStopAndGo) THEN
+        START ObserveRobotOverride() PRIO 3;
+     END_IF;
+  END_IF;
+  
+  locKinematic.VirtualWallSafeCfg.dChecksumFromEps   := MAPX(cSV_VirtWallCrc[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(locKinematic.VirtualWallSafeCfg.dChecksumFromEps) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 15, instId, "TRcuEps.MapSystemVariables", cSV_VirtWallCrc[locKinematic.kinListInx]);
+  END_IF;
+  
+  locKinematic.VirtualWallSafeCfg.bChecksumErrorToEps := MAPX(cSV_VirtWallCrcError[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(locKinematic.VirtualWallSafeCfg.bChecksumErrorToEps) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 16, instId, "TRcuEps.MapSystemVariables", cSV_VirtWallCrcError[locKinematic.kinListInx]);
+  END_IF;
+  
+  locKinematic.VirtualWallSafeCfg.dChecksumToEps     := MAPX(cSV_VirtWallCrcToEps[locKinematic.kinListInx]);
+  IF NOT IS_MAPPED(locKinematic.VirtualWallSafeCfg.dChecksumToEps) THEN
+     RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, locKinematic.kinListInx, 17, instId, "TRcuEps.MapSystemVariables", cSV_VirtWallCrcToEps[locKinematic.kinListInx]);
+  END_IF;
+  
+  IF IS_MAPPED(locKinematic.VirtualWallSafeCfg.dChecksumFromEps)    AND 
+     IS_MAPPED(locKinematic.VirtualWallSafeCfg.bChecksumErrorToEps) AND
+     IS_MAPPED(locKinematic.VirtualWallSafeCfg.dChecksumToEps)      THEN
+     locKinematic.VirtualWallSafeCfg.bEpsMapped := TRUE;
+     START ObserveVirtWallCrc() PRIO 3;
+  END_IF;
+  
+END_ROUTINE
+
+
+(******************************************************************************
+*** Show the program-states on EcoScreen **************************************
+******************************************************************************)
+ROUTINE UpdateRobotMode() PRIVATE
+  VAR
+     bChgMode       : BOOL;
+  END_VAR
+  
+  WAIT gbBootupFinished;
+  
+  bChgMode := IS_CHANGED(locKinematic.mainModeMgr.mode);
+  WHILE TRUE DO
+    CASE locKinematic.mainModeMgr.mode OF
+        ciT1:    Outputs.iModeRobot := 1;
+        ciT2:    Outputs.iModeRobot := 2;
+        ciAuto:  Outputs.iModeRobot := 4;
+        ciSleep: Outputs.iModeRobot := 8;
+    ELSE
+                 Outputs.iModeRobot := 0;
+    END_CASE;
+    WAIT bChgMode;
+    bChgMode := FALSE;
+  END_WHILE;
+   
+END_ROUTINE
+
+(******************************************************************************
+*** Show the actaul teachprog-name on EcoScreen *******************************
+******************************************************************************)
+ROUTINE UpdateProgInfo() PRIVATE
+  VAR
+     bChgInfo    : BOOL;
+     locProgInfo : TUserProgStackInfo;
+  END_VAR
+  
+  WAIT gbBootupFinished;
+  
+  bChgInfo := IS_CHANGED(ProgInfo);
+  locProgInfo := ProgInfo; // local copy
+  WHILE TRUE DO
+     IF (locProgInfo.depth > 0) THEN
+         Outputs.zActualModulName := locProgInfo.progNames[locProgInfo.depth-1];
+     ELSE
+         Outputs.zActualModulName := "";
+     END_IF;
+     WAIT bChgInfo;
+     locProgInfo := ProgInfo; // local copy
+     bChgInfo := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+(******************************************************************************
+*** Show the drive-states on EcoScreen ****************************************
+******************************************************************************)
+ROUTINE UpdateDriveStates() PRIVATE
+ 
+ VAR
+   yChg           : ARRAY [cMcuMaxJ] OF BOOL;
+   bChg           : BOOL;
+   bChgUpdate     : BOOL;
+   I              : SINT;
+   bDriveStateBB  : BOOL;
+   bDriveStateErr : BOOL;
+ END_VAR
+ 
+ WAIT gbBootupFinished;
+ 
+ FOR I:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO
+     IF IS_MAPPED(locKinematic.drive[I]) THEN
+        yChg[I] := IS_CHANGED(locKinematic.drive[I].state);
+     END_IF;
+ END_FOR;
+ bChg := IS_CHANGED(yChg);
+ bChgUpdate := IS_CHANGED(locKinematic.updateActive);
+ WHILE TRUE DO
+   bDriveStateBB  := TRUE;
+   bDriveStateErr := FALSE;
+   FOR I:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO 
+     IF IS_MAPPED(locKinematic.drive[I]) THEN
+        IF (locKinematic.drive[I].state <> eRcuDriveComSwitchOnDisabled) THEN
+           bDriveStateBB := FALSE;
+       END_IF;
+        IF (locKinematic.drive[I].state = eRcuDriveComMalf) OR (locKinematic.drive[I].state = eRcuDriveComMalfReactionActive) OR 
+                                                            (locKinematic.drive[I].state = eRcuDriveComQuickstopActive) THEN
+           bDriveStateErr := TRUE;
+       END_IF; 
+     END_IF;
+   END_FOR;
+   locKinematic.allDrivesBB    := bDriveStateBB;
+   locKinematic.anySercosError := bDriveStateErr;
+   // this variable is now written by iec
+   //locKinematic.fieldbusOut.MotionErr.svBool  := FALSE;
+   //locKinematic.fieldbusOut.MotionOn.svBool   := FALSE;
+   //locKinematic.fieldbusOut.MotionOff.svBool  := FALSE;
+   //locKinematic.fieldbusOut.MotionWarn.svBool := FALSE;
+   
+   IF locKinematic.anySercosError THEN
+      Outputs.iDrivesState := cgiHMI_Red;   //color red
+      // this variable is now written by iec
+      //locKinematic.fieldbusOut.MotionErr.svBool := TRUE;
+   ELSIF locKinematic.allDrivesReady AND locKinematic.updateActive THEN
+      Outputs.iDrivesState := cgiHMI_Green;   //color green
+      // this variable is now written by iec
+      //locKinematic.fieldbusOut.MotionOn.svBool := TRUE;
+   ELSIF locKinematic.allDrivesBB OR NOT locKinematic.updateActive THEN
+      Outputs.iDrivesState := cgiHMI_Grey;  //color grey
+      // this variable is now written by iec
+      //locKinematic.fieldbusOut.MotionOff.svBool := TRUE;
+   END_IF;
+   WAIT bChg OR bChgUpdate;
+     FOR I:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO
+        yChg[I] := FALSE;
+     END_FOR;
+   bChg       := FALSE;
+   bChgUpdate := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+
+(******************************************************************************
+*** Show the Indramat-Display on EcoScreen ************************************
+******************************************************************************)
+ROUTINE UpdateDriveState(myKinematic : TRcuRobot) PRIVATE
+ VAR
+   i              : SINT;
+ END_VAR
+ 
+ WAIT gbBootupFinished;
+ 
+ WHILE TRUE DO
+   FOR i:=0 TO myKinematic.kinematic.mNrOfJoints - 1 DO 
+       IF IS_MAPPED(myKinematic.drive[i]) THEN
+         Outputs.yDriveState[i+1] := myKinematic.drive[i].iDisplayWord;
+       ELSE
+         Outputs.yDriveState[i+1] := 0;
+       END_IF; 
+   END_FOR;
+   Sleep(cCycleTime);
+ END_WHILE;
+ 
+END_ROUTINE
+
+
+
+(******************************************************************************
+*** Show the kinematic-states on EcoScreen ************************************
+******************************************************************************)
+ROUTINE UpdateJointPos() PRIVATE
+ 
+ VAR
+   i              :  INT;
+   di             : DINT;
+ END_VAR
+ 
+  WAIT gbBootupFinished;
+  
+  //Write configured jointlimits to EPS  
+  FOR i:=1 TO locKinematic.kinematic.mNrOfJoints DO
+      Outputs.svPositions[i].tsOut.rMinPos := locKinematic.kinematic.mJoints[i-1].mMinPos;
+      Outputs.svPositions[i].tsOut.rMaxPos := locKinematic.kinematic.mJoints[i-1].mMaxPos;
+  END_FOR;
+  
+  WHILE TRUE DO
+    IF NOT locKinematic.allDrivesSimulated THEN
+       FOR i:=1 TO locKinematic.readBackVals.mJoints.mMainJoints.mValidLen DO
+          Outputs.svPositions[i].tsOut.rActPos := locKinematic.readBackVals.mJoints.mMainJoints.mValues[i-1];
+       END_FOR;
+       FOR i:=1 TO locKinematic.readBackVals.mJoints.mAuxJoints.mValidLen DO
+          Outputs.svPositions[i+locKinematic.readBackVals.mJoints.mMainJoints.mValidLen].tsOut.rActPos := 
+          locKinematic.readBackVals.mJoints.mAuxJoints.mValues[i-1];
+       END_FOR;
+    ELSE   
+       FOR i:=1 TO locKinematic.kinematic.mNrOfJoints DO
+          Outputs.svPositions[i].tsOut.rActPos := locKinematic.actJoints.mPos[i-1];
+       END_FOR;
+    END_IF;   
+    FOR i:=0 TO locKinematic.nrOfDrives-1 DO
+       // the index of auxVal depends of iosercos.cfg and bugs in firmware!!!!!!!!!!
+       di := DINT(locKinematic.drive[i].auxVal[0] + 0.5);
+       Outputs.svPositions[i+1].tsOut.iDriveState := di;
+       IF locKinematic.drive[i].useLimitSwitchMin AND IS_MAPPED(locKinematic.drive[i].limitSwitchMin) THEN
+          Outputs.svPositions[i+1].tsOut.mAxisLimitMin := locKinematic.drive[i].limitSwitchMin;
+       END_IF;
+       IF locKinematic.drive[i].useLimitSwitchMax AND IS_MAPPED(locKinematic.drive[i].limitSwitchMax) THEN
+          Outputs.svPositions[i+1].tsOut.mAxisLimitMax := locKinematic.drive[i].limitSwitchMax;
+       END_IF;
+    END_FOR;
+    Sleep(cCycleTime);
+  END_WHILE;
+
+END_ROUTINE
+
+(******************************************************************************
+*** Show the actual fixpos programm number on EcoScreen ***********************
+******************************************************************************)
+ROUTINE FixposNumber() PRIVATE
+ VAR
+  bChgPos : BOOL;
+ END_VAR
+ 
+ WAIT gbBootupFinished;
+ bChgPos := IS_CHANGED(locKinematic.fixpos.RcuFixposNumber);
+ WHILE TRUE DO
+   Outputs.svFixposNumber := locKinematic.fixpos.RcuFixposNumber;
+   WAIT bChgPos;
+   bChgPos := FALSE;
+ END_WHILE;
+
+END_ROUTINE
+
+(******************************************************************************
+*** Wait for order writing starep *********************************************
+******************************************************************************)
+ROUTINE WritingStarep() PRIVATE
+ VAR 
+    bChg        : BOOL;
+    bChgProgess : BOOL;
+ END_VAR
+  
+  bChg := IS_CHANGED(Inputs.bWriteStarep);
+  WHILE TRUE DO
+    WAIT bChg;
+    bChg := FALSE;
+    IF Inputs.bWriteStarep THEN
+      Outputs.iStarepProgress := 0;
+      gStarepWriteFlag := TRUE;
+      bChgProgess := IS_CHANGED(gStarepWriteProgress);
+      WHILE gStarepWriteFlag AND (gStarepWriteState <> -1) DO
+        Outputs.iStarepProgress := gStarepWriteProgress;
+        bChgProgess := FALSE;
+        WAIT bChgProgess OR (gStarepWriteState = -1) OR NOT gStarepWriteFlag;
+      END_WHILE;
+      IF gStarepWriteState = -1 THEN      //Error while writing Starep
+         RcuSetMessageOnce(TRcuEps_WarnStarepNoSucc, locKinematic.kinListInx, 1, instId, "TRcuEps.WritingStarep");
+      ELSE                                // Starep successfully written
+         Outputs.iStarepProgress := gStarepWriteProgress;  // protect that the user is not able 
+         Sleep(5000);                                      // to write too much stareps
+         Outputs.iStarepProgress := 0;
+      END_IF;
+      Inputs.bWriteStarep := FALSE;
+    END_IF;
+  END_WHILE;
+
+END_ROUTINE
+
+(******************************************************************************
+*** Show the actaul BrushNumber on EcoScreen *******************************
+******************************************************************************)
+ROUTINE UpdateBrushNumber() PRIVATE
+  VAR
+     bChgBrushNumber   : BOOL;
+  END_VAR
+  
+  WAIT gbBootupFinished;
+  
+  bChgBrushNumber := IS_CHANGED(locKinematic.RcuInterfaceToProcess.iBrushNumberEps);
+  WHILE TRUE DO
+     Outputs.iActBrushNumber := locKinematic.RcuInterfaceToProcess.iBrushNumberEps;
+     WAIT bChgBrushNumber;
+     bChgBrushNumber := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+
+(******************************************************************************
+*** Show the robot moving state on EcoScreen **********************************
+******************************************************************************)
+ROUTINE UpdateRobotMoving() PRIVATE
+  
+  WAIT gbBootupFinished;
+  
+  Outputs.bRobotMoving := UPDATE(locKinematic.RcuInterfaceToBCU.mRobotMoving);
+  
+END_ROUTINE
+
+(******************************************************************************
+*** Show the robot in bypass on EcoScreen *************************************
+******************************************************************************)
+ROUTINE UpdateBypass() PRIVATE
+  
+  WAIT gbBootupFinished;
+  WAIT locKinematic.bFieldbusSlaveReady;  
+  Outputs.bBypass := UPDATE(locKinematic.fieldbusOut.PosBypass.svBool);
+  
+END_ROUTINE
+
+(******************************************************************************
+*** Show the robot in unselect on EcoScreen ***********************************
+******************************************************************************)
+ROUTINE UpdateUnselect() PRIVATE
+  
+  WAIT gbBootupFinished;
+  WAIT locKinematic.bFieldbusSlaveReady;  
+  Outputs.bUnselect := UPDATE(locKinematic.fieldbusOut.PosUnselect.svBool);
+  
+END_ROUTINE
+
+(******************************************************************************
+*** Show the state of collision ini's on EcoScreen ****************************
+******************************************************************************)
+ROUTINE UpdateAtomCollision() PRIVATE
+ 
+   WAIT gbBootupFinished;
+   IF IS_MAPPED(locKinematic.RcuEmergencyStop.hwSensor1) THEN
+      Outputs.yAtomCollision[0] := UPDATE(NOT locKinematic.RcuEmergencyStop.hwSensor1);
+   END_IF;
+   IF IS_MAPPED(locKinematic.RcuEmergencyStop.hwSensor2) THEN
+      Outputs.yAtomCollision[1] := UPDATE(NOT locKinematic.RcuEmergencyStop.hwSensor2);
+   END_IF;
+   
+END_ROUTINE
+
+(******************************************************************************
+*** Show the actaul Collisionbits on EcoScreen *******************************
+******************************************************************************)
+ROUTINE CollisionBits() PRIVATE
+ VAR
+   i    : SINT;
+ END_VAR
+ 
+  WAIT gbBootupFinished;
+  IF NOT locKinematic.bFieldbusSlaveReady THEN
+     RETURN;
+  END_IF;
+  FOR i:=0 TO 15 DO
+    Outputs.yCollisionBits[i] := UPDATE(locKinematic.fieldbusOut.yCollisionBits[i].svBool);
+  END_FOR;
+
+END_ROUTINE
+
+(******************************************************************************
+***  Start handler interface **************************************************
+******************************************************************************)
+ROUTINE HandlerInterface(kin : TRcuRobot) : BOOL
+ VAR
+   bMapOk       : BOOL := TRUE;    // Mapping SV variables
+ END_VAR
+ 
+ HandlerOutputs.yOrders := MAPX(cSV_EPSOrders[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.yOrders) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 20, instId, "TRcuEps.HandlerInterface", cSV_EPSOrders[kin.kinListInx]);
+ END_IF;
+ 
+ HandlerOutputs.sReqPartPos := MAPX(cSV_EPSReqPartPos[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.sReqPartPos) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 21, instId, "TRcuEps.HandlerInterface", cSV_EPSReqPartPos[kin.kinListInx]);
+ END_IF;
+ 
+ HandlerOutputs.sReqOrder := MAPX(cSV_EPSReqOrder[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.sReqOrder) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 22, instId, "TRcuEps.HandlerInterface", cSV_EPSReqOrder[kin.kinListInx]);
+ END_IF;
+ 
+ HandlerOutputs.bIsOrderer := MAPX(cSV_EPSIsOrderer[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bIsOrderer) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 23, instId, "TRcuEps.HandlerInterface", cSV_EPSIsOrderer[kin.kinListInx]);
+ END_IF;
+ 
+ HandlerOutputs.bIsHandler := MAPX(cSV_EPSIsHandler[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bIsHandler) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 24, instId, "TRcuEps.HandlerInterface", cSV_EPSIsHandler[kin.kinListInx]);
+ END_IF;
+ RETURN bMapOk;
+ 
+END_ROUTINE
+
+(******************************************************************************
+***  Start handler interface sensor *******************************************
+******************************************************************************)
+ROUTINE HandlerInterfaceSensor(kin : TRcuRobot) : BOOL
+ VAR
+   bMapOk       : BOOL := TRUE;    // Mapping SV variables
+ END_VAR
+ 
+ HandlerInputs.bCalibSensor := MAPX(cSV_EPSInCalibSensor[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerInputs.bCalibSensor) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 8, instId, "TRcuEps.HandlerInterface", cSV_EPSInCalibSensor[kin.kinListInx]);
+ END_IF;
+ HandlerInputs.bDeactivateSensor := MAPX(cSV_EPSInDeactivateSensor[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerInputs.bDeactivateSensor) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 9, instId, "TRcuEps.HandlerInterface", cSV_EPSInDeactivateSensor[kin.kinListInx]);
+ END_IF;
+ HandlerInputs.bSetPartFound := MAPX(cSV_EPSInSetPartFound[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerInputs.bSetPartFound) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 10, instId, "TRcuEps.HandlerInterface", cSV_EPSInSetPartFound[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bCalibRuns := MAPX(cSV_EPSOutSensorCalibRuns[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bCalibRuns) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 11, instId, "TRcuEps.HandlerInterface", cSV_EPSOutSensorCalibRuns[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bSensorInactive := MAPX(cSV_EPSOutSensorInactive[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bSensorInactive) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 12, instId, "TRcuEps.HandlerInterface", cSV_EPSOutSensorInactive[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bSensorPartSet := MAPX(cSV_EPSOutSensorPartSet[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bSensorPartSet) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 13, instId, "TRcuEps.HandlerInterface", cSV_EPSOutSensorPartSet[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bActValDir0 := MAPX(cSV_EPSOutActValueDir0[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bActValDir0) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 14, instId, "TRcuEps.HandlerInterface", cSV_EPSOutActValueDir0[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bActValDir1 := MAPX(cSV_EPSOutActValueDir1[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bActValDir1) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 15, instId, "TRcuEps.HandlerInterface", cSV_EPSOutActValueDir1[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bIgnorePartCtrl  := MAPX(cSV_EPSOutIgnorePartCtrl[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bIgnorePartCtrl) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 20, instId, "TRcuEps.HandlerInterface", cSV_EPSOutIgnorePartCtrl[kin.kinListInx]);
+ END_IF;
+ RETURN bMapOk;
+    
+END_ROUTINE
+
+(******************************************************************************
+***  Start handler interface switch *******************************************
+******************************************************************************)
+ROUTINE HandlerInterfaceSwitch(kin : TRcuRobot) : BOOL
+ VAR
+   bMapOk       : BOOL := TRUE;    // Mapping SV variables
+ END_VAR
+ 
+ HandlerInputs.bDeactivateSwitch := MAPX(cSV_EPSInDeactivateSwitch[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerInputs.bDeactivateSwitch) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 16, instId, "TRcuEps.HandlerInterface", cSV_EPSInDeactivateSwitch[kin.kinListInx]);
+ END_IF;
+ HandlerOutputs.bSwitchInactive := MAPX(cSV_EPSOutSwitchInactive[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bSwitchInactive) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 17, instId, "TRcuEps.HandlerInterface", cSV_EPSOutSwitchInactive[kin.kinListInx]);
+ END_IF;
+ 
+ HandlerOutputs.ySwitchSignal := MAPX(cSV_EPSOutSwitchSignal[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.ySwitchSignal) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 18, instId, "TRcuEps.HandlerInterface", cSV_EPSOutSwitchSignal[kin.kinListInx]);
+ END_IF;
+ 
+ HandlerOutputs.bIgnorePartCtrl  := MAPX(cSV_EPSOutIgnorePartCtrl[kin.kinListInx]);
+ IF NOT IS_MAPPED(HandlerOutputs.bIgnorePartCtrl) THEN
+    bMapOk := FALSE;
+    RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 19, instId, "TRcuEps.HandlerInterface", cSV_EPSOutIgnorePartCtrl[kin.kinListInx]);
+ END_IF;
+ 
+ RETURN bMapOk;
+    
+END_ROUTINE
+
+(******************************************************************************
+***  Start handler interface pneu unit ****************************************
+******************************************************************************)
+ROUTINE HandlerInterfacePneu(kin : TRcuRobot) : BOOL
+ VAR
+   bMapOk : BOOL := TRUE;    // Mapping SV variables
+   i      : SINT;
+ END_VAR
+ 
+  FOR i:=0 TO cMaxPneuUnits-1 DO
+      HandlerInputs.yPneuUnit[i]  := MAPX(cSV_EPSInPneuUnit[kin.kinListInx] + "[" + STR(i+1) + "]");
+      IF NOT IS_MAPPED(HandlerInputs.yPneuUnit[i]) THEN
+     bMapOk := FALSE;
+         RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 20, instId, "TRcuEps.HandlerInterfacePneu", cSV_EPSInPneuUnit[kin.kinListInx] + "[" + STR(i+1) + "]");
+  END_IF;
+      HandlerOutputs.yPneuUnit[i] := MAPX(cSV_EPSOutPneuUnit[kin.kinListInx] + "[" + STR(i+1) + "]");
+      IF NOT IS_MAPPED(HandlerOutputs.yPneuUnit[i]) THEN
+         bMapOk := FALSE;
+         RcuSetMessageOnce(TRcuEps_ErrMapsEpsVar, kin.kinListInx, 21, instId, "TRcuEps.HandlerInterfacePneu", cSV_EPSOutPneuUnit[kin.kinListInx] + "[" + STR(i+1) + "]");
+      END_IF;
+  END_FOR;
+  RETURN bMapOk;  
+END_ROUTINE
+
+(******************************************************************************
+***  map in-/outputs to EcoScreen for brakecheck ******************************
+******************************************************************************)
+ROUTINE InterfaceBrakeCheck(kin: TRcuKinematic) : BOOL
+ VAR
+   bMapOk    : BOOL := TRUE;    // Mapping SV variables
+ END_VAR
+  
+  
+  sBrakeCheck := MAPX(cSV_EPSbrakeCheck[kin.kinListInx]);
+  IF IS_MAPPED(sBrakeCheck) THEN
+     START UpdateOutputs();
+     START UpdateAxisState();
+     RETURN TRUE;
+  ELSE   
+     WHILE TRUE DO
+        RcuSetMessageOnce(TRcuEps_ErrBrakeCheckSv, locKinematic.kinListInx, 1, instId, "TRcuEps.InterfaceBrakeCheck", cSV_EPSbrakeCheck[kin.kinListInx]);
+        WAIT locKinematic.bRcuAnyErrorPending;
+        WAIT NOT locKinematic.bRcuAnyErrorPending;
+     END_WHILE;
+     RETURN FALSE;
+  END_IF;
+     
+END_ROUTINE
+
+(******************************************************************************
+***  map in-/outputs to EcoScreen for brakecheck ******************************
+******************************************************************************)
+ROUTINE UpdateOutputs() PRIVATE
+ VAR 
+  bChgPos   : BOOL;
+  bChgState : BOOL;
+  bChgMode  : BOOL;
+ END_VAR
+ 
+  WAIT gbBootupFinished;
+  bChgPos   := IS_CHANGED(locKinematic.fixpos.RcuInBrakeCheckPos);
+  bChgState := IS_CHANGED(locKinematic.brakeCheck.BrakeCheckState);
+  bChgMode  := IS_CHANGED(locKinematic.mainModeMgr.mode);
+  WHILE TRUE DO
+    locKinematic.ecoscreen.sBrakeCheck.sOut.mReadyForCheck   := locKinematic.fixpos.RcuInBrakeCheckPos AND
+       (locKinematic.brakeCheck.BrakeCheckState <> eStateCheckRunning) AND (locKinematic.mainModeMgr.mode = ciAuto) AND
+       locKinematic.fieldbusIn.ModeHand.svBool;
+    locKinematic.ecoscreen.sBrakeCheck.sOut.iCheckState := TBrakeCheckState(locKinematic.brakeCheck.BrakeCheckState);    
+        
+    bChgPos   := FALSE;
+    bChgState := FALSE;
+    bChgMode  := FALSE;
+    WAIT bChgPos OR bChgState OR bChgMode;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// Update axis state
+//------------------------------------------------------------------------------
+ROUTINE UpdateAxisState() PRIVATE
+  VAR
+    yChg   : ARRAY [cMcuMaxJ] OF BOOL;
+    bChg   : BOOL;  
+    i      : INT;
+  END_VAR
+  
+   FOR i:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO 
+       IF IS_MAPPED(locKinematic.drive[i]) THEN
+          yChg[i] := IS_CHANGED(BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].testDate);
+      END_IF;
+   END_FOR;
+   bChg := IS_CHANGED(yChg);
+   
+   FOR i:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO
+      IF IS_MAPPED(locKinematic.drive[i]) THEN
+         locKinematic.ecoscreen.sBrakeCheck.sOut.yAxisState[i+1] := BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].execState;
+         locKinematic.ecoscreen.sBrakeCheck.sOut.yAxisCheckDate[i+1] := BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].testDate;
+         locKinematic.ecoscreen.sBrakeCheck.sOut.yAxisAutoCheck[i+1] := BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].autoCheck;
+      END_IF;
+   END_FOR;
+   
+   WHILE TRUE DO
+      FOR i:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO
+         IF IS_MAPPED(locKinematic.drive[i]) THEN
+            locKinematic.ecoscreen.sBrakeCheck.sOut.yAxisState[i+1] := BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].execState;
+            locKinematic.ecoscreen.sBrakeCheck.sOut.yAxisCheckDate[i+1] := BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].testDate;
+            locKinematic.ecoscreen.sBrakeCheck.sOut.yAxisAutoCheck[i+1] := BrakeTestData[locKinematic.kinListInx][locKinematic.drive[i].driveNr].autoCheck;
+         END_IF;
+         yChg[i] := FALSE;
+      END_FOR;
+      bChg := FALSE;
+      WAIT bChg;
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// observe user for TechView
+//------------------------------------------------------------------------------
+ROUTINE ObserveUserForTeachView() PRIVATE
+ VAR
+  chgLevel   : BOOL;
+  newUserLvl : SINT;
+  i          : SINT;
+ END_VAR
+ 
+  iManageUserForTV := 2;
+  chgLevel := IS_CHANGED(Inputs.yUserLevel);
+  WHILE TRUE DO
+    FOR i:=1 TO cMaxUserLevel DO
+       IF Inputs.yUserLevel[i] THEN
+             newUserLvl := i;
+       END_IF;
+    END_FOR;
+    iUserLevelForTV := newUserLvl;
+    WAIT chgLevel;
+    chgLevel   := FALSE;
+    newUserLvl := 0;
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// reset user level for TechView
+//------------------------------------------------------------------------------
+ROUTINE ResetUserForTeachView()
+ VAR
+  i          : SINT;
+ END_VAR
+ 
+  IF (iManageUserForTV = 2) THEN
+     FOR i:=1 TO cMaxUserLevel DO
+         Inputs.yUserLevel[i] := FALSE;
+     END_FOR;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// observe language from HMI for drives
+//------------------------------------------------------------------------------
+ROUTINE ObserveLanguage() PRIVATE
+ VAR
+  chg  : BOOL;
+  i    : SINT;
+ END_VAR
+ 
+  WAIT gbBootupFinished;
+  chg := IS_CHANGED(Inputs.sCurrentLanguage);
+  WHILE TRUE DO
+    IF (Inputs.sCurrentLanguage <> "") THEN
+       FOR i:=0 TO locKinematic.kinematic.mNrOfJoints - 1 DO 
+          IF IS_MAPPED(locKinematic.drive[i]) THEN
+             locKinematic.drive[i].SetLanguage(Inputs.sCurrentLanguage);
+          END_IF;
+       END_FOR;
+    END_IF;
+    chg := FALSE;
+    WAIT chg;
+  END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveRobotOverride() PRIVATE
+   VAR
+      chgActOverride    : BOOL;
+      chgSetNewOverride : BOOL;
+      chgGhostMode      : BOOL;
+   END_VAR
+   
+   chgActOverride := IS_CHANGED(locKinematic.override);
+   chgSetNewOverride := IS_CHANGED(robotOverride.setNewOverride);
+   chgGhostMode := IS_CHANGED(locKinematic.autoControl.bPLCGhost);
+   
+   WHILE TRUE DO
+      
+      IF chgActOverride THEN
+         robotOverride.actValue := locKinematic.override/10;
+         chgActOverride := FALSE;
+      END_IF;
+      
+      IF chgSetNewOverride THEN
+         chgSetNewOverride := FALSE;
+         IF robotOverride.setNewOverride AND locKinematic.autoControl.bPLCGhost
+            AND (robotOverride.setValue >= 10) AND (robotOverride.setValue <= 100) THEN
+            locKinematic.SetTimeOverride(REAL(robotOverride.setValue)/100.0);
+         END_IF;
+         robotOverride.setNewOverride := FALSE;
+      END_IF;
+      
+      IF chgGhostMode THEN
+         chgGhostMode := FALSE;
+         IF NOT locKinematic.autoControl.bPLCGhost THEN
+            locKinematic.SetTimeOverride(1.0);
+         END_IF;
+      END_IF;
+      
+      WAIT chgActOverride OR chgSetNewOverride OR chgGhostMode;
+      
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+// HMI is sending CRC checksum for virtual wall --> check and send feedback
+//------------------------------------------------------------------------------
+ROUTINE ObserveVirtWallCrc() PRIVATE
+ VAR
+  chgCrcFromHmi : BOOL;
+ END_VAR
+ 
+  chgCrcFromHmi := IS_CHANGED(locKinematic.VirtualWallSafeCfg.dChecksumFromEps);
+  WAIT gbBootupFinished;
+  
+  WHILE TRUE DO
+    locKinematic.VirtualWallSafeCfg.dChecksumToEps := 0;
+    IF (locKinematic.VirtualWallSafeCfg.dChecksumFromEps = 0) THEN
+       locKinematic.VirtualWallSafeCfg.bChecksumErrorToEps := TRUE;
+    ELSIF (locKinematic.VirtualWallSafeCfg.dChecksumFromEps <> locKinematic.VirtualWallSafeCfg.Checksum) THEN
+       locKinematic.VirtualWallSafeCfg.bChecksumErrorToEps := TRUE;      
+       locKinematic.VirtualWallSafeCfg.dChecksumToEps      := locKinematic.VirtualWallSafeCfg.Checksum;
+       RcuSetMessageOnce(TRcuRobot_ErrVirtualWallCRC, locKinematic.kinListInx, 2, instId, "TRcuEps.ObserveVirtWallCrc", STR(locKinematic.VirtualWallSafeCfg.Checksum), STR(locKinematic.VirtualWallSafeCfg.dChecksumFromEps));
+    ELSE
+       locKinematic.VirtualWallSafeCfg.bChecksumErrorToEps := FALSE;
+    END_IF;
+    chgCrcFromHmi := FALSE;
+    WAIT chgCrcFromHmi;
+  END_WHILE;
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+******************************************************************************)
+ROUTINE NEW()
+  instId := RcuGetInstanceId(); //instance identification number (for alarms)
+END_ROUTINE

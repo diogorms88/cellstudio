@@ -1,0 +1,1627 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Carl-Benz-Str. 34                                                         *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2015 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Bitzer                                                      *
+*   E-Mail      : sven.bitzer@durr.com                                        *
+*                                                                             *
+*   Modul       : TRcuToolCleaner.tts                                         *
+*   Description : ToolCleaner for handler tool                                *
+*-----------------------------------------------------------------------------*)
+
+VAR
+  bAirSupplyOk : BOOL := TRUE;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+// Startup of ToolCleaner -- called from TRcuHandler.tts
+//------------------------------------------------------------------------------------------------------
+ROUTINE Init(locRobot : TRcuRobot)
+
+  myRobot := MAP(locRobot);
+  instId  := RcuGetInstanceId();
+  myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Start initialisation");
+  
+  sv_iCleaningStrokes := MAPX(cSV_iCleaningStrokes[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sv_iCleaningStrokes) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.Init", cSV_iCleaningStrokes[myRobot.kinListInx]);
+     RETURN;
+  END_IF;
+  
+  sv_mBlowAirTool := MAPX(cSV_mBlowAirTool[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sv_mBlowAirTool) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.Init", cSV_mBlowAirTool[myRobot.kinListInx]);
+     RETURN;
+  END_IF;
+  
+  sv_mErrorQuit := MAPX(cSV_ErrorQuit);
+  IF NOT IS_MAPPED(sv_mErrorQuit) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 3, 0, "TRcuToolCleaner.Init", cSV_ErrorQuit);
+     RETURN;
+  END_IF;
+  
+  sv_mGapPurgingActive := MAPX(cSV_mGapPurgingActive[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sv_mGapPurgingActive) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 4, 0, "TRcuToolCleaner.Init", cSV_mGapPurgingActive[myRobot.kinListInx]);
+     RETURN;
+  END_IF;
+  
+  sv_mCleanerFilled_Retain := MAPX(cSV_mCleanerFilled_Retain[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sv_mCleanerFilled_Retain) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 5, 0, "TRcuToolCleaner.Init", cSV_mCleanerFilled_Retain[myRobot.kinListInx]);
+     RETURN;
+  END_IF; 
+  
+  sv_iReplenishXBodies_Retain := MAPX(cSV_iReplenishXBodies_Retain[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sv_iReplenishXBodies_Retain) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 6, 0, "TRcuToolCleaner.Init", cSV_iReplenishXBodies_Retain[myRobot.kinListInx]);
+     RETURN;
+  END_IF;
+  
+  sHmi := MAPX(cSV_sToolCleanerHmi[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sHmi) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 7, 0, "TRcuToolCleaner.Init", cSV_sToolCleanerHmi[myRobot.kinListInx]);
+     RETURN;
+  END_IF; 
+  
+  sCfgValues.bCatUpdate := MAPX(cSV_mCatalogChanged[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(sCfgValues.bCatUpdate) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 9, 0, "TRcuToolCleaner.Init", cSV_mCatalogChanged[myRobot.kinListInx]);
+     RETURN;
+  ELSE
+     START CfgUpdate();
+  END_IF;
+  WAIT sCfgValues.bCfgReadDone;
+    
+  //Not activated in cfg --> don't initialize ToolCleaner
+  IF NOT sCfgValues.bUseToolCleaner THEN
+     RETURN;
+  END_IF;
+    
+  IF NOT Init_IO_System() THEN
+     RETURN;
+  END_IF;
+  
+  IF NOT myRobot.RcuInterfaceToBCU.bPostProcessMapped THEN 
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 8, 0, "TRcuToolCleaner.Init", cSV_PP_mRefillCleaner[myRobot.kinListInx]);
+     RcuSetMessageOnce(TRcuToolCleaner_ErrMapSysVar, myRobot.kinListInx, 9, 0, "TRcuToolCleaner.Init", cSV_PP_mCleanTool[myRobot.kinListInx]);
+     RETURN;
+  END_IF;
+  
+  //restore last state of cleaner and counter of painted bodies --> stored RETAIN
+  IF sv_mCleanerFilled_Retain THEN
+     sState := eFilled;
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Restored state=Filled from RETAIN memory");
+  END_IF;
+  sHmi.iCntBodies := sv_iReplenishXBodies_Retain;
+  myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Restored CntBodies to replenish=" + STR(sv_iReplenishXBodies_Retain) + " from RETAIN memory");
+  
+  WAIT gbBootupFinished; 
+  
+  IF IS_MAPPED(myRobot.RcuEmergencyStop.stop) AND IS_MAPPED(myRobot.RcuEmergencyStop.firealarm) AND IS_MAPPED(myRobot.RcuInterfaceToBCU.nStationMode) THEN
+     START Cyclic();
+  ELSE
+     RETURN;
+  END_IF;
+  
+  START TvHmiStates();
+  START TeachViewOrders();
+  START HmiOrders();
+  IF sCfgValues.bRefillOverFunnel THEN
+     START ShowFixposTV();
+  END_IF;
+  myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: initialisation finished");
+  
+  IF gbSimulationOS OR gbFBSSActive THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Simulation of Hardware activated");
+     sInputs.sAirSupply.bSignal := UPDATE(sOutputs.sAirSupply.bSignal);
+     sInputs.sBallTap.bSignal   := UPDATE(sOutputs.sBallTap.bSignal);
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Teachprogram checks if robot has to move into ToolCleaner (PostProcess CleanTool)
+//------------------------------------------------------------------------------------------------------
+ROUTINE PostProcessRequested(LineNr : DINT; mRefill : BOOL) : BOOL
+
+  IF bDeactivated OR NOT sCfgValues.bUseToolCleaner THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: NO PostProcess - Cleaner is deactivated");
+     RETURN FALSE;
+  ELSIF NOT myRobot.fixpos.RcuInBypass THEN  
+     RcuSetMessageOnce(TRcuToolCleaner_ErrNotBypass, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.PostProcessRequested", STR(LineNr));
+     sv_mGapPurgingActive := FALSE;
+     RETURN FALSE;
+  ELSIF (NOT mRefill) AND (sState <> eFilled) THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess can not execute CleanTool, wrong cleaner state=" + STR(sState) + " - sv_mGapPurgingActive := FALSE");
+     sv_mGapPurgingActive := FALSE;
+     RETURN FALSE;
+  ELSIF mRefill AND bPostProcessRefill AND sCfgValues.bRefillOverFunnel THEN   
+     sv_mGapPurgingActive := TRUE;
+     IF myRobot.RcuInterfaceToBCU.bOpenFixationMapped AND (myRobot.RcuInterfaceToBCU.nStationMode = eAuto) THEN
+        myRobot.RcuInterfaceToBCU.sMotionInterface.tMotiontoBCU.mOpenFixation := TRUE;
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess RefillCleaner is requested - sv_mGapPurgingActive and mOpenFixation set");
+     ELSE
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess RefillCleaner is requested - sv_mGapPurgingActive set");
+     END_IF;
+     RETURN TRUE; 
+  ELSIF (NOT mRefill) AND bPostProcessClean THEN
+     sv_mGapPurgingActive := TRUE;
+     IF myRobot.RcuInterfaceToBCU.bOpenFixationMapped AND (myRobot.RcuInterfaceToBCU.nStationMode = eAuto) THEN
+        myRobot.RcuInterfaceToBCU.sMotionInterface.tMotiontoBCU.mOpenFixation := TRUE;
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess CleanTool is requested, move into Cleaner - sv_mGapPurgingActive and mOpenFixation set");
+     ELSE
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess CleanTool is requested, move into Cleaner - sv_mGapPurgingActive set");
+     END_IF;
+     RETURN TRUE;  
+  ELSE
+     IF mRefill THEN
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess RefillCleaner is not requested");
+        RETURN FALSE;
+     ELSE
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess CleanTool is not requested");
+        RETURN FALSE;
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------------------------------
+// Teachprogram checks if cleaner is filled before moving into it. (PostProcess CleanerFilled)
+// Attention: If brushes in the cleaner are dry it's not allowed to move in otherwise brushes get damaged
+//----------------------------------------------------------------------------------------------------------------
+ROUTINE CleanerIsFilled() : BOOL
+
+  IF bDeactivated OR NOT sCfgValues.bUseToolCleaner THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk checks if cleaner is filled - RETURN FALSE - Cleaner is deactivated");
+     RETURN FALSE;
+  ELSIF (sState <> eFilled) THEN
+     RcuSetMessageOnce(TRcuToolCleaner_EmptyCleaner, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.CleanerIsFilled");
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk checks if cleaner is filled - RETURN FALSE -  state=" + STR(sState));
+     RETURN FALSE;
+  ELSE
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk checks if cleaner is filled - RETURN TRUE - all ok");
+     RETURN TRUE;
+  END_IF;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------------------------------------------
+// Teachprogram starts PostProcess RefillCleaner if set from BCU
+//----------------------------------------------------------------------------------------------------------------
+ROUTINE RefillCleaner()
+
+  IF bDeactivated OR NOT sCfgValues.bUseToolCleaner THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk wants to start PostProcess Refill but Cleaner is deactivated");
+     RETURN;
+  ELSIF NOT sCfgValues.bRefillOverFunnel THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk wants to start PostProcess Refill but -RefillOverFunnel- is not activated in config");
+     RETURN;
+  ELSIF (sOrder <> eNoOrder) THEN
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk wants to start PostProcess Refill but other order already pending - order=" + STR(sOrder));
+     RETURN;
+  ELSIF bPostProcessRefill THEN
+     IF sCfgValues.bRefillOverFunnel AND NOT myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill THEN 
+        RcuSetMessageOnce(TRcuToolCleaner_ErrNotInRefill, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.RefillCleaner", "REFILLCLEANER");
+        myRobot.ErrorReaction(TRUE);
+        RETURN;
+     ELSE
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk is starting PostProcess Refill - waiting until cleaner is filled");
+        sOrder := eRefillCleaner;
+        WAIT (sState = eFilled);
+        bPostProcessRefill := FALSE;
+        RETURN;
+     END_IF;
+  ELSE   
+     myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: EcoTalk wants to start PostProcess Refill but BCU hasn't send it");
+     RETURN;
+  END_IF;   
+
+END_ROUTINE  
+
+
+
+//******************************************************************************
+// private
+TYPE PRIVATE
+
+  TOrders : (eNoOrder, eDrainCleaner, eRefillCleaner, eFillCleaner, eReplenish);
+  
+  TStates : (eInit, eDraining, eDrainInterrupted, eEmpty, eFilling, eFillingInterrupted, eFilled);
+  
+  TReplenish : (eStop, eRun, eInterrupted, eDone);
+  
+  TSignal : (eOff, eOn, eError);
+
+  tCfgValues : STRUCT
+    bCfgReadDone           : BOOL;
+    bCatUpdate             : MAPTO BOOL;
+    bUseToolCleaner        : BOOL;
+    bUseDisposalBox        : BOOL;
+    bRefillOverFunnel      : BOOL;
+    iFillTimeSolvent       : DINT;
+    iFillTimeSolvent_sec   : DINT;
+    iDisposalTime          : DINT;
+    iDisposalTime_sec      : DINT;
+    iCleaningStrokes       : DINT;
+    bDeactivate            : BOOL;
+    iReplenishAfterXBodies : DINT;
+    iReplenishTime         : DINT;
+    iReplenishTime_sec     : DINT;
+    iMsg_Deselected        : DINT;
+  END_STRUCT;
+  tHwSignal : STRUCT
+     sName        : STRING;
+     bSignal      : MAPTO BOOL;
+     bSignal_stat : MAPTO BOOL;
+  END_STRUCT;
+  tInputs : STRUCT
+    sAirSupply              : tHwSignal;
+    sBallTap                : tHwSignal;
+  END_STRUCT;
+  tOutputs : STRUCT
+    sAirSupply              : tHwSignal;
+    sSolvent                : tHwSignal;
+    sBlowAirDrying          : tHwSignal;
+    sBlowAirReturnLine      : tHwSignal;
+    sBallTap                : tHwSignal;
+  END_STRUCT;
+  tHmiSignal_BoolState : STRUCT
+    bRelease	: BOOL;
+    bSignal    : BOOL;
+    bState     : BOOL;
+  END_STRUCT;
+  tHmiSignal_IntState : STRUCT
+    bRelease	: BOOL;
+    bSignal    : BOOL;
+    iState     : INT;
+  END_STRUCT;
+  tTV_Interface : STRUCT
+    bShowFixpos     : BOOL;
+    sAirSupplyValve : tHmiSignal_IntState;
+    sAirSupplyIni   : tHmiSignal_IntState;
+    sBallTapIni     : tHmiSignal_IntState;
+    sBallTapValve   : tHmiSignal_IntState;
+    sSolventValve   : tHmiSignal_IntState;
+    sBlowAirValve   : tHmiSignal_IntState;
+    sBlowAirRFValve : tHmiSignal_IntState;
+    sStartDrain     : tHmiSignal_IntState;
+    sStartRefill    : tHmiSignal_IntState;
+    sStartReplenish : tHmiSignal_IntState;
+    sDeActivate     : tHmiSignal_IntState;
+  END_STRUCT;
+  tHmiCfg : STRUCT
+    iFillTimeSolvent       : INT;
+    iDisposalTime          : INT;
+    iReplenishTime         : INT;
+    iReplenishAfterXBodies : INT;
+  END_STRUCT;
+  tHmiInterface : STRUCT
+    iState           : INT;
+    iStateReplenish  : INT;
+    iCntBodies       : INT;
+    sCfg             : tHmiCfg;
+    sAirSupplyValve  : tHmiSignal_BoolState;
+    sAirSupplyIni    : tHmiSignal_IntState;
+    sBallTapValve    : tHmiSignal_BoolState;
+    sBallTapIni      : tHmiSignal_IntState;
+    sSolventValve    : tHmiSignal_BoolState;
+    sBlowAirValve    : tHmiSignal_BoolState;
+    sBlowAirRFValve  : tHmiSignal_BoolState;
+    sStartDrain      : tHmiSignal_BoolState;
+    sStartRefill     : tHmiSignal_BoolState;
+    sStartReplenish  : tHmiSignal_BoolState;
+    sSelect          : tHmiSignal_IntState;
+  END_STRUCT;
+END_TYPE  
+    
+CONSTANT PRIVATE
+  cTimeoutAirsupply  : DINT := 3000;  // 3sec = 3000ms
+  cTimeoutBallTap    : DINT := 3000;  // 3sec = 3000ms
+  cNoMsg             : DINT := 0;
+  cErrFirstBody      : DINT := 1;
+  cWarnEachOrder     : DINT := 2;
+END_CONSTANT
+    
+VAR PRIVATE
+  myRobot                     : MAPTO TRcuRobot;
+  instId                      : DINT;
+  sCfgValues                  : tCfgValues;
+  sv_iCleaningStrokes         : MAPTO INT;
+  sv_mBlowAirTool             : MAPTO BOOL;
+  sv_mErrorQuit               : MAPTO BOOL;
+  sv_mCleanerFilled_Retain    : MAPTO BOOL;
+  sv_iReplenishXBodies_Retain : MAPTO INT;
+  sInputs                     : tInputs;
+  sOutputs                    : tOutputs;
+  sTeachView                  : tTV_Interface;
+  sHmi                        : MAPTO tHmiInterface;
+  //states                    
+  bReleaseSetValues           : BOOL;
+  bReleaseAirSupply           : BOOL;
+  bAirSupplyError             : BOOL;
+  bAirSupplyRunning           : BOOL;
+  bHwError                    : BOOL;
+  iBallTapState               : TSignal;
+  bTeachProgRunning           : BOOL;
+  bDeactivated                : BOOL;
+  bErrMsgDeactivatedSet       : BOOL;
+  //BCU signals               
+  bPostProcessRefill          : BOOL;
+  bPostProcessClean           : BOOL;
+  sv_mGapPurgingActive        : MAPTO BOOL; 
+  sOrder                      : TOrders;
+  sState                      : TStates;
+  sReplenishState             : TReplenish;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+// IEC writes the cfg values after download from RCUx.cfg to catalog  
+//------------------------------------------------------------------------------------------------------
+ROUTINE CfgUpdate() PRIVATE
+ VAR 
+  chg    : BOOL;
+  path   : STRING;
+  catHdl : DINT; 
+  i      : DINT; 
+  error  : BOOL;  
+  bootup : BOOL := TRUE;
+ END_VAR
+  
+  chg := IS_CHANGED(sCfgValues.bCatUpdate);
+  WHILE TRUE DO
+     
+    //get handle to KINEMATIC:x.Handler.ToolCleaner
+    path := "KINEMATIC:" + STR(myRobot.kinListInx) + ".Handler.ToolCleaner";
+    IF NOT CatalogGetHandleRelative(giRcBaseHdl, path, catHdl) THEN
+       myRobot.DebugPrint(eTraceRcuHandler, "TOOL CLEANER: Catalog error can't find group=" + path);
+       error := TRUE;
+    END_IF;
+    IF bootup THEN
+       //read parameter KINEMATIC:x.Handler.ToolCleaner.UseToolCleaner
+       IF NOT error THEN
+          IF CatalogReadIntRange(catHdl, "UseToolCleaner", i, 0, 1, TRUE) THEN
+             sCfgValues.bUseToolCleaner := (i<>0);
+          ELSE
+             myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".UseToolCleaner");
+             error := TRUE;
+          END_IF;
+       END_IF;
+       //read parameter KINEMATIC:x.Handler.ToolCleaner.UseDisposalBox
+       IF NOT error THEN
+          IF CatalogReadIntRange(catHdl, "UseDisposalBox", i, 0, 1, TRUE) THEN
+             sCfgValues.bUseDisposalBox := (i<>0);
+          ELSE
+             myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".UseDisposalBox");
+             error := TRUE;
+          END_IF;
+       END_IF;
+       //read parameter KINEMATIC:x.Handler.ToolCleaner.RefillOverFunnel
+       IF NOT error THEN
+          IF CatalogReadIntRange(catHdl, "RefillOverFunnel", i, 0, 1, TRUE) THEN
+             sCfgValues.bRefillOverFunnel := (i<>0);
+          ELSE
+             myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + "RefillOverFunnel");
+             error := TRUE;
+          END_IF;
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.FillTimeSolvent
+    IF NOT error THEN
+       IF NOT CatalogReadInt(catHdl, "FillTimeSolvent", sCfgValues.iFillTimeSolvent, TRUE) THEN
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".FillTimeSolvent");
+          error := TRUE;
+       ELSE
+          sCfgValues.iFillTimeSolvent_sec := sCfgValues.iFillTimeSolvent / 1000; //ms --> sec
+          sHmi.sCfg.iFillTimeSolvent      := sCfgValues.iFillTimeSolvent / 1000; //ms --> sec
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.DisposalTime
+    IF NOT error THEN
+       IF NOT CatalogReadInt(catHdl, "DisposalTime", sCfgValues.iDisposalTime, TRUE) THEN
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".DisposalTime");
+          error := TRUE;
+       ELSE
+          sCfgValues.iDisposalTime_sec := sCfgValues.iDisposalTime / 1000; //ms --> sec
+          sHmi.sCfg.iDisposalTime      := sCfgValues.iDisposalTime / 1000; //ms --> sec
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.CleaningStrokes
+    IF NOT error THEN
+       IF NOT CatalogReadInt(catHdl, "CleaningStrokes", sCfgValues.iCleaningStrokes, TRUE) THEN
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".CleaningStrokes");
+          error := TRUE;
+       ELSE
+          sv_iCleaningStrokes := sCfgValues.iCleaningStrokes;
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.Deactivate
+    IF NOT error THEN
+       IF CatalogReadIntRange(catHdl, "Deactivate", i, 0, 1, TRUE) THEN
+          IF (i=0) AND sCfgValues.bDeactivate THEN
+             bDeactivated := FALSE;
+          ELSIF (i<>0) THEN
+             bDeactivated := TRUE;
+          END_IF;   
+          sCfgValues.bDeactivate := (i<>0);
+       ELSE
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".Deactivate");
+          error := TRUE;
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.MsgDeactivated
+    IF NOT error THEN
+       IF CatalogReadIntRange(catHdl, "MsgDeactivated", i, 0, 2, TRUE) THEN
+          sCfgValues.iMsg_Deselected := i;
+       ELSE
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".MsgDeactivated");
+          error := TRUE;
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.ReplenishAfterXBodies
+    IF NOT error THEN
+       IF NOT CatalogReadInt(catHdl, "ReplenishAfterXBodies", sCfgValues.iReplenishAfterXBodies, TRUE) THEN
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".ReplenishAfterXBodies");
+          error := TRUE;
+       ELSE
+          sHmi.sCfg.iReplenishAfterXBodies := sCfgValues.iReplenishAfterXBodies;
+       END_IF;
+    END_IF;
+    //read parameter KINEMATIC:x.Handler.ToolCleaner.ReplenishTime
+    IF NOT error THEN
+       IF NOT CatalogReadInt(catHdl, "ReplenishTime", sCfgValues.iReplenishTime, TRUE) THEN
+          myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog error can't find parameter=" + path + ".ReplenishTime");
+          error := TRUE;
+       ELSE
+          sCfgValues.iReplenishTime_sec := sCfgValues.iReplenishTime / 1000; //ms --> sec
+          sHmi.sCfg.iReplenishTime      := sCfgValues.iReplenishTime / 1000; //ms --> sec
+       END_IF;
+    END_IF;
+    
+    sCfgValues.bCfgReadDone := NOT error;
+    myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog values successful read");
+    bootup := FALSE;
+    WAIT chg;
+    chg                     := FALSE;
+    error                   := FALSE;
+    sCfgValues.bCfgReadDone := FALSE;
+    myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Catalog values update");
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Read names of IO signals from RcHwSymbols.cfg and map them
+//------------------------------------------------------------------------------------------------------
+ROUTINE Init_IO_System() : BOOL PRIVATE
+ VAR
+  dirHdl : DINT;    // handle of a subdirectory
+  symbol : STRING;
+ END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.Init_IO_System");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+   
+      IF NOT CatalogReadString(dirHdl, "Sym_InAirSupplyOn", symbol, TRUE) THEN
+         symbol := "HWI_mBHV1_1";
+      END_IF;
+      sInputs.sAirSupply.sName := StrDelete(symbol, 5, 1);
+      symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+      sInputs.sAirSupply.bSignal := MAPX(symbol);
+      IF NOT IS_MAPPED(sInputs.sAirSupply.bSignal) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      symbol := symbol + "_stat";
+      sInputs.sAirSupply.bSignal_stat := MAPX(symbol);
+      IF NOT IS_MAPPED(sInputs.sAirSupply.bSignal_stat) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+   
+      IF NOT CatalogReadString(dirHdl, "Sym_OutAirSupplyOn", symbol, TRUE) THEN
+         symbol := "HWO_mHV1_1";
+      END_IF;
+      sOutputs.sAirSupply.sName := StrDelete(symbol, 5, 1);
+      symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+      sOutputs.sAirSupply.bSignal  := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sAirSupply.bSignal) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 3, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      symbol := symbol + "_stat";
+      sOutputs.sAirSupply.bSignal_stat := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sAirSupply.bSignal_stat) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 4, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      
+      IF NOT CatalogReadString(dirHdl, "Sym_OutOpenSolvent", symbol, TRUE) THEN
+         symbol := "HWO_mYV47_1";
+      END_IF;
+      sOutputs.sSolvent.sName := StrDelete(symbol, 5, 1);
+      symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+      sOutputs.sSolvent.bSignal := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sSolvent.bSignal) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 5, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      symbol := symbol + "_stat";
+      sOutputs.sSolvent.bSignal_stat := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sSolvent.bSignal_stat) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 6, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      
+      IF NOT CatalogReadString(dirHdl, "Sym_OutOpenBlowAirDrying", symbol, TRUE) THEN
+         symbol := "HWO_mYBL48_1";
+      END_IF;
+      sOutputs.sBlowAirDrying.sName := StrDelete(symbol, 5, 1);
+      symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+      sOutputs.sBlowAirDrying.bSignal := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sBlowAirDrying.bSignal) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 7, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      symbol := symbol + "_stat";
+      sOutputs.sBlowAirDrying.bSignal_stat := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sBlowAirDrying.bSignal_stat) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 8, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      
+      IF NOT CatalogReadString(dirHdl, "Sym_InBallTapOpen", symbol, TRUE) THEN
+         symbol := "HWO_mYAV1z_1";
+      END_IF;
+      sInputs.sBallTap.sName := StrDelete(symbol, 5, 1);
+      symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+      sInputs.sBallTap.bSignal := MAPX(symbol);
+      IF NOT IS_MAPPED(sInputs.sBallTap.bSignal) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      symbol := symbol + "_stat";
+      sInputs.sBallTap.bSignal_stat := MAPX(symbol);
+      IF NOT IS_MAPPED(sInputs.sBallTap.bSignal_stat) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      
+      IF NOT CatalogReadString(dirHdl, "Sym_OutOpenBallTap", symbol, TRUE) THEN
+         symbol := "HWO_mYAV1z_1";
+      END_IF;
+      sOutputs.sBallTap.sName := StrDelete(symbol, 5, 1);
+      symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+      sOutputs.sBallTap.bSignal := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sBallTap.bSignal) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 9, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      symbol := symbol + "_stat";
+      sOutputs.sBallTap.bSignal_stat := MAPX(symbol);
+      IF NOT IS_MAPPED(sOutputs.sBallTap.bSignal_stat) THEN
+         RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 10, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+         RETURN FALSE;
+      END_IF;
+      
+      //This blowair is only needed when we have a disposal box
+      IF sCfgValues.bUseDisposalBox THEN
+         IF NOT CatalogReadString(dirHdl, "Sym_OutOpenBlowAirReturnLine", symbol, TRUE) THEN
+            symbol := "HWO_mYBL13_1";
+         END_IF;
+         sOutputs.sBlowAirReturnLine.sName := StrDelete(symbol, 5, 1);
+         symbol := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]) + "." + symbol;
+         sOutputs.sBlowAirReturnLine.bSignal := MAPX(symbol);
+         IF NOT IS_MAPPED(sOutputs.sBlowAirReturnLine.bSignal) THEN
+            RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 11, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+            RETURN FALSE;
+         END_IF;
+         symbol := symbol + "_stat";
+         sOutputs.sBlowAirReturnLine.bSignal_stat := MAPX(symbol);
+         IF NOT IS_MAPPED(sOutputs.sBlowAirReturnLine.bSignal_stat) THEN
+            RcuSetMessageOnce(TRcuToolCleaner_ErrMapIO, myRobot.kinListInx, 12, 0, "TRcuToolCleaner.Init_IO_System", symbol);
+            RETURN FALSE;
+         END_IF;
+      END_IF;
+      
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.Init_IO_System");
+      RETURN FALSE;
+   END_IF;
+
+RETURN TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Collect several signal and generate the local states out of them
+//------------------------------------------------------------------------------------------------------
+ROUTINE Cyclic() PRIVATE
+ VAR
+  bReleaseLastCycle : BOOL;
+  sModeLastCycle    : TMainMode;
+  bModeChanged      : BOOL;
+  sStateLastCycle   : TStates;
+ END_VAR
+ 
+   IF sCfgValues.bUseDisposalBox THEN
+      bHwError := UPDATE(sInputs.sBallTap.bSignal_stat OR sOutputs.sBallTap.bSignal_stat OR sOutputs.sSolvent.bSignal_stat OR sOutputs.sBlowAirDrying.bSignal_stat OR sOutputs.sBlowAirReturnLine.bSignal_stat);
+   ELSE
+      bHwError := UPDATE(sInputs.sBallTap.bSignal_stat OR sOutputs.sBallTap.bSignal_stat OR sOutputs.sSolvent.bSignal_stat OR sOutputs.sBlowAirDrying.bSignal_stat);
+   END_IF;
+                                          
+   bReleaseAirSupply := UPDATE(myRobot.RcuEmergencyStop.stop AND myRobot.RcuEmergencyStop.firealarm                                                                 AND //Safety signals OK        
+                               (NOT sOutputs.sAirSupply.bSignal_stat) AND (NOT sInputs.sAirSupply.bSignal_stat));    //Hardware signals OK
+   
+   bReleaseSetValues  := UPDATE(sOutputs.sAirSupply.bSignal AND sInputs.sAirSupply.bSignal AND bReleaseAirSupply AND NOT (bHwError OR bModeChanged OR bDeactivated) AND
+                                (((myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND myRobot.svMotionAllowed) OR (myRobot.RcuInterfaceToBCU.nStationMode = eAuto)));  //Main mode OK
+   
+   //open HV1 and check feedback of pressure switch
+   START HandleAirSupply();
+                                
+   WHILE TRUE DO
+   
+      WHILE bDeactivated DO
+         //check if BCU is sending post process request --> copy to local variable                           
+         IF myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mCleanTool THEN
+            bPostProcessClean := TRUE;
+            myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mCleanTool := FALSE;
+            myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess -CleanTool- received from BCU but deactivated");
+            IF (sCfgValues.iMsg_Deselected = cWarnEachOrder) THEN
+               RcuSetMessageOnce(TRcuToolCleaner_WarDeactClean, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.Cyclic");
+            END_IF;
+         END_IF;   
+         IF myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mRefillCleaner THEN
+            bPostProcessRefill := TRUE;
+            myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mRefillCleaner := FALSE;
+            myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess -RefillCleaner- received from BCU but deactivated");
+            IF (sCfgValues.iMsg_Deselected = cWarnEachOrder) THEN
+               RcuSetMessageOnce(TRcuToolCleaner_WarDeactRefill, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.Cyclic");
+            END_IF;
+         END_IF;
+         sTeachView.sDeActivate.iState := cgiHMI_Grey;
+         sHmi.sSelect.iState           := cgiHMI_Grey;
+         myRobot.WaitMcMicroCycles(1);
+      END_WHILE;
+      WAIT NOT bDeactivated;
+      
+      //execute time programs --> interruption by missing release is handled in routine to save timer value
+      START ProgramSequence();
+      START ObserveRefillPos();
+      bErrMsgDeactivatedSet := FALSE;
+      WHILE NOT bDeactivated DO    
+         //check if BCU is sending post process request --> copy to local variable                           
+         IF myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mCleanTool THEN
+            bPostProcessClean := TRUE;
+            myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mCleanTool := FALSE;
+            myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess -CleanTool- received from BCU");
+         END_IF;   
+         IF myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mRefillCleaner THEN
+            bPostProcessRefill := TRUE;
+            myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mRefillCleaner := FALSE;
+            myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: PostProcess -RefillCleaner- received from BCU");
+         END_IF;
+         
+         //start refilling/replenish on start of teach prog --> cleaner is not needed while handler is working on the body
+         IF bTeachProgRunning AND (sOrder = eNoOrder) AND NOT sv_mGapPurgingActive THEN         
+            IF bPostProcessRefill AND NOT sCfgValues.bRefillOverFunnel THEN
+               sOrder := eRefillCleaner;
+               bPostProcessRefill := FALSE;                                //value "0" means dectivated
+            ELSIF (sv_iReplenishXBodies_Retain >= sCfgValues.iReplenishAfterXBodies) AND (sCfgValues.iReplenishAfterXBodies > 0) THEN
+               sOrder := eReplenish;
+               myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Amount of bodies = " + STR(sv_iReplenishXBodies_Retain) + " to replenish reached");
+            END_IF;
+         END_IF;
+         
+         //detect edges of release - execute valve functions only if release is set
+         IF bReleaseSetValues AND NOT bReleaseLastCycle THEN
+            START BallTapFeedback();
+            START BlowAirDrying();
+         ELSIF (NOT bReleaseSetValues) AND  bReleaseLastCycle THEN
+            STOP BallTapFeedback;
+            STOP BlowAirDrying;
+            ResetSetValues("Falling edge of bReleaseSetValues");
+         END_IF;
+         bReleaseLastCycle := bReleaseSetValues;
+         
+         //reset all set values when manual mode is left
+         bModeChanged := FALSE;
+         IF (sModeLastCycle = eHand) AND (myRobot.RcuInterfaceToBCU.nStationMode <> eHand) THEN
+            bModeChanged := TRUE; //ResetSetValues("leaving manual mode");
+         END_IF;
+         //check if cleaner is filled otherwise start it when automatic mode begins
+         IF (myRobot.RcuInterfaceToBCU.nStationMode = eAuto) AND (sModeLastCycle <> eAuto) THEN
+            IF (sState <> eFilled) AND (sOrder = eNoOrder) THEN
+               //starting automatic refilling at programmstart is only allowed when no funnel is used, otherwise start post process after body
+               IF NOT sCfgValues.bRefillOverFunnel THEN
+                  sOrder := eRefillCleaner;
+                  myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Begin automatic --> no order pending and cleaner not filled --> set order refill");
+               ELSE
+                  bPostProcessRefill := TRUE;
+                  myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Begin automatic --> cleaner not filled --> start post process refill after body");
+               END_IF;
+            END_IF;
+         //reset all set values when automatic mode is left
+         ELSIF (sModeLastCycle = eAuto) AND (myRobot.RcuInterfaceToBCU.nStationMode <> eAuto) THEN
+            bModeChanged := TRUE; //ResetSetValues("leaving automatic mode");
+         END_IF;
+         sModeLastCycle := myRobot.RcuInterfaceToBCU.nStationMode;
+         
+         //Error quit from message system
+         IF (iBallTapState = eError) AND sv_mErrorQuit THEN 
+            iBallTapState := eOff;
+         END_IF;
+         
+         IF (sState <> sStateLastCycle) THEN
+            sv_mCleanerFilled_Retain := (sState = eFilled);
+            sHmi.iState              := sState;
+         END_IF;
+         sStateLastCycle               := sState;
+         sHmi.iStateReplenish          := sReplenishState;
+         sTeachView.sDeActivate.iState := cgiHMI_Green;
+         sHmi.sSelect.iState           := cgiHMI_Green;
+         myRobot.WaitMcMicroCycles(1);
+      END_WHILE;
+      
+      STOP ProgramSequence;
+      STOP ObserveRefillPos;
+      STOP BallTapFeedback;
+      STOP BlowAirDrying;
+      iBallTapState        := eOff;
+      bAirSupplyError      := FALSE;
+      sOrder               := eNoOrder;
+      bModeChanged         := FALSE;
+      bTeachProgRunning    := FALSE;
+      sv_mBlowAirTool      := FALSE;
+      sv_mGapPurgingActive := FALSE;
+      ResetSetValues("Cleaner deactivated !!!");
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// AIRSUPPLY - Start/Stop switching air supply valve according robot selection
+//------------------------------------------------------------------------------------------------------
+ROUTINE HandleAirSupply() PRIVATE
+ VAR
+  chg : BOOL;
+ END_VAR
+
+   chg := IS_CHANGED(myRobot.fieldbusIn.ReleaseRobot.svBool);
+   WHILE TRUE DO
+      IF myRobot.fieldbusIn.ReleaseRobot.svBool AND NOT bAirSupplyRunning THEN
+         START AirSupply();
+      ELSE
+         STOP AirSupply;
+         bAirSupplyRunning           := FALSE;
+         sOutputs.sAirSupply.bSignal := FALSE;
+         bAirSupplyError             := FALSE;
+         bAirSupplyOk                := FALSE;
+      END_IF;
+      WAIT chg;
+      chg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// AIRSUPPLY - Switch on/off and check feedback
+//------------------------------------------------------------------------------------------------------
+ROUTINE AirSupply() PRIVATE
+ VAR
+  bTimeOut  : BOOL;
+ END_VAR
+ 
+  bAirSupplyRunning := TRUE;
+  WHILE TRUE DO
+    //check if pressure switch signals off (ex. fixed valve)
+    WHILE NOT bReleaseAirSupply DO
+       //close HV1
+       sOutputs.sAirSupply.bSignal := FALSE;
+       bAirSupplyOk                := FALSE;
+       //wait until pressure switch signals off   OR  air supply is switched on again
+       SysTimerSet(cTimeoutAirsupply, bTimeOut);
+       WAIT (NOT sInputs.sAirSupply.bSignal) OR bTimeOut OR bReleaseAirSupply;
+       //pressure switch signals off --> check if signal comes back
+       IF NOT sInputs.sAirSupply.bSignal THEN 
+          WAIT sInputs.sAirSupply.bSignal OR bReleaseAirSupply;
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE; 
+       ELSIF NOT bReleaseAirSupply THEN
+          RcuSetMessageOnce(TRcuToolCleaner_WarAirSupplyOn, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.CheckAirSupplyIsOff");
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE;  
+       END_IF;   
+    END_WHILE;
+    
+    
+    WAIT bReleaseAirSupply;
+    //check if pressure switch signals on (ex. no air, low pressure)
+    WHILE bReleaseAirSupply DO
+        //open HV1
+        sOutputs.sAirSupply.bSignal := TRUE;
+       //wait until pressure switch signals on   OR  air supply is switched off again
+       SysTimerSet(cTimeoutAirsupply, bTimeOut);
+       WAIT sInputs.sAirSupply.bSignal OR bTimeOut OR NOT bReleaseAirSupply;
+       //pressure switch signals on --> check if signal if pressure drops
+       IF sInputs.sAirSupply.bSignal THEN 
+          bAirSupplyOk := TRUE;
+          WAIT NOT (sInputs.sAirSupply.bSignal AND bReleaseAirSupply);
+          bAirSupplyOk := FALSE;
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE; 
+       ELSIF bReleaseAirSupply THEN
+          sOutputs.sAirSupply.bSignal := FALSE;
+          RcuSetMessageOnce(TRcuToolCleaner_ErrAirSupplyOn, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.CheckAirSupplyIsOff");
+          bAirSupplyError := TRUE;
+          bAirSupplyOk    := FALSE;
+          WAIT NOT myRobot.svMotionAllowed;
+          WAIT myRobot.svMotionAllowed;
+          bAirSupplyError := FALSE;
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE;  
+       END_IF;   
+    END_WHILE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Check feedback of switch when ball tap is opened or closed
+ROUTINE BallTapFeedback() PRIVATE
+ VAR
+  bTimeOut  : BOOL;
+ END_VAR
+ 
+  iBallTapState := eOff;
+  
+  WHILE TRUE DO
+    
+    //AV1 is close - initiator open shouldn't be activated 
+    WHILE NOT sOutputs.sBallTap.bSignal DO
+       //wait until initiator isn't activated   OR  ball tap is opened again
+       SysTimerSet(cTimeoutBallTap, bTimeOut);
+       WAIT (NOT sInputs.sBallTap.bSignal) OR (bTimeOut AND NOT bTeachProgRunning) OR sOutputs.sBallTap.bSignal;
+       //Signal open is still pending --> error
+       IF bTimeOut AND sInputs.sBallTap.bSignal THEN
+          RcuSetMessageOnce(TRcuToolCleaner_ErrBallTap, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.BallTapFeedback", sInputs.sBallTap.sName);
+          iBallTapState := eError;
+          WAIT NOT myRobot.svMotionAllowed;
+          WAIT myRobot.svMotionAllowed;
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE;
+       ELSE
+          iBallTapState := eOff;
+          WAIT sOutputs.sBallTap.bSignal; //wait until ball tap is opened again
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE;
+       END_IF;
+    END_WHILE;
+    
+    //AV1 is open - initiator open should be activated
+    WAIT sOutputs.sBallTap.bSignal;
+    WHILE sOutputs.sBallTap.bSignal DO
+       //wait until pressure initiator signals on   OR  ball tap is closed again
+       SysTimerSet(cTimeoutAirsupply, bTimeOut);
+       WAIT sInputs.sBallTap.bSignal OR (bTimeOut AND NOT bTeachProgRunning) OR NOT sOutputs.sBallTap.bSignal;
+       //initiator still not activated --> error
+       IF bTimeOut AND NOT sInputs.sBallTap.bSignal THEN
+          RcuSetMessageOnce(TRcuToolCleaner_ErrBallTap, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.BallTapFeedback", sInputs.sBallTap.sName);
+          iBallTapState := eError;
+          WAIT NOT myRobot.svMotionAllowed;
+          WAIT myRobot.svMotionAllowed;
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE;
+       ELSE
+          iBallTapState := eOn;
+          WAIT NOT (sOutputs.sBallTap.bSignal AND sInputs.sBallTap.bSignal); //wait until ball tap is closed again OR signal from switch gets lots
+          IF NOT sInputs.sBallTap.bSignal THEN
+             iBallTapState := eOff;
+          END_IF;
+          SysTimerClear(bTimeOut); 
+          bTimeOut := FALSE;
+       END_IF; 
+    END_WHILE;
+    WAIT NOT sOutputs.sBallTap.bSignal;
+    
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Switch blow air for drying tool according the SV set from EcoTalk
+//------------------------------------------------------------------------------------------------------
+ROUTINE BlowAirDrying() PRIVATE
+ VAR
+  chg     : BOOL;
+  blowAir : BOOL;
+ END_VAR;
+ 
+   chg := IS_CHANGED(sv_mBlowAirTool);
+   WHILE TRUE DO
+     //switch valve
+     blowAir := sOutputs.sBlowAirDrying.bSignal;   
+     sOutputs.sBlowAirDrying.bSignal := (myRobot.RcuInterfaceToBCU.nStationMode <> eSleep) AND sv_mBlowAirTool;
+     IF (sOutputs.sBlowAirDrying.bSignal <> blowAir) THEN
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Switch blow air drying=" + STR(sOutputs.sBlowAirDrying.bSignal));
+     END_IF;
+     //signal for BCU to prevent the start of next body as long as tool cleaning is running
+     IF chg AND NOT sv_mBlowAirTool THEN
+        IF sv_mGapPurgingActive THEN
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: sv_mGapPurgingActive := FALSE by blow air drying");
+        END_IF;
+        sv_mGapPurgingActive := FALSE;
+        IF bPostProcessClean  THEN
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: bPostProcessClean := FALSE by blow air drying");
+        END_IF;
+        bPostProcessClean := FALSE;
+     END_IF;
+     chg := FALSE;
+     WAIT chg;
+   END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Draining and refilling cleaner
+//------------------------------------------------------------------------------------------------------
+ROUTINE ProgramSequence() PRIVATE
+ VAR
+  iRunTime  : DINT;
+  bStepDone : BOOL;
+ END_VAR
+ 
+   WHILE TRUE DO
+      WAIT bReleaseSetValues;
+      WHILE bReleaseSetValues DO
+        WAIT (sOrder <> eNoOrder) AND bReleaseSetValues;
+
+        IF (sOrder = eDrainCleaner) OR (sOrder = eRefillCleaner) THEN
+        
+           //init timer
+           IF (sState <> eDrainInterrupted) THEN
+              iRunTime := sCfgValues.iDisposalTime; //prog starts now --> init timer wirh cfg value
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Start draining");
+           ELSE
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Continue draining");
+           END_IF;
+           bStepDone := FALSE;
+           sState := eDraining;
+                         
+           //set valve outputs
+           sOutputs.sSolvent.bSignal := FALSE;
+           IF sCfgValues.bUseDisposalBox THEN
+              sOutputs.sBlowAirReturnLine.bSignal := FALSE;
+           END_IF;
+           sOutputs.sBallTap.bSignal := TRUE;
+           //wait until ball tap is open
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Wait until ball tap is open");
+           WAIT (iBallTapState = eOn) OR ((sOrder <> eDrainCleaner) AND (sOrder <> eRefillCleaner)) OR NOT bReleaseSetValues;
+        
+           //not release --> interrupt prog and set time for continuation
+           IF ((sOrder <> eDrainCleaner) AND (sOrder <> eRefillCleaner)) OR NOT bReleaseSetValues THEN
+              sState := eDrainInterrupted;
+           END_IF;
+        
+           IF (sState = eDraining) THEN 
+              SysTimerSet(iRunTime, bStepDone);  //start run timer
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Run draining - runtime=" + STR(iRunTime) + "ms");
+              WAIT bStepDone OR ((sOrder <> eDrainCleaner) AND (sOrder <> eRefillCleaner)) OR (iBallTapState <> eOn) OR NOT bReleaseSetValues;
+           END_IF;
+           
+           //save runtime for continuation
+           iRunTime := SysTimerClear(bStepDone);
+           //cleaner is empty now --> set order to fill
+           IF bStepDone THEN
+              iRunTime := 0;
+              sState := eEmpty;
+              IF (sOrder = eRefillCleaner) THEN
+                 sOrder := eFillCleaner;
+                 myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Cleaner is empty --> set order fill");
+              ELSE
+                 sOrder := eNoOrder;
+                 myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Cleaner is empty");
+              END_IF;
+           ELSE
+              sState := eDrainInterrupted;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Drain - Draining interrupted - runtime=" + STR(iRunTime) + "ms");
+              IF (myRobot.RcuInterfaceToBCU.nStationMode = eHand) THEN
+                 sOrder := eNoOrder;
+              END_IF;
+           END_IF;
+           bStepDone := FALSE;
+           //close valve
+           sOutputs.sBallTap.bSignal := FALSE;
+           
+        ELSIF (sOrder = eFillCleaner) THEN
+        
+           //init timer
+           IF (sState <> eFillingInterrupted) THEN
+              iRunTime := sCfgValues.iFillTimeSolvent; //prog starts now --> init timer wirh cfg value
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Fill - Start filling");
+           ELSE
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Fill - Continue filling");
+           END_IF;
+           bStepDone := FALSE;
+           sState := eFilling;
+        
+           //set valve outputs
+           sOutputs.sSolvent.bSignal := FALSE;
+           IF sCfgValues.bUseDisposalBox THEN
+              sOutputs.sBlowAirReturnLine.bSignal := FALSE;
+           END_IF;
+           sOutputs.sBallTap.bSignal := FALSE;
+           //wait until ball tap is close
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Fill - Wait until ball tap is close");
+           WAIT (iBallTapState = eOff) OR (sOrder <> eFillCleaner) OR NOT bReleaseSetValues;
+        
+           //not release --> interrupt prog and set time for continuation
+           IF (sOrder <> eFillCleaner) OR NOT bReleaseSetValues THEN
+              sState := eFillingInterrupted;
+           END_IF;
+           
+           IF (sState = eFilling) THEN 
+              SysTimerSet(iRunTime, bStepDone);  //start run timer
+              sOutputs.sSolvent.bSignal := TRUE; //open solvent valve
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Fill - Run filling - runtime=" + STR(iRunTime) + "ms");
+              WAIT bStepDone OR (iBallTapState <> eOff) OR (sOrder <> eFillCleaner) OR NOT bReleaseSetValues;
+           END_IF;
+           
+           //save runtime for continuation
+           iRunTime := SysTimerClear(bStepDone);
+           //cleaner is full now --> reset order
+           IF bStepDone THEN
+              iRunTime := 0;
+              sState := eFilled;
+              sOrder := eNoOrder;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Fill - Cleaner is filled");
+              sv_iReplenishXBodies_Retain := 0;
+              sHmi.iCntBodies := 0;
+              bPostProcessRefill := FALSE;
+           ELSE
+              sState := eFillingInterrupted;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Fill - Filling interrupted - runtime=" + STR(iRunTime) + "ms");
+              IF (myRobot.RcuInterfaceToBCU.nStationMode = eHand) THEN
+                 sOrder := eNoOrder;
+              END_IF;
+              IF sOutputs.sSolvent.bSignal_stat THEN
+                 RcuSetMessageOnce(TRcuToolCleaner_ErrHwSignal, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.ProgramSequence", sOutputs.sSolvent.sName);
+                 WAIT NOT myRobot.svMotionAllowed;
+                 WAIT myRobot.svMotionAllowed;
+              END_IF;   
+           END_IF;
+           bStepDone := FALSE;
+           //close valve
+           sOutputs.sSolvent.bSignal := FALSE;
+           
+        ELSIF (sOrder = eReplenish) THEN 
+         
+           //init timer
+           IF (sReplenishState <> eInterrupted) THEN
+              iRunTime := sCfgValues.iReplenishTime; //prog starts now --> init timer wirh cfg value
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Replenish - Start replenish");
+           ELSE
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Replenish - Continue replenish");
+           END_IF;
+           bStepDone := FALSE;
+           sReplenishState := eRun;
+         
+           //set valve outputs
+           sOutputs.sSolvent.bSignal := FALSE;
+           IF sCfgValues.bUseDisposalBox THEN
+              sOutputs.sBlowAirReturnLine.bSignal := FALSE;
+           END_IF;
+           sOutputs.sBallTap.bSignal := FALSE;
+           //wait until ball tap is close
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Replenish - Wait until ball tap is close");
+           WAIT (iBallTapState = eOff) OR (sOrder <> eReplenish) OR NOT bReleaseSetValues;
+         
+           //not release --> interrupt prog and set time for continuation
+           IF (sOrder <> eReplenish) OR NOT bReleaseSetValues THEN
+              sReplenishState := eInterrupted;
+           END_IF;
+           
+           IF (sReplenishState = eRun) THEN 
+              SysTimerSet(iRunTime, bStepDone);  //start run timer
+              sOutputs.sSolvent.bSignal := TRUE; //open solvent valve
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Replenish - Run replenish - runtime=" + STR(iRunTime) + "ms");
+              WAIT bStepDone OR (iBallTapState <> eOff) OR (sOrder <> eReplenish) OR NOT bReleaseSetValues;
+           END_IF;
+         
+           //save runtime for continuation
+           iRunTime := SysTimerClear(bStepDone);
+           //cleaner is full now --> reset order
+           IF bStepDone THEN
+              iRunTime := 0;
+              sReplenishState := eDone;
+              sOrder := eNoOrder;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Replenish - Cleaner is replenished");
+              sv_iReplenishXBodies_Retain := 0;
+              sHmi.iCntBodies := 0;
+           ELSE
+              sReplenishState := eInterrupted;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ProgramSequence Replenish - Replenish interrupted - runtime=" + STR(iRunTime) + "ms");
+              IF (myRobot.RcuInterfaceToBCU.nStationMode = eHand) THEN
+                 sOrder := eNoOrder;
+              END_IF;
+              IF sOutputs.sSolvent.bSignal_stat THEN
+                 RcuSetMessageOnce(TRcuToolCleaner_ErrHwSignal, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.ProgramSequence", sOutputs.sSolvent.sName);
+                 WAIT NOT myRobot.svMotionAllowed;
+                 WAIT myRobot.svMotionAllowed;
+              END_IF;   
+           END_IF;
+           bStepDone := FALSE;
+           //close valve
+           sOutputs.sSolvent.bSignal := FALSE;
+        END_IF;
+        
+      END_WHILE; //WHILE bReleaseSetValues DO 
+   END_WHILE; //WHILE TRUE DO
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Check if robot stays in fixpos "Refill" while draining or refilling cleaner
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveRefillPos() PRIVATE
+ VAR
+  chgState   : BOOL;
+  chgBallTap : BOOL;
+  chgSovent  : BOOL;
+  chgPos     : BOOL;
+ END_VAR
+ 
+  chgState   := IS_CHANGED(sState);
+  chgBallTap := IS_CHANGED(sInputs.sBallTap.bSignal);
+  chgSovent  := IS_CHANGED(sOutputs.sSolvent.bSignal);
+  chgPos     := IS_CHANGED(myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill);
+  WHILE TRUE DO
+    WAIT chgState OR chgBallTap OR chgPos;
+    chgState   := FALSE;
+    chgBallTap := FALSE;
+    chgSovent  := FALSE;
+    chgPos     := FALSE;
+    IF ((sState = eDraining) OR (sState = eFilling) OR sInputs.sBallTap.bSignal OR sOutputs.sSolvent.bSignal) AND sCfgValues.bRefillOverFunnel AND 
+       NOT myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill THEN           
+       RcuSetMessageOnce(TRcuToolCleaner_ErrNotInRefill, myRobot.kinListInx, 2, 0, "TRcuToolCleaner.ObserveRefillPos", "REFILLCLEANER");
+    END_IF;  
+  END_WHILE;   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Reset all Hardware signals, TeachView signals
+//------------------------------------------------------------------------------------------------------
+ROUTINE ResetSetValues(s : STRING) PRIVATE
+
+  sOutputs.sBallTap.bSignal       := FALSE;
+  sOutputs.sSolvent.bSignal       := FALSE;
+  sOutputs.sBlowAirDrying.bSignal := FALSE;
+  IF sCfgValues.bUseDisposalBox THEN
+     sOutputs.sBlowAirReturnLine.bSignal := FALSE;
+  END_IF;
+        
+  sTeachView.sBallTapValve.bSignal   := FALSE;
+  sTeachView.sSolventValve.bSignal   := FALSE;
+  sTeachView.sBlowAirValve.bSignal   := FALSE;
+  sTeachView.sBlowAirRFValve.bSignal := FALSE;
+  sTeachView.sStartDrain.bSignal     := FALSE;
+  sTeachView.sStartRefill.bSignal    := FALSE;
+  sTeachView.sStartReplenish.bSignal := FALSE;
+  sTeachView.sDeActivate.bSignal     := FALSE;
+  
+  sHmi.sBallTapValve.bSignal        := FALSE;
+  sHmi.sSolventValve.bSignal        := FALSE;
+  sHmi.sBlowAirValve.bSignal        := FALSE;
+  sHmi.sBlowAirRFValve.bSignal      := FALSE;
+  sHmi.sStartDrain.bSignal          := FALSE;
+  sHmi.sStartRefill.bSignal         := FALSE;
+  sHmi.sStartReplenish.bSignal      := FALSE;
+       
+  myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: ResetSetValues executed - " + s);
+       
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Interface to TeachView
+//------------------------------------------------------------------------------------------------------
+ROUTINE TeachViewOrders() PRIVATE
+ VAR
+  chgBallTap   : BOOL;
+  chgSolvent   : BOOL;
+  chgBL_Dry    : BOOL;
+  chgBL_RF     : BOOL;
+  chgDrain     : BOOL;
+  chgRefill    : BOOL;
+  chgReplenish : BOOL;
+  chgDeAct     : BOOL;
+ END_VAR
+ 
+  chgBallTap   := IS_CHANGED(sTeachView.sBallTapValve.bSignal);
+  chgSolvent   := IS_CHANGED(sTeachView.sSolventValve.bSignal);
+  chgBL_Dry    := IS_CHANGED(sTeachView.sBlowAirValve.bSignal);
+  chgDrain     := IS_CHANGED(sTeachView.sStartDrain.bSignal);
+  chgRefill    := IS_CHANGED(sTeachView.sStartRefill.bSignal);  
+  chgReplenish := IS_CHANGED(sTeachView.sStartReplenish.bSignal);
+  IF sCfgValues.bUseDisposalBox THEN
+     chgBL_RF := IS_CHANGED(sTeachView.sBlowAirRFValve.bSignal);
+  END_IF;
+  chgDeAct    := IS_CHANGED(sTeachView.sDeActivate.bSignal);
+  
+  WHILE TRUE DO
+     IF chgBallTap AND sTeachView.sBallTapValve.bSignal AND NOT bDeactivated THEN
+        sOutputs.sBallTap.bSignal := NOT sOutputs.sBallTap.bSignal;
+        IF sOutputs.sBallTap.bSignal AND (sState <> eInit) THEN
+           sState := eInit;
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Ball tap opened by TeachView --> set state = eInit");           
+        END_IF;
+     END_IF;
+     sTeachView.sBallTapValve.bSignal := FALSE;
+     
+     IF chgSolvent AND sTeachView.sSolventValve.bSignal AND NOT bDeactivated THEN
+        sOutputs.sSolvent.bSignal := NOT sOutputs.sSolvent.bSignal;
+        IF sOutputs.sSolvent.bSignal AND (sState <> eInit) THEN
+           sState := eInit;
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Solvent valve opened by TeachView --> set state = eInit");           
+        END_IF;
+     END_IF;
+     sTeachView.sSolventValve.bSignal := FALSE;
+     
+     IF chgBL_Dry AND sTeachView.sBlowAirValve.bSignal AND NOT bDeactivated THEN
+        sOutputs.sBlowAirDrying.bSignal := NOT sOutputs.sBlowAirDrying.bSignal;
+     END_IF;
+     sTeachView.sBlowAirValve.bSignal := FALSE;
+     
+     IF chgBL_RF AND sTeachView.sBlowAirValve.bSignal AND NOT bDeactivated THEN
+        IF sCfgValues.bUseDisposalBox THEN
+           sOutputs.sBlowAirReturnLine.bSignal := NOT sOutputs.sBlowAirReturnLine.bSignal;
+        END_IF;
+     END_IF;
+     sTeachView.sBlowAirValve.bSignal := FALSE;
+     
+     IF chgDrain AND sTeachView.sStartDrain.bSignal AND NOT bDeactivated THEN
+        ResetSetValues("Start draining from TeachView");
+        sOrder := eDrainCleaner;
+     END_IF;
+     sTeachView.sStartDrain.bSignal := FALSE;
+     
+     IF chgRefill AND sTeachView.sStartRefill.bSignal AND NOT bDeactivated THEN
+        ResetSetValues("Start refill from TeachView");
+        sOrder := eRefillCleaner;
+     END_IF;
+     sTeachView.sStartRefill.bSignal := FALSE;
+     
+     IF chgReplenish AND sTeachView.sStartReplenish.bSignal AND NOT bDeactivated THEN
+        ResetSetValues("Start replenish from TeachView");
+        sOrder := eReplenish;
+     END_IF;
+     sTeachView.sStartReplenish.bSignal := FALSE;
+     
+     IF chgDeAct AND sTeachView.sDeActivate.bSignal THEN
+        IF bDeactivated AND NOT sCfgValues.bDeactivate THEN
+           bDeactivated := FALSE;
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Activated by TeachView");
+        ELSIF NOT bDeactivated THEN
+           bDeactivated := TRUE;
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Deactivated by TeachView");
+        END_IF;
+     END_IF;
+     sTeachView.sDeActivate.bSignal := FALSE;
+     
+     chgBallTap   := FALSE;
+     chgSolvent   := FALSE;
+     chgBL_Dry    := FALSE;
+     chgBL_RF     := FALSE;
+     chgDrain     := FALSE;
+     chgRefill    := FALSE;
+     chgReplenish := FALSE;
+     chgDeAct     := FALSE;
+     WAIT chgBallTap OR chgSolvent OR chgBL_Dry OR chgBL_RF OR chgDrain OR chgRefill OR chgReplenish OR chgDeAct;
+  END_WHILE;   
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Interface to HmiOrders
+//------------------------------------------------------------------------------------------------------
+ROUTINE HmiOrders() PRIVATE
+ VAR
+  chgBallTap   : BOOL;
+  chgSolvent   : BOOL;
+  chgBL_Dry    : BOOL;
+  chgBL_RF     : BOOL;
+  chgDrain     : BOOL;
+  chgRefill    : BOOL;
+  chgReplenish : BOOL;
+  chgSelect    : BOOL;
+ END_VAR
+ 
+  sHmi.sSelect.bSignal := TRUE; //at startup cleaner is activated
+  chgBallTap   := IS_CHANGED(sHmi.sBallTapValve.bSignal);
+  chgSolvent   := IS_CHANGED(sHmi.sSolventValve.bSignal);
+  chgBL_Dry    := IS_CHANGED(sHmi.sBlowAirValve.bSignal);
+  chgDrain     := IS_CHANGED(sHmi.sStartDrain.bSignal);
+  chgRefill    := IS_CHANGED(sHmi.sStartRefill.bSignal);  
+  chgReplenish := IS_CHANGED(sHmi.sStartReplenish.bSignal);
+  IF sCfgValues.bUseDisposalBox THEN
+     chgBL_RF := IS_CHANGED(sHmi.sBlowAirRFValve.bSignal);
+  END_IF;
+  chgSelect   := IS_CHANGED(sHmi.sSelect.bSignal);
+  
+  WHILE TRUE DO
+     IF chgBallTap AND NOT bDeactivated THEN
+        IF sHmi.sBallTapValve.bSignal AND NOT sOutputs.sBallTap.bSignal THEN
+           sOutputs.sBallTap.bSignal := TRUE;
+           IF (sState <> eInit) THEN
+              sState := eInit;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Ball tap opened by HMI --> set state = eInit");           
+           END_IF;
+        ELSIF NOT sHmi.sBallTapValve.bSignal AND sOutputs.sBallTap.bSignal THEN
+           sOutputs.sBallTap.bSignal := FALSE;
+        END_IF;
+     END_IF; 
+     
+     IF chgSolvent AND NOT bDeactivated THEN
+        IF sHmi.sSolventValve.bSignal AND NOT sOutputs.sSolvent.bSignal THEN
+           sOutputs.sSolvent.bSignal := TRUE;
+           IF (sState <> eInit) THEN
+              sState := eInit;
+              myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Solvent valve opened by HMI --> set state = eInit");           
+           END_IF;
+        ELSIF NOT sHmi.sSolventValve.bSignal AND sOutputs.sSolvent.bSignal THEN
+           sOutputs.sSolvent.bSignal := FALSE;
+        END_IF;
+     END_IF;
+     
+     IF chgBL_Dry AND NOT bDeactivated THEN
+        IF sHmi.sBlowAirValve.bSignal AND NOT sOutputs.sBlowAirDrying.bSignal THEN
+           sOutputs.sBlowAirDrying.bSignal := TRUE;
+        ELSIF NOT sHmi.sBlowAirValve.bSignal AND sOutputs.sBlowAirDrying.bSignal THEN
+           sOutputs.sBlowAirDrying.bSignal := FALSE;
+        END_IF;
+     END_IF;
+     
+     IF chgBL_RF AND NOT bDeactivated THEN 
+        IF sHmi.sBlowAirValve.bSignal AND NOT sOutputs.sBlowAirReturnLine.bSignal THEN
+           sOutputs.sBlowAirReturnLine.bSignal := TRUE;
+        ELSIF NOT sHmi.sBlowAirValve.bSignal AND sOutputs.sBlowAirReturnLine.bSignal THEN
+           sOutputs.sBlowAirReturnLine.bSignal := FALSE;
+        END_IF;
+     END_IF;
+     
+     IF chgDrain AND sHmi.sStartDrain.bSignal AND NOT bDeactivated THEN
+        ResetSetValues("Start draining from HMI");
+        sOrder := eDrainCleaner;
+     END_IF;
+     sHmi.sStartDrain.bSignal := FALSE;
+     
+     IF chgRefill AND sHmi.sStartRefill.bSignal AND NOT bDeactivated THEN
+        ResetSetValues("Start refill from HMI");
+        sOrder := eRefillCleaner;
+     END_IF;
+     sHmi.sStartRefill.bSignal := FALSE;
+     
+     IF chgReplenish AND sHmi.sStartReplenish.bSignal AND NOT bDeactivated THEN
+        ResetSetValues("Start replenish from HMI");
+        sOrder := eReplenish;
+     END_IF;
+     sHmi.sStartReplenish.bSignal := FALSE;
+     
+     IF chgSelect AND sHmi.sSelect.bSignal AND bDeactivated AND NOT sCfgValues.bDeactivate THEN
+        bDeactivated := FALSE;
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Activated by HMI");
+     ELSIF chgSelect AND NOT sHmi.sSelect.bSignal AND NOT bDeactivated THEN
+        bDeactivated := TRUE;
+        myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Deactivated by HMI");
+     END_IF;
+     
+     chgBallTap   := FALSE;
+     chgSolvent   := FALSE;
+     chgBL_Dry    := FALSE;
+     chgBL_RF     := FALSE;
+     chgDrain     := FALSE;
+     chgRefill    := FALSE;
+     chgReplenish := FALSE;
+     chgSelect    := FALSE;
+     WAIT chgBallTap OR chgSolvent OR chgBL_Dry OR chgBL_RF OR chgDrain OR chgRefill OR chgReplenish OR chgSelect;
+  END_WHILE;   
+
+END_ROUTINE
+ 
+//------------------------------------------------------------------------------------------------------
+// Interface to TeachView and HMI
+//------------------------------------------------------------------------------------------------------
+ROUTINE TvHmiStates() PRIVATE
+ VAR
+  chgAirSupplyValve : BOOL;
+  chgAirSupplyIni   : BOOL;
+  chgAirSupplyErr   : BOOL;
+  chgBallTapIni     : BOOL;
+  chgBallTapState   : BOOL;
+  chgBallTapValve   : BOOL;
+  chgSolventValve   : BOOL;
+  chgBlowAirValve   : BOOL;
+  chgBlowAirRFValve : BOOL;
+ END_VAR
+
+  sTeachView.sAirSupplyIni.bRelease     := FALSE;
+  sHmi.sAirSupplyIni.bRelease           := FALSE;
+  sTeachView.sBallTapIni.bRelease       := FALSE;
+  sHmi.sBallTapIni.bRelease             := FALSE;
+  sTeachView.sBallTapValve.bRelease     := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND (sState <> eDraining) AND (sState <> eFilling) AND (sReplenishState <> eRun) AND
+                                                  (myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill OR sInputs.sBallTap.bSignal OR NOT sCfgValues.bRefillOverFunnel));  
+  sHmi.sBallTapValve.bRelease           := UPDATE(sTeachView.sBallTapValve.bRelease);
+  sTeachView.sSolventValve.bRelease     := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND (sState <> eDraining) AND (sState <> eFilling) AND (sReplenishState <> eRun) AND
+                                                  (myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill OR sOutputs.sSolvent.bSignal OR NOT sCfgValues.bRefillOverFunnel));
+  sHmi.sSolventValve.bRelease           := UPDATE(sTeachView.sSolventValve.bRelease);
+  sTeachView.sBlowAirValve.bRelease     := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND (sState <> eDraining) AND (sState <> eFilling) AND (sReplenishState <> eRun));
+  sHmi.sBlowAirValve.bRelease           := UPDATE(sTeachView.sBlowAirValve.bRelease);
+  sTeachView.sBlowAirRFValve.bRelease   := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND sCfgValues.bUseDisposalBox AND (sState <> eDraining) AND (sState <> eFilling) AND (sReplenishState <> eRun));
+  sHmi.sBlowAirRFValve.bRelease         := UPDATE(sTeachView.sBlowAirRFValve.bRelease);
+  sTeachView.sStartDrain.bRelease       := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND (sState <> eDraining) AND 
+                                                  (myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill OR NOT sCfgValues.bRefillOverFunnel)); 
+  sHmi.sStartDrain.bRelease             := UPDATE(sTeachView.sStartDrain.bRelease);
+  sTeachView.sStartRefill.bRelease      := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND (sState <> eFilling) AND
+                                                  (myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill OR NOT sCfgValues.bRefillOverFunnel));
+  sHmi.sStartRefill.bRelease            := UPDATE(sTeachView.sStartRefill.bRelease);
+  sTeachView.sStartReplenish.bRelease   := UPDATE(bReleaseSetValues AND (myRobot.RcuInterfaceToBCU.nStationMode = eHand) AND (sReplenishState <> eRun));
+  sHmi.sStartReplenish.bRelease         := UPDATE(sTeachView.sStartReplenish.bRelease);
+  sTeachView.sDeActivate.bRelease       := NOT sCfgValues.bDeactivate;
+  sHmi.sSelect.bRelease                 := NOT sCfgValues.bDeactivate;
+  
+  chgAirSupplyValve := IS_CHANGED(sOutputs.sAirSupply.bSignal);
+  chgAirSupplyIni   := IS_CHANGED(sInputs.sAirSupply.bSignal);
+  chgAirSupplyErr   := IS_CHANGED(bAirSupplyError);
+  chgBallTapIni     := IS_CHANGED(sInputs.sBallTap.bSignal);
+  chgBallTapState   := IS_CHANGED(iBallTapState);
+  chgBallTapValve   := IS_CHANGED(sOutputs.sBallTap.bSignal);
+  chgSolventValve   := IS_CHANGED(sOutputs.sSolvent.bSignal);
+  chgBlowAirValve   := IS_CHANGED(sOutputs.sBlowAirDrying.bSignal);
+  IF sCfgValues.bUseDisposalBox THEN
+     chgBlowAirRFValve := IS_CHANGED(sOutputs.sBlowAirReturnLine.bSignal);
+  END_IF;
+  
+  WHILE TRUE DO
+    IF sInputs.sAirSupply.bSignal THEN
+       sTeachView.sAirSupplyIni.iState := cgiHMI_Green;
+       sHmi.sAirSupplyIni.iState       := cgiHMI_Green;
+    ELSIF bAirSupplyError THEN
+       sTeachView.sAirSupplyIni.iState := cgiHMI_Red;
+       sHmi.sAirSupplyIni.iState       := cgiHMI_Red;
+    ELSE
+       sTeachView.sAirSupplyIni.iState := cgiHMI_Grey;
+       sHmi.sAirSupplyIni.iState       := cgiHMI_Grey;
+    END_IF;
+    
+    IF sOutputs.sAirSupply.bSignal THEN
+       sTeachView.sAirSupplyValve.iState := cgiHMI_Green;
+    ELSE
+       sTeachView.sAirSupplyValve.iState := cgiHMI_Grey;
+    END_IF;
+    sHmi.sAirSupplyValve.bState := sOutputs.sAirSupply.bSignal;
+    
+    IF sInputs.sBallTap.bSignal THEN
+       sTeachView.sBallTapIni.iState := cgiHMI_Green;
+       sHmi.sBallTapIni.iState       := cgiHMI_Green;
+    ELSIF (iBallTapState = eError) THEN
+       sTeachView.sBallTapIni.iState := cgiHMI_Red;
+       sHmi.sBallTapIni.iState       := cgiHMI_Red;
+    ELSE
+       sTeachView.sBallTapIni.iState := cgiHMI_Grey;
+       sHmi.sBallTapIni.iState       := cgiHMI_Grey;
+    END_IF;
+    
+    IF sOutputs.sBallTap.bSignal THEN
+       sTeachView.sBallTapValve.iState := cgiHMI_Green;
+    ELSE
+       sTeachView.sBallTapValve.iState := cgiHMI_Grey;
+       sHmi.sBallTapValve.bSignal      := FALSE;
+    END_IF;
+    sHmi.sBallTapValve.bState := sOutputs.sBallTap.bSignal;
+    
+    IF sOutputs.sSolvent.bSignal THEN
+       sTeachView.sSolventValve.iState := cgiHMI_Green;
+    ELSE
+       sTeachView.sSolventValve.iState := cgiHMI_Grey;
+       sHmi.sSolventValve.bSignal      := FALSE;
+    END_IF;
+    sHmi.sSolventValve.bState := sOutputs.sSolvent.bSignal;
+    
+    IF sOutputs.sBlowAirDrying.bSignal THEN
+       sTeachView.sBlowAirValve.iState := cgiHMI_Green;
+    ELSE
+       sTeachView.sBlowAirValve.iState := cgiHMI_Grey;
+       sHmi.sBlowAirValve.bSignal      := FALSE;
+    END_IF; 
+    sHmi.sBlowAirValve.bState := sOutputs.sBlowAirDrying.bSignal;
+        
+    IF sCfgValues.bUseDisposalBox THEN
+       IF sOutputs.sBlowAirReturnLine.bSignal THEN
+          sTeachView.sBlowAirRFValve.iState := cgiHMI_Green;
+       ELSE
+          sTeachView.sBlowAirRFValve.iState := cgiHMI_Grey;
+          sHmi.sBlowAirRFValve.bSignal      := FALSE;
+       END_IF;
+       sHmi.sBlowAirRFValve.bState := sOutputs.sBlowAirReturnLine.bSignal;
+    ELSE
+       sHmi.sBlowAirRFValve.bState  := FALSE;
+       sHmi.sBlowAirRFValve.bSignal := FALSE;
+    END_IF;
+    
+    chgAirSupplyValve := FALSE;
+    chgAirSupplyIni   := FALSE;
+    chgAirSupplyErr   := FALSE;
+    chgBallTapIni     := FALSE;
+    chgBallTapState   := FALSE;
+    chgBallTapValve   := FALSE;
+    chgSolventValve   := FALSE;
+    chgBlowAirValve   := FALSE;
+    chgBlowAirRFValve := FALSE;
+    WAIT chgAirSupplyValve OR chgAirSupplyIni OR chgAirSupplyErr OR chgBallTapIni OR chgBallTapState OR chgBallTapValve OR chgSolventValve OR chgBlowAirValve OR chgBlowAirRFValve;
+  END_WHILE;
+  
+END_ROUTINE  
+  
+//---------------------------------------------------------------------------------
+//toggle fixpos on teachview
+//---------------------------------------------------------------------------------
+ROUTINE ShowFixposTV() PRIVATE
+ VAR
+   timeout : BOOL;
+   toggle  : BOOL;
+ END_VAR
+ 
+  sTeachView.bShowFixpos := UPDATE((myRobot.RcuInterfaceToBCU.nStationMode <> eHand)                                                              OR
+                                   (bReleaseSetValues AND toggle AND NOT myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill) OR
+                                   myRobot.RcuInterfaceToBCU.sMotionInterface.tPostProcess.mPositionRefill);
+  WHILE TRUE DO
+    timeout := FALSE;
+    SysTimerSet(1000, timeout);
+    WAIT timeout;
+    SysTimerClear(timeout);
+    toggle := NOT toggle;        
+  END_WHILE;  
+END_ROUTINE
+  
+//-----------------------------------------------------.-------------------------------------------------
+// systemroutines
+//------------------------------------------------------------------------------------------------------
+ROUTINE RESERVE()
+
+  IF IS_MAPPED(myRobot) AND sCfgValues.bUseToolCleaner THEN
+     IF myRobot.mainModeMgr.externControl AND NOT (myRobot.bReleaseBlockedByHandler OR myRobot.RcuInterfaceToBCU.bFixposActive) THEN
+        IF NOT bDeactivated THEN
+           bTeachProgRunning := TRUE; 
+           myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: Start of  body program --> Release of background process");     
+        END_IF;
+        IF bDeactivated AND (sCfgValues.iMsg_Deselected = cErrFirstBody) AND NOT bErrMsgDeactivatedSet THEN
+           RcuSetMessageOnce(TRcuToolCleaner_ErrStartDeact, myRobot.kinListInx, 1, 0, "TRcuToolCleaner.RESERVE");
+           bErrMsgDeactivatedSet := TRUE;
+        END_IF;
+     END_IF;
+  END_IF;
+  
+END_ROUTINE
+
+ROUTINE RELEASE()
+   
+   IF IS_MAPPED(myRobot) AND sCfgValues.bUseToolCleaner AND NOT bDeactivated THEN
+      IF myRobot.mainModeMgr.externControl AND NOT (myRobot.bReleaseBlockedByHandler OR myRobot.RcuInterfaceToBCU.bFixposActive) THEN
+         bTeachProgRunning := FALSE;
+         sv_iReplenishXBodies_Retain := sv_iReplenishXBodies_Retain + 1;
+         sHmi.iCntBodies := sv_iReplenishXBodies_Retain;
+      END_IF;
+      sv_mBlowAirTool      := FALSE;
+      sv_mGapPurgingActive := FALSE;
+      myRobot.logger.SetLoggerStep(myRobot.handler.iLoggerNumber, "TOOL CLEANER: RELEASE() of kinematic - sv_mGapPurgingActive := FALSE");
+   END_IF;
+   
+END_ROUTINE

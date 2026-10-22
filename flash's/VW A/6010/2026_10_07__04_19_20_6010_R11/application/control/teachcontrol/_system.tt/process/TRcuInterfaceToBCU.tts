@@ -1,0 +1,1825 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuInterfaceToBCU.ttp                                       *
+*    Description: Interface to the Body Control Unit                          *
+*                                                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 21.04.06 BMA: Extension in tsMotiontoBCU
+*               mMotionrelease and iActualFixPosition
+*               New routine ObserveUpdateActive()
+*               Modification in ObserveFixpos()
+*)
+
+
+TYPE GLOBAL
+ tsBCUtoMotion : 
+   STRUCT 
+    tProgramnumber : MAPTO INT;
+    iMotionIndexFifoZone : MAPTO INT;
+    rActualconveyorposition : MAPTO REAL (* actual conveyorposition in T1, T2-mode *);
+    mAbort : MAPTO BOOL;(* abort program *)
+    mInterrupt : MAPTO BOOL;(* Interrupt program *)
+    mStartBrakeCheck : MAPTO BOOL; (* Start Brakecheck *)
+    iLastProgramnumber: MAPTO INT; (*last programnumber on interface*)
+    mGoHomeAtEnd : MAPTO BOOL; (* actual program must end in Home position *)
+    mHeartbeat : MAPTO BOOL; (* heartbeat signal *)
+    mConnection2HMIOK: MAPTO BOOL;  (*State connection BCU to HMI OK*)
+    mNoPaint : MAPTO BOOL;
+    wDegrade : MAPTO INT(* degrade bits *);
+    mConvStopDueToProcess : MAPTO BOOL; (* Conveyor stop position reached and process not ready *)
+    iNextPrePos : MAPTO INT;
+    mStartProg : MAPTO BOOL;
+    mStopProg  : MAPTO BOOL;
+    mSwitchOffDrives : MAPTO BOOL; //Energy saving -- switch drives from AF --> AB by request of PLC
+   END_STRUCT;
+ 
+ tsMotiontoBCU : 
+   STRUCT 
+    mMotionrelease : MAPTO BOOL;
+    mMotionactive : MAPTO BOOL; (* program active (could be interrupted by error) *)
+    mRobotmoving : MAPTO BOOL; (* program active and not interrupted *)
+    mMotionerror : MAPTO BOOL;
+    mBypass : MAPTO BOOL;
+    mHomeposition : MAPTO BOOL;
+    mBrakeCheckPos : MAPTO BOOL;
+    mPreposition : MAPTO BOOL (* robot in preposition *);
+    mEndOfBody : MAPTO BOOL (* In case of handlers, this signal is set when handling is finished *);
+    mReleaseConveyor : MAPTO BOOL (* release conveyor in T1, T2-mode *);
+    mSetConveyorStartvalue : MAPTO BOOL (* set startvalue conveyor in T1,T2-mode *);
+    iActualFixPosition : MAPTO INT (* actual Fixpositionnumber *);
+    rConveyorStartvalue : MAPTO REAL (* startvalue conveyor in T1,T2-mode *);
+    mBrakeCheckRunning : MAPTO BOOL; (* Feedback that brakecheck is running *)
+    mBrakeCheckFinished : MAPTO BOOL; (* Feedback that brakecheck has finished *)
+    mNormalEndofProgram : MAPTO BOOL; (* Normal end of program*)
+    iExtFixPosNumber : MAPTO INT (* extended fixpos check during overlap *);
+    iNextFixPosNumber : MAPTO INT (* next fixposnumber in ecotalk program *);
+    zProjectName : MAPTO STRING[32];
+    zProgramName : MAPTO STRING[32];     
+    mHeartbeat : MAPTO BOOL; (* mirrored heartbeat signal *)
+    mAbortBody : MAPTO BOOL;
+    mDeadMan: MAPTO BOOL;
+    wDegrade : MAPTO INT(* degrade bits *);
+    
+    iVersion           : MAPTO INT;
+    mAckBodyData       : MAPTO BOOL;
+    mBadBodyData       : MAPTO BOOL;
+    mBadStartProg      : MAPTO BOOL;
+    mOpenFixation      : MAPTO BOOL;
+    mDrivesSwitchedOff : MAPTO BOOL; //Energy saving -- switch drives from AF --> AB by request of PLC
+     END_STRUCT;
+ 
+ tsPostProcessInterface :
+   STRUCT  
+    mPositionRefill : MAPTO BOOL;
+    mRefillCleaner : MAPTO BOOL;
+    mCleanTool     : MAPTO BOOL;
+   END_STRUCT;
+   
+ tsMotionInterface : 
+   STRUCT 
+    tBCUtoMotion : tsBCUtoMotion;
+    tMotiontoBCU : tsMotiontoBCU;
+    tPostProcess : tsPostProcessInterface;
+   END_STRUCT;
+END_TYPE
+
+
+CONSTANT GLOBAL
+ cMaxBodydata : INT := 50 (* Maximum amount of bodydatablocks *);
+ cMaxFifoData : INT := 2*cMaxBodydata;
+END_CONSTANT
+
+// Type definition must be exactly the same as in T_BodyControl.tu on the
+// process control side
+TYPE GLOBAL
+ tsRCUData : 
+   STRUCT 
+    ConveyorPosition : REAL (* conveyorposition real limited *);
+    Variants : DINT (* variants *);
+    Partareas : DINT (* part-/repairareas *);
+    Degrade   : INT(* degrade bits *);
+   END_STRUCT; 
+END_TYPE
+
+VAR
+   iProgramNumber       : MAPTO INT;
+   iMotionIndexFifoZone : MAPTO INT;
+   iExtFixPosNumber     : MAPTO INT;
+   iNextFixPosNumber    : MAPTO INT;
+   sMotionInterface     : tsMotionInterface;
+   sFifoZone            : ARRAY [1..cMaxBodydata] OF MAPTO tsRCUData;
+   iFifoZoneVariantHigh : ARRAY [1..cMaxBodydata] OF MAPTO DINT;
+   iFifoZoneExtVariant  : ARRAY [1..cMaxBodydata,1..5] OF MAPTO DINT;
+   iFifoZoneExtPartareas: ARRAY [1..cMaxBodydata,1..5] OF MAPTO DINT;
+   mRobotMoving         : MAPTO BOOL;
+   mMotionActive        : MAPTO BOOL;
+   mRobotIsStopped      : MAPTO BOOL;
+   mSVConveyorRelease   : MAPTO BOOL;   // Interface to BCU
+   mConveyorRelease     : BOOL := TRUE; // reset by error / set when golden repos finished
+   mMacroConveyorRelease: BOOL := TRUE; // set/reset by EcoTalk macros
+   mDelayedConvRelease  : BOOL := TRUE; // set when WAIT_CONVEYOR exceeded
+   bConvStopDueToProcess: MAPTO BOOL;
+   iNextPrePos          : MAPTO INT;
+   mMotionError         : MAPTO BOOL;
+   mEndOfBody           : MAPTO BOOL;
+   mGoHomeAtEnd         : MAPTO BOOL;
+   mNoPaint             : MAPTO BOOL;
+   mAbortBody           : MAPTO BOOL;
+   sProjectName         : MAPTO STRING[32];
+   sProgramName         : MAPTO STRING[32];
+   rConveyorPosition    : REAL;
+   rConveyorStartPos    : REAL;
+   dVariants            : DINT;
+   dVariantsHigh        : DINT;
+   dVariantsExt         : ARRAY [1..5] OF DINT;
+   dPartAreas           : DINT;
+   dPartAreasExt        : ARRAY [1..5] OF DINT;
+   iDegrade             : INT;
+   bSemaInit            : BOOL;
+   bVariantHighMapped   : BOOL;
+   bVariantExtMapped    : BOOL;
+   bPartareasExtMapped  : BOOL;
+   
+   bAbortProg           : MAPTO BOOL;
+   bInterruptProg       : MAPTO BOOL;
+   
+   // handshake bits to TRcuAutoControl
+   bBodyData            : BOOL;
+   bStartProg           : BOOL;
+   bStopProg            : MAPTO BOOL;
+   
+   // handshake bits from TRcuAutoControl
+   bAckBodyData         : BOOL;
+   bBadBodyData         : BOOL;
+   bNewBodyData         : BOOL; // Ready for new body data
+   bAckStartProg        : BOOL;
+   bBadStartProg        : BOOL;
+   
+   bStartBrakeCheck     : MAPTO BOOL;
+   
+   bInitComplete        : BOOL;
+   
+   bProgStart           : BOOL;
+   sProgName            : STRING;
+   
+   rActConveyorSpeed    : REAL;
+//   variant : DINT;
+//   partarea : DINT;
+   lost                 : DINT;
+   locKinematic         : MAPTO TRcuRobot;
+   locKinListInx        : DINT;
+   
+   sFifoZoneAmount      : MAPTO INT;
+   sFifoZoneProgNr      : ARRAY [1..cMaxBodydata] OF MAPTO INT;
+   sFifoAmount          : MAPTO INT;
+   sFifoProgNr          : ARRAY [1..cMaxBodydata] OF MAPTO INT;
+   sSimFifoAmount       : MAPTO INT;
+   sSimFifoProgNr       : ARRAY [1..cMaxBodydata] OF MAPTO INT;
+   anyPrgNrChanged      : BOOL;
+   
+   aiPrgNrFifo          : ARRAY [1..cMaxFifoData] OF INT;
+   bPrgNrFifoChg        : BOOL;
+   iPrgNrFifoAmount     : INT;
+   //Nur temporär bis BCU das ARRAY zur Verfügung stellt
+   yActualFixPosition : ARRAY[cMaxFixpos] OF BOOL;
+   //indicates if program number from BCU is fixpos
+   bFixposActive        : BOOL;
+   
+   rConveyorPositionKorr: REAL;
+   rCorrValue           : REAL := 0.0;
+   rConveyorPositionBCU : REAL;
+   
+   rConvLimitVelUp      : REAL := 15.0; // 20% 
+   rConvLimitVelDown    : REAL := 60.0; // 80% 
+   rConvVel             : REAL := 75.0; // 100%
+   rCompDistance        : REAL := 7.5;
+   rDeltaFactor         : REAL := 0.005;
+   bKorrOff             : BOOL := TRUE;
+   
+   bExtInterfaceMapped  : BOOL;
+   sKinName             : STRING;
+   bOpenFixationMapped  : BOOL;
+   bPostProcessMapped   : BOOL;
+   bStopProgMapped      : BOOL;
+   bDummyStopProg       : BOOL := FALSE;
+   nStationMode         : MAPTO TMainMode;
+   bSwitchOffDrives     : BOOL;
+END_VAR
+
+
+ROUTINE SetT1ConveyorPosition(pos : REAL)
+   VAR
+      delta : REAL;
+      i     : INT;
+   END_VAR
+
+   IF IS_MAPPED(locKinematic.mainModeMgr.actMainModeDef) THEN
+      IF locKinematic.mainModeMgr.actMainModeDef.actions.jogging THEN
+         i := 0;
+         delta := 10.0;
+         sMotionInterface.tMotiontoBCU.rConveyorStartvalue := pos;
+         sMotionInterface.tMotiontoBCU.mSetConveyorStartvalue := TRUE;
+         WHILE rAbs(delta) > 5.0 DO
+            locKinematic.WaitMcMicroCycles(1);
+            i := i+1;
+            delta := sMotionInterface.tMotiontoBCU.rConveyorStartvalue - sMotionInterface.tBCUtoMotion.rActualconveyorposition;
+            IF i > 10 THEN
+               RcuSetMessageOnce(RcuInterfToBCU_ErrSetT1ConvPos, locKinListInx, 1, 0, "RcuInterfaceToBCU.SetT1ConveyorPosition");
+               sMotionInterface.tMotiontoBCU.mSetConveyorStartvalue := FALSE;
+               RETURN;
+            END_IF;
+         END_WHILE;
+      END_IF;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mSetConveyorStartvalue := FALSE;
+END_ROUTINE
+
+// Version von Keba zum Test
+// reads in every MCU-cycle the position of the current object from the BCU.
+// The actualization of trackingframe and axis-7-offset are done in RcuTracking
+ROUTINE ObserveConveyorPosition(kin : TRcuKinematic)
+   VAR
+        bChgUpdate : BOOL;
+        bChgExtCtrl: BOOL;
+        
+        bStartBuf  : BOOL := TRUE;
+        arBufPos   : ARRAY[1..50] OF REAL; // old conveyorpositions
+        i          : INT;
+        iIndex     : INT;
+        iIndexOld  : INT;
+        iBufLen    : INT;
+        iBufSize   : INT := 50;
+        
+        rCorrFactor        : REAL;
+        bAboveLim          : BOOL := FALSE;
+        bBelowLim          : BOOL := TRUE;
+        bUp                : BOOL := FALSE;
+        bDown              : BOOL := FALSE;
+        
+        rOldPos  : REAL := -1;
+        dOldCounter : DINT := -1;
+        delta    :REAL;
+        offset1 : REAL := -1.0;
+        offset2 : DINT := -1;
+        first : BOOL := TRUE;
+        iUpdateCounter : DINT := -1;
+        conv : REAL := -1.0;
+        count : DINT := -1;
+   END_VAR
+   
+//   WAIT bInitComplete;
+   WAIT kin.mainModeMgr.mode <> 0;
+   kin.WaitMcMainCycles(1);
+   bChgUpdate := IS_CHANGED(kin.actDrives.mUpdateCounterDrives);
+   bChgExtCtrl:= IS_CHANGED(kin.mainModeMgr.externControl);
+   WHILE TRUE DO
+      WHILE kin.mainModeMgr.externControl DO
+         WAIT bChgUpdate;
+         LOCK;
+         bChgUpdate := FALSE;
+         IF iMotionIndexFifoZone <> 0 THEN
+            conv := sFifoZone[iMotionIndexFifoZone].ConveyorPosition;
+            count := kin.actDrives.mUpdateCounterDrives;
+            UNLOCK;
+            IF first THEN
+               offset1 := conv;
+               offset2 := count;
+               kin.DebugPrint(eTraceInterfaceBCU, "Offset changed");
+               first := FALSE;
+            END_IF;
+            IF bStartBuf THEN
+               FOR i:=1 TO iBufSize DO
+                  arBufPos[i] := rConveyorPosition;
+               END_FOR;
+               iIndex   := 1;
+               iIndexOld := 1;
+               iBufLen  := 1;
+               bStartBuf := FALSE;
+            END_IF;
+//               rConveyorPosition := conv - offset1;
+            rConveyorPosition := conv;
+            rConveyorPositionBCU := conv;
+            IF rConveyorPosition = rOldPos THEN
+               lost := lost + 1;
+            END_IF;
+            
+            // test only
+            IF gbSimulationOS THEN 
+               IF (((rConveyorPosition - rOldPos) > 1.95 * delta) AND (delta > 0.01)) THEN
+                  rConveyorPosition := rOldPos + (rConveyorPosition - rOldPos)/2.0;
+               END_IF;
+            END_IF;
+                        
+            iUpdateCounter := count - offset2;
+            
+            rActConveyorSpeed := (rConveyorPosition - arBufPos[iIndexOld])/iBufLen/grCycleTime;
+            IF iIndex >= iBufSize THEN
+               iIndex := 1;
+            ELSE
+               iIndex := iIndex+1;
+            END_IF;
+            IF iBufLen < iBufSize THEN
+               iBufLen := iBufLen+1;
+               iIndexOld := 1;
+            ELSE
+               iIndexOld := iIndex+1;
+               IF iIndexOld > iBufSize THEN
+                  iIndexOld := 1;
+               END_IF;
+            END_IF;
+            arBufPos[iIndex] := rConveyorPosition;
+            
+            IF (rActConveyorSpeed > rConvLimitVelUp) AND bBelowLim THEN
+               bUp := TRUE;
+               bBelowLim := FALSE;
+               kin.DebugPrint(eTraceInterfaceBCU, "Begin Conveyor starts");
+            END_IF;
+            IF (rActConveyorSpeed <= rConvLimitVelUp) THEN
+               bBelowLim := TRUE;
+            END_IF;
+            
+            IF (rActConveyorSpeed <= rConvLimitVelDown) AND bAboveLim THEN
+               bDown := TRUE;
+               bAboveLim := FALSE;
+               kin.DebugPrint(eTraceInterfaceBCU, "Begin Conveyor stops");
+            END_IF;
+            IF (rActConveyorSpeed > rConvLimitVelDown) THEN
+               bAboveLim := TRUE;
+            END_IF;
+
+            IF (rActConveyorSpeed > rConvLimitVelUp) AND bUp THEN
+               IF rCorrFactor < 1.0 THEN
+                  rCorrFactor := rCorrFactor + rDeltaFactor;
+               END_IF;
+               IF rCorrFactor >= 1.0 THEN
+                  rCorrFactor := 1.0;
+                  bUp := FALSE;
+                  kin.DebugPrint(eTraceInterfaceBCU, "End Conveyor starts");
+               END_IF;
+            END_IF;
+            
+            IF (rActConveyorSpeed <= rConvLimitVelDown) AND bDown THEN
+               IF rCorrFactor > 0.0 THEN
+                  rCorrFactor := rCorrFactor - rDeltaFactor;
+               END_IF;
+               IF rCorrFactor <= 0.0 THEN
+                  rCorrFactor := 0.0;
+                  bDown := FALSE;
+                  kin.DebugPrint(eTraceInterfaceBCU, "End Conveyor stops");
+               END_IF;               
+            END_IF;
+            
+            rCorrValue := rCorrFactor * rCompDistance;
+            rConveyorPositionKorr := rConveyorPosition + rCorrValue;
+            IF bKorrOff THEN
+               kin.tracking.rActConveyor := rConveyorPosition;
+            ELSE 
+               kin.tracking.rActConveyor := rConveyorPositionKorr;
+            END_IF;
+            delta := rConveyorPosition - rOldPos;
+            rOldPos := rConveyorPosition; 
+            kin.tracking.updateConveyor := kin.tracking.updateConveyor + 1;
+            IF (dOldCounter+1) <>  iUpdateCounter THEN
+                IF dOldCounter <= iUpdateCounter THEN // kein Nulldurchgang
+                   IF NOT gbSimulationOS THEN
+                      kin.DebugPrint(eTraceInterfaceBCU, "ObserveConveyorPosition: Updatecycle lost");
+                   END_IF;
+               END_IF;
+            END_IF;
+            dOldCounter := iUpdateCounter;
+         ELSE
+            UNLOCK;
+            bStartBuf := TRUE;
+         END_IF;
+      END_WHILE;
+      //IF kin.mainModeMgr.jogging AND bChgExtCtrl THEN
+      IF IS_MAPPED(locKinematic.mainModeMgr.actMainModeDef) THEN
+         IF kin.mainModeMgr.actMainModeDef.actions.jogging AND bChgExtCtrl THEN
+            SetT1ConveyorPosition(conv);
+            bChgExtCtrl := FALSE;
+         END_IF;
+      END_IF;
+      IF IS_MAPPED(locKinematic.mainModeMgr.actMainModeDef) THEN
+         IF kin.mainModeMgr.actMainModeDef.actions.jogging THEN
+//            IF iMotionIndexFifoZone <> 0 THEN
+               conv := sMotionInterface.tBCUtoMotion.rActualconveyorposition;
+               count := kin.actDrives.mUpdateCounterDrives;
+               IF first THEN
+                  offset1 := conv;
+                  offset2 := count;
+                  kin.DebugPrint(eTraceInterfaceBCU, "Offset changed");
+                  first := FALSE;
+               END_IF;
+//                  rConveyorPosition := conv - offset1;
+               rConveyorPosition := conv;
+               iUpdateCounter := count - offset2;
+               kin.tracking.rActConveyor := rConveyorPosition;
+               rActConveyorSpeed := (rConveyorPosition - rOldPos)/8 * 1000;
+               rOldPos := rConveyorPosition;
+               kin.tracking.updateConveyor := kin.tracking.updateConveyor + 1;
+               IF (dOldCounter+1) <>  iUpdateCounter THEN
+                   IF dOldCounter <= iUpdateCounter THEN // kein Nulldurchgang
+                      IF NOT gbSimulationOS THEN
+                         kin.DebugPrint(eTraceInterfaceBCU, "ObserveConveyorPosition: Updatecycle lost");
+                      END_IF;
+                  END_IF;
+               END_IF;
+               dOldCounter := iUpdateCounter;
+//            ELSE
+//               UNLOCK;
+//            END_IF;
+         END_IF;
+      END_IF;
+      kin.WaitMcMainCycles(1);
+   END_WHILE;
+END_ROUTINE
+
+
+
+// Waits for a program number from the BCU. Starts tracking and signals
+// RcuAutoControl the new body data
+ROUTINE ObserveProgNumber(kin : TRcuKinematic)
+   VAR
+        bChanged : BOOL;
+        iProgramNumberOld : INT;
+        i: INT;
+   END_VAR
+   
+   WAIT bInitComplete;
+   bChanged := IS_CHANGED(iProgramNumber);
+   iProgramNumberOld := 0;
+   WHILE TRUE DO
+      kin.DebugPrint(eTraceInterfaceBCU, "ProgramNumber "+ STR(iProgramNumber)+ " from BCU");
+      IF (iProgramNumber <> 0) AND (iProgramNumberOld = 0) THEN
+         IF mMotionActive OR NOT bNewBodyData THEN
+            RcuSetMessageOnce(RcuInterfToBCU_ErrPrgRunning, kin.kinListInx, 1, 0, "RcuInterfaceToBCU.ObserveProgNumber");
+            mMotionError := TRUE;
+            IF bExtInterfaceMapped THEN
+               sMotionInterface.tMotiontoBCU.mBadBodyData := TRUE;
+            END_IF;
+         ELSE
+            //IF s.Wait(2) THEN
+               IF iMotionIndexFifoZone <> 0 THEN
+                  rConveyorStartPos := sFifoZone[iMotionIndexFifoZone].ConveyorPosition;
+                  dVariants := sFifoZone[iMotionIndexFifoZone].Variants;
+                  IF bVariantHighMapped THEN
+                     dVariantsHigh := iFifoZoneVariantHigh[iMotionIndexFifoZone];
+                  END_IF;
+                  dPartAreas := sFifoZone[iMotionIndexFifoZone].Partareas;
+                  IF bVariantExtMapped THEN
+                     FOR i := 1 TO 5 DO
+                        dVariantsExt[i] := iFifoZoneExtVariant[iMotionIndexFifoZone][i];
+                     END_FOR;
+                  END_IF;
+                  IF bPartareasExtMapped THEN
+                     FOR i := 1 TO 5 DO
+                        dPartAreasExt[i] := iFifoZoneExtPartareas[iMotionIndexFifoZone][i];
+                     END_FOR;
+                  END_IF;               
+               END_IF;
+               IF iProgramNumber < giMinFixposNr THEN // not for fixpos programs
+                  kin.tracking.bPartDetect := TRUE; // Tracking
+                  bFixposActive := FALSE;
+               ELSE
+                  bFixposActive := TRUE;
+               END_IF;
+               bBodyData := TRUE; // --> TRcuAutoControl
+               IF NOT bExtInterfaceMapped THEN
+                  START WaitForAckBodyData(kin);
+               ELSE
+                  START WaitForAckBodyDataExt(kin);
+               END_IF;
+         END_IF;
+      ELSE
+         IF iProgramNumber = 0 THEN
+            bBodyData := FALSE; // --> TRcuAutoControl
+            bBadBodyData := FALSE;
+            bBadStartProg := FALSE;
+            IF bExtInterfaceMapped THEN
+               sMotionInterface.tMotiontoBCU.mAckBodyData := FALSE;
+               sMotionInterface.tMotiontoBCU.mBadBodyData := FALSE;
+               sMotionInterface.tMotiontoBCU.mBadStartProg := FALSE;
+               STOP WaitForAckBodyDataExt;
+            END_IF;
+            kin.DebugPrint(eTraceInterfaceBCU, "ProgramNumber changed to 0 from BCU"); 
+         END_IF;
+      END_IF;
+      iProgramNumberOld := iProgramNumber;
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+// Waits for a StartProg from the BCU. 
+ROUTINE ObserveStartProg(kin : TRcuKinematic) PRIVATE
+VAR
+   bChanged      : BOOL;
+   bStartProgOld : BOOL;
+END_VAR
+   
+   WAIT bInitComplete;
+   bChanged := IS_CHANGED(sMotionInterface.tBCUtoMotion.mStartProg);
+   WHILE TRUE DO
+      bStartProgOld := sMotionInterface.tBCUtoMotion.mStartProg;
+      WAIT bChanged;
+      bChanged := FALSE;
+      IF sMotionInterface.tBCUtoMotion.mStartProg AND NOT bStartProgOld THEN
+         bStartProg := TRUE; // --> TRcuAutoControl
+         START WaitForAckStartProgExt(kin);
+      ELSE 
+         bStartProg := FALSE; // --> TRcuAutoControl
+         bBadStartProg := FALSE;
+         sMotionInterface.tMotiontoBCU.mBadStartProg := FALSE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveUpdateActiv(kin: TRcuKinematic) PRIVATE
+   VAR
+     bChgUpdate : BOOL;
+     bChgSim    : BOOL;
+     sLogText   : STRING;
+   END_VAR
+   
+   WAIT bInitComplete;
+   //only to be compatible to old projects which have not this output in fieldbus.cfgr
+   //If EtherCAT is used RcuFieldbusSlave.ttp is doing the mapping but with bootup error on failure
+   IF NOT gbEthercat THEN
+      locKinematic.fieldbusOut.MovementRelease.svBool := MAPX("RCU" + STR(gyiNrRcu[locKinListInx]) + "." + cHW_SLO_mMovementRelease);
+   END_IF;
+   
+   bChgUpdate := IS_CHANGED(kin.updateActive);
+   bChgSim    := IS_CHANGED(kin.ghostNoMotion.bSwitchingDrives);
+   WHILE TRUE DO
+      sMotionInterface.tMotiontoBCU.mMotionrelease := kin.updateActive OR kin.ghostNoMotion.bSwitchingDrives;
+      IF IS_MAPPED(locKinematic.fieldbusOut.MovementRelease.svBool) THEN
+         locKinematic.fieldbusOut.MovementRelease.svBool := sMotionInterface.tMotiontoBCU.mMotionrelease OR kin.interfaceToSCP.bNoMovementRelease;
+      END_IF;
+      sLogText := "Motionrelease to BCU is " + STR(sMotionInterface.tMotiontoBCU.mMotionrelease);
+      kin.logger.SetLoggerStep(kin.autoControl.iLoggerNumber, sLogText);
+      kin.DebugPrint(eTraceInterfaceBCU, sLogText);
+      WAIT bChgUpdate OR bChgSim;
+      bChgUpdate := FALSE;
+      bChgSim    := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+// observes changes of MotionError and "Program active in mode AutoExt"
+// mConveyorRelease := FALSE if MotionError AND program active in AutoExt
+// mConveyorRelease := TRUE if no program active in AutoExt this means also
+// mode AutoExt is no longer selected
+ROUTINE ObserveMotionError(kin : TRcuKinematic) PRIVATE
+   VAR
+     bChgMotionError            : BOOL;
+     bChgObserveContinueRunning : BOOL;
+   END_VAR
+   
+   WAIT bInitComplete AND gbEquipmentReady;
+   IF IS_MAPPED(mSVConveyorRelease) AND locKinematic.bUseGoldenRepos AND locKinematic.lineTracking THEN
+      locKinematic.bGoldenTracking := TRUE;
+   ELSE
+      locKinematic.bGoldenTracking := FALSE;
+      RETURN;
+   END_IF;
+   
+   bChgMotionError            := IS_CHANGED(mMotionError);
+   bChgObserveContinueRunning := IS_CHANGED(kin.autoControl.bObserveContinueRunning);
+   
+   START ObserveConvTest(kin);
+   
+   WHILE TRUE DO
+      IF mMotionError AND kin.autoControl.bObserveContinueRunning THEN
+         mConveyorRelease := FALSE;
+         kin.DebugPrint(eTraceInterfaceBCU, "mConveyorRelease=FALSE because mMotionError");
+      ELSIF NOT kin.autoControl.bObserveContinueRunning THEN
+         IF NOT mConveyorRelease THEN
+            mConveyorRelease := TRUE;
+            kin.DebugPrint(eTraceInterfaceBCU, "mConveyorRelease=TRUE because ObserveContinue stopped");
+         END_IF;
+      END_IF;
+      WAIT bChgMotionError OR bChgObserveContinueRunning;
+      bChgMotionError            := FALSE;
+      bChgObserveContinueRunning := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+// only for debugprints
+ROUTINE ObserveConvTest(kin : TRcuKinematic) PRIVATE
+   VAR
+     bChgConvTest : BOOL;
+   END_VAR
+
+   bChgConvTest            := IS_CHANGED(mConveyorRelease);
+   WHILE TRUE DO
+      kin.DebugPrint(eTraceInterfaceBCU, "++++++++   mConveyorRelease = " +STR(mConveyorRelease));
+      WAIT bChgConvTest;
+      bChgConvTest            := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveStopProg()
+ VAR
+  bChgStopProg : BOOL;
+ END_VAR
+ 
+  bChgStopProg := IS_CHANGED(bStopProg);
+  WHILE TRUE DO
+    IF bStopProg THEN
+       locKinematic.DebugPrint(eTraceInterfaceBCU, "BCU has set mStopProg - to interrupt program");
+    ELSE
+       locKinematic.DebugPrint(eTraceInterfaceBCU, "BCU has lowered mStopProg");
+    END_IF;  
+    WAIT bChgStopProg;
+    bChgStopProg := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveEndOfBody() PRIVATE
+   VAR
+        bChanged : BOOL;
+   END_VAR
+   
+   WAIT bInitComplete AND gbEquipmentReady;
+   bChanged := IS_CHANGED(PaintRobot[locKinListInx].RcuInterfaceToProcess.endOfBody);
+   WHILE TRUE DO
+      mEndOfBody := PaintRobot[locKinListInx].RcuInterfaceToProcess.endOfBody;
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveDegrade() PRIVATE
+ VAR
+   bChangedDegrade : BOOL;
+ END_VAR
+
+  bChangedDegrade := IS_CHANGED(sMotionInterface.tBCUtoMotion.wDegrade);
+  WHILE TRUE DO
+     iDegrade := sMotionInterface.tBCUtoMotion.wDegrade;
+     sMotionInterface.tMotiontoBCU.wDegrade := iDegrade;
+     WAIT bChangedDegrade;
+     bChangedDegrade := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+
+// Jogging the conveyor is possible if jogging is allowed
+// BIT 2.11.07 Move conveyor with TeachPandent is only allowed if drives 
+// switched off
+ROUTINE ObserveConveyorJog(kin: TRcuKinematic) PRIVATE
+   VAR
+        bChgJogConv    : BOOL;
+        bChgJogAllowed : BOOL;
+   END_VAR
+   
+   WAIT bInitComplete AND gbEquipmentReady;
+   bChgJogConv := IS_CHANGED(kin.bJogConveyor);
+   //bChgJogAllowed := IS_CHANGED(kin.mainModeMgr.jogging);
+   bChgJogAllowed := IS_CHANGED(kin.mainModeMgr.mode);
+   WHILE TRUE DO
+      //IF kin.mainModeMgr.jogging THEN
+      IF kin.mainModeMgr.mode > 0 THEN
+         IF kin.mainModeMgr.mainModeDefinition[kin.mainModeMgr.mode].actions.jogging THEN
+            sMotionInterface.tMotiontoBCU.mReleaseConveyor := kin.bJogConveyor;
+            kin.DebugPrint(eTraceInterfaceBCU, "mReleaseConveyor = " + STR(kin.bJogConveyor));
+         ELSE 
+            sMotionInterface.tMotiontoBCU.mReleaseConveyor := FALSE;
+            kin.DebugPrint(eTraceInterfaceBCU, "Conveyor jogging not allowed: mReleaseConveyor = FALSE");
+         END_IF;
+      END_IF;
+      WAIT bChgJogConv OR bChgJogAllowed;
+      bChgJogConv := FALSE;
+      bChgJogAllowed := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+// bProgStart wird gesetzt in der Routine BEGINPROG in main.ttp
+// wird auch in T1/T2 gesetzt, nicht nur in Automatik
+// nicht mit StartProg zu verwechseln!!!!!
+ROUTINE ObserveProgStart(kin: TRcuKinematic) PRIVATE
+   VAR
+      bChanged : BOOL;
+      nr       : INT;
+   END_VAR
+   
+   WAIT bInitComplete AND gbEquipmentReady;
+   bChanged := IS_CHANGED(bProgStart);
+   WHILE TRUE DO
+      IF bProgStart THEN
+         IF (kin.lineTracking OR kin.railTracking) AND NOT kin.mainModeMgr.TeachPendantLocked THEN
+            IF kin.RcuTypeList.SearchTypeListEntryFromPath(sProgName, nr) THEN
+               IF nr < giMinFixposNr THEN
+                  // Variable zur BCU setzen
+                  kin.DebugPrint(eTraceInterfaceBCU, "Program " + sProgName);
+                  kin.tracking.bPartDetect := TRUE; // ?????
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+      bProgStart := FALSE;
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObservePreposition(kin: TRcuKinematic) PRIVATE
+   VAR
+        bChanged : BOOL;
+   END_VAR
+   
+   WAIT bInitComplete AND gbEquipmentReady;
+   bChanged := IS_CHANGED(kin.bInPreposition);
+   WHILE TRUE DO
+      // Variable zur BCU setzen
+      sMotionInterface.tMotiontoBCU.mPreposition := kin.bInPreposition;
+      kin.DebugPrint(eTraceInterfaceBCU, "bInPreposition = " + STR(kin.bInPreposition));
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveFixpos() PRIVATE
+   VAR
+        bChanged1 : BOOL;
+        bChanged2 : BOOL;
+        bChanged3 : BOOL;
+        bChanged4 : BOOL;
+   END_VAR
+   
+   WAIT bInitComplete;
+   bChanged1 := IS_CHANGED(PaintRobot[locKinListInx].fixpos.RcuInHome);
+   bChanged2 := IS_CHANGED(PaintRobot[locKinListInx].fixpos.RcuInBypass);
+   bChanged3 := IS_CHANGED(PaintRobot[locKinListInx].fixpos.RcuFixposNumber);
+   bChanged4 := IS_CHANGED(PaintRobot[locKinListInx].fixpos.RcuInBrakeCheckPos);
+   WHILE TRUE DO
+      sMotionInterface.tMotiontoBCU.mHomeposition   := PaintRobot[locKinListInx].fixpos.RcuInHome;
+      sMotionInterface.tMotiontoBCU.mBypass            := PaintRobot[locKinListInx].fixpos.RcuInBypass;
+      sMotionInterface.tMotiontoBCU.iActualFixPosition := PaintRobot[locKinListInx].fixpos.RcuFixposNumber;
+      sMotionInterface.tMotiontoBCU.mBrakeCheckPos  := PaintRobot[locKinListInx].fixpos.RcuInBrakeCheckPos;
+      WAIT bChanged1 OR bChanged2 OR bChanged3 OR bChanged4;      
+      bChanged1 := FALSE;
+      bChanged2 := FALSE;
+      bChanged3 := FALSE;
+      bChanged4 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveExtFixpos() PRIVATE
+   VAR
+        bChanged1 : BOOL;
+        bChanged2 : BOOL;
+   END_VAR
+   
+   WAIT bInitComplete;
+   bChanged1 := IS_CHANGED(PaintRobot[locKinListInx].fixpos.ExtFixposNumber);
+   bChanged2 := IS_CHANGED(PaintRobot[locKinListInx].fixpos.NextFixposNumber);
+   WHILE TRUE DO
+      sMotionInterface.tMotiontoBCU.iExtFixPosNumber  := PaintRobot[locKinListInx].fixpos.ExtFixposNumber;
+      sMotionInterface.tMotiontoBCU.iNextFixPosNumber := PaintRobot[locKinListInx].fixpos.NextFixposNumber;
+      WAIT bChanged1 OR bChanged2;      
+      bChanged1 := FALSE;
+      bChanged2 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveFixposArray()
+ VAR
+  bChg : BOOL;
+  i    : SINT;
+ END_VAR
+ 
+ WAIT bInitComplete;
+ bChg := IS_CHANGED(PaintRobot[locKinListInx].fixpos.yRcuInFixpositions);
+ WHILE TRUE DO
+   FOR i:=0 TO cMaxFixpos-1 DO
+     yActualFixPosition[i] := PaintRobot[locKinListInx].fixpos.yRcuInFixpositions[i];
+   END_FOR;
+   WAIT bChg;
+   bChg := FALSE;   
+ END_WHILE;
+ 
+END_ROUTINE
+
+// Data from brake check
+ROUTINE ObserveBrakeCheck()
+ VAR
+   bChanged1 : BOOL;
+   bChanged2 : BOOL;
+ END_VAR
+
+   WAIT bInitComplete;
+   bChanged1 := IS_CHANGED(PaintRobot[locKinListInx].brakeCheck.BrakeCheckState);
+   bChanged2 := IS_CHANGED(PaintRobot[locKinListInx].brakeCheck.bBrakeCheckFinished);
+   WHILE TRUE DO
+      sMotionInterface.tMotiontoBCU.mBrakeCheckRunning := (PaintRobot[locKinListInx].brakeCheck.BrakeCheckState = 1);
+      sMotionInterface.tMotiontoBCU.mBrakeCheckFinished := PaintRobot[locKinListInx].brakeCheck.bBrakeCheckFinished;
+      WAIT bChanged1 OR bChanged2;      
+      bChanged1 := FALSE;
+      bChanged2 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveBCUFifos()
+   VAR
+      i : INT;
+      bChgGhost : BOOL;
+   END_VAR
+   
+   bChgGhost := IS_CHANGED(locKinematic.autoControl.bPLCGhost);
+   bChgGhost := FALSE;
+   START ObserveChangesInBCUFifos();
+   FOR i:=1 TO giNoBodydata  DO
+      START ObservePrgNrInFifoZone(i);
+   END_FOR;
+   WHILE TRUE DO
+      FOR i:=1 TO giNoBodydata  DO
+         IF locKinematic.autoControl.bPLCGhost THEN
+            START ObservePrgNrInSimFifo(i);
+         ELSE
+            START ObservePrgNrInFifo(i);
+         END_IF;
+      END_FOR;
+      WAIT bChgGhost;
+      bChgGhost := FALSE;
+      PRINT (" Geistbetriebsart hat sich geändert!");
+      IF locKinematic.autoControl.bPLCGhost THEN
+         STOP ObservePrgNrInFifo;
+      ELSE
+         STOP ObservePrgNrInSimFifo;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveChangesInBCUFifos()
+   VAR
+      i : INT;
+      j : INT;
+      k : INT;
+      bChgFifoZoneAmount : BOOL;
+      bChgFifoAmount     : BOOL;
+      bChgSimFifoAmount  : BOOL;
+      bChgMotionIndex    : BOOL;
+   END_VAR
+
+   bChgFifoZoneAmount := IS_CHANGED(sFifoZoneAmount);
+   bChgFifoAmount     := IS_CHANGED(sFifoAmount);
+   bChgSimFifoAmount  := IS_CHANGED(sSimFifoAmount);
+   bChgMotionIndex    := IS_CHANGED(iMotionIndexFifoZone);
+   bChgFifoZoneAmount := FALSE;
+   bChgFifoAmount     := FALSE;
+   bChgSimFifoAmount  := FALSE;
+   bChgMotionIndex    := FALSE;   
+(*
+   aiPrgNrFifo          : ARRAY [1..cMaxFifoData] OF INT;
+   bPrgNrFifoChg        : BOOL;
+   iPrgNrFifoAmount     : INT;
+*)
+   LOCK;
+   FOR i := 1 TO giNoBodydata DO
+      aiPrgNrFifo[i] := 0;
+   END_FOR;
+   IF iMotionIndexFifoZone <> 0 THEN
+      j := iMotionIndexFifoZone;
+   ELSE
+      j := sFifoZoneAmount;
+   END_IF;
+   k := j;
+   FOR i := 1 TO k DO
+      aiPrgNrFifo[j] := sFifoZoneProgNr[i];
+      j := j -1;
+   END_FOR;
+   j := 1;
+   IF locKinematic.autoControl.bPLCGhost THEN
+      FOR i:=1 TO sSimFifoAmount DO
+         aiPrgNrFifo[i+k] := sSimFifoProgNr[i];
+      END_FOR;
+   ELSE
+      FOR i:=1 TO sFifoAmount DO
+         aiPrgNrFifo[i+k] := sFifoProgNr[i];
+      END_FOR;
+   END_IF;
+   iPrgNrFifoAmount := i+k-1;
+   UNLOCK;
+   bPrgNrFifoChg := TRUE;
+   
+   anyPrgNrChanged := FALSE;
+   WHILE TRUE DO
+      WAIT anyPrgNrChanged OR bChgFifoZoneAmount 
+           OR (bChgFifoAmount AND NOT locKinematic.autoControl.bPLCGhost)
+           OR (bChgSimFifoAmount AND locKinematic.autoControl.bPLCGhost)
+           OR bChgMotionIndex;
+      anyPrgNrChanged := FALSE;
+      bChgFifoZoneAmount := FALSE;
+      bChgFifoAmount     := FALSE;
+      bChgSimFifoAmount  := FALSE;
+      bChgMotionIndex    := FALSE;   
+      LOCK;
+      FOR i := 1 TO giNoBodydata DO
+         aiPrgNrFifo[i] := 0;
+      END_FOR;
+      IF iMotionIndexFifoZone <> 0 THEN
+         j := iMotionIndexFifoZone;
+      ELSE
+         j := sFifoZoneAmount;
+      END_IF;
+      k := j;
+      FOR i := 1 TO k DO
+         aiPrgNrFifo[j] := sFifoZoneProgNr[i];
+         j := j -1;
+      END_FOR;
+      j := 1;
+      IF locKinematic.autoControl.bPLCGhost THEN
+         FOR i:=1 TO sSimFifoAmount DO
+            aiPrgNrFifo[i+k] := sSimFifoProgNr[i];
+         END_FOR;
+      ELSE
+         FOR i:=1 TO sFifoAmount DO
+            aiPrgNrFifo[i+k] := sFifoProgNr[i];
+         END_FOR;
+      END_IF;
+      iPrgNrFifoAmount := i+k-1;
+      UNLOCK;
+      bPrgNrFifoChg := TRUE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObservePrgNrInFifoZone(Index : INT) PRIVATE
+   VAR
+      bChanged : BOOL;
+      nr       : INT;
+      i        : INT;
+   END_VAR
+   
+   i := Index;
+   nr := sFifoZoneProgNr[i];
+   bChanged := IS_CHANGED(sFifoZoneProgNr[i]);
+   bChanged := FALSE;
+   WHILE TRUE DO
+      WAIT bChanged;
+      bChanged := FALSE;
+      anyPrgNrChanged := TRUE;
+      locKinematic.DebugPrint(eTraceInterfaceBCU, " New Programnumber " + STR(sFifoZoneProgNr[i]) + " in FifoZone[" + STR(i) + "]");
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObservePrgNrInFifo(Index : INT) PRIVATE
+   VAR
+      bChanged : BOOL;
+      nr       : INT;
+      i        : INT;
+   END_VAR
+   
+   i := Index;
+   nr := sFifoProgNr[i];
+   bChanged := IS_CHANGED(sFifoProgNr[i]);
+   bChanged := FALSE;
+   WHILE TRUE DO
+      WAIT bChanged;
+      bChanged := FALSE;
+      anyPrgNrChanged := TRUE;
+      locKinematic.DebugPrint(eTraceInterfaceBCU, " New Programnumber " + STR(sFifoProgNr[i]) + " in Fifo[" + STR(i) + "]");
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObservePrgNrInSimFifo(Index : INT) PRIVATE
+   VAR
+      bChanged : BOOL;
+      nr       : INT;
+      i        : INT;
+   END_VAR
+   
+   i := Index;
+   nr := sSimFifoProgNr[i];
+   bChanged := IS_CHANGED(sSimFifoProgNr[i]);
+   bChanged := FALSE;
+   WHILE TRUE DO
+      WAIT bChanged;
+      bChanged := FALSE;
+      anyPrgNrChanged := TRUE;
+      locKinematic.DebugPrint(eTraceInterfaceBCU, " New Programnumber " + STR(sSimFifoProgNr[i]) + " in SimFifo[" + STR(i) + "]");
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE MapFifos () PRIVATE
+
+   VAR
+      i           : DINT;
+      j           : DINT;
+      mapString   : STRING;
+      posInString : DINT;
+      pos2InString: DINT;
+      helpString  : STRING;
+      mapError    : BOOL := FALSE;
+   END_VAR;
+   
+   locKinematic.DebugPrint(eTraceCommon, "****************** Waiting for giNoBodydata <> 0");
+   WAIT (giNoBodydata <> 0) AND PaintRobot[locKinListInx].fixPosReady;
+   locKinematic.DebugPrint(eTraceCommon, "****************** End Waiting for giNoBodydata <> 0 giNoBodydata = "+ STR(giNoBodydata));
+   IF (giNoBodydata > cMaxBodydata) OR (giNoBodydata <= 0) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_FaErrInvNoBodyDa, locKinListInx, 1, 0, "RcuInterfaceToBCU.MapFifos");
+      RETURN;
+   END_IF;
+   
+   posInString := StrFind(cSV_sFifoZone[locKinListInx], "[") + 1;
+   FOR i := 1 TO giNoBodydata DO
+      helpString := STR(i);
+      mapString := StrInsert(cSV_sFifoZone[locKinListInx], helpString, posInString);
+      sFifoZone[i] := MAPX(mapString);
+      IF NOT IS_MAPPED(sFifoZone[i]) THEN
+         mapError := TRUE;
+         RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 39, 0, "RcuInterfaceToBCU.MapFifos", mapString);
+      END_IF;
+   END_FOR;
+   
+   posInString := StrFind(cSV_sFifoZoneVariantHigh[locKinListInx], "[") + 1;
+   bVariantHighMapped := TRUE;
+   FOR i := 1 TO giNoBodydata DO
+      helpString := STR(i);
+      mapString := StrInsert(cSV_sFifoZoneVariantHigh[locKinListInx], helpString, posInString);
+      iFifoZoneVariantHigh[i] := MAPX(mapString);
+      IF NOT IS_MAPPED(iFifoZoneVariantHigh[i]) THEN
+         bVariantHighMapped := FALSE;
+      END_IF;
+   END_FOR;
+   
+   posInString  := StrFind(cSV_sFifoZoneExtVariants[locKinListInx], "[") + 1;
+   bVariantExtMapped := TRUE;
+   FOR i := 1 TO giNoBodydata DO
+      FOR j := 1 TO 5 DO
+         helpString := STR(i);
+         mapString := StrInsert(cSV_sFifoZoneExtVariants[locKinListInx], helpString, posInString);
+         pos2InString := StrFind(mapString, "[", posInString) + 1;
+         helpString := STR(j);
+         mapString := StrInsert(mapString, helpString, pos2InString);
+         iFifoZoneExtVariant[i][j] := MAPX(mapString);
+         IF NOT IS_MAPPED(iFifoZoneExtVariant[i][j]) THEN
+            bVariantExtMapped := FALSE;
+         END_IF;
+      END_FOR;
+   END_FOR;
+   
+   posInString  := StrFind(cSV_sFifoZoneExtPartareas[locKinListInx], "[") + 1;
+   bPartareasExtMapped := TRUE;
+   FOR i := 1 TO giNoBodydata DO
+      FOR j := 1 TO 5 DO
+         helpString := STR(i);
+         mapString := StrInsert(cSV_sFifoZoneExtPartareas[locKinListInx], helpString, posInString);
+         pos2InString := StrFind(mapString, "[", posInString) + 1;
+         helpString := STR(j);
+         mapString := StrInsert(mapString, helpString, pos2InString);
+         iFifoZoneExtPartareas[i][j] := MAPX(mapString);
+         IF NOT IS_MAPPED(iFifoZoneExtPartareas[i][j]) THEN
+            bPartareasExtMapped := FALSE;
+         END_IF;
+      END_FOR;
+   END_FOR;
+      
+   sFifoZoneAmount      := MAPX(cSV_sFifoZoneAmount[locKinListInx]);
+   IF NOT IS_MAPPED(sFifoZoneAmount) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 40, 0, "RcuInterfaceToBCU.MapFifos", cSV_sFifoZoneAmount[locKinListInx]);
+   END_IF;
+   sFifoAmount      := MAPX(cSV_sFifoAmount[locKinListInx]);
+   IF NOT IS_MAPPED(sFifoAmount) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 41, 0, "RcuInterfaceToBCU.MapFifos", cSV_sFifoAmount[locKinListInx]);
+   END_IF;
+   sSimFifoAmount      := MAPX(cSV_sSimFifoAmount[locKinListInx]);
+   IF NOT IS_MAPPED(sSimFifoAmount) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 42, 0, "RcuInterfaceToBCU.MapFifos", cSV_sSimFifoAmount[locKinListInx]);
+   END_IF;
+      
+   posInString := StrFind(cSV_sFifoZoneProgNr[locKinListInx], "[") + 1;
+   FOR i := 1 TO giNoBodydata DO
+      helpString := STR(i);
+      mapString := StrInsert(cSV_sFifoZoneProgNr[locKinListInx], helpString, posInString);
+      sFifoZoneProgNr[i] := MAPX(mapString);
+      IF NOT IS_MAPPED(sFifoZoneProgNr[i]) THEN
+         mapError := TRUE;
+         RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 43, 0, "RcuInterfaceToBCU.MapFifos", mapString);
+      END_IF;
+   END_FOR;
+
+   posInString := StrFind(cSV_sFifoProgNr[locKinListInx], "[") + 1;
+   FOR i := 1 TO giNoBodydata DO
+      helpString := STR(i);
+      mapString := StrInsert(cSV_sFifoProgNr[locKinListInx], helpString, posInString);
+      sFifoProgNr[i] := MAPX(mapString);
+      IF NOT IS_MAPPED(sFifoProgNr[i]) THEN
+         mapError := TRUE;
+         RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 44, 0, "RcuInterfaceToBCU.MapFifos", mapString);
+      END_IF;
+   END_FOR;
+
+   posInString := StrFind(cSV_sSimFifoProgNr[locKinListInx], "[") + 1;
+   FOR i := 1 TO giNoBodydata DO
+      helpString := STR(i);
+      mapString := StrInsert(cSV_sSimFifoProgNr[locKinListInx], helpString, posInString);
+      sSimFifoProgNr[i] := MAPX(mapString);
+      IF NOT IS_MAPPED(sSimFifoProgNr[i]) THEN
+         mapError := TRUE;
+         RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 45, 0, "RcuInterfaceToBCU.MapFifos", mapString);
+      END_IF;
+   END_FOR;
+END_ROUTINE
+
+
+// Handshake with TRcuAutoControl
+ROUTINE WaitForAckBodyData(kin: TRcuKinematic) PRIVATE
+   VAR
+      timeOut : BOOL;
+   END_VAR;
+   
+   kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyData");
+   SysTimerSet(10000, timeOut); //changed for multikin from 5000 --> 10000
+   WAIT bAckBodyData OR bBadBodyData OR timeOut;
+   kin.WaitMcMainCycles(1); // Test Kemroscope
+   IF bAckBodyData THEN
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyData: AckBodyData = TRUE");
+      bBodyData  := FALSE;// --> TRcuAutoControl
+      IF bAbortProg THEN
+         kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyData: bAbortProg = TRUE");
+      ELSE
+         bStartProg := TRUE;// --> TRcuAutoControl
+         START WaitForAckStartProg(kin);
+      END_IF;
+   ELSE
+      kin.tracking.bPartDetect := FALSE; // Tracking
+      mMotionError := TRUE;
+      bBodyData := FALSE; // --> TRcuAutoControl
+      IF bBadBodyData THEN
+         kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyData: bBadBodyData = TRUE");
+         RcuSetMessageOnce(RcuInterfToBCU_ErrWrgPrgNumber, kin.kinListInx, 1, 0, "RcuInterfaceToBCU.WaitForAckBodyData");
+      ELSE
+         kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyData: timeout");
+         RcuSetMessageOnce(RcuInterfToBCU_ErrTimeOutPrgLd, kin.kinListInx, 1, 0, "RcuInterfaceToBCU.WaitForAckBodyData");
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// Handshake with TRcuAutoControl
+ROUTINE WaitForAckBodyDataExt(kin: TRcuKinematic) PRIVATE
+   VAR
+      timeOut : BOOL;
+   END_VAR;
+   
+   kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyDataExt");
+   SysTimerSet(60000, timeOut); //greater than timeout in PLCSelect
+   WAIT bAckBodyData OR bBadBodyData OR timeOut;
+   IF bAckBodyData THEN
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyDataExt: AckBodyData = TRUE");
+      sMotionInterface.tMotiontoBCU.mAckBodyData := TRUE;
+      bBodyData  := FALSE;// --> TRcuAutoControl
+      IF bAbortProg THEN
+         kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyDataExt: bAbortProg = TRUE");
+      END_IF;
+   ELSIF bBadBodyData THEN
+      kin.tracking.bPartDetect := FALSE; // Tracking
+      mMotionError := TRUE;
+      sMotionInterface.tMotiontoBCU.mBadBodyData := TRUE;
+   ELSE
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckBodyDataExt: timeout");
+      RcuSetMessageOnce(RcuInterfToBCU_ErrTimeOutPrgLd, kin.kinListInx, 1, 0, "RcuInterfaceToBCU.WaitForAckBodyDataExt");
+   END_IF;
+END_ROUTINE
+
+
+// Handshake with TRcuAutoControl
+ROUTINE WaitForAckStartProg(kin: TRcuKinematic) PRIVATE
+   VAR
+      timeOut : BOOL;
+   END_VAR;
+   
+   kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProg");
+   SysTimerSet(10000, timeOut);  //changed for multikin from 5000 --> 10000
+   WAIT bAckStartProg OR timeOut;
+   kin.tracking.bPartDetect := FALSE; // Tracking
+   IF bAckStartProg THEN
+      kin.WaitMcMainCycles(1);// Test only for kemroscope
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProg : bAckStartProg = TRUE");
+      bStartProg := FALSE;// --> TRcuAutoControl
+   ELSE
+      bStartProg := FALSE;// --> TRcuAutoControl
+      mMotionError := TRUE;
+      RcuSetMessageOnce(RcuInterfToBCU_ErrTimeOutPrgSt, kin.kinListInx, 1, 0, "RcuInterfaceToBCU.WaitForAckStartProg");
+   END_IF;
+END_ROUTINE
+
+// Handshake with TRcuAutoControl
+ROUTINE WaitForAckStartProgExt(kin: TRcuKinematic) PRIVATE
+   VAR
+      timeOut : BOOL;
+   END_VAR;
+   
+   IF PaintRobot[locKinListInx].brakeCheck.autoCheckActive THEN
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProgExt waiting until automatic brake test is done");
+      WAIT NOT PaintRobot[locKinListInx].brakeCheck.autoCheckActive;
+   END_IF;
+   IF kin.autoControl.bPLCGhostNoMotion <> kin.allDrivesSimulated THEN
+      SysTimerSet(5000, timeOut);
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProgExt started with timeout=5sec");
+   ELSE
+      SysTimerSet(2000, timeOut);
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProgExt started with timeout=2sec");
+   END_IF;
+   WAIT bAckStartProg OR bBadStartProg OR timeOut;
+   kin.tracking.bPartDetect := FALSE; // Tracking
+   kin.WaitMcMainCycles(1); // Test only for kemroscope
+   IF bAckStartProg THEN
+      kin.WaitMcMainCycles(1); // Test only for kemroscope
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProgExt : bAckStartProg = TRUE");
+   ELSIF bBadStartProg THEN
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProgExt : bBadStartProg = TRUE");
+      sMotionInterface.tMotiontoBCU.mBadStartProg := TRUE;
+      mMotionError := TRUE;
+   ELSE
+      bBadStartProg := TRUE;
+      sMotionInterface.tMotiontoBCU.mBadStartProg := TRUE;
+      kin.DebugPrint(eTraceInterfaceBCU, "WaitForAckStartProgExt : bBadStartProg = TRUE");
+      mMotionError := TRUE;
+      RcuSetMessageOnce(RcuInterfToBCU_ErrTimeOutPrgSt, kin.kinListInx, 1, 0, "RcuInterfaceToBCU.WaitForAckStartProgExt");
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE RcuReadConfigCompensation() PRIVATE
+VAR
+   baseHdl : DINT;   // handle of the base directory
+   i       : DINT;
+   r       : REAL;
+END_VAR
+   
+   IF NOT CatalogGetHandleRelative(locKinematic.rcCatHdl, "Tracking", baseHdl) THEN
+      bKorrOff := TRUE; // default compensation off
+      RETURN;
+   END_IF;
+
+   IF CatalogReadInt(baseHdl, "enableCompensation", i, TRUE) THEN
+      IF i = 1 THEN
+         bKorrOff := FALSE; // compensation ON
+      ELSE
+         bKorrOff := TRUE; // default compensation off
+         RETURN;
+      END_IF;
+   ELSE   
+      bKorrOff := TRUE; // default compensation off
+      RETURN;
+   END_IF;
+   IF NOT CatalogReadReal(baseHdl, "compDistance", r, TRUE) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, -1, 1, 0, "TRcuInterfaceToBCU.RcuReadConfigCompensation", "compDistance");
+      bKorrOff := TRUE; // default compensation off
+      RETURN;
+   ELSE
+      rCompDistance := r;
+   END_IF;
+   IF NOT CatalogReadReal(baseHdl, "conveyorSpeed", r, TRUE) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, -1, 1, 0, "TRcuInterfaceToBCU.RcuReadConfigCompensation", "compDistance");
+      bKorrOff := TRUE; // default compensation off
+      RETURN;
+   ELSE
+      rConvVel := r;
+   END_IF;
+   IF NOT CatalogReadRealRange(baseHdl, "limitVelUp", r, 0.0, 100.0, TRUE) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, -1, 1, 0, "TRcuInterfaceToBCU.RcuReadConfigCompensation", "compDistance");
+      rConvLimitVelUp := 0.2 * rConvVel; //default 20%
+   ELSE
+      rConvLimitVelUp := r/100.0 * rConvVel;
+   END_IF;
+   IF NOT CatalogReadRealRange(baseHdl, "limitVelDown", r, 0.0, 100.0, TRUE) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, -1, 1, 0, "TRcuInterfaceToBCU.RcuReadConfigCompensation", "compDistance");
+      rConvLimitVelDown := 0.8 * rConvVel; //default 80%
+   ELSE
+      rConvLimitVelDown := r/100.0 * rConvVel;
+   END_IF;
+   IF NOT CatalogReadReal(baseHdl, "compTime", r, TRUE) THEN
+      RcuSetMessageOnce(_RcuConfiguration_WarNotInConf, -1, 1, 0, "TRcuInterfaceToBCU.RcuReadConfigCompensation", "compDistance");
+      rDeltaFactor := 0.005; // default 200*CycleTime
+   ELSE
+      IF r > 0.0 THEN
+         rDeltaFactor := (grCycleTime*1000)/r;
+      ELSE
+         rDeltaFactor := 0.016;
+      END_IF;
+   END_IF;
+   
+
+END_ROUTINE
+
+//toggle lifebit to IEC, if missed PLC could stop station
+ROUTINE ObserveLifeBit() PRIVATE
+ VAR
+   bChangedLifeBit : BOOL;
+   bTimeout        : BOOL;
+ END_VAR
+
+  bChangedLifeBit := IS_CHANGED(sMotionInterface.tBCUtoMotion.mHeartbeat);
+  WHILE TRUE DO
+    IF sMotionInterface.tBCUtoMotion.mHeartbeat THEN
+       sMotionInterface.tMotiontoBCU.mHeartbeat := TRUE;
+    ELSE
+       sMotionInterface.tMotiontoBCU.mHeartbeat := FALSE;
+    END_IF;
+    WAIT bChangedLifeBit;
+    bChangedLifeBit := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//Energy saving -- switch drives from AF --> AB by request of PLC
+ROUTINE SwitchOffDrives() PRIVATE
+ VAR
+   bChgRequest : BOOL;
+   bChgUpdate  : BOOL;
+   bDrivesOff  : BOOL;
+ END_VAR
+ 
+ bChgRequest := IS_CHANGED(sMotionInterface.tBCUtoMotion.mSwitchOffDrives);
+ bChgUpdate  := IS_CHANGED(locKinematic.updateActive);
+ WHILE TRUE DO
+    bSwitchOffDrives := sMotionInterface.tBCUtoMotion.mSwitchOffDrives;
+    sMotionInterface.tMotiontoBCU.mDrivesSwitchedOff := bSwitchOffDrives AND NOT locKinematic.updateActive;
+    IF (bSwitchOffDrives <> bDrivesOff) THEN
+        locKinematic.DebugPrint(eTraceInterfaceBCU, "SwitchOffDrives: Signal from BCU changed - mSwitchOffDrives=" + STR(bSwitchOffDrives));
+    END_IF;
+    bDrivesOff := bSwitchOffDrives;
+    WAIT bChgRequest OR bChgUpdate;
+    bChgRequest := FALSE;
+    bChgUpdate  := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+
+ROUTINE Create (mykinematic : TRcuKinematic)   
+VAR
+   bInterfaceMapped : BOOL;
+   s                : STRING;
+END_VAR
+
+   locKinematic := MAP(mykinematic);
+   locKinListInx := locKinematic.kinListInx;
+   
+   WAIT PaintRobot[locKinListInx].initRobComplete;
+   
+   sKinName := locKinematic.kinematic.mName;
+   bInterfaceMapped := TRUE;
+   bExtInterfaceMapped := TRUE;
+   sMotionInterface.tBCUtoMotion.tProgramnumber          := MAPX(cSV_B2M_tProgramnumber[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.tProgramnumber) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 1, 0, "RcuInterfaceToBCU.Create", cSV_B2M_tProgramnumber[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.iMotionIndexFifoZone    := MAPX(cSV_B2M_iMotionIndexFifoZone[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.iMotionIndexFifoZone) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 2, 0, "RcuInterfaceToBCU.Create", cSV_B2M_iMotionIndexFifoZone[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.rActualconveyorposition := MAPX(cSV_B2M_rActualconveyorposition[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.rActualconveyorposition) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 3, 0, "RcuInterfaceToBCU.Create", cSV_B2M_rActualconveyorposition[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mAbort                  := MAPX(cSV_B2M_mAbort[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mAbort) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 4, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mAbort[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mInterrupt              := MAPX(cSV_B2M_mInterrupt[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mInterrupt) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 5, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mInterrupt[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mStartBrakeCheck        := MAPX(cSV_B2M_mStartBrakeCheck[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mStartBrakeCheck) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 6, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mStartBrakeCheck[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.iLastProgramnumber      := MAPX(cSV_B2M_iLastProgramnumber[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.iLastProgramnumber) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 7, 0, "RcuInterfaceToBCU.Create", cSV_B2M_iLastProgramnumber[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mGoHomeAtEnd            := MAPX(cSV_B2M_mGoHomeAtEnd[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mGoHomeAtEnd) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 8, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mGoHomeAtEnd[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mHeartbeat              := MAPX(cSV_B2M_mHeartbeat[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mHeartbeat) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 9, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mHeartbeat[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mConnection2HMIOK       := MAPX(cSV_B2M_mConnection2HMIOK[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mConnection2HMIOK) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 10, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mConnection2HMIOK[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.mNoPaint                := MAPX(cSV_B2M_mNoPaint[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mNoPaint) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 11, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mNoPaint[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tBCUtoMotion.wDegrade                := MAPX(cSV_B2M_wDegrade[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.wDegrade) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 12, 0, "RcuInterfaceToBCU.Create", cSV_B2M_wDegrade[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   
+   sMotionInterface.tBCUtoMotion.mStartProg              := MAPX(cSV_B2M_mStartProg[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mStartProg) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_B2M_mStartProg[locKinListInx]+" not mapped");
+      bExtInterfaceMapped := FALSE;
+   END_IF;
+   
+   sMotionInterface.tBCUtoMotion.mStopProg              := MAPX(cSV_B2M_mStopProg[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mStopProg) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_B2M_mStartProg[locKinListInx]+" not mapped");
+      bStopProgMapped := FALSE;
+   ELSE
+      bStopProgMapped := TRUE;
+   END_IF;
+   
+   sMotionInterface.tMotiontoBCU.mMotionrelease          := MAPX(cSV_M2B_mMotionrelease[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mMotionrelease) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 13, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mMotionrelease[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mMotionactive           := MAPX(cSV_M2B_mMotionactive[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mMotionactive) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 14, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mMotionactive[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mRobotmoving            := MAPX(cSV_M2B_mRobotmoving[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mRobotmoving) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 15, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mRobotmoving[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mMotionerror            := MAPX(cSV_M2B_mMotionerror[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mMotionerror) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 16, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mMotionerror[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mBypass                 := MAPX(cSV_M2B_mBypass[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mBypass) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 17, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mBypass[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mHomeposition           := MAPX(cSV_M2B_mHomeposition[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mHomeposition) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 18, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mHomeposition[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mBrakeCheckPos          := MAPX(cSV_M2B_mBrakeCheckPos[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mBrakeCheckPos) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 19, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mBrakeCheckPos[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mPreposition            := MAPX(cSV_M2B_mPreposition[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mPreposition) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 20, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mPreposition[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mEndOfBody              := MAPX(cSV_M2B_mEndOfBody[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mEndOfBody) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 21, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mEndOfBody[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mReleaseConveyor        := MAPX(cSV_M2B_mReleaseConveyor[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mReleaseConveyor) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 22, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mReleaseConveyor[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mSetConveyorStartvalue  := MAPX(cSV_M2B_mSetConveyorStartvalue[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mSetConveyorStartvalue) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 23, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mSetConveyorStartvalue[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.iActualFixPosition      := MAPX(cSV_M2B_iActualFixPosition[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.iActualFixPosition) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 24, 0, "RcuInterfaceToBCU.Create", cSV_M2B_iActualFixPosition[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.rConveyorStartvalue     := MAPX(cSV_M2B_rConveyorStartvalue[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.rConveyorStartvalue) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 25, 0, "RcuInterfaceToBCU.Create", cSV_M2B_rConveyorStartvalue[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mBrakeCheckRunning      := MAPX(cSV_M2B_mBrakeCheckRunning[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mBrakeCheckRunning) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 26, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mBrakeCheckRunning[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mBrakeCheckFinished     := MAPX(cSV_M2B_mBrakeCheckFinished[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mBrakeCheckFinished) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 27, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mBrakeCheckFinished[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mNormalEndofProgram     := MAPX(cSV_M2B_mNormalEndofProgram[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mNormalEndofProgram) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 28, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mNormalEndofProgram[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.iExtFixPosNumber        := MAPX(cSV_M2B_iExtFixPosNumber[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.iExtFixPosNumber) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 29, 0, "RcuInterfaceToBCU.Create", cSV_M2B_iExtFixPosNumber[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.iNextFixPosNumber       := MAPX(cSV_M2B_iNextFixPosNumber[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.iNextFixPosNumber) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 30, 0, "RcuInterfaceToBCU.Create", cSV_M2B_iNextFixPosNumber[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.zProjectName            := MAPX(cSV_M2B_zProjectName[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.zProjectName) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 31, 0, "RcuInterfaceToBCU.Create", cSV_M2B_zProjectName[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.zProgramName            := MAPX(cSV_M2B_zProgramName[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.zProgramName) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 32, 0, "RcuInterfaceToBCU.Create", cSV_M2B_zProgramName[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mHeartbeat              := MAPX(cSV_M2B_mHeartbeat[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mHeartbeat) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 33, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mHeartbeat[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mAbortBody              := MAPX(cSV_M2B_mAbortBody[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mAbortBody) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 34, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mAbortBody[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mDeadMan                := MAPX(cSV_M2B_mDeadMan[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mDeadMan) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 35, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mDeadMan[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.wDegrade                := MAPX(cSV_M2B_wDegrade[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.wDegrade) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 36, 0, "RcuInterfaceToBCU.Create", cSV_M2B_wDegrade[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+   nStationMode                                          := MAPX(cSV_sMainMode[locKinListInx]);
+   IF NOT IS_MAPPED(nStationMode) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 37, 0, "RcuInterfaceToBCU.Create", cSV_sMainMode[locKinListInx]);
+      bInterfaceMapped := FALSE;
+   END_IF;
+      
+   sMotionInterface.tMotiontoBCU.iVersion                := MAPX(cSV_M2B_iVersion[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.iVersion) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_M2B_iVersion[locKinListInx]+" not mapped");
+      bExtInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mAckBodyData                := MAPX(cSV_M2B_mAckBodyData[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mAckBodyData) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_M2B_mAckBodyData[locKinListInx]+" not mapped");
+      bExtInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mBadBodyData                := MAPX(cSV_M2B_mBadBodyData[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mBadBodyData) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_M2B_mBadBodyData[locKinListInx]+" not mapped");
+      bExtInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mBadStartProg                := MAPX(cSV_M2B_mBadStartProg[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mBadStartProg) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_M2B_mBadStartProg[locKinListInx]+" not mapped");
+      bExtInterfaceMapped := FALSE;
+   END_IF;
+   sMotionInterface.tMotiontoBCU.mOpenFixation                := MAPX(cSV_M2B_mOpenFixation[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mOpenFixation) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Extended Motion-BCU Interface: "+cSV_M2B_mOpenFixation[locKinListInx]+" not mapped");
+   ELSE
+      bOpenFixationMapped := TRUE;
+   END_IF;
+      
+   bPostProcessMapped := TRUE;
+   sMotionInterface.tPostProcess.mPositionRefill           := MAPX(cSV_PP_mPositionRefill[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tPostProcess.mPositionRefill) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Motion-BCU PostProcess Interface: "+cSV_PP_mPositionRefill[locKinListInx]+" not mapped");
+      bPostProcessMapped := FALSE;
+   END_IF;
+   sMotionInterface.tPostProcess.mRefillCleaner                := MAPX(cSV_PP_mRefillCleaner[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tPostProcess.mRefillCleaner) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Motion-BCU PostProcess Interface: "+cSV_PP_mRefillCleaner[locKinListInx]+" not mapped");
+      bPostProcessMapped := FALSE;
+   END_IF;
+   sMotionInterface.tPostProcess.mCleanTool                := MAPX(cSV_PP_mCleanTool[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tPostProcess.mCleanTool) THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "Motion-BCU PostProcess Interface: "+cSV_PP_mCleanTool[locKinListInx]+" not mapped");
+      bPostProcessMapped := FALSE;
+   END_IF;
+     
+   //Energy saving -- switch drives from AF --> AB by request of PLC
+   sMotionInterface.tBCUtoMotion.mSwitchOffDrives       := MAPX(cSV_B2M_mSwitchOffDrives[locKinListInx]);
+   sMotionInterface.tMotiontoBCU.mDrivesSwitchedOff     := MAPX(cSV_M2B_mDrivesSwitchedOff[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mSwitchOffDrives) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 46, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mSwitchOffDrives[locKinListInx]);
+   ELSIF NOT IS_MAPPED(sMotionInterface.tMotiontoBCU.mDrivesSwitchedOff) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 47, 0, "RcuInterfaceToBCU.Create", cSV_M2B_mDrivesSwitchedOff[locKinListInx]);
+   ELSE
+      START SwitchOffDrives();
+   END_IF;
+   
+   // REHAU conveyor stop position reached
+   sMotionInterface.tBCUtoMotion.mConvStopDueToProcess  := MAPX(cSV_B2M_mConvStopDueToProcess[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.mConvStopDueToProcess) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 48, 0, "RcuInterfaceToBCU.Create", cSV_B2M_mConvStopDueToProcess[locKinListInx]);
+   ELSE   
+      bConvStopDueToProcess := MAP(sMotionInterface.tBCUtoMotion.mConvStopDueToProcess);
+   END_IF;
+   
+   // REHAU variable Preposition
+   sMotionInterface.tBCUtoMotion.iNextPrePos  := MAPX(cSV_B2M_iNextPrePos[locKinListInx]);
+   IF NOT IS_MAPPED(sMotionInterface.tBCUtoMotion.iNextPrePos) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 49, 0, "RcuInterfaceToBCU.Create", cSV_B2M_iNextPrePos[locKinListInx]);
+   ELSE   
+      iNextPrePos := MAP(sMotionInterface.tBCUtoMotion.iNextPrePos);
+   END_IF;
+   
+     
+   IF NOT bInterfaceMapped THEN
+      RETURN;
+   ELSE
+//      giSimMode := MAP(sMotionInterface.iSimMode);
+      iProgramNumber := MAP(sMotionInterface.tBCUtoMotion.tProgramnumber);
+      iMotionIndexFifoZone := MAP(sMotionInterface.tBCUtoMotion.iMotionIndexFifoZone);
+      bAbortProg := MAP(sMotionInterface.tBCUtoMotion.mAbort);
+      bInterruptProg := MAP(sMotionInterface.tBCUtoMotion.mInterrupt);
+      mRobotMoving := MAP(sMotionInterface.tMotiontoBCU.mRobotmoving);
+      mMotionError := MAP(sMotionInterface.tMotiontoBCU.mMotionerror);
+      mMotionActive := MAP(sMotionInterface.tMotiontoBCU.mMotionactive);
+      mRobotIsStopped := MAPX(cSV_sRobotIsStopped[locKinListInx]);
+      mSVConveyorRelease := MAPX(cSV_sConveyorRelease[locKinListInx]);
+      sProjectName := MAP(sMotionInterface.tMotiontoBCU.zProjectName);
+      sProgramName := MAP(sMotionInterface.tMotiontoBCU.zProgramName);
+      mGoHomeAtEnd := MAP(sMotionInterface.tBCUtoMotion.mGoHomeAtEnd);
+      mNoPaint := MAP(sMotionInterface.tBCUtoMotion.mNoPaint);
+      mAbortBody := MAP(sMotionInterface.tMotiontoBCU.mAbortBody);
+      bStartBrakeCheck := MAP(sMotionInterface.tBCUtoMotion.mStartBrakeCheck);
+      IF NOT (IS_MAPPED(iProgramNumber) AND IS_MAPPED(iMotionIndexFifoZone) AND
+              IS_MAPPED(mRobotMoving)  AND IS_MAPPED(mMotionError) AND
+              IS_MAPPED(mMotionActive) AND IS_MAPPED(bStartBrakeCheck) AND
+              IS_MAPPED(mGoHomeAtEnd) AND IS_MAPPED(mNoPaint) AND
+              IS_MAPPED(sProjectName) AND IS_MAPPED(sProgramName) AND
+              IS_MAPPED(mAbortBody) ) THEN
+         RcuSetMessageOnce(RcuInterfToBCU_NotAllMapped, locKinListInx, 1, 0, "RcuInterfaceToBCU.Create");
+      END_IF;
+      IF IS_MAPPED(mSVConveyorRelease) THEN
+         mSVConveyorRelease := UPDATE(mConveyorRelease AND mMacroConveyorRelease AND mDelayedConvRelease);
+      END_IF;
+      mykinematic.autoControl.bNormalEndOfProgram := MAP(sMotionInterface.tMotiontoBCU.mNormalEndofProgram);
+   END_IF;
+   //bExtInterfaceMapped := FALSE; //altes Interface wird damit aktiviert
+   IF bExtInterfaceMapped THEN
+      sMotionInterface.tMotiontoBCU.iVersion := 1;
+   END_IF;
+   
+   IF bStopProgMapped THEN
+      bStopProg := MAP(sMotionInterface.tBCUtoMotion.mStopProg);
+      START ObserveStopProg();
+   ELSE
+      bStopProg := MAP(bDummyStopProg );
+   END_IF;
+   
+   mEndOfBody := MAP(sMotionInterface.tMotiontoBCU.mEndOfBody);
+   IF NOT IS_MAPPED(mEndOfBody) THEN
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 37, 0, "RcuInterfaceToBCU.Create",
+      "BCU.SV_Motion_Interface.tMotiontoBCU.mEndOfBodyProfile");
+   ELSE
+      START ObserveEndOfBody();
+   END_IF;
+   
+   mMotionActive := UPDATE(locKinematic.bMotionActive);
+   mRobotMoving  := UPDATE(locKinematic.bRobotMoving);
+   
+   IF IS_MAPPED(mRobotIsStopped) THEN
+      mRobotIsStopped := UPDATE(locKinematic.isStopped);
+   ELSE
+      RcuSetMessageOnce(RcuInterfToBCU_ErrVarNotMapped, locKinListInx, 38, 0, "RcuInterfaceToBCU.Create", cSV_sRobotIsStopped[locKinListInx]);
+   END_IF;
+   
+   START ObserveFixpos();
+   START ObserveExtFixpos();
+   START ObserveFixposArray();
+   START ObserveUpdateActiv(locKinematic);
+   START ObserveConveyorJog(locKinematic);
+   START ObservePreposition(locKinematic);
+   START ObserveProgStart(locKinematic);
+   START ObserveBrakeCheck();
+   START ObserveLifeBit();
+   START ObserveDegrade();
+   IF bExtInterfaceMapped THEN
+      START ObserveStartProg(locKinematic);
+   END_IF;
+   START MapFifos();
+   
+   RcuReadConfigCompensation();
+   IF bKorrOff THEN
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "C O N V E Y O R   C O M P E N S A T I O N   O F F");
+   ELSE
+      locKinematic.DebugPrint(eTraceInterfaceBCU, "C O N V E Y O R   C O M P E N S A T I O N   O N");
+   END_IF;
+      
+   START ObserveMotionError(locKinematic);
+      
+   s := locKinematic.kinematic.mName+".";
+      
+   SwoAddRealVariable(rCorrValue, s+"CorrValue");
+   SwoAddRealVariable(rConveyorPosition, s+"ConveyorPosition");
+   SwoAddRealVariable(rConveyorPositionBCU, s+"ConveyorPositionBCU");
+   SwoAddRealVariable(rConveyorPositionKorr, s+"ConveyorPositionKorr");
+   SwoAddRealVariable(rActConveyorSpeed, s+"ConveyorSpeed");
+   
+   s := s+"AutoControl.";
+   SwoAddBoolVariable(bBodyData, s+"bBodyData");
+   SwoAddBoolVariable(bNewBodyData, s+"bNewBodyData");
+   SwoAddBoolVariable(bStartProg, s+"bStartProg");
+   SwoAddBoolVariable(bAckStartProg, s+"bAckStartProg");
+   SwoAddBoolVariable(bBadStartProg, s+"bBadStartProg");
+   SwoAddBoolVariable(bAckBodyData, s+"bAckBodyData");
+   SwoAddBoolVariable(bBadBodyData, s+"bBadBodyData");
+
+   s := locKinematic.kinematic.mName+".FromBCU.";
+   SwoAddIntVariable(iProgramNumber, s+"iProgramNumber");
+   SwoAddBoolVariable(bAbortProg, s+"mAbortProg");
+   SwoAddBoolVariable(bInterruptProg, s+"mInterruptProg");
+   IF bExtInterfaceMapped THEN
+      SwoAddBoolVariable(sMotionInterface.tBCUtoMotion.mStartProg, s+"mStartProg");
+   END_IF;
+   s := locKinematic.kinematic.mName+".ToBCU.";
+   SwoAddBoolVariable(mRobotMoving, s+"mRobotMoving");
+   SwoAddBoolVariable(mMotionActive, s+"mMotionActive");
+   SwoAddBoolVariable(mMotionError, s+"mMotionError");
+   IF bExtInterfaceMapped THEN
+      SwoAddBoolVariable(sMotionInterface.tMotiontoBCU.mAckBodyData, s+"mAckBodyData");
+      SwoAddBoolVariable(sMotionInterface.tMotiontoBCU.mBadBodyData, s+"mBadBodyData");
+      SwoAddBoolVariable(sMotionInterface.tMotiontoBCU.mBadStartProg, s+"mBadStartProg");
+   END_IF;
+   
+   bInitComplete := TRUE;
+END_ROUTINE
+
+ROUTINE DELETE()
+    
+   IF IS_MAPPED(mMotionActive) THEN
+      mMotionActive := UPDATE(FALSE);
+   END_IF;
+   IF IS_MAPPED(mRobotMoving) THEN
+      mRobotMoving := UPDATE(FALSE);
+   END_IF;
+   IF IS_MAPPED(mRobotIsStopped) THEN
+      mRobotIsStopped := UPDATE(FALSE);
+   END_IF;
+      
+   SwoRemoveVariable(sKinName+".CorrValue");
+   SwoRemoveVariable(sKinName+".ConveyorPosition");
+   SwoRemoveVariable(sKinName+".ConveyorPositionBCU");
+   SwoRemoveVariable(sKinName+".ConveyorPositionKorr");
+   SwoRemoveVariable(sKinName+".ConveyorSpeed");
+   
+   SwoRemoveVariable(sKinName+".AutoControl.bBodyData");
+   SwoRemoveVariable(sKinName+".AutoControl.bNewBodyData");
+   SwoRemoveVariable(sKinName+".AutoControl.bStartProg");
+   SwoRemoveVariable(sKinName+".AutoControl.bAckStartProg");
+   SwoRemoveVariable(sKinName+".AutoControl.bBadStartProg");
+   SwoRemoveVariable(sKinName+".AutoControl.bAckBodyData");
+   SwoRemoveVariable(sKinName+".AutoControl.bBadBodyData");
+
+   SwoRemoveVariable(sKinName+".FromBCU.iProgramNumber");
+   SwoRemoveVariable(sKinName+".FromBCU.mAbortProg");
+   SwoRemoveVariable(sKinName+".FromBCU.mInterruptProg");
+   IF bExtInterfaceMapped THEN
+      SwoRemoveVariable(sKinName+".FromBCU.mStartProg");
+   END_IF;
+   
+   SwoRemoveVariable(sKinName+".ToBCU.mRobotMoving");
+   SwoRemoveVariable(sKinName+".ToBCU.mMotionActive");
+   SwoRemoveVariable(sKinName+".ToBCU.mMotionError");
+   IF bExtInterfaceMapped THEN
+      SwoRemoveVariable(sKinName+".ToBCU.mAckBodyData");
+      SwoRemoveVariable(sKinName+".ToBCU.mBadBodyData");
+      SwoRemoveVariable(sKinName+".ToBCU.mBadStartProg");
+   END_IF;
+
+END_ROUTINE

@@ -1,0 +1,1508 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Carl-Benz-Strasse 34                                                     *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2011 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         01.01.2011                                                  *
+*    Author :     Koch                                                        *
+*    E-Mail:      Nico.Koch@durr.com                                          *
+*                                                                             *
+*    Modul:       TRcuSFA.tts                                                 *
+*    Description:                                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------
+*)
+
+// ZY1 - Bandandrückzylinder
+// ZY2 - Bandabschneidezylinder
+// ZY3 - Applikationsrollezylinder
+
+
+// s - String
+// b - Bool (auch IOBool)
+// i - DINT
+
+// Types could be also copied to EcotalkVariables.ttp
+TYPE GLOBAL USER
+   SFA_CMD : (PressureOff       :=1,
+              Pressure1         :=2,
+              Pressure2         :=3,
+                
+              ZYlForward        :=4,
+              ZYlBackward       :=5,
+              ZY2Forward        :=6,
+              ZY2Backward       :=7,
+              ZY3Forward        :=8,
+              ZY3Backward       :=9,
+              
+              DriveOff          :=10,
+              DriveOnConst      :=11,
+              DriveOnCtrl       :=12,
+              
+              ZCheckOn          :=13, 
+              ZCheckOff         :=14);
+
+   SFA_STATE : (ZYlEV    :=1,
+                ZYlER    :=2,
+                ZY2EV    :=3,
+                ZY2ER    :=4,
+                ZY3EV    :=5,
+                ZY3ER    :=6);
+END_TYPE
+TYPE PRIVATE
+   tsSfaInputs : STRUCT
+      bZY1EV             : TInOutBool;       
+      bZY1ER             : TInOutBool;
+      bZY2EV             : TInOutBool;
+      bZY2ER             : TInOutBool;
+      bZY3EV             : TInOutBool;
+      bZY3ER             : TInOutBool;   
+      bZInWorkPos        : TInOutBool;
+      bOverload          : TInOutBool;
+      bWarnEOT           : TInOutBool;          // Warnung Bandende
+      bErrEOT            : TInOutBool;          // Fehler Bandende: Karosse beenden
+      bTurnSignal        : TInOutBool;
+      bObserveTREndPos   : TInOutBool;
+      bObserveAppRoll    : TInOutBool;
+      bObservePressRoll  : TInOutBool;
+      bBLV1              : TInOutBool;          // Rückmeldung Hauptluft
+      bDriveNoError      : TInOutBool;          // Digital input from SEW amplifier: no error signal   
+   END_STRUCT;
+   
+   tsSfaOutputs : STRUCT
+      bDrive_Release      : TInOutBool;          //  Freigabe
+      bDrive_RightTurn    : TInOutBool;          //  Rechstlauf
+      bDrive_ConstSpeed   : TInOutBool;          //  Regelung 
+      bDrive_CtrlSpeed    : TInOutBool;          //  Festdrehzahl
+      bDrive_RegStop      : TInOutBool;          //  Reglersperre      
+      bPressure1ZComp     : TInOutBool;          // 
+      bPressure2ZComp     : TInOutBool;          // 
+      bZY1                : TInOutBool;          //    
+      bZY2                : TInOutBool;          //    
+      bZY3V               : TInOutBool;          // Applikationsrolle vor     
+      bZY3R               : TInOutBool;          // Applikationsrolle rück    
+      bYHV1               : TInOutBool;          // Hauptluftventil
+   END_STRUCT;
+  
+   tsSfaSim : STRUCT
+      bZY1EV :  BOOL;
+      bZY1ER :  BOOL;
+      bZY2EV :  BOOL;
+      bZY2ER :  BOOL;
+      bZY3EV :  BOOL;
+      bZY3ER :  BOOL;
+   END_STRUCT;
+   
+   tsSFAInterface : STRUCT
+      In     : tsSfaInputs;
+      Out    : tsSfaOutputs;
+      Sim    : tsSfaSim;
+      HMI    : MAPTO tsSFAHMI;
+   END_STRUCT;
+   
+   tsSFAHMI : STRUCT
+      HMIOut : tsSfaHMIDataOut;
+      HMIIn  : tsSfaHMIDataIn; 
+   END_STRUCT;
+   
+   tsSfaHMIDataIn : STRUCT
+      bDrive_Off     :  BOOL;
+      bDrive_OnConst :  BOOL;
+      bDrive_OnCtrl  :  BOOL;      
+      bPressureOff   :  BOOL;
+      bPressure1     :  BOOL;
+      bPressure2     :  BOOL;
+      bZY1V          :  BOOL;
+      bZY1R          :  BOOL;
+      bZY2V          :  BOOL;
+      bZY2R          :  BOOL;
+      bZY3V          :  BOOL;
+      bZY3R          :  BOOL;
+      bResetCounter  :  BOOL; 
+   END_STRUCT;
+   
+   tsSfaHMIDataOut : STRUCT
+      bZY1EV         : BOOL;
+      bZY1ER         : BOOL;
+      bZY2EV         : BOOL;
+      bZY2ER         : BOOL;
+      bZY3EV         : BOOL;
+      bZY3ER         : BOOL;
+      bDriveConst    : BOOL;
+      bDriveCtrl     : BOOL;      
+      bYP1           : BOOL;
+      bYP2           : BOOL;
+      bYHV1          : BOOL;
+      bBLV1          : BOOL;     
+      bB3            : BOOL;
+      bB4            : BOOL;
+      bB6            : BOOL;
+      bB7            : BOOL;
+      bB8            : BOOL;
+      bB9            : BOOL;
+      bB10           : BOOL;
+      bB11           : BOOL;
+      bButtonEnabled : BOOL;
+      iIncCounter    : DINT;
+   END_STRUCT;
+   
+   tsSfaSymbols : STRUCT
+     sZY1EV              : STRING;
+     sZY1ER              : STRING;
+     sZY2EV              : STRING;
+     sZY2ER              : STRING;
+     sZY3EV              : STRING;
+     sZY3ER              : STRING;
+     sZInWorkPos         : STRING;
+     sOverload           : STRING;
+     sWarnEOT            : STRING;
+     sErrEOT             : STRING;
+     sTurnSignal         : STRING;
+     sTREndPos           : STRING;
+     sAppRoll            : STRING;
+     sPressRoll          : STRING;
+     sAirPress           : STRING;               
+     sDriveNoError       : STRING;
+     sDriveRelease       : STRING;
+     sRightTurn          : STRING;
+     sDriveCtrlSpeed     : STRING;
+     sDriveConstSpeed    : STRING;
+     sDriveRegulatorStop : STRING;
+     sPressure1          : STRING;
+     sPressure2          : STRING;
+     sCylinder1          : STRING;
+     sCylinder2          : STRING;
+     sOutZY3V            : STRING;
+     sOutZY3R            : STRING;
+     sAirSupply          : STRING;
+   END_STRUCT;
+   
+   DRIVEMODES : (SpeedOff, SpeedConst, SpeedCtrl);
+   
+   SfaCmd : (PressureOff,
+             Pressure1,
+             Pressure2,     
+             ZYlForward,
+             ZYlBackward,
+             ZY2Forward,
+             ZY2Backward,
+             ZY3Forward,
+             ZY3Backward,  
+             DriveOff,
+             DriveOnConst,
+             DriveOnCtrl,  
+             ZCheckOn, 
+             ZCheckOff);
+END_TYPE
+
+CONSTANT PRIVATE     
+   cTimeToMoveCylinder : DINT := 5000;   // Time => 5000 ms or 5   sec
+END_CONSTANT
+
+VAR PRIVATE
+  myRobot           : MAPTO TRcuRobot;
+  bMappingOk        : BOOL;
+  Symbols           : tsSfaSymbols;
+  Signals           : tsSFAInterface;
+  bSimulateReaction : BOOL;
+  bErrorQuit        : MAPTO BOOL;
+  bHV1              : MAPTO BOOL;
+  bBLV1             : MAPTO BOOL;
+  bGhostNoColor     : MAPTO BOOL;
+  bHMIAllowed       : BOOL;
+  instId            : DINT;
+  
+  bZCheckEnabled    : BOOL;
+  iIncCounter       : DINT;
+  
+  actDriveMode      : DRIVEMODES;
+  
+  iPulseLength      : DINT;
+END_VAR
+
+//******************************************************************************
+//******************************************************************************
+//*
+//* Private methods
+//*
+//******************************************************************************
+//******************************************************************************
+
+
+//******************************************************************************
+//* Procedure   : RcuReadSymbols
+//* Description : read configured HW endpointnames from catalog
+//* Parameter   : none                         
+//* Return      : bool
+//******************************************************************************
+ROUTINE RcuReadSymbols() : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      name : STRING;
+      i      : SINT;
+   END_VAR
+
+   WAIT gbRcHandleOk;
+   IF giRcBaseHdl = 0 THEN
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuSFA.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+   
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_ZY1EV", Symbols.sZY1EV, TRUE) THEN
+         Symbols.sZY1EV := "HWI_mASFA1_ZY1EV";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_ZY1ER", Symbols.sZY1ER, TRUE) THEN
+         Symbols.sZY1ER := "HWI_mASFA1_ZY1ER";
+      END_IF;   
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_ZY2EV", Symbols.sZY2EV, TRUE) THEN
+         Symbols.sZY2EV := "HWI_mASFA1_ZY2EV";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_ZY2ER", Symbols.sZY2ER, TRUE) THEN
+         Symbols.sZY2ER := "HWI_mASFA1_ZY2ER";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_ZY3EV", Symbols.sZY3EV, TRUE) THEN
+         Symbols.sZY3EV := "HWI_mASFA1_ZY3EV";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_ZY3ER", Symbols.sZY3ER, TRUE) THEN
+         Symbols.sZY3ER := "HWI_mASFA1_ZY3ER";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B4", Symbols.sZInWorkPos, TRUE) THEN
+         Symbols.sZInWorkPos := "HWI_mASFA1_B4";
+      END_IF;   
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B3", Symbols.sOverload, TRUE) THEN
+         Symbols.sOverload := "HWI_mASFA1_B3";
+      END_IF; 
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B8", Symbols.sWarnEOT, TRUE) THEN
+         Symbols.sWarnEOT := "HWI_mASFA1_B8";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B7", Symbols.sErrEOT, TRUE) THEN
+         Symbols.sErrEOT := "HWI_mASFA1_B7";
+      END_IF; 
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B6", Symbols.sTurnSignal, TRUE) THEN
+         Symbols.sTurnSignal := "HWI_mASFA1_B6";
+      END_IF;   
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B9", Symbols.sTREndPos, TRUE) THEN
+         Symbols.sTREndPos := "HWI_mASFA1_B9";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B10", Symbols.sAppRoll, TRUE) THEN
+         Symbols.sAppRoll := "HWI_mASFA1_B10";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_B11", Symbols.sPressRoll, TRUE) THEN
+         Symbols.sPressRoll := "HWI_mASFA1_B11";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_AirPress", Symbols.sAirPress, TRUE) THEN
+         Symbols.sAirPress := "HWI_mBLV1";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_In_DriveNoError", Symbols.sDriveNoError, TRUE) THEN
+         Symbols.sDriveNoError := "HWI_mASFA1_DriveNoError";
+      END_IF;
+      
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_DriveRelease", Symbols.sDriveRelease, TRUE) THEN
+         Symbols.sDriveRelease := "HWO_mASFA1_Release";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_RightTurn", Symbols.sRightTurn, TRUE) THEN
+         Symbols.sRightTurn := "HWO_mASFA1_RightTurn";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_TRCtrl", Symbols.sDriveCtrlSpeed, TRUE) THEN
+         Symbols.sDriveCtrlSpeed := "HWO_mASFA1_TRCtrl";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_TRConst", Symbols.sDriveConstSpeed, TRUE) THEN
+         Symbols.sDriveConstSpeed := "HWO_mASFA1_TRConst";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_RegulatorStop", Symbols.sDriveRegulatorStop, TRUE) THEN
+         Symbols.sDriveRegulatorStop := "HWO_mASFA1_Reglersperre";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_TRConst", Symbols.sDriveConstSpeed, TRUE) THEN
+         Symbols.sDriveConstSpeed := "HWO_mASFA1_TRConst";
+      END_IF; 
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_Pressure1", Symbols.sPressure1, TRUE) THEN
+         Symbols.sPressure1 := "HWO_mASFA1_YP1";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_Pressure2", Symbols.sPressure2, TRUE) THEN
+         Symbols.sPressure2 := "HWO_mASFA1_YP2";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_ZY1", Symbols.sCylinder1, TRUE) THEN
+         Symbols.sCylinder1 := "HWO_mASFA1_ZY1";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_ZY2", Symbols.sCylinder2, TRUE) THEN
+         Symbols.sCylinder2 := "HWO_mASFA1_ZY2";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_ZY3EV", Symbols.sOutZY3V, TRUE) THEN
+         Symbols.sOutZY3V := "HWO_mASFA1_ZY3V";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_ZY3ER", Symbols.sOutZY3R, TRUE) THEN
+         Symbols.sOutZY3R := "HWO_mASFA1_ZY3R";
+      END_IF;
+      IF NOT CatalogReadString(dirHdl, "Sym_SFA_Out_HV1", Symbols.sAirSupply, TRUE) THEN
+         Symbols.sAirSupply := "HWO_mYHV1";
+      END_IF; 
+   ELSE
+      RcuSetMessageOnce(_systemvars_ErrCnfSymbol, -1, 1, 0, "TRcuSFA.RcuReadSymbols");
+      RETURN FALSE;
+   END_IF;
+
+   RETURN TRUE;
+
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : MapSfaSignals
+//* Description : Map of all used variables
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE MapSfaSignals() PRIVATE
+VAR
+   iRobot             : DINT;
+END_VAR
+   
+   iRobot     := myRobot.kinListInx;
+   bMappingOk := TRUE;
+   
+   RcuReadSymbols(); //read configured HW endpointnames from catalog
+   
+   // Inputs
+   MapAndCheckBool(Signals.In.bZY1EV,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZY1EV);
+   MapAndCheckBool(Signals.In.bZY1ER,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZY1ER);
+   MapAndCheckBool(Signals.In.bZY2EV,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZY2EV);
+   MapAndCheckBool(Signals.In.bZY2ER,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZY2ER);
+   MapAndCheckBool(Signals.In.bZY3EV,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZY3EV);
+   MapAndCheckBool(Signals.In.bZY3ER,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZY3ER);   
+   MapAndCheckBool(Signals.In.bZInWorkPos,        "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sZInWorkPos);
+   MapAndCheckBool(Signals.In.bOverload,          "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sOverload);
+   MapAndCheckBool(Signals.In.bWarnEOT,           "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sWarnEOT);
+   MapAndCheckBool(Signals.In.bErrEOT,            "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sErrEOT);   
+   MapAndCheckBool(Signals.In.bTurnSignal,        "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sTurnSignal);
+   MapAndCheckBool(Signals.In.bObserveTREndPos,   "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sTREndPos);
+   MapAndCheckBool(Signals.In.bObserveAppRoll,    "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sAppRoll);
+   MapAndCheckBool(Signals.In.bObservePressRoll,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sPressRoll);   
+   MapAndCheckBool(Signals.In.bDriveNoError,      "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sDriveNoError);
+   MapAndCheckBool(Signals.In.bBLV1,              "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sAirPress); //Feedback HV1
+   
+   // Outputs
+   MapAndCheckBool(Signals.Out.bDrive_Release,    "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sDriveRelease);
+   MapAndCheckBool(Signals.Out.bDrive_RightTurn,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sRightTurn);
+   MapAndCheckBool(Signals.Out.bDrive_ConstSpeed, "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sDriveConstSpeed);
+   MapAndCheckBool(Signals.Out.bDrive_CtrlSpeed,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sDriveCtrlSpeed);
+   MapAndCheckBool(Signals.Out.bDrive_RegStop,    "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sDriveRegulatorStop);
+   MapAndCheckBool(Signals.Out.bPressure1ZComp,   "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sPressure1);
+   MapAndCheckBool(Signals.Out.bPressure2ZComp,   "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sPressure2);
+   MapAndCheckBool(Signals.Out.bZY1,              "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sCylinder1);
+   MapAndCheckBool(Signals.Out.bZY2,              "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sCylinder2);
+   MapAndCheckBool(Signals.Out.bZY3V,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sOutZY3V);
+   MapAndCheckBool(Signals.Out.bZY3R,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sOutZY3R);  
+   MapAndCheckBool(Signals.Out.bYHV1,             "RCU" + STR(gyiNrRcu[iRobot]) + "." + Symbols.sAirSupply);
+  
+   bHV1          := MAPX("RCU" + STR(gyiNrRcu[iRobot]) + "." + cSV_SLI_mAirPress);
+   bBLV1         := MAPX("RCU" + STR(gyiNrRcu[iRobot]) + "." + cSV_SLO_mAirSupply);
+   bGhostNoColor := MAPX("BCU" + STR(gyiNrBcu[iRobot]) + "." + cSV_SLI_mGhostNoColor);
+   
+   Signals.HMI :=  MAPX(cSV_HmiSfa[iRobot]);
+   
+   IF NOT IS_MAPPED(bBLV1) THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcuSFA_ErrNotMapped, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.MapSfaSignals",
+         "RCU" + STR(gyiNrRcu[iRobot]) + "." + cSV_SLO_mAirSupply);  
+      bMappingOk := FALSE;
+   END_IF;
+   
+   IF NOT IS_MAPPED(bGhostNoColor) THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcuSFA_ErrNotMapped, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.MapSfaSignals",
+         "BCU" + STR(gyiNrBcu[iRobot]) + "." + cSV_SLI_mGhostNoColor);  
+      bMappingOk := FALSE;
+   END_IF;
+    
+   IF NOT IS_MAPPED(bHV1) THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcuSFA_ErrNotMapped, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.MapSfaSignals",
+         "RCU" + STR(gyiNrRcu[iRobot]) + "." + cSV_SLI_mAirPress);  
+      bMappingOk := FALSE;
+   END_IF;
+   
+   IF NOT IS_MAPPED(Signals.HMI) THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(TRcuSFA_ErrNotMapped, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.MapSfaSignals",
+          cSV_HmiSfa[iRobot]); 
+      bMappingOk := FALSE;
+   END_IF;
+ 
+END_ROUTINE // End of MapSfaSignals 
+
+
+//******************************************************************************
+//* Procedure   : MapAndCheckBool
+//* Description : Maps and checks an boolean Variable
+//* Parameter   : bMapVar - target variable
+//                sSvVarName - String of the variable                        
+//* Return      : none
+//******************************************************************************
+ROUTINE MapAndCheckBool(bMapVar      : TInOutBool; 
+                        sSvVarName   : STRING) 
+                       PRIVATE
+                       
+   bMapVar.svBool := MAPX(sSvVarName);    
+
+   IF NOT IS_MAPPED(bMapVar.svBool) THEN
+      bMappingOk := FALSE;
+      
+      RcuSetMessageOnce(TRcuSFA_MapBool, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.MapAndCheckBool",
+         sSvVarName);  
+   END_IF;  
+
+END_ROUTINE // End of MapAndCheckBool 
+  
+  
+//******************************************************************************
+//* Procedure   : SetDriveMode
+//* Description :  
+//*
+//* Parameter   : 
+//*                            
+//* Return      : none
+//******************************************************************************
+ROUTINE SetDriveMode(mode : DRIVEMODES) PRIVATE
+   
+   IF myRobot.fieldbusIn.GhostMode.svBool AND bGhostNoColor THEN
+      PRINT("SetDriveMode(" + STR(mode) + ") command ignored because Ghost without process is active");
+      mode := SpeedOff;
+   END_IF;
+   
+   actDriveMode := mode;
+  
+   CASE mode OF
+      SpeedOff:
+         Signals.Out.bDrive_Release.svBool    := FALSE;
+         Signals.Out.bDrive_RightTurn.svBool  := FALSE;
+         Signals.Out.bDrive_ConstSpeed.svBool := FALSE;
+         Signals.Out.bDrive_CtrlSpeed.svBool  := FALSE;
+         Signals.HMI.HMIOut.bDriveConst       := FALSE;
+         Signals.HMI.HMIOut.bDriveCtrl        := FALSE;
+
+      SpeedConst:       
+         Signals.Out.bDrive_Release.svBool    := TRUE;
+         Signals.Out.bDrive_RightTurn.svBool  := TRUE;
+         Signals.Out.bDrive_ConstSpeed.svBool := TRUE;
+         Signals.Out.bDrive_CtrlSpeed.svBool  := FALSE;
+         Signals.HMI.HMIOut.bDriveConst       := TRUE;
+         Signals.HMI.HMIOut.bDriveCtrl        := FALSE;
+         
+      SpeedCtrl:      
+         Signals.Out.bDrive_Release.svBool    := TRUE;
+         Signals.Out.bDrive_RightTurn.svBool  := TRUE;
+         Signals.Out.bDrive_ConstSpeed.svBool := FALSE;
+         Signals.Out.bDrive_CtrlSpeed.svBool  := TRUE;
+         Signals.HMI.HMIOut.bDriveConst       := FALSE;
+         Signals.HMI.HMIOut.bDriveCtrl        := TRUE;
+   END_CASE;   
+      
+END_ROUTINE  // End of SetDriveMode                       
+
+
+//******************************************************************************
+//* Procedure   : ObserveTREndPos
+//* Description : Check of ini B9, end position of "Taenzerrolle"
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveTREndPos() PRIVATE
+   VAR
+      bChgError      : BOOL;
+      bChgErrorQuit  : BOOL;
+      bChgAutoExtern : BOOL;
+   END_VAR 
+   
+   bChgError      := IS_CHANGED(Signals.In.bObserveTREndPos.svBool);
+   bChgErrorQuit  := IS_CHANGED(myRobot.svMotionAllowed);
+   bChgAutoExtern := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   
+   WHILE TRUE DO
+      WAIT bChgError OR bChgAutoExtern; 
+      IF Signals.In.bObserveTREndPos.svBool THEN
+         RcuSetMessageOnce(TRcuSFA_TREndPos, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveTREndPos",
+                        "B9"); 
+         WHILE  myRobot.mainModeMgr.externControl AND Signals.In.bObserveTREndPos.svBool DO               
+               RcuSetMessageOnce(TRcuSFA_TREndPos, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveTREndPos",
+                        "B9");  
+               
+               WAIT bChgError OR bChgErrorQuit;         
+               
+               bChgError      := FALSE;
+               bChgErrorQuit  := FALSE;
+         END_WHILE;      
+      END_IF;
+      
+      bChgError      := FALSE;
+      bChgAutoExtern := FALSE;
+  END_WHILE;
+  
+END_ROUTINE  // End of ObserveTREndPos  
+
+
+//******************************************************************************
+//* Procedure   : ObserveDriveNoError
+//* Description : Check of no error bit from SEW amplififier
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveDriveNoError() PRIVATE
+   VAR
+      bChgError      : BOOL;
+      bChgErrorQuit  : BOOL;
+      bChgAutoExtern : BOOL;
+   END_VAR 
+   
+   bChgError      := IS_CHANGED(Signals.In.bDriveNoError.svBool);
+   bChgErrorQuit  := IS_CHANGED(myRobot.svMotionAllowed);
+   bChgAutoExtern := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   
+   WHILE TRUE DO
+      WAIT bChgError OR bChgAutoExtern; 
+      IF NOT Signals.In.bDriveNoError.svBool THEN
+         RcuSetMessageOnce(TRcuSFA_DriveError, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveDriveNoError");
+                                              
+         WHILE myRobot.mainModeMgr.externControl AND NOT Signals.In.bDriveNoError.svBool DO                          
+               RcuSetMessageOnce(TRcuSFA_DriveError, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveDriveNoError");
+                                      
+               WAIT bChgError OR bChgErrorQuit;         
+               
+               bChgError      := FALSE;
+               bChgErrorQuit  := FALSE;
+         END_WHILE;      
+      END_IF;
+      
+      bChgError      := FALSE;
+      bChgAutoExtern := FALSE;
+  END_WHILE;
+  
+END_ROUTINE  // End of ObserveDriveNoError  
+  
+  
+//******************************************************************************
+//* Procedure   : ObserveOverload
+//* Description : Check of ini B3, collision detection 
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveOverload() PRIVATE
+   VAR
+      bChgError      : BOOL;
+      bChgErrorQuit  : BOOL;
+      bChgAutoExtern : BOOL;
+   END_VAR 
+   
+   bChgError      := IS_CHANGED(Signals.In.bOverload.svBool);
+   bChgErrorQuit  := IS_CHANGED(myRobot.svMotionAllowed);
+   bChgAutoExtern := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   
+   WHILE TRUE DO 
+      IF NOT Signals.In.bOverload.svBool AND NOT bSimulateReaction THEN
+         RcuSetMessageOnce(TRcuSFA_Overload, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveOverload",
+                        "B3"); 
+         WHILE  myRobot.mainModeMgr.externControl AND NOT Signals.In.bOverload.svBool DO               
+            
+               RcuSetMessageOnce(TRcuSFA_Overload, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveOverload",
+                        "B3");  
+               WAIT bChgError OR bChgErrorQuit;          
+               
+               bChgError      := FALSE;
+               bChgErrorQuit  := FALSE;
+         END_WHILE;      
+      END_IF;
+      
+      WAIT bChgError OR bChgAutoExtern;
+      
+      bChgError      := FALSE;
+      bChgAutoExtern := FALSE;
+  END_WHILE;
+  
+END_ROUTINE  // End of ObserveOverload 
+
+
+//******************************************************************************
+//* Procedure   : ObserveRolls
+//* Description : Check of inis B10 - Application roll
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveAppRoll() PRIVATE
+   VAR
+      bChgError      : BOOL;
+      bChgErrorQuit  : BOOL;
+      bChgAutoExtern : BOOL;
+   END_VAR 
+   
+   bChgError      := IS_CHANGED(Signals.In.bObserveAppRoll.svBool);
+   bChgErrorQuit  := IS_CHANGED(myRobot.svMotionAllowed);
+   bChgAutoExtern := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   
+   WHILE TRUE DO 
+      IF Signals.In.bObserveAppRoll.svBool AND NOT bSimulateReaction THEN
+         RcuSetMessageOnce(TRcuSFA_AppRoll, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveAppRoll",
+                        "B10"); 
+         WHILE  myRobot.mainModeMgr.externControl AND Signals.In.bObserveAppRoll.svBool DO               
+              
+               RcuSetMessageOnce(TRcuSFA_AppRoll, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveAppRoll",
+                        "B10"); 
+               
+               WAIT bChgError OR bChgErrorQuit; 
+        
+               bChgError      := FALSE;
+               bChgErrorQuit  := FALSE;
+         END_WHILE;      
+      END_IF;
+      
+      WAIT bChgError OR bChgAutoExtern;
+      
+      bChgError      := FALSE;
+      bChgAutoExtern := FALSE;
+  END_WHILE;
+  
+END_ROUTINE  // End of ObserveAppRoll 
+
+
+//******************************************************************************
+//* Procedure   : ObservePressRoll
+//* Description : Check of inis B11 - Pressure roll
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObservePressRoll() PRIVATE
+   VAR
+      bChgError      : BOOL;
+      bChgErrorQuit  : BOOL;
+      bChgAutoExtern : BOOL;
+   END_VAR 
+   
+   bChgError      := IS_CHANGED(Signals.In.bObservePressRoll.svBool);
+   bChgErrorQuit  := IS_CHANGED(myRobot.svMotionAllowed);
+   bChgAutoExtern := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   
+   WHILE TRUE DO 
+      IF Signals.In.bObservePressRoll.svBool AND NOT bSimulateReaction THEN
+         RcuSetMessageOnce(TRcuSFA_PressRoll, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObservePressRoll",
+                        "B11"); 
+         WHILE  myRobot.mainModeMgr.externControl AND Signals.In.bObservePressRoll.svBool DO               
+             
+               RcuSetMessageOnce(TRcuSFA_PressRoll, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObservePressRoll",
+                        "B11"); 
+               
+               WAIT bChgError OR bChgErrorQuit; 
+               
+               bChgError      := FALSE;
+               bChgErrorQuit  := FALSE;
+         END_WHILE;      
+      END_IF;
+      
+      WAIT bChgError OR bChgAutoExtern;
+      
+      bChgError      := FALSE;
+      bChgAutoExtern := FALSE;
+  END_WHILE;
+  
+END_ROUTINE  // End of Observe 
+
+
+//******************************************************************************
+//* Procedure   : ObserveZCheck
+//* Description : Check of ini B4, collision detection 
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveZCheck() PRIVATE
+   VAR
+      bChgError      : BOOL;
+      bChgErrorQuit  : BOOL;
+      bChgMainMode   : BOOL;
+      bChgCheckOnOff : BOOL;
+   END_VAR 
+
+   bChgError      := IS_CHANGED(Signals.In.bZInWorkPos.svBool);
+   bChgErrorQuit  := IS_CHANGED(myRobot.svMotionAllowed);
+   bChgMainMode   := IS_CHANGED(myRobot.mainModeMgr.mode);
+   bChgCheckOnOff := IS_CHANGED(bZCheckEnabled);
+   
+   WHILE TRUE DO
+      WAIT bChgError OR bChgMainMode OR bChgCheckOnOff; 
+      IF (NOT Signals.In.bZInWorkPos.svBool) AND bZCheckEnabled AND (myRobot.mainModeMgr.mode <> ciT1) AND
+         (NOT bSimulateReaction) AND (NOT (myRobot.fieldbusIn.GhostMode.svBool AND bGhostNoColor)) THEN
+         RcuSetMessageOnce(TRcuSFA_ZCheck, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveZCheck",
+                        "B4"); 
+         WHILE (myRobot.mainModeMgr.mode <> ciT1) AND NOT Signals.In.bZInWorkPos.svBool AND bZCheckEnabled DO               
+             WAIT bChgError OR bChgErrorQuit OR bChgCheckOnOff;
+               IF (myRobot.mainModeMgr.mode <> ciT1) THEN 
+                  RcuSetMessageOnce(TRcuSFA_ZCheck, 
+                           myRobot.kinListInx, 
+                           2, 
+                           instId, 
+                           "TRcuSFA.ObserveZCheck",
+                           "B4");  
+               END_IF;
+               bChgError      := FALSE;
+               bChgErrorQuit  := FALSE;
+               bChgCheckOnOff := FALSE;
+         END_WHILE;      
+      END_IF;
+
+      bChgError      := FALSE;
+      bChgMainMode   := FALSE;
+      bChgCheckOnOff := FALSE;
+  END_WHILE;
+
+END_ROUTINE  // End of ObserveZCheck     
+
+
+//******************************************************************************
+//* Procedure   : ObserveWarnTapeEndPos
+//* Description : Check of ini B8 
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveWarnTapeEndPos() PRIVATE
+   VAR
+
+   END_VAR 
+
+   WHILE TRUE DO
+      IF NOT Signals.In.bWarnEOT.svBool AND NOT bSimulateReaction THEN
+         RcuSetMessageOnce(TRcuSFA_WarnTapeEndPos, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveWarnTapeEndPos",
+                        "B8");  
+      END_IF;
+      Sleep(500);
+   END_WHILE;
+   
+END_ROUTINE  // End of ObserveWarnTapeEndPos   
+
+
+//******************************************************************************
+//* Procedure   : ObserveErrTapeEndPos
+//* Description : Check of ini B7
+//* Parameter   : none                         
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveErrTapeEndPos() PRIVATE
+   VAR
+
+   END_VAR 
+
+   WHILE TRUE DO
+      IF Signals.In.bErrEOT.svBool AND (myRobot.mainModeMgr.mode <> ciT1)  AND NOT bSimulateReaction THEN
+         RcuSetMessageOnce(TRcuSFA_ErrTapeEndPos, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuSFA.ObserveErrTapeEndPos",
+                        "B7");    
+      END_IF;
+      Sleep(500);
+   END_WHILE;
+     
+END_ROUTINE  // End of ObserveErrTapeEndPos
+
+
+//******************************************************************************
+//* Procedure   : UpdateHMIInterfaceOut
+//* Description :  
+//* Parameter   :                            
+//* Return      : none
+//******************************************************************************
+ROUTINE UpdateHMIInterfaceOut() PRIVATE
+   VAR
+
+   END_VAR  
+   
+   Signals.HMI.HMIOut.bZY1EV := UPDATE(Signals.In.bZY1EV.svBool OR (bSimulateReaction AND Signals.Sim.bZY1EV));
+   Signals.HMI.HMIOut.bZY1ER := UPDATE(Signals.In.bZY1ER.svBool OR (bSimulateReaction AND Signals.Sim.bZY1ER));
+   Signals.HMI.HMIOut.bZY2EV := UPDATE(Signals.In.bZY2EV.svBool OR (bSimulateReaction AND Signals.Sim.bZY2EV));
+   Signals.HMI.HMIOut.bZY2ER := UPDATE(Signals.In.bZY2ER.svBool OR (bSimulateReaction AND Signals.Sim.bZY2ER));
+   Signals.HMI.HMIOut.bZY3EV := UPDATE(Signals.In.bZY3EV.svBool OR (bSimulateReaction AND Signals.Sim.bZY3EV));
+   Signals.HMI.HMIOut.bZY3ER := UPDATE(Signals.In.bZY3ER.svBool OR (bSimulateReaction AND Signals.Sim.bZY3ER));
+
+   Signals.HMI.HMIOut.bYP1   := UPDATE(Signals.Out.bPressure1ZComp.svBool);
+   Signals.HMI.HMIOut.bYP2   := UPDATE(Signals.Out.bPressure2ZComp.svBool);
+   Signals.HMI.HMIOut.bYHV1  := UPDATE(Signals.Out.bYHV1.svBool);
+
+   Signals.HMI.HMIOut.bB3  := UPDATE(Signals.In.bOverload.svBool);
+   Signals.HMI.HMIOut.bB4  := UPDATE(Signals.In.bZInWorkPos.svBool);
+   Signals.HMI.HMIOut.bB6  := UPDATE(Signals.In.bTurnSignal.svBool);
+   Signals.HMI.HMIOut.bB7  := UPDATE(Signals.In.bErrEOT.svBool);
+   Signals.HMI.HMIOut.bB8  := UPDATE(Signals.In.bWarnEOT.svBool);
+   Signals.HMI.HMIOut.bB9  := UPDATE(Signals.In.bObserveTREndPos.svBool);
+   Signals.HMI.HMIOut.bB10 := UPDATE(Signals.In.bObserveAppRoll.svBool);
+   Signals.HMI.HMIOut.bB11 := UPDATE(Signals.In.bObservePressRoll.svBool);
+   Signals.HMI.HMIOut.bBLV1 := UPDATE(Signals.In.bBLV1.svBool);
+            
+END_ROUTINE  // End of UpdateHMIInterfaceOut
+
+
+//******************************************************************************
+//* Procedure   : ObserveHMIInterfaceIn
+//* Description : Inputs from HMI 
+//* Parameter   :                            
+//* Return      : none
+//******************************************************************************
+ROUTINE ObserveHMIInterfaceIn() PRIVATE
+   VAR
+      bChgSig1 : BOOL;
+      bChgSig2 : BOOL;
+      bChgSig3 : BOOL;
+     // bChgSig4 : BOOL;
+      bChgSig5 : BOOL;
+      bChgSig6 : BOOL;
+      bChgSig7 : BOOL;
+      bChgSig8 : BOOL;
+      bChgSig9 : BOOL;
+      bChgSig10: BOOL;
+      bChgSig11: BOOL;
+      bChgSig12: BOOL;
+      bChgSig13: BOOL;
+      bChgSig14: BOOL;
+      bChgSig15: BOOL;
+      bChgSig16: BOOL;
+      bChgSig17: BOOL;
+          
+      bChgMode : BOOL;
+      bAllowedMainMode : BOOL;
+   END_VAR 
+   
+   bChgSig1        := IS_CHANGED(Signals.HMI.HMIIn.bDrive_Off);
+   bChgSig2        := IS_CHANGED(Signals.HMI.HMIIn.bDrive_OnConst);
+   bChgSig3       := IS_CHANGED(Signals.HMI.HMIIn.bDrive_OnCtrl);
+
+   bChgSig5        := IS_CHANGED(Signals.HMI.HMIIn.bZY1V);
+   bChgSig6        := IS_CHANGED(Signals.HMI.HMIIn.bZY1R);
+   bChgSig7        := IS_CHANGED(Signals.HMI.HMIIn.bZY2V);
+   bChgSig8        := IS_CHANGED(Signals.HMI.HMIIn.bZY2R);
+   bChgSig9        := IS_CHANGED(Signals.HMI.HMIIn.bZY3V);
+   bChgSig10       := IS_CHANGED(Signals.HMI.HMIIn.bZY3R);
+   
+   bChgSig11       := IS_CHANGED(Signals.HMI.HMIIn.bDrive_Off);
+   bChgSig12       := IS_CHANGED(Signals.HMI.HMIIn.bDrive_OnConst);
+   bChgSig13       := IS_CHANGED(Signals.HMI.HMIIn.bDrive_OnCtrl);
+   
+   bChgSig14        := IS_CHANGED(Signals.HMI.HMIIn.bPressureOff);
+   bChgSig15        := IS_CHANGED(Signals.HMI.HMIIn.bPressure1);
+   bChgSig16        := IS_CHANGED(Signals.HMI.HMIIn.bPressure2);
+   
+   bChgSig17        := IS_CHANGED(Signals.HMI.HMIIn.bResetCounter);
+   
+   bChgMode        := IS_CHANGED(myRobot.mainModeMgr.mode);
+
+   WHILE TRUE DO
+      bAllowedMainMode := (myRobot.mainModeMgr.mode = ciT1) OR (myRobot.mainModeMgr.mode = ciT2);
+      
+      Signals.HMI.HMIOut.bButtonEnabled := bAllowedMainMode;
+       
+      IF Signals.HMI.HMIIn.bZY1V AND bAllowedMainMode THEN
+         SetSFACmd(ZYlForward);
+         Signals.HMI.HMIIn.bZY1V := FALSE;
+      END_IF;
+       
+      IF Signals.HMI.HMIIn.bZY1R AND bAllowedMainMode THEN
+         SetSFACmd(ZYlBackward);
+         Signals.HMI.HMIIn.bZY1R := FALSE;
+      END_IF;
+ 
+      IF Signals.HMI.HMIIn.bZY2V AND bAllowedMainMode THEN
+         SetSFACmd(ZY2Forward);
+         Signals.HMI.HMIIn.bZY2V := FALSE;
+      END_IF;
+       
+      IF Signals.HMI.HMIIn.bZY2R AND bAllowedMainMode THEN
+         SetSFACmd(ZY2Backward);
+         Signals.HMI.HMIIn.bZY2R := FALSE;
+      END_IF;
+ 
+      IF Signals.HMI.HMIIn.bZY3V AND bAllowedMainMode THEN
+         SetSFACmd(ZY3Forward);
+         Signals.HMI.HMIIn.bZY3V := FALSE;
+      END_IF;
+       
+      IF Signals.HMI.HMIIn.bZY3R AND bAllowedMainMode THEN
+         SetSFACmd(ZY3Backward);
+         Signals.HMI.HMIIn.bZY3R := FALSE;
+      END_IF;
+ 
+      // Drive
+      IF Signals.HMI.HMIIn.bDrive_Off AND bAllowedMainMode THEN
+         SetSFACmd(DriveOff);
+         Signals.HMI.HMIIn.bDrive_Off := FALSE;
+      END_IF;
+
+      IF Signals.HMI.HMIIn.bDrive_OnConst AND bAllowedMainMode THEN
+         SetSFACmd(DriveOnConst);
+         Signals.HMI.HMIIn.bDrive_OnConst := FALSE;
+      END_IF;
+      
+      IF Signals.HMI.HMIIn.bDrive_OnCtrl AND bAllowedMainMode THEN
+         SetSFACmd(DriveOnCtrl);
+         Signals.HMI.HMIIn.bDrive_OnCtrl := FALSE;
+      END_IF;
+
+   	// Pressure
+      IF Signals.HMI.HMIIn.bPressureOff AND bAllowedMainMode THEN
+         SetSFACmd(PressureOff);
+         Signals.HMI.HMIIn.bPressureOff := FALSE;
+      END_IF;
+     
+      IF Signals.HMI.HMIIn.bPressure1 AND bAllowedMainMode THEN
+         SetSFACmd(Pressure1);
+         Signals.HMI.HMIIn.bPressure1 := FALSE;
+      END_IF;
+       
+      IF Signals.HMI.HMIIn.bPressure2 AND bAllowedMainMode THEN
+         SetSFACmd(Pressure2);
+         Signals.HMI.HMIIn.bPressure2 := FALSE;
+      END_IF;
+      
+      IF Signals.HMI.HMIIn.bResetCounter AND bAllowedMainMode THEN
+         ResetCounter();
+         Signals.HMI.HMIIn.bResetCounter := FALSE;
+      END_IF;
+        
+      WAIT bChgMode OR bChgSig1 OR bChgSig2 OR bChgSig3 OR bChgSig5 OR bChgSig6 OR bChgSig7 OR bChgSig8 OR bChgSig9 OR bChgSig10 OR bChgSig11 OR bChgSig12 OR bChgSig13 OR bChgSig14 OR bChgSig15 OR bChgSig16 OR bChgSig17;
+      
+      bChgSig1 := FALSE;
+      bChgSig2 := FALSE;
+      bChgSig3 := FALSE;
+    //  bChgSig4 := FALSE;
+      bChgSig5 := FALSE;
+      bChgSig6 := FALSE;
+      bChgSig7 := FALSE;
+      bChgSig8 := FALSE;
+      bChgSig9 := FALSE;
+      bChgSig10 := FALSE;
+      bChgSig11  := FALSE;
+      bChgSig12  := FALSE;
+      bChgSig13  := FALSE;
+      bChgSig14  := FALSE;
+      bChgSig15  := FALSE;
+      bChgSig16  := FALSE;
+      bChgSig17  := FALSE;
+      
+      bChgMode := FALSE;
+   END_WHILE;
+   
+END_ROUTINE  // End of ObserveHMIInterfaceIn
+
+
+//******************************************************************************
+//* Procedure   : SetSFACmd
+//* Description : 
+//* Parameter   : Cmd                          
+//* Return      : none
+//******************************************************************************
+ROUTINE SetSFACmd(Cmd : SfaCmd) : BOOL PRIVATE
+   VAR
+      bReturn : BOOL;
+   END_VAR    
+   
+   bReturn := TRUE;
+   
+   CASE Cmd OF
+      // PressureOff
+      PressureOff :
+         Signals.Out.bPressure1ZComp.svBool := FALSE;
+         Signals.Out.bPressure2ZComp.svBool := FALSE;
+      
+      // Pressure1
+      Pressure1 :
+         Signals.Out.bPressure1ZComp.svBool := TRUE;
+         Signals.Out.bPressure2ZComp.svBool := FALSE;
+      
+      // Pressure2
+      Pressure2 :
+         Signals.Out.bPressure1ZComp.svBool := FALSE;
+         Signals.Out.bPressure2ZComp.svBool := TRUE;
+      
+      // Pressure roll forward
+      ZYlForward :
+         Signals.Out.bZY1.svBool := TRUE;
+         Signals.Sim.bZY1EV      := TRUE;
+         Signals.Sim.bZY1ER      := FALSE;
+         
+      // Pressure roll backward
+      ZYlBackward :
+         Signals.Out.bZY1.svBool := FALSE;
+         Signals.Sim.bZY1EV      := FALSE;
+         Signals.Sim.bZY1ER      := TRUE;
+         
+      // Cutter forward
+      ZY2Forward :
+         Signals.Out.bZY2.svBool := TRUE;
+         Signals.Sim.bZY2EV      := TRUE;
+         Signals.Sim.bZY2ER      := FALSE;
+         
+      // Cutter backward
+      ZY2Backward :
+         Signals.Out.bZY2.svBool := FALSE;
+         Signals.Sim.bZY2EV      := FALSE;
+         Signals.Sim.bZY2ER      := TRUE;
+         
+      // Application roll forward
+      ZY3Forward :
+         Signals.Out.bZY3R.svBool := FALSE;
+         Signals.Out.bZY3V.svBool := TRUE;
+         Signals.Sim.bZY3EV       := TRUE;
+         Signals.Sim.bZY3ER       := FALSE; 
+    
+      // Application roll backward
+      ZY3Backward :
+         Signals.Out.bZY3V.svBool := FALSE;
+         Signals.Out.bZY3R.svBool := TRUE;
+         Signals.Sim.bZY3EV       := FALSE;
+         Signals.Sim.bZY3ER       := TRUE;      
+      
+      // DriveOff
+      DriveOff :
+         SetDriveMode(SpeedOff);
+      
+      // DriveOnConst
+      DriveOnConst :
+         SetDriveMode(SpeedConst);   
+      
+      // DriveOnCtrl
+      DriveOnCtrl :
+         SetDriveMode(SpeedCtrl); 
+       
+      // ZCheckOn   
+      ZCheckOn :
+         SetZCheck(TRUE);
+           
+      // ZCheckOff
+      ZCheckOff :
+         SetZCheck(FALSE);      
+   ELSE
+      RcuSetMessageOnce(TRcuSFA_UnknownCommand, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.SetSFACmd"); 
+         
+      bReturn :=FALSE;     
+   END_CASE; 
+   RETURN bReturn;
+   
+END_ROUTINE   
+
+
+ROUTINE ResetAll() PRIVATE
+  
+   SetSFACmd(PressureOff);
+   SetSFACmd(DriveOff);
+   SetSFACmd(ZCheckOff);
+ 
+ //  SetSFACmd(ZYlBackward);
+ //  SetSFACmd(ZY2Backward);
+ //  SetSFACmd(ZY3Backward);
+ 
+END_ROUTINE 
+ 
+
+ROUTINE inits() PRIVATE
+   
+   // All drive in AF
+   Signals.Out.bDrive_RegStop.svBool := UPDATE(myRobot.allDrivesReady);
+      
+   Signals.Out.bYHV1.svBool := UPDATE(bHV1);
+   bBLV1                    := UPDATE(Signals.In.bBLV1.svBool);
+   
+   SwoAddBoolVariable(Signals.Out.bDrive_Release.svBool,    "SFA.bDrive_Release");
+   SwoAddBoolVariable(Signals.Out.bDrive_RightTurn.svBool,  "SFA.bDrive_RightTurn");
+   SwoAddBoolVariable(Signals.Out.bDrive_ConstSpeed.svBool, "SFA.bDrive_ConstSpeed");
+   SwoAddBoolVariable(Signals.Out.bDrive_CtrlSpeed.svBool,  "SFA.bDrive_CtrlSpeed");
+   SwoAddBoolVariable(Signals.Out.bDrive_RegStop.svBool,    "SFA.bDrive_RegStop");
+   
+END_ROUTINE
+
+
+ROUTINE SetZCheck(enable : BOOL) PRIVATE
+   bZCheckEnabled := enable; 
+END_ROUTINE
+
+
+ROUTINE CheckIncrements() PRIVATE
+   VAR
+      bChg      : BOOL;
+   END_VAR 
+   
+   bChg      := IS_CHANGED(Signals.In.bTurnSignal.svBool);
+   
+   WHILE TRUE DO
+      WAIT bChg;
+      IF Signals.In.bTurnSignal.svBool THEN
+         IF iIncCounter > 100000 THEN
+            iIncCounter := 0;
+         END_IF;
+         iIncCounter := iIncCounter + 1;
+         Signals.HMI.HMIOut.iIncCounter := iIncCounter;
+      END_IF;
+      
+      bChg    := FALSE;
+  END_WHILE;  
+ 
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : ResetCounter
+//* Description : 
+//* Parameter   :                           
+//* Return      : 
+//******************************************************************************
+ROUTINE ResetCounter()  PRIVATE
+   PRINT("SFA-ResetCounter: iIncCounter = " + STR(iIncCounter));
+   iIncCounter := 0;
+   Signals.HMI.HMIOut.iIncCounter := iIncCounter;
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : PulseDrive
+//* Description : 
+//* Parameter   : iPulseLength in ms                          
+//* Return      : none
+//******************************************************************************
+ROUTINE PulseDrive() PRIVATE
+   VAR
+      bTimer             : BOOL;
+      lastDriveMode      : DRIVEMODES;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT (iPulseLength > 0);
+      
+      lastDriveMode := actDriveMode;
+      SysTimerSet(iPulseLength, bTimer);
+      SetDriveMode(SpeedConst);  
+      
+      WAIT bTimer;
+      bTimer := FALSE;
+      SetDriveMode(lastDriveMode);
+      
+      iPulseLength := 0;
+   END_WHILE;
+   
+END_ROUTINE
+  
+  
+//******************************************************************************
+//******************************************************************************
+//*
+//* methods
+//*
+//******************************************************************************
+//******************************************************************************
+
+//******************************************************************************
+//* Procedure   : MacroPulseDrive
+//* Description : 
+//* Parameter   : iPulseLength in ms                          
+//* Return      : none
+//******************************************************************************
+ROUTINE MacroPulseDrive(iPulseLengthEcoTalk : DINT) 
+   
+   IF NOT (myRobot.fieldbusIn.GhostMode.svBool AND bGhostNoColor) THEN
+      iPulseLength := iPulseLengthEcoTalk;
+   END_IF;
+   
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : MacroResetCounter
+//* Description : 
+//* Parameter   :                       
+//* Return      : 
+//******************************************************************************
+ROUTINE MacroResetCounter(syncMainRun : BOOL) 
+   IF syncMainRun THEN
+      MAINRUN();
+   ELSE
+      STOPPOINT();
+   END_IF;
+   ResetCounter();
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : MacroCheckCounter
+//* Description : 
+//* Parameter   :                       
+//* Return      : 
+//******************************************************************************
+ROUTINE MacroCheckCounter(min : DINT; max : DINT) : BOOL
+   IF ((iIncCounter >= min) AND (iIncCounter <=max)) OR myRobot.bRcuSimulatesAllDrives OR (myRobot.fieldbusIn.GhostMode.svBool AND bGhostNoColor) THEN
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(TRcuSFA_CheckCounter, 
+         myRobot.kinListInx, 
+         1, 
+         instId, 
+         "TRcuSFA.MacroCheckCounter"); 
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE MacroEndOfTape() : BOOL
+   RETURN Signals.In.bErrEOT.svBool; 
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : MacroSetSFACmd
+//* Description : 
+//* Parameter   : SFA_CMD                          
+//* Return      : none
+//******************************************************************************
+ROUTINE MacroSetSFACmd(Cmd : SFA_CMD; iLine : DINT; syncMainRun : BOOL)
+   VAR
+      ecoTalkLine : DINT;
+   END_VAR    
+   
+   ecoTalkLine := iLine;
+   IF syncMainRun THEN
+      MAINRUN();
+   ELSE
+      STOPPOINT();
+   END_IF;
+   CASE Cmd OF
+      1: SetSFACmd(PressureOff);
+      
+      2: SetSFACmd(Pressure1);
+      
+      3: SetSFACmd(Pressure2);
+      
+      4: SetSFACmd(ZYlForward);
+         
+      5: SetSFACmd(ZYlBackward);
+         
+      6: SetSFACmd(ZY2Forward);
+         
+      7: SetSFACmd(ZY2Backward);
+         
+      8: SetSFACmd(ZY3Forward);
+
+      9: SetSFACmd(ZY3Backward);
+         
+      // DriveOff
+     10: SetDriveMode(SpeedOff);
+      
+      // DriveOnConst
+     11: SetDriveMode(SpeedConst); 
+      
+      // DriveOnCtrl
+     12: SetDriveMode(SpeedCtrl); 
+       
+      // ZCheckOn   
+     13: SetZCheck(TRUE);
+      
+      // ZCheckOff
+     14: SetZCheck(FALSE);
+          
+   ELSE
+      STOPPOINT();
+      RcuSetMessageOnce(EcoTalk_ErrParamOutOfRange, myRobot.kinListInx, 1, 0, "TRcuSFA.MacroSetSFACmd",  STR(ecoTalkLine), "SFA_CMD", STR(Cmd));
+      myRobot.ErrorReaction(TRUE);    
+   END_CASE; 
+   
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : MacroWaitSFAState
+//* Description : 
+//*
+//* Parameter   : SFA_STATE
+//*                            
+//* Return      : none
+//******************************************************************************
+ROUTINE MacroWaitSFAState(state : SFA_STATE; iLine : DINT; syncMainRun : BOOL)
+   VAR
+      bTimeOut : BOOL;
+     ecoTalkLine : DINT;
+   END_VAR    
+   
+   ecoTalkLine := iLine;
+   IF syncMainRun THEN
+      MAINRUN();
+   ELSE
+      STOPPOINT();
+   END_IF;
+   bTimeOut := FALSE;
+   SysTimerSet(cTimeToMoveCylinder, bTimeOut);
+      
+   CASE state OF
+      //ZYlEV
+      1: WAIT  (Signals.In.bZY1EV.svBool AND NOT Signals.In.bZY1ER.svBool) OR bTimeOut OR
+               (bSimulateReaction AND Signals.Sim.bZY1EV AND NOT Signals.Sim.bZY1ER);                                                                          
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuSFA_ZY_InvState, myRobot.kinListInx, 1, instId,  "TRcuSFA.MacroWaitSFAState", "ZY1", "ZY1EV", "ZY1ER");
+         END_IF;
+  
+      //ZYlER
+      2: WAIT  (NOT Signals.In.bZY1EV.svBool AND Signals.In.bZY1ER.svBool) OR bTimeOut OR
+               (bSimulateReaction AND NOT Signals.Sim.bZY1EV AND Signals.Sim.bZY1ER);     
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuSFA_ZY_InvState, myRobot.kinListInx, 2, instId,  "TRcuSFA.MacroWaitSFAState", "ZY1", "ZY1ER", "ZY1EV");
+         END_IF;
+         
+      //ZY2EV
+      3: WAIT  (Signals.In.bZY2EV.svBool AND NOT Signals.In.bZY2ER.svBool) OR bTimeOut OR
+               (bSimulateReaction AND  Signals.Sim.bZY2EV AND NOT Signals.Sim.bZY2ER);
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuSFA_ZY_InvState, myRobot.kinListInx, 3, instId,  "TRcuSFA.MacroWaitSFAState", "ZY2", "ZY2EV", "ZY2ER");
+         END_IF;
+             
+      //ZY2ER
+      4: WAIT  (NOT Signals.In.bZY2EV.svBool AND Signals.In.bZY2ER.svBool) OR bTimeOut OR
+               (bSimulateReaction AND NOT Signals.Sim.bZY2EV AND Signals.Sim.bZY2ER);
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuSFA_ZY_InvState, myRobot.kinListInx, 4, instId,  "TRcuSFA.MacroWaitSFAState", "ZY2", "ZY2ER", "ZY2EV");
+         END_IF;
+      
+      //ZY3EV
+      5: WAIT  (Signals.In.bZY3EV.svBool AND NOT Signals.In.bZY3ER.svBool) OR bTimeOut OR
+               (bSimulateReaction AND Signals.Sim.bZY3EV AND NOT Signals.Sim.bZY3ER);
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuSFA_ZY_InvState, myRobot.kinListInx, 5, instId,  "TRcuSFA.MacroWaitSFAState", "ZY3", "ZY3EV", "ZY3ER");
+         END_IF;
+      
+      //ZY3ER
+      6: WAIT  (NOT Signals.In.bZY3EV.svBool AND Signals.In.bZY3ER.svBool) OR bTimeOut OR
+               (bSimulateReaction AND NOT Signals.Sim.bZY3EV AND Signals.Sim.bZY3ER);
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuSFA_ZY_InvState, myRobot.kinListInx, 6, instId,  "TRcuSFA.MacroWaitSFAState", "ZY3", "ZY3ER", "ZY3EV");
+         END_IF;
+  
+   ELSE
+      STOPPOINT();
+      RcuSetMessageOnce(EcoTalk_ErrParamOutOfRange, myRobot.kinListInx, 2, 0, "TRcuSFA.MacroWaitSFAState",  STR(ecoTalkLine), "SFA_STATE", STR(state));
+      myRobot.ErrorReaction(TRUE); 
+   END_CASE;   
+   
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : Release
+//* Description : release of the kinematic
+//* Parameter   : none                       
+//* Return      : none
+//******************************************************************************
+ROUTINE Release()
+   ResetAll();
+END_ROUTINE
+
+
+//******************************************************************************
+//* Procedure   : init
+//* Description : initialization routine
+//* Parameter   : TRcuRobot                       
+//* Return      : none
+//******************************************************************************
+ROUTINE init(locRobot : TRcuRobot)
+
+   instId := RcuGetInstanceId();    // Get the instance identification number (for errors) 
+   myRobot := MAP(locRobot);
+   
+   bSimulateReaction := gbSimulationOS OR gbFBSSActive;
+   MapSfaSignals();
+   bErrorQuit := MAPX(cSV_ErrorQuit);
+   
+   START ObserveTREndPos();
+   START ObserveZCheck();
+   START ObserveOverload();
+   START ObservePressRoll();
+   START ObserveAppRoll();
+   START ObserveWarnTapeEndPos();
+   START ObserveErrTapeEndPos();
+   START ObserveDriveNoError();
+    
+   START ObserveHMIInterfaceIn();
+   START CheckIncrements();
+   
+   START PulseDrive();
+   
+   UpdateHMIInterfaceOut();
+   inits();
+END_ROUTINE

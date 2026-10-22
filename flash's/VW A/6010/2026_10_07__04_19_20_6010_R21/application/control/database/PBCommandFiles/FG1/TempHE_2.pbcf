@@ -1,0 +1,112 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.03.00  | 12.09.2014  | KLCH   | Change: adaptions for new type T004 of ATC; move SubRoutines to CommonTempControl
+//  v2_01.04.00  | 21.11.2016  | KLCH   | Change: redesign
+
+Imports Common CommonTempControl
+
+Parameter Option1 Option14 TempHE TempHE_2
+
+Call Main_TempHE_2
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_TempHE_2
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL_PCL
+			Call TempHE_2_AddDeviceToMaterial2
+		Case EcoDose_SM_PCL
+			Call TempHE_2_AddDeviceToMaterial2
+		Case EcoDose_SM_SM
+			Call TempHE_2_AddDeviceToMaterial2
+		CaseElse
+			Message Wrong process type (Main_TempHE_2)!!
+	EndSelect
+Return
+
+SubRoutine TempHE_2_AddDeviceToMaterial2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATC2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATC2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectCase TempHE_2
+		Case 1
+			Call Common_AddDevice_ATC2
+		CaseElse
+			SelectCase TempHE
+//				Case 0
+//					FSCopy ..\SpecialOptions\TempHE_Sercos3\No\profinetslave.cfgr ..\..\..\..\..\application\control\config
+				Case 1
+					SelectCase Option14 // Variant of bus system
+						Case SercosIII
+//							FSCopy ..\SpecialOptions\TempHE_Sercos3\Yes\profinetslave.cfgr ..\..\..\..\..\application\control\config
+							Message Signals for ATC2 have to be added to profinetslave.cfgr
+						Case Profibus
+//							FSCopy ..\SpecialOptions\TempHE_Sercos3\No\profinetslave.cfgr ..\..\..\..\..\application\control\config
+						CaseElse
+							Message Wrong bus master (ATC2)!! Only Profibus and Sercos III supported
+					EndSelect
+			EndSelect
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATC2
+		
+		Call CommonTempCtrl_SetConfigMaterial2_AMatManager2
+		
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.ATC2
+		SelectCase Option14 // Variant of bus system
+			Case SercosIII	//With sercos III single is connected to PLC
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_bATC2_ActRegRatio
+	  			BusType 1 //Profibus-DP
+	  			Vendor  7 //Single
+	  			Card    1 //Input module - ???
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATC2_ActTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  7 //Single
+	  			Card    1 //Input module - ???
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATC2_SetTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  7 //Single
+	  			Card    1 //Output module - ???
+				
+				SelectCase TempHE
+//					Case 0
+//						FSCopy ..\SpecialOptions\TempHE_2_Sercos3\Yes\TempHE\No\profinetslave.cfgr ..\..\..\..\..\application\control\config
+					Case 1
+//						FSCopy ..\SpecialOptions\TempHE_2_Sercos3\Yes\TempHE\Yes\profinetslave.cfgr ..\..\..\..\..\application\control\config
+	  					Message Signals for ATC2 have to be added to profinetslave.cfgr
+	  			EndSelect
+				
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_bATC2_ActRegRatio
+	  			BusType 1 //Profibus-DP
+	  			Vendor  7 //Single
+	  			Card    1 //Input module - ???
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wATC2_ActTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  7 //Single
+	  			Card    1 //Input module - ???
+				SelectTab [HWSignals]
+				SelectHWSignal HWO_wATC2_SetTemp
+	  			BusType 1 //Profibus-DP
+	  			Vendor  7 //Single
+	  			Card    1 //Output module - ???
+	  			
+//				FSCopy ..\SpecialOptions\TempHE_Sercos3\No\profinetslave.cfgr ..\..\..\..\..\application\control\config
+	  			
+			CaseElse
+				Message Wrong bus master (ATC2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return

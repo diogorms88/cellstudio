@@ -1,0 +1,46 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 20.12.2016  | RHI    | First release
+//  v2_01.00.01  | 01.06.2017  | KTO    | BugFix: handler are named H12
+//  v2_01.00.02  | 19.06.2017  | BIT    | AddOn: EnableCoolingDeviceError=1 and DelayCoolingError=2h set for RCMP2
+
+Parameter OptionCoolingDevice Option1 KeStudio
+
+Call Main_OptionCoolingDevice
+
+SelectCase Option1
+	Case Handler
+		SelectNode RPC1.H12
+	CaseElse
+		SelectNode RPC1.R11
+EndSelect
+		
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_OptionCoolingDevice
+	SelectCase OptionCoolingDevice
+		Case 1
+			SelectNode RPC1.System
+			SelectTab [CfgParameter]
+			SelectCfg System.RCMP.CheckCoolingDevice
+			value 1
+			
+			SelectCase KeStudio
+				Case V3.20_RCMP2
+					SelectCfg System.RCMP.EnableCoolingDeviceError
+					value 1
+					SelectCfg System.RCMP.DelayCoolingError
+					value 0d2h0m0s0ms
+					
+			EndSelect
+			
+		Case 0
+			SelectNode RPC1.System
+			SelectTab [CfgParameter]
+			SelectCfg System.RCMP.CheckCoolingDevice
+			value 0
+	EndSelect
+Return
+
+

@@ -1,0 +1,557 @@
+;============================================================================
+;    Device description file according to DIN 19245 Part 3 (PROFIBUS-DP)
+;============================================================================
+;
+; FILENAME                 : WAGOB751.GSD
+;----------------------------------------------------------------------------
+; DEVICENAME               : Fieldbuscoupler PROFIBUS-DP/FMS 12MBaud
+;----------------------------------------------------------------------------
+; DEVICE FAMILY            : WAGO->I/O->SYSTEM 750
+;----------------------------------------------------------------------------
+; PROTOCOL                 : PROFIBUS-DP/FMS (Slave)
+;----------------------------------------------------------------------------
+; VENDOR                   : WAGO Kontakttechnik GmbH
+;                            Hansastrasse 27
+;                            D-32423 Minden/Westf.
+;                            Germany
+;                            Phone: +49 (0) 571 / 887-0
+;                            Fax  : +49 (0) 571 / 887-169
+;----------------------------------------------------------------------------
+; ORDER-NO                 : 750-303 (/...-...)
+;----------------------------------------------------------------------------
+; CONTACT                  : support@wago.com
+;                            Phone: +49 (0) 571 / 887-555
+;                            Fax  : +49 (0) 571 / 887-8555
+;----------------------------------------------------------------------------
+; FILE VERSION             : 4.31
+;----------------------------------------------------------------------------
+; DATE                     : 2007-03-01
+;----------------------------------------------------------------------------
+; MODIFICATIONS :
+; DATE         AUTHOR   VERSION   DESCRIPTION:
+; 2000-11-15   Bra      4.00      New Release
+; 2002-03-01   Bra      4.10      Clearness of module description improved
+;                                 and new modules supplemented
+; 2004-01-31   Bra      4.20      Modules for ASI- and DALI/DSI-Master
+;                                 inserted
+; 2004-10-15   Bra      4.30      Further modules inserted
+; 2007-03-01   Bra      4.31      Update of module catalog
+;
+;
+;============================================================================
+#Profibus_DP
+PrmText = 1
+Text(0) = "is not used"
+Text(1) = "is used"
+EndPrmText
+PrmText = 3
+Text(0) = "POWER ON RESET"
+Text(1) = "AUTORESET"
+EndPrmText
+PrmText = 4
+Text(0) = "disabled"
+Text(1) = "enabled"
+EndPrmText
+PrmText = 7
+Text(0) = "is mapped into PI"
+Text(1) = "is not mapped into PI"
+EndPrmText
+PrmText = 9
+Text(0) = "process data only"
+Text(1) = "complete evaluation"
+EndPrmText
+PrmText = 10
+Text(0) = "INTEL (LSB-MSB)"
+Text(1) = "MOTOROLA (MSB-LSB)"
+EndPrmText
+PrmText = 11
+Text(0) = "cycle synchronous"
+Text(1) = "free running"
+EndPrmText
+PrmText = 12
+Text(0) = "Terminalbus stops transmission"
+Text(1) = "Output image is cleared"
+Text(2) = "Output image is stored"
+EndPrmText
+PrmText = 13
+Text(0) = "PROFIBUS communication stops"
+Text(1) = "Input image is cleared"
+Text(2) = "Input image is stored"
+EndPrmText
+PrmText = 14
+Text(2) = "16 Byte"
+Text(3) = "24 Byte"
+Text(4) = "32 Byte"
+Text(5) = "40 Byte"
+Text(6) = "48 Byte"
+Text(7) = "56 Byte"
+Text(8) = "64 Byte"
+EndPrmText
+PrmText = 16
+Text(0) = "according to PI-Update"
+Text(1) = "only on SYNC and/or FREEZE"
+EndPrmText
+ExtUserPrmData = 1 "Register-Interface"
+Bit(0) 0 0-1; Default = 0, Min = 0, Max = 1
+Prm_Text_Ref = 1
+EndExtUserPrmData
+ExtUserPrmData = 3 "Restart on K-Bus Failure"
+Bit(0) 0 0-1; Default = 0, Min = 0, Max = 1
+Prm_Text_Ref = 3
+EndExtUserPrmData
+ExtUserPrmData = 4 "Terminalbus diagnostics"
+Bit(1) 0 0-1; Default = 0, Min = 0, Max = 1
+Prm_Text_Ref = 4
+EndExtUserPrmData
+ExtUserPrmData = 5 "Evaluation of Clear_Data"
+Bit(2) 0 0-1; Default = 0, Min = 0, Max = 1
+Prm_Text_Ref = 4
+EndExtUserPrmData
+ExtUserPrmData = 7 "Diagnostics of binary modules"
+Bit(4) 0 0-1; Default = 0, Min = 0, Max = 1
+Prm_Text_Ref = 7
+EndExtUserPrmData
+ExtUserPrmData = 9 "Evaluation of complex modules"
+Bit(2) 0 0-1; Default = 0, Min = 0, Max = 1
+Prm_Text_Ref = 9; Verweis auf Text-Definition 9
+EndExtUserPrmData
+ExtUserPrmData = 10 "Data format"
+Bit(3) 1 0-1; Default = 1, Min = 0, Max = 1
+Prm_Text_Ref = 10
+EndExtUserPrmData
+ExtUserPrmData = 11 "Process image update"
+Bit(6) 1 0-1; Default = 1, Min = 0, Max = 1
+Prm_Text_Ref = 11
+EndExtUserPrmData
+ExtUserPrmData = 12 "Response to PROFIBUS failure"
+BitArea (0-1) 0 0-2; Default = 0, Min = 0, Max = 2
+Prm_Text_Ref = 12
+EndExtUserPrmData
+ExtUserPrmData = 13 "Response to K-Bus Failure"
+BitArea (2-3) 0 0-2; Default = 0, Min = 0, Max = 2
+Prm_Text_Ref = 13
+EndExtUserPrmData
+ExtUserPrmData = 14 "Maximum length of diagnostics"
+BitArea (3-6) 2 2-8; Default = 2, Min = 2, Max = 8
+Prm_Text_Ref = 14
+EndExtUserPrmData
+ExtUserPrmData = 16 "Extended PI-Update"
+Bit(3) 0 0-1; Default = 1, Min = 0, Max = 1
+Prm_Text_Ref = 16
+EndExtUserPrmData
+GSD_Revision               = 2
+Vendor_Name                = "WAGO Kontakttechnik GmbH"
+Model_Name                 = "WAGO 750-303 (FW: 07 ... ) STD"
+Revision                   = "4.xx"
+Ident_Number               = 0xB751
+Protocol_Ident             = 0
+Station_Type               = 0
+FMS_supp                   = 1
+Hardware_Release           = "HW 08"
+Software_Release           = "SW 09"
+9.6_supp                   = 1
+19.2_supp                  = 1
+93.75_supp                 = 1
+187.5_supp                 = 1
+500_supp                   = 1
+1.5M_supp                  = 1
+3M_supp                    = 1
+6M_supp                    = 1
+12M_supp                   = 1
+MaxTsdr_9.6                = 60
+MaxTsdr_19.2               = 60
+MaxTsdr_93.75              = 60
+MaxTsdr_187.5              = 60
+MaxTsdr_500                = 100
+MaxTsdr_1.5M               = 150
+MaxTsdr_3M                 = 250
+MaxTsdr_6M                 = 350
+MaxTsdr_12M                = 550
+Redundancy                 = 0
+Repeater_Ctrl_Sig          = 0
+24V_Pins                   = 0
+Implementation_Type        = "SPC4X-ASIC"
+Bitmap_Device              = "buskopbn"
+Bitmap_Diag                = "buskopbs"
+Freeze_Mode_supp           = 1
+Sync_Mode_supp             = 1
+Auto_Baud_supp             = 1
+Set_Slave_Add_supp         = 0
+Min_Slave_Intervall        = 5
+Modular_Station            = 1
+Max_Module                 = 244
+Max_Input_Len              = 244
+Max_Output_Len             = 244
+Max_Data_Len               = 488
+Modul_Offset               = 0
+User_Prm_Data_Len          = 15
+User_Prm_Data              = 0x00,0x00,0x00,0x00,0x00,\
+                             0x00,0x00,0x00,0x00,0x6B,\
+                             0x00,0x10,0x00,0x0A,0x00
+Max_User_Prm_Data_Len      = 128
+Fail_Safe                  = 0
+Slave_Family               = 3@WAGO-IO-SYSTEM 750
+Max_Diag_Data_Len          = 64
+Ext_User_Prm_Data_Const(0) = 0x00,0x00,0x00,0x00,0x00,\
+                             0x00,0x00,0x00,0x00,0x6B,\
+                             0x00,0x10,0x00,0x0A,0x00
+Ext_User_Prm_Data_Ref(5)   = 1
+Ext_User_Prm_Data_Ref(7)   = 3
+Ext_User_Prm_Data_Ref(7)   = 4
+Ext_User_Prm_Data_Ref(7)   = 5
+Ext_User_Prm_Data_Ref(7)   = 7
+Ext_User_Prm_Data_Ref(7)   = 16
+Ext_User_Prm_Data_Ref(9)   = 9
+Ext_User_Prm_Data_Ref(9)   = 10
+Ext_User_Prm_Data_Ref(9)   = 11
+Ext_User_Prm_Data_Ref(10)  = 12
+Ext_User_Prm_Data_Ref(10)  = 13
+Ext_User_Prm_Data_Ref(11)  = 14
+Module = "75x-404 (/...-...)            " 0xB4
+1
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-452 (/...-...)            " 0x51
+2
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-453 (/...-...)            " 0x53
+3
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-454 (/...-...)            " 0x51
+4
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-455 (/...-...)            " 0x53
+5
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-456 (/...-...)            " 0x51
+6
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-457 (/...-...)            " 0x53
+7
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-459 (/...-...)            " 0x53
+8
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-460 (/...-...)            " 0x53
+9
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-461 (/...-...)            " 0x51
+10
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-462 (/...-...)            " 0x51
+11
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-465 (/...-...)            " 0x51
+13
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-466 (/...-...)            " 0x51
+14
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-467 (/...-...)            " 0x51
+15
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-468 (/...-...)            " 0x53
+16
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-469 (/...-...)            " 0x51
+17
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-470 (/...-...)            " 0x51
+84
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-472 (/...-...)            " 0x51
+18
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-473 (/...-...)            " 0x51
+85
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-474 (/...-...)            " 0x51
+19
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-475 (/...-...)            " 0x51
+20
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-476 (/...-...)            " 0x51
+21
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-477 (/...-...)            " 0x51
+22
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-478 (/...-...)            " 0x51
+23
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-479 (/...-...)            " 0x51
+24
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-480 (/...-...)            " 0x51
+25
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-481 (/...-...)            " 0x51
+26
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-483 (/...-...)            " 0x51
+27
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-484 (/...-...)            " 0x51
+28
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-485 (/...-...)            " 0x51
+29
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-486 (/...-...)            " 0x51
+30
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-487 (/...-...)            " 0x51
+31
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-488 (/...-...)            " 0x53
+32
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-491 (/...-...)            " 0x51
+33
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-492 (/...-...)            " 0x51
+34
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-511 (/...-...)            " 0xF2
+35
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-550 (/...-...)            " 0x61
+36
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-551 (/...-...)            " 0x61
+37
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-552 (/...-...)            " 0x61
+38
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-553 (/...-...)            " 0x63
+39
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-554 (/...-...)            " 0x61
+40
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-555 (/...-...)            " 0x63
+41
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-556 (/...-...)            " 0x61
+42
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-557 (/...-...)            " 0x63
+43
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-559 (/...-...)            " 0x63
+44
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-580 (/...-...)            " 0x61
+46
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-584 (/...-...)            " 0x61
+47
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-585 (/...-...)            " 0x61
+48
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-630 (/...-...)            " 0xD1
+49
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-631 (/...-...)            " 0xB5
+50
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-634 (/...-...)            " 0xB5
+51
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-635 (/...-...)            " 0xB3
+52
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-637 (/...-...)            " 0xB5
+53
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-638 (/...-...)            " 0xF2
+54
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-639 (/...-...)            " 0xB2
+55
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-640 (/...-...)            " 0xF2
+86
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-641 (/...-...)            " 0xB5
+56
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-642 (/...-...)            " 0xB3
+57
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-643 (/...-...)            " 0xB7
+58
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-645 (/...-...)            " 0xBB
+87
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-650 (/...-...)  4 Byte I/O" 0xB3
+59
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-650 (/...-...)  6 Byte I/O" 0xB5
+60
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-651 (/...-...)  4 Byte I/O" 0xB3
+61
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-651 (/...-...)  6 Byte I/O" 0xB5
+62
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-653 (/...-...)  4 Byte I/O" 0xB3
+63
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-653 (/...-...)  6 Byte I/O" 0xB5
+64
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-654 (/...-...)            " 0xF1
+65
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-655 (/...-...)  12Byte I/O" 0xBB
+66
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-655 (/...-...)  20Byte I/O" 0xC0 , 0x93 , 0x93
+67
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-655 (/...-...)  24Byte I/O" 0xC0 , 0x97 , 0x97
+68
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-655 (/...-...)  32Byte I/O" 0xC0 , 0x9F , 0x9F
+69
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-655 (/...-...)  40Byte I/O" 0xC0 , 0xA7 , 0xA7
+70
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-655 (/...-...)  48Byte I/O" 0xC0 , 0xAF , 0xAF
+71
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-670 (/...-...)  12Byte I/O" 0xBB
+88
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-671 (/...-...)  12Byte I/O" 0xBB
+89
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-4aa (/...-...) 2x AI      " 0x51
+72
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-4aa (/...-...) 4x AI      " 0x53
+73
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-5aa (/...-...) 2x AO      " 0x61
+74
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-5aa (/...-...) 4x AO      " 0x63
+75
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-4dd/5dd/6dd 8x DI         " 0x10
+76
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-4dd/5dd/6dd 16x DI        " 0x11
+77
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-4dd/5dd/6dd 24x DI        " 0x12
+78
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-4dd/5dd/6dd 32x DI        " 0x13
+79
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-5dd 8x DO                 " 0x20
+80
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-5dd 16x DO                " 0x21
+81
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-5dd 24x DO                " 0x22
+82
+Ext_Module_Prm_Data_Len = 0
+EndModule
+Module = "75x-5dd 32x DO                " 0x23
+83
+Ext_Module_Prm_Data_Len = 0
+EndModule

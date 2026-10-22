@@ -1,0 +1,925 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2006 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         18.02.2007                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       TRcuDriveBrakeCheck.tts                                     *
+*    Description: ATEX-BrakeCheck                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 
+*
+iExecState | ExecState
+-----------|-------------------------
+     1     | eNoError
+     2     | eErrorSetTorque
+     3     | eDriveNotAF
+     4     | eErrorStart
+     5     | eErrorStop
+     6     | eTimeOut
+     7     | eNoResult
+     8     | eErrorPhase1
+     9     | eErrorPhase2
+    10     | eCheckSuccess
+    11     | eDriveIsExProof
+*)
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  bSuccessful       : BOOL;                     
+  bFault            : BOOL;
+  bDecTimer         : BOOL;
+  iParam_P545       : DINT;
+  iParam_P547       : DINT;
+  iParam_P548       : DINT;
+  bBrakeIsClose     : BOOL;
+  iExecState        : DINT;
+  iSymbol           : DINT;
+  MyDrive           : MAPTO TRcuDrive;
+  bCheckRunning     : BOOL;
+END_VAR
+
+//-----------------------------------------------------------------------------
+//  brakecheck sequence
+//-----------------------------------------------------------------------------
+ROUTINE CheckSequence() 
+ VAR
+  ident          : DINT;
+  bOK            : BOOL;
+  data           : DINT;
+  ret            : TKSC_Status;
+ END_VAR
+  
+  //init states
+  bSuccessful    := FALSE;
+  bFault         := FALSE;
+  bDecTimer      := FALSE;
+  bTimeOut       := FALSE;
+  iExecState     := 1;
+  iSymbol        := 1;
+  ExecState      := eNoError;
+  bCheckRunning  := TRUE;
+  
+  IF IsDriveExProof() THEN
+     iExecState    := 11;
+     iSymbol       := 3;
+     bCheckRunning := FALSE;
+     ExecState     := eDriveIsExProof;
+     RETURN;
+  END_IF;
+  
+  //Set torque to 500%
+   IF NOT MyDrive.SetGrindInTorque(TRUE) THEN
+      iExecState    := 2;
+      iSymbol       := 3; 
+      bCheckRunning := FALSE;
+      ExecState     := eErrorSetTorque;
+      RETURN;
+   END_IF;
+   
+   // start observation of driveflag
+   START ObserveDriveStateAF();   
+   
+   // start timer to observe period
+   SysTimerSet(cMaxTimeExecution, bTimeOut);
+   
+   // start check
+   IF NOT WriteStartCommand() THEN
+      bCheckRunning := FALSE;
+      RETURN;
+   END_IF;
+   
+   // wait test is finished or timeout
+   IF NOT WaitTestFinished() THEN
+      bCheckRunning := FALSE;
+      RETURN;
+   END_IF;
+   
+   // command stop (with execstate)
+   IF NOT WriteStopCommand(TRUE) THEN
+      bCheckRunning := FALSE;
+      RETURN;
+   END_IF;
+   
+   // stop timer
+   SysTimerClear(bTimeOut);
+   
+   //read result
+   IF NOT GetTestResult() THEN
+      bCheckRunning := FALSE;
+      RETURN;
+   END_IF;
+   
+   //Test finished now
+   bCheckRunning := FALSE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// handle the results of brake check
+//-----------------------------------------------------------------------------
+ROUTINE HandleResult()
+ 
+   WAIT ((ExecState <> eNoError) AND (NOT bCheckRunning)) OR MyDrive.myRobot.bRcuAnyErrorPending;
+   
+   KillBrakeCheck();
+   
+   // restore original limit values
+   IF NOT IsDriveExProof() AND MyDrive.hasMotorBrake THEN
+      MyDrive.SetGrindInTorque(FALSE);
+   END_IF;
+   
+   IF MyDrive.myRobot.bRcuAnyErrorPending AND NOT (ExecState = eCheckSuccess) THEN
+      // no additional messages to display
+      bFault      := TRUE;
+      bDecTimer   := FALSE;
+      bSuccessful := FALSE;
+      RETURN;
+   END_IF;
+   
+   CASE ExecState OF
+   
+    eDriveIsExProof:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_Warn, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName, "MKE");
+       bFault      := FALSE;
+       bDecTimer   := FALSE;
+       bSuccessful := TRUE;
+       
+    eErrorSetTorque:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWritTorq, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName);
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+    eDriveNotAF:
+       IF NOT MyDrive.myRobot.brakeCheck.autoCheckActive THEN
+          RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrDrivNoAF, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName);
+       END_IF;
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+    eErrorStart:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWriteCom, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", "P-0-0541 Start", MyDrive.axesName);
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+    eErrorStop:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWriteCom, MyDrive.myRobot.kinListInx, 2, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", "P-0-0541 Stop", MyDrive.axesName);
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+    eTimeOut:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrTimeOut, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName);
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+    eNoResult:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrReadRes, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName, "P-0-0539");
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+    eErrorPhase1:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrPhaseX, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", "1", MyDrive.axesName);
+       bFault      := TRUE;
+       bDecTimer   := TRUE;
+       bSuccessful := FALSE;
+       
+    eErrorPhase2:   
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrPhaseX, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", "2", MyDrive.axesName);
+       bFault      := TRUE;
+       bDecTimer   := TRUE;
+       bSuccessful := FALSE;
+       
+    eCheckSuccess:
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_InfTestSuc, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName);
+       bFault      := FALSE;
+       bDecTimer   := FALSE;
+       bSuccessful := TRUE;
+       
+    eNoError:
+       bFault      := TRUE;
+       bDecTimer   := FALSE;
+       bSuccessful := FALSE;
+       
+   END_CASE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  get values of needed parameters for brake check
+//-----------------------------------------------------------------------------
+ROUTINE GetParamInfo()
+ VAR
+   ident       : DINT;
+ END_VAR;
+    
+   ident := 545 + P_ParamMask;           // P-0-0545
+   RcReadSercosParameter(MyDrive.sercHdl, ident, iParam_P545, 1);
+   iParam_P545 := iParam_P545 / 10;
+   IF (MyDrive.deviceType = eRcuEcoDrive) THEN
+      ident := 548 + P_ParamMask;           // P-0-0548
+      RcReadSercosParameter(MyDrive.sercHdl, ident, iParam_P548, 1);
+   ELSIF (MyDrive.deviceType = eRcuIndraDrive) OR (MyDrive.deviceType = eRcuIndraDriveCS) THEN
+      ident := 547 + P_ParamMask;           // P-0-0547
+      RcReadSercosParameter(MyDrive.sercHdl, ident, iParam_P547, 1);
+      iParam_P547 := iParam_P547 / 10;      
+   END_IF;      
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  close the brake by teach view to grind in
+//-----------------------------------------------------------------------------
+ROUTINE OpenCloseBrake(iNr : SINT)
+  VAR
+   ident          : DINT;
+   ret            : BOOL;
+   bOpenBrake     : BOOL;
+   iDriveNr       : SINT;
+   rVeloMin       : REAL;
+   rVeloMax       : REAL;
+   bTimeOut       : BOOL; 
+   i              : INT;
+   lowSpeed       : REAL;
+   str            : STRING;
+   targetSpeed    : REAL;
+   nrLoops        : INT;
+   delayTimeOpen  : DINT;
+   delayTimeClose : DINT;
+   delayTimeStart : DINT;
+  END_VAR
+  
+  iDriveNr      := iNr;
+  bBrakeIsClose := FALSE;
+  IF NOT MyDrive.myRobot.bUseATEXbrakeCheck THEN
+     RETURN;
+  END_IF;
+  
+  IF IsDriveExProof() THEN
+     RcuSetMessageOnce(TRcuDriveBrakeCheck_Warn, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.HandleResult", MyDrive.axesName, "MKE");
+     RETURN;
+  END_IF;
+  
+  IF MyDrive.myRobot.mainModeMgr.mode = ciT1 THEN
+     RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrGrindT1, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.OpenCloseBrake");
+     RETURN;
+  END_IF;
+  
+  IF NOT MyDrive.hasMotorBrake THEN
+     MyDrive.myRobot.DebugPrint(eTraceRcuDrive, "no brake");   
+     RETURN;
+  END_IF;
+  
+  IF MyDrive.simulated OR MyDrive.ioSimulated THEN
+     MyDrive.myRobot.loggerDrive.UpdateInfo(MyDrive.iIecDevIndex, eGrindinDone);
+     MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Start of grinding-in, but drive is simulated");
+     ret := TRUE;
+     RETURN;
+  ELSE   
+     MyDrive.SetGrindInTorque(TRUE);
+     MyDrive.myRobot.brakeCheck.startGrindInMove := TRUE;
+     IF MyDrive.bEtherCAT THEN
+        ContinueProg(MyDrive.myRobot.selectingFlow.flowId);
+     END_IF;
+     
+     IF MyDrive.bEtherCAT THEN
+        // calc target axis velo for 100 rpm on motor side
+        IF (MyDrive.type = eMcuJointRot) THEN
+           targetSpeed := (100.0*360.0/60.0) / MyDrive.gearRatio;
+        ELSE
+           targetSpeed := (100.0/60.0) / MyDrive.gearRatio;
+        END_IF;
+        rVeloMin := targetSpeed * 0.95;
+        rVeloMax := targetSpeed * 1.05;
+        // set axis velo in percent
+        targetSpeed := (targetSpeed / MyDrive.myRobot.kinematic.mJoints[iDriveNr].mDynLimits.mVelo) * 100.0;
+        MyDrive.myRobot.progPath.Vel(targetSpeed);
+     ELSE
+        rVeloMin := MyDrive.myRobot.kinematic.mJoints[iDriveNr].mDynLimits.mVelo * 0.02; // 2% of Vmax
+        rVeloMax := MyDrive.myRobot.kinematic.mJoints[iDriveNr].mDynLimits.mVelo * 0.06; // 6% of Vmax
+     END_IF;
+     
+     SysTimerSet(500, bTimeOut);
+     bTimeOut := FALSE;
+     WAIT ((MyDrive.myRobot.actJoints.mVelo[iDriveNr] >= rVeloMin) AND
+           (MyDrive.myRobot.actJoints.mVelo[iDriveNr] <= rVeloMax)) OR
+          ((MyDrive.myRobot.actJoints.mVelo[iDriveNr] <= -1.0*rVeloMin) AND
+           (MyDrive.myRobot.actJoints.mVelo[iDriveNr] >= -1.0*rVeloMax)) OR
+          bTimeOut;
+          
+     IF bTimeOut THEN
+        IF rAbs(MyDrive.myRobot.actJoints.mVelo[iNr]) > rVeloMax THEN
+           MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Start of grinding-in, but ERROR velocity too high=" + STR(MyDrive.myRobot.actJoints.mVelo[iNr]));
+           RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrVTooBig, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.OpenCloseBrake", MyDrive.axesName);
+        ELSE
+           MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Start of grinding-in, but ERROR velocity not reached=" + STR(MyDrive.myRobot.actJoints.mVelo[iNr]));
+           RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrVTooLow, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.OpenCloseBrake", MyDrive.axesName);
+        END_IF;
+        MyDrive.SetGrindInTorque(FALSE);
+        RETURN;
+     END_IF;
+     
+     IF MyDrive.bEtherCAT THEN
+        delayTimeStart := MyDrive.myRobot.timeConstAxisFilter*1000;
+        Sleep(delayTimeStart);
+     END_IF; 
+     
+     ret := CloseBrakeCommand();
+  END_IF;
+  
+  IF NOT ret THEN
+     RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWriteCom, MyDrive.myRobot.kinListInx, 3, MyDrive.instId, "TRcuDriveBrakeCheck.OpenCloseBrake", "P-0-0543 Close brake", MyDrive.axesName);
+     //set common torque
+     MyDrive.SetGrindInTorque(FALSE);
+     RETURN;
+  ELSE
+     bBrakeIsClose := TRUE;
+     START ObserveJointVelocity(iDriveNr, rVeloMax);
+     START ObserveDragError(iDriveNr);
+     
+     // check if grinding-in is performed with "low" speed
+     lowSpeed := MyDrive.myRobot.kinematic.mJoints[iDriveNr].mDynLimits.mVelo*0.03;
+     
+     IF MyDrive.bEtherCAT THEN
+        nrLoops := 20;
+        delayTimeOpen := 120;
+        delayTimeClose := 80;
+     ELSE
+        nrLoops := 5;
+        delayTimeOpen := 500;
+        delayTimeClose := 500;
+     END_IF;
+     
+     MyDrive.myRobot.DebugPrint(eTraceRcuDrive, MyDrive.axesName + " : start of grinding-in");
+     MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Start of grinding-in (" + STR(nrLoops) + "x " + STR(delayTimeClose) + "/" + STR(delayTimeOpen) + " ms)");
+
+     IF (rAbs(MyDrive.myRobot.actJoints.mVelo[iDriveNr]) > lowSpeed) AND NOT MyDrive.bEtherCAT THEN
+        SysTimerSet(3000, bOpenBrake);
+     ELSE
+        SysTimerSet(6000, bOpenBrake);
+        FOR i:=1 TO nrLoops DO
+           Sleep(delayTimeClose);
+           OpenBrakeCommand();
+           Sleep(delayTimeOpen);
+           ret := CloseBrakeCommand();
+           IF NOT ret THEN
+              RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWriteCom, MyDrive.myRobot.kinListInx, 4, MyDrive.instId, "TRcuDriveBrakeCheck.OpenCloseBrake", "P-0-0543 Close brake", MyDrive.axesName);
+              //set common torque
+              MyDrive.SetGrindInTorque(FALSE);
+              RETURN;
+           END_IF;
+        END_FOR;
+        Sleep(delayTimeClose);
+        OpenBrakeCommand();
+     END_IF;
+  END_IF;
+  
+  WAIT bOpenBrake OR MyDrive.bDriveFlags[eRcuDriveComOpEnabled] OR MyDrive.myRobot.bRcuAnyErrorPending;
+  WAIT bOpenBrake OR NOT MyDrive.bDriveFlags[eRcuDriveComOpEnabled] OR MyDrive.myRobot.bRcuAnyErrorPending;
+  SysTimerClear(bOpenBrake);
+  bOpenBrake := FALSE;
+  STOP ObserveJointVelocity;
+  STOP ObserveDragError;
+  
+  IF MyDrive.simulated OR MyDrive.ioSimulated THEN
+     ret := TRUE;
+  ELSE
+     ret := OpenBrakeCommand();
+  END_IF;
+  
+  WHILE NOT ret DO
+     RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWriteCom, MyDrive.myRobot.kinListInx, 5, MyDrive.instId, "TRcuDriveBrakeCheck.OpenCloseBrake", "P-0-0543 Reset close brake", MyDrive.axesName);
+     ret := OpenBrakeCommand();
+  END_WHILE;
+  bBrakeIsClose := FALSE;
+
+  MyDrive.myRobot.loggerDrive.UpdateInfo(MyDrive.iIecDevIndex, eGrindinDone);
+  MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Grinding-in of motor brake successful finished");
+ 
+  //drive is moving and the brake needs some time to open. In this short time to torque maybe has 
+  //been lowered --> brake still close but lowered torque ---> F228
+  IF MyDrive.bDriveFlags[eRcuDriveComOpEnabled] AND NOT MyDrive.myRobot.bRcuAnyErrorPending THEN
+     Sleep(200);
+  END_IF;
+  MyDrive.SetGrindInTorque(FALSE);                //set common torque
+  IF MyDrive.bEtherCAT THEN
+     ContinueProg(MyDrive.myRobot.selectingFlow.flowId);
+  END_IF;
+  
+END_ROUTINE
+
+(*******************************************************************************
+* private members
+*)
+TYPE PRIVATE
+  TBrakeCheckExecState : (eNoError, eDriveIsExProof, eErrorSetTorque, eDriveNotAF, eErrorStart,
+                          eErrorStop, eTimeOut, eNoResult, eErrorPhase1, eErrorPhase2,
+                          eCheckSuccess);
+END_TYPE
+
+CONSTANT PRIVATE
+  cMaxTimeExecution : DINT := 20000;        //Maximum time to execute the test 20sec.
+  cStateFinsish     : DINT := 16#00000020;
+  cResultMask       : DINT := 16#00008000;
+END_CONSTANT
+
+VAR PRIVATE
+  bTimeOut          : BOOL;
+  ExecState         : TBrakeCheckExecState;
+END_VAR
+
+//-----------------------------------------------------------------------------
+//  kill brakecheck sequence
+//-----------------------------------------------------------------------------
+ROUTINE KillBrakeCheck() PRIVATE
+   
+   STOP CheckSequence;                       // stop sequence
+   STOP ObserveDriveStateAF;              // stop observation of driveflag
+   IF NOT WriteStopCommand(FALSE) THEN    // command stop (without execstate)
+      RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrWriteCom, MyDrive.myRobot.kinListInx, 6, MyDrive.instId, "TRcuDriveBrakeCheck.KillBrakeCheck", "P-0-0541 Stop", MyDrive.axesName);
+   END_IF;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  stop braketest if drive is not in AF
+//-----------------------------------------------------------------------------
+ROUTINE ObserveDriveStateAF() PRIVATE
+ VAR
+   bChgState : BOOL;
+ END_VAR                        
+  
+  bChgState := IS_CHANGED(MyDrive.bDriveFlags[eRcuDriveComOpEnabled]);
+  WHILE TRUE DO
+    IF NOT MyDrive.bDriveFlags[eRcuDriveComOpEnabled] THEN
+       iExecState := 3;
+       iSymbol    := 3;
+       ExecState := eDriveNotAF;
+       bCheckRunning := FALSE;
+    END_IF;
+    WAIT bChgState;
+    bChgState := FALSE;
+  END_WHILE;
+ 
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  write start command P-0-0541
+//-----------------------------------------------------------------------------
+ROUTINE WriteStartCommand() : BOOL PRIVATE
+ VAR
+  ident      : DINT;
+  ret        : TKSC_Status;
+  value      : INT;
+ END_VAR
+   
+   IF NOT bCheckRunning THEN
+      RETURN FALSE;
+   END_IF;
+   
+   MyDrive.myRobot.DebugPrint(eTraceRcuDrive, MyDrive.axesName + ": brake test started");
+   
+   IF MyDrive.bEtherCAT THEN
+      ident := 16#290b + MyDrive.iDriveIndex*16#800;
+      IF IsPaintArm7VWrist(MyDrive.myRobot) AND (MyDrive.driveNr = 1) THEN
+         value := 16#8011; // only negative direction of drive 2 is checked !!!
+      ELSE
+         value := 16#8019; // both directions are checked
+      END_IF;
+      IF (WriteSdoInt16(MyDrive.hdlDrvEcat, ident, 0, value, 500) <> 2) THEN
+         iExecState := 4;
+         iSymbol    := 3;
+         ExecState := eErrorStart;
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      ident := 541 + P_ParamMask;  // P-0-0541
+      ret := RcWriteSercosParameter(MyDrive.sercHdl, ident, 3, 10);
+      IF (ret <> eKSC_Ok) THEN
+         iExecState := 4;
+         iSymbol    := 3;
+         ExecState := eErrorStart;
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   
+   IF bTimeOut THEN
+      iExecState := 6;
+      iSymbol    := 3;
+      ExecState := eTimeOut;
+      RETURN FALSE;
+   END_IF;
+   
+   RETURN TRUE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  wait test is finished or timeout S-0-0135
+//-----------------------------------------------------------------------------
+ROUTINE WaitTestFinished() : BOOL PRIVATE
+ VAR
+  ident       : DINT;
+  ret         : TKSC_Status;
+  bFinish     : BOOL;
+  data        : DINT;
+  value       : INT;
+ END_VAR
+ 
+   //SercosII signal command changed in S-0-0135
+   IF (MyDrive.busType = eRcuSercos2) OR (MyDrive.busType = eRcuUndefBus) THEN
+      ident  := 135;    // 
+   //SercosIII signal command changed in S-0-1045
+   ELSIF (MyDrive.busType = eRcuSercos3) THEN
+      ident := 1045;
+   END_IF; 
+   
+   IF MyDrive.bEtherCAT THEN
+      ident := 16#290c + MyDrive.iDriveIndex*16#800;
+   END_IF;
+   
+   WHILE NOT (bTimeOut OR bFinish) DO
+      Sleep(500);
+      IF MyDrive.bEtherCAT THEN
+         IF (ReadSdoInt16(MyDrive.hdlDrvEcat, ident, 1, value, 500) = 2) THEN
+            IF ((value AND 16#1) > 0) OR ((value AND 16#2) > 0) THEN
+               bFinish := TRUE;
+            END_IF;
+         END_IF;
+      ELSE
+         ret := RcReadSercosParameter(MyDrive.sercHdl, ident, data, 1);
+         IF ret = eKSC_Ok THEN
+            IF (data AND cStateFinsish) = cStateFinsish THEN
+               bFinish := TRUE;
+            END_IF;
+         END_IF;
+      END_IF;
+   END_WHILE;
+   
+   IF bTimeOut THEN
+      iExecState := 6;
+      iSymbol    := 3;
+      ExecState := eTimeOut;
+      RETURN FALSE;
+   END_IF;
+   bFinish := FALSE;
+   RETURN TRUE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  write stop command P-0-0541
+//-----------------------------------------------------------------------------
+ROUTINE WriteStopCommand(bUseExec : BOOL) : BOOL PRIVATE
+ VAR
+  ident      : DINT;
+  ret        : TKSC_Status;
+  value      : INT;
+ END_VAR
+ 
+   ident := 541 + P_ParamMask;                                    // P-0-0541
+   IF MyDrive.bEtherCAT THEN
+      ident := 16#290b + MyDrive.iDriveIndex*16#800;
+      value := 16#0;
+   END_IF;
+   
+   IF MyDrive.bEtherCAT THEN
+      IF (WriteSdoInt16(MyDrive.hdlDrvEcat, ident, 0, value, 500) <> 2) THEN
+         IF bUseExec THEN
+            iExecState := 5;
+            iSymbol    := 3;
+            ExecState := eErrorStop;
+         END_IF;
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      ret := RcWriteSercosParameter(MyDrive.sercHdl, ident, 0, 5);        // command stop
+      IF (ret <> eKSC_Ok) THEN
+         IF bUseExec THEN
+            iExecState := 5;
+            iSymbol    := 3;
+            ExecState := eErrorStop;
+         END_IF;
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   
+   IF bUseExec THEN
+      IF bTimeOut THEN
+         iExecState := 6;
+         iSymbol    := 3;
+         ExecState := eTimeOut;
+         RETURN FALSE;
+      END_IF;
+   END_IF;  
+   RETURN TRUE;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  get result  S-0-0144
+//-----------------------------------------------------------------------------
+ROUTINE GetTestResult() : BOOL PRIVATE
+ VAR
+   ident         : DINT;
+   ret           : TKSC_Status;
+   data          : DINT;
+   data2         : DINT;
+   holdingTorque : REAL;
+   value         : INT;
+   retEcat       : BOOL;
+   torquePos     : REAL;
+   torqueNeg     : REAL;
+   str           : STRING;
+ END_VAR
+   
+   IF NOT bCheckRunning THEN
+      RETURN FALSE;
+   END_IF;
+   
+   IF MyDrive.bEtherCAT THEN
+      ident := 16#290c + MyDrive.iDriveIndex*16#800;
+      IF (ReadSdoInt16(MyDrive.hdlDrvEcat, ident, 1, value, 500) <> 2) THEN
+         iExecState := 7;
+         iSymbol    := 3;
+         ExecState := eNoResult;
+         RETURN FALSE;
+      END_IF;
+      
+      IF bTimeOut THEN
+         iExecState := 6;
+         iSymbol    := 3;
+         ExecState := eTimeOut;
+         RETURN FALSE;
+      END_IF;
+      
+      IF ((value AND 16#1) > 0) THEN
+         iExecState := 10;
+         iSymbol    := 2;
+         ExecState := eCheckSuccess;
+         retEcat := TRUE;
+      ELSIF ((value AND 16#2) > 0) THEN
+         iExecState := 9;
+         ExecState := eErrorPhase2;
+         retEcat := TRUE;
+      ELSE
+         iExecState := 7;
+         iSymbol    := 3;
+         ExecState := eNoResult;
+         retEcat := FALSE;
+      END_IF;
+      
+      // read actual holding torque
+      IF (ExecState = eErrorPhase2) THEN
+         ident := 16#290c + MyDrive.iDriveIndex*16#800;
+         ReadSdoReal(MyDrive.hdlDrvEcat, ident, 2, torquePos, 500);
+         ReadSdoReal(MyDrive.hdlDrvEcat, ident, 3, torqueNeg, 500);
+         IF (torquePos <> 0) THEN
+            str := MyDrive.resourceName + " : brake check failed for motor, pos. holding torque = " + STR(torquePos) + " Nm";
+            MyDrive.myRobot.DebugPrint(eTraceRcuDrive, str);
+            MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Brake check failed => pos. holding torque = " + STR(torquePos) + " Nm"); 
+         ELSIF (torqueNeg <> 0) THEN
+            str := MyDrive.resourceName + " : brake check failed for motor, neg. holding torque = " + STR(torqueNeg) + " Nm";
+            MyDrive.myRobot.DebugPrint(eTraceRcuDrive, str);
+            MyDrive.myRobot.loggerDrive.SetProtocol("TRcuDriveBrakeCheck", MyDrive.iIecDevIndex, "Brake check failed => neg. holding torque = " + STR(torqueNeg) + " Nm");
+         END_IF;
+      END_IF;
+      
+      // return result
+      RETURN retEcat;
+   ELSE
+      ident := 144;       // S-0-0144
+      ret := RcReadSercosParameter(MyDrive.sercHdl, ident, data, 5);
+      IF (ret <> eKSC_Ok) THEN
+         iExecState := 7;
+         iSymbol    := 3;
+         ExecState := eNoResult;
+         RETURN FALSE;
+      END_IF;
+      
+      IF bTimeOut THEN
+         iExecState := 6;
+         iSymbol    := 3;
+         ExecState := eTimeOut;
+         RETURN FALSE;
+      END_IF;
+
+      ident := 554 + P_ParamMask; // P-0-0554
+      ret := RcReadSercosParameter(MyDrive.sercHdl, ident, data2, 5);
+      IF (ret = eKSC_Ok) THEN
+         IF MyDrive.myRobot.driveTorqueUnitNm THEN
+            holdingTorque := REAL(data2)/100;
+            MyDrive.myRobot.DebugPrint(eTraceRcuDrive, MyDrive.axesName + ": holding torque (P-0-0554) = " + STR(holdingTorque) + " Nm");
+         ELSE
+            holdingTorque := REAL(data2)/10;
+            MyDrive.myRobot.DebugPrint(eTraceRcuDrive, MyDrive.axesName + ": holding torque (P-0-0554) = " + STR(holdingTorque) + " %");
+         END_IF;
+      END_IF;
+
+      data := data AND cResultMask;
+      IF data > 0 THEN
+         iExecState := 10;
+         iSymbol    := 2;
+         ExecState := eCheckSuccess;
+         RETURN TRUE;
+      ELSE
+         RETURN GetErrorResult();
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  get error result  P-0-0539
+//-----------------------------------------------------------------------------
+ROUTINE GetErrorResult() : BOOL PRIVATE
+ VAR
+  ident      : DINT;
+  ret        : TKSC_Status;
+  data       : DINT;
+  bOK        : BOOL;
+ END_VAR
+   
+  ident := 539 + P_ParamMask;           // P-0-0539
+  ret := RcReadSercosParameter(MyDrive.sercHdl, ident, data, 5);
+  IF ret = eKSC_Ok THEN
+     bOK := (data AND 16#00000004) = 16#00000004;
+     IF NOT bOK THEN
+        iExecState := 8;
+        ExecState := eErrorPhase1;
+        RETURN TRUE;
+     ELSIF MyDrive.myRobot.brakeCheck.bOnlyPhaseOne THEN
+        ExecState := eCheckSuccess;
+        RETURN TRUE;
+     ELSE   
+        bOK := (data AND 16#00000008) = 16#00000008;
+        IF NOT bOK THEN
+           iExecState := 9;
+           ExecState := eErrorPhase2;
+           RETURN TRUE;
+        END_IF;
+     END_IF;
+     iExecState := 7;
+     ExecState := eNoResult;
+     RETURN FALSE;
+  ELSE
+     iExecState := 7;
+     ExecState := eNoResult;
+     RETURN FALSE;
+  END_IF;
+  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  check if drive is ex proof, then no brakecheck is allowed
+//-----------------------------------------------------------------------------
+ROUTINE IsDriveExProof() : BOOL PRIVATE
+ 
+  IF (StrFind(MyDrive.sMotorType, "MKE") <> 0) THEN
+     RETURN TRUE;
+  END_IF;
+  RETURN FALSE;
+  
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// max. velocity          400U/min. about 10.0% of Vmax  
+// requested velocity     200U/min. about  5.0% of Vmax
+// min. velocity          100U/min. about  2.5% of Vmax
+//
+// RP7F140                            
+// A1   13.4°  5%Override  5.57°/sec 
+// A2   15.2°  5%Override  5.57°/sec  
+// A3   18.4°  5%Override  5.57°/sec  
+// A4   85.5°  5%Override  27.0°/sec  
+// A5   88.4°  5%Override  27.0°/sec  
+// A6   86.8°  5%Override  27.0°/sec  
+// A7  242.0mm 5%Override 60.0mm/sec 
+//
+// - min observation is too complex, because of acceleration/deceleration
+// - moving all axis together is pratical because of sychron PTP and coupled joints
+//
+// so this function only observes that velo is below 10% of Vmax
+//-----------------------------------------------------------------------------
+ROUTINE ObserveJointVelocity(iNr : SINT; rMaxVelo : REAL) PRIVATE
+  
+  WHILE TRUE DO
+    IF rAbs(MyDrive.myRobot.actJoints.mVelo[iNr]) > rMaxVelo THEN
+       RcuSetMessageOnce(TRcuDriveBrakeCheck_ErrPathShrt, MyDrive.myRobot.kinListInx, 1, MyDrive.instId, "TRcuDriveBrakeCheck.ObserveJointVelocity", MyDrive.axesName);
+    END_IF;
+    MyDrive.myRobot.WaitMcMicroCycles(1);
+  END_WHILE;
+  
+END_ROUTINE
+
+ROUTINE ObserveDragError(iNr : SINT) PRIVATE
+   VAR
+      limit          : REAL;
+      setValueBuffer : ARRAY [10] OF REAL;
+      i              : DINT;
+      excDeviation   : BOOL;
+   END_VAR
+   
+   IF (MyDrive.myRobot.followingErrorDelay = -1) THEN
+      RETURN;
+   ELSE
+      limit := MyDrive.myRobot.followingErrorLimits.mValues[iNr];
+   END_IF;
+   
+   WHILE TRUE DO
+      excDeviation := FALSE;
+      FOR i:=0 TO MyDrive.myRobot.followingErrorDelay - 1 DO
+         setValueBuffer[i] := MyDrive.setValuePos;
+         MyDrive.myRobot.WaitMcMicroCycles(1);
+      END_FOR;
+      WHILE NOT excDeviation DO
+         FOR i:=1 TO MyDrive.myRobot.followingErrorDelay -1 DO
+            setValueBuffer[i-1] := setValueBuffer[i];
+         END_FOR;
+         setValueBuffer[MyDrive.myRobot.followingErrorDelay-1] := MyDrive.setValuePos;
+         IF rAbs(setValueBuffer[0] - MyDrive.actValuePos) > limit THEN
+            excDeviation := TRUE;
+            MyDrive.myRobot.DebugPrint(eTraceRcuDrive, "open brake command by ObserveDragError");
+            MyDrive.myRobot.DebugPrint(eTraceRcuDrive, "Deviation Drive " + MyDrive.axesName + " : " + STR(rAbs(setValueBuffer[0] - MyDrive.actValuePos)));
+            OpenBrakeCommand();
+         END_IF;
+         MyDrive.myRobot.WaitMcMicroCycles(1);
+      END_WHILE;
+   END_WHILE;
+   
+END_ROUTINE
+
+ROUTINE OpenBrakeCommand() : BOOL PRIVATE
+
+   VAR
+      ret   : TKSC_Status;
+      ident : DINT;
+      res   : DINT;
+   END_VAR
+
+   MyDrive.myRobot.DebugPrint(eTraceRcuDrive, "open brake command");
+   IF MyDrive.bEtherCAT THEN
+     ident := 16#2906 + MyDrive.iDriveIndex*16#800;
+     res := WriteSdoInt16(MyDrive.hdlDrvEcat, ident, 0, 0, 500); // reset close-brake command
+     IF (res = 2) THEN
+        RETURN TRUE;
+     ELSE
+        RETURN FALSE;
+     END_IF;
+   ELSE
+     ident := 543 + P_ParamMask;
+     ret := RcWriteSercosParameter(MyDrive.sercHdl, ident, 0, 5); // reset close-brake command
+     IF (ret = eKSC_Ok) THEN
+        RETURN TRUE;
+     ELSE
+        RETURN FALSE;
+     END_IF;
+   END_IF;
+
+END_ROUTINE
+
+ROUTINE CloseBrakeCommand() : BOOL PRIVATE
+
+   VAR
+      ret   : TKSC_Status;
+      ident : DINT;
+      res   : DINT;
+   END_VAR
+
+   MyDrive.myRobot.DebugPrint(eTraceRcuDrive, "close brake command");
+   IF MyDrive.bEtherCAT THEN
+     ident := 16#2906 + MyDrive.iDriveIndex*16#800;
+     res := WriteSdoInt16(MyDrive.hdlDrvEcat, ident, 0, 1, 500); // set close-brake command
+     IF (res = 2) THEN
+        RETURN TRUE;
+     ELSE
+        RETURN FALSE;
+     END_IF;
+   ELSE
+     ident := 543 + P_ParamMask;
+     ret := RcWriteSercosParameter(MyDrive.sercHdl, ident, 3, 2); // set close-brake command
+     IF (ret = eKSC_Ok) THEN
+        RETURN TRUE;
+     ELSE
+        RETURN FALSE;
+     END_IF;
+   END_IF;
+
+END_ROUTINE

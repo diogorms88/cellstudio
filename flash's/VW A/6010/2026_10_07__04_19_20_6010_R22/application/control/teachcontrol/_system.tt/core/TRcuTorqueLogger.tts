@@ -1,0 +1,288 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : TRcuTorqueLogger.tts                                        *
+*   Description : Axis torque monitor                                         *
+*-----------------------------------------------------------------------------*)
+
+CONSTANT
+   // maximum number of joints
+   ciMaxJoints      : DINT := cgiRcuMaxJoints + cgiRcuMaxAuxJoints;
+   ciMaxLoggerItems : DINT := 8000;
+END_CONSTANT
+
+
+TYPE
+   STRINGARRAY : ARRAY[1..ciMaxJoints] OF STRING;
+
+   TTorqueLoggerItem : STRUCT
+      actAxisPosition : REAL;
+      actAxisTorque   : REAL;
+   END_STRUCT;
+   
+   TTorqueLoggerData : STRUCT
+      loggerItems     : ARRAY[1..ciMaxLoggerItems] OF TTorqueLoggerItem;
+      logIndex        : INT := 0;
+   END_STRUCT;
+END_TYPE
+
+
+VAR PRIVATE
+   myRobot               : MAPTO TRcuRobot;
+   actPosition           : ARRAY [1..ciMaxJoints] OF REAL;
+   actTorque             : ARRAY [1..ciMaxJoints] OF REAL;
+   startLogging          : ARRAY [1..ciMaxJoints] OF BOOL;   
+   strLoggerFiles        : STRINGARRAY;
+   measuringActive       : BOOL;
+   loggerData            : TTorqueLoggerData;
+END_VAR
+
+
+ROUTINE init(locRobot : TRcuRobot)
+   VAR
+      i      : INT;
+   END_VAR
+   
+   myRobot := MAP(locRobot);
+   
+   // start co routines
+   FOR i:=1 TO myRobot.nrOfJoints DO
+      START ObserveTorque(i);
+      START GetActValue(i);
+   END_FOR;   
+END_ROUTINE
+
+
+ROUTINE Reset()
+   VAR
+      i : INT;
+   END_VAR
+   
+   loggerData.logIndex := 0;   
+   
+   FOR i := 1 TO ciMaxJoints DO
+      startLogging[i] := FALSE;
+      strLoggerFiles[i] := "";
+   END_FOR;
+END_ROUTINE
+
+
+ROUTINE IsLoggingActive() : INT
+   VAR
+      i           : INT;
+      nAxisNumber : INT := 0;
+   END_VAR
+   
+   FOR i := 1 TO ciMaxJoints DO
+      IF startLogging[i] THEN
+         nAxisNumber := i;         
+      END_IF;
+   END_FOR;
+   
+   RETURN nAxisNumber;
+END_ROUTINE
+
+
+ROUTINE MacroStartStopLogging(start : BOOL; AxisNumber : AXISNAME)
+   VAR
+      nActLoggedAxisNumber : INT := 0;
+   END_VAR
+   
+   STOPPOINT();
+   
+   nActLoggedAxisNumber := IsLoggingActive();
+   
+   IF start THEN      
+     IF nActLoggedAxisNumber = 0 THEN
+       myRobot.DebugPrint(eTraceTorqueLogger, "TorqueMonitor Start logging for axis " + myRobot.drive[AxisNumber].axesName);
+       loggerData.logIndex := 0;
+       startLogging[AxisNumber+1] := TRUE;
+     ELSE
+        RcuSetMessageOnce(TRcuTorqueLogger_ErrIsRunning, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuTorqueLogger.MacroStartStopLogging", 
+                        myRobot.drive[nActLoggedAxisNumber-1].axesName);
+     END_IF;
+   ELSE
+      IF nActLoggedAxisNumber = 0 THEN
+        RcuSetMessageOnce(TRcuTorqueLogger_ErrNotRunning, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuTorqueLogger.MacroStartStopLogging");
+      ELSIF nActLoggedAxisNumber <> AxisNumber+1 THEN
+        RcuSetMessageOnce(TRcuTorqueLogger_ErrWrongAxisNo, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuTorqueLogger.MacroStartStopLogging", 
+                        myRobot.drive[nActLoggedAxisNumber-1].axesName,
+                        myRobot.drive[AxisNumber].axesName);
+      ELSE
+         myRobot.DebugPrint(eTraceTorqueLogger, "TorqueMonitor Stop logging for axis " + myRobot.drive[AxisNumber].axesName);
+         startLogging[AxisNumber+1] := FALSE;
+         WriteFile(AxisNumber);
+      END_IF;
+   END_IF;   
+END_ROUTINE
+
+
+ROUTINE GetActValue(VAR_IN axis : INT) PRIVATE
+   WHILE TRUE DO
+      WAIT (startLogging[axis]); 
+      WHILE (startLogging[axis]) DO
+         
+         actPosition[axis] := myRobot.actDrives.mPos[axis-1];
+         actTorque[axis] := myRobot.actDrives.mActTorque[axis-1];
+         
+         measuringActive := TRUE;
+         
+         myRobot.WaitMcMicroCycles(1);
+      END_WHILE;
+      measuringActive := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE ObserveTorque(VAR_IN axis : INT) PRIVATE
+  WHILE TRUE DO
+     WAIT startLogging[axis] AND measuringActive;
+     WHILE startLogging[axis] AND (loggerData.logIndex < ciMaxLoggerItems) DO
+        IF myRobot.bRobotMoving THEN
+           loggerData.logIndex := loggerData.logIndex + 1;
+
+           loggerData.loggerItems[loggerData.logIndex].actAxisPosition := actPosition[axis];
+           loggerData.loggerItems[loggerData.logIndex].actAxisTorque   := actTorque[axis];      
+        END_IF;
+        
+        myRobot.WaitMcMicroCycles(1);
+
+     END_WHILE;
+  END_WHILE;
+END_ROUTINE
+
+
+ROUTINE WriteFile(VAR_IN axisNumber:INT)
+   VAR
+      hdlFile      : DINT := -1;
+      sFileName    : STRING;
+      sFilePath    : STRING;
+      sRobotSubDir : STRING;
+      sApplPath    : STRING;
+      len          : DINT;
+      sTmp         : STRING;
+   END_VAR
+
+   sRobotSubDir := myRobot.subDirName;
+   CatalogReadString(giSysBaseHdl, "applPath", sApplPath, FALSE);
+   sFilePath := sApplPath + "application/control/teachcontrol/" + sRobotSubDir + "/Torqdata/";
+   
+   IF NOT IsDir(sFilePath, TRUE) THEN
+      MkDir(sFilePath);
+   END_IF;
+   sFileName := "K" + STR(myRobot.kinListInx+1) + "A" + STR(axisNumber+1) + "TO.txt";
+   sTmp := sFilePath + sFileName;
+   hdlFile := FileOpen (sTmp,  eFileModeReadWriteDelete);
+   IF hdlFile <> -1 THEN
+      DebugPrint(eTraceTorqueLogger, "Write logger data to file " + sFilePath + sFileName);
+      WriteHeaderDataToFile(hdlFile, axisNumber);
+      WriteTorqueDataToFile(hdlFile, axisNumber);
+      StreamClose(hdlFile);
+      strLoggerFiles[axisNumber+1] := sFilePath + sFileName;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE WriteHeaderDataToFile(fileHandle : DINT; axisNumber:INT) PRIVATE
+ VAR
+  sTmp : STRING;
+ END_VAR
+ 
+   IF fileHandle <> -1 THEN
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; kinematic number");
+      sTmp :=  STR(myRobot.kinListInx+1) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+     
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; kinematic name");
+      sTmp := myRobot.kinematic.mName + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; axis number");
+      sTmp := STR(axisNumber+1)+ ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; axis name");
+      sTmp := myRobot.drive[axisNumber].axesName + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; date - day.month.year");
+      sTmp := RcuDateTimeUtils.GetDateString() + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; time - hour:minute:second");
+      sTmp := RcuDateTimeUtils.GetTimeString() + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+     
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; polling rate (seconds)");
+      sTmp := STR(grCycleTime) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+     
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; max. axis torque (%)");
+      sTmp := STR(myRobot.drive[axisNumber].driveMaxTorque/1000000) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+     
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; negative softend");
+      sTmp := STR(myRobot.kinematic.mJoints[axisNumber].mMinPos) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; positive softend");
+      sTmp := STR(myRobot.kinematic.mJoints[axisNumber].mMaxPos) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; axis speed");
+      sTmp := STR(myRobot.progPath.dynamic.mTurn.mVelo * myRobot.override /100000) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; axis acceleration");
+      sTmp := STR(myRobot.progPath.dynamic.mTurn.mAcce * myRobot.override /100000) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; axis deceleration");
+      sTmp := STR(myRobot.progPath.dynamic.mTurn.mDece * myRobot.override /100000) + ",";
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+   END_IF;   
+END_ROUTINE
+
+
+ROUTINE WriteTorqueDataToFile(fileHandle : DINT; axisNumber:INT) PRIVATE
+   VAR
+      l    : DINT;
+      sTmp : STRING;
+   END_VAR
+   myRobot.DebugPrint(eTraceTorqueLogger, "WriteTorqueDataToFile Start");
+   IF fileHandle <> -1 THEN
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "; axisposition (mm or degree), torque (%)");
+      
+      FOR l := 1 TO loggerData.logIndex DO
+        sTmp := STR(loggerData.loggerItems[l].actAxisPosition) + "," + STR(loggerData.loggerItems[l].actAxisTorque) + ",";
+        RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sTmp);
+        
+        WAIT TRUE;
+      END_FOR;
+   END_IF;
+   myRobot.DebugPrint(eTraceTorqueLogger, "WriteTorqueDataToFile Ende");
+END_ROUTINE

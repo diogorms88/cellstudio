@@ -1,0 +1,230 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       TRcuTrigger.ols                                             *
+*    Description: root of all Trigger-structures                              *
+*                                                                             *
+*                                                                             *
+*----------------------------------------------------------------------------*)
+(*
+* 20.01.05 nmr: Changes to allow reaching triggerpositions
+*               Extensions for reaching trigger on circlesegments
+* 22.03.05 nmr: with McuCreatePosFromPathPos created positions must be 
+*               explicit released 
+* 10.05.06 BMA: Modification in Routine Move: move to teached trigger position
+*               instead move to triggerpoint on the segment
+*)
+
+(*
+   User-Daten zu den Jobs:
+   
+   Allgemein:
+      job.mUserData.mDataInt[0] ... type : TRcuTriggerType (Gun, Brush, Process )
+      job.mUserData.mDataInt[1] ... number of job on segment (+ 100*line-number of the corresponding segment)
+      job.mUserData.mDataInt[2] ... stackHdl of the UserProg-Callstack of the setBrush-macro in the end-user program
+
+   Brushtrigger:  
+      job.mUserData.mDataInt[3] ... gunNumber
+      job.mUserData.mDataInt[4] ... brushNumber
+
+   Guntrigger:
+      job.mUserData.mDataInt[3] ... number
+      
+   Processtrigger:
+      job.mUserData.mDataInt[3] ... command
+      
+   Unterschiedliche Trigger machen keinen Sinn, wenn dann in TRIGGERFRAME alle
+   möglichen Typen instanziert werden. TEACH und ENTER werden ohnehin nie aufgerufen
+   wenn es keine Enduser-Instanzen dieser Typen gibt.
+*)
+
+// inherit from position -> trigger can be used in ptp, lin, circ...
+INHERIT TRcuPositionCart;  
+
+
+TYPE GLOBAL
+   // Enumeration denoting the gun states
+   GunStates : (eGunInvalid := -1, eGunOn, eGunOff, eNrOfGunStates);
+   GunNumbers : (Gun1 := 1, Gun2, Gun3, Gun4);
+END_TYPE
+
+(*------------------------------------------------------------------------------
+* members
+*)
+
+VAR
+   command : COMMAND; // for process-triggers
+   state   : GunStates; // for guntrigger
+   gunNumber   : INT; // Number of the Gun (guntrigger, brushtrigger)
+   brushNumber : INT; // Number of the Brush (brushtrigger)
+   pointNumber : INT; // Number of the point (bkActiontrigger)
+   mpType      : MP_TYPE; // Zeiss
+   pointFrame  : TMcuFrame; 
+   iMultiGun   : DINT; // State of Guns (multiguntrigger)
+END_VAR
+
+
+// nmr: calculation of the orientation of the trigger frame
+ROUTINE CalcOri(VAR_IN start : TMcuPosition; VAR_IN end : TMcuPosition; 
+      CONST type : TMcuSegmentTyp; CONST path : TRcuPath) : BOOL
+   VAR
+      startCart : TMcuPosCart;
+      endCart   : TMcuPosCart;
+      vec : TMcuVector3;
+      n : TMcuVector3;
+      tmpOri : TMcuVector3;
+   END_VAR
+
+   IF NOT path.startPosValid THEN
+      RcuSetMessageOnce(TRcuTrigger_WarNoStartPos, path.myKinematic.kinListInx, 1, 0, "TRcuTrigger.CalcOri", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+   IF type <> eMcuLine THEN  // nmr: orientation is only calculated for lines
+      RcuSetMessageOnce(TRcuTrigger_WarNoLineSegment, path.myKinematic.kinListInx, 1, 0, "TRcuTrigger.CalcOri", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+   
+   (* orig
+   IF NOT RcuTransformPosToCart(start, startCart, refSys, path.myKinematic.kinematicMcuId, path.segHdl.mRobotToolID) OR 
+      NOT RcuTransformPosToCart(end, endCart, refSys, path.myKinematic.kinematicMcuId, path.segHdl.mRobotToolID) THEN
+      RcuSetMessageOnce(TRcuTrigger_WarCalcOriFailed, path.myKinematic.kinListInx, 1, 0, "TRcuTrigger.CalcOri", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;   
+  *)
+   IF path.myKinematic.extToolActive THEN
+      IF NOT RcuTransformPosToCart(start, startCart, eRcuRefSystemWorld, path.myKinematic.kinematicMcuId, path.segHdl.mRobotToolID) OR 
+         NOT RcuTransformPosToCart(end, endCart, eRcuRefSystemWorld, path.myKinematic.kinematicMcuId, path.segHdl.mRobotToolID) THEN
+         RcuSetMessageOnce(TRcuTrigger_WarCalcOriFailed, path.myKinematic.kinListInx, 1, 0, "TRcuTrigger.CalcOri", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;   
+   ELSE
+      IF NOT RcuTransformPosToCart(start, startCart, refSys, path.myKinematic.kinematicMcuId, path.segHdl.mRobotToolID) OR 
+         NOT RcuTransformPosToCart(end, endCart, refSys, path.myKinematic.kinematicMcuId, path.segHdl.mRobotToolID) THEN
+         RcuSetMessageOnce(TRcuTrigger_WarCalcOriFailed, path.myKinematic.kinListInx, 1, 0, "TRcuTrigger.CalcOri", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;   
+   END_IF;
+   (* Test
+   IF NOT RcuTransformPosToCartExt(start, startCart, path.myKinematic.extToolActive , path.myKinematic) OR 
+      NOT RcuTransformPosToCartExt(end, endCart, path.myKinematic.extToolActive , path.myKinematic) THEN
+      RcuSetMessageOnce(TRcuTrigger_WarCalcOriFailed, path.myKinematic.kinListInx, 1, 0, "TRcuTrigger.CalcOri", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;   
+   *)
+   McuSubVector3(vec, endCart.mFrame.mPos, startCart.mFrame.mPos);
+   McuUnifyVec3(n, vec);
+   RcuNormalToEuler(n, tmpOri);
+   // pos is of type TRcuPositionCartKardan -> transform Orientation to kardan-angles
+   McuEulerToKardan(frame.mOri, tmpOri);
+   frame.mFrameTyp := eMcuFrameKardan;
+   
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE SetSegType(type: TMcuSegmentTyp)
+   
+   IF segType <> type THEN
+      segType := type;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE Move(CONST path : TRcuProgPath; CONST pos : TRcuPositionCart) PRIVATE
+
+   // move to teached trigger position
+   DebugPrint(eTraceTrigger, "Move to Trigger position: "+INSTANCE_NAME());
+   DebugPrint(eTraceTrigger, "Position:    "+STR(pos.frame.mPos.mValues[0])+" "+STR(pos.frame.mPos.mValues[1])+" "+STR(pos.frame.mPos.mValues[2]));
+   DebugPrint(eTraceTrigger, "Orientation: "+STR(pos.frame.mOri.mValues[0])+" "+STR(pos.frame.mOri.mValues[1])+" "+STR(pos.frame.mOri.mValues[2]));
+   DebugPrint(eTraceTrigger, "Axis 7       "+STR(pos.auxJoints[0]));
+   path.Lin(pos); // only LIN because the interpolation type is not known at this moment
+END_ROUTINE
+
+
+ROUTINE SetTcpDataValid(v : BOOL)
+
+   tcpDataValid := v;
+END_ROUTINE
+
+
+ROUTINE IsTcpDataValid() : BOOL
+
+   RETURN tcpDataValid;
+END_ROUTINE
+
+
+ROUTINE GetTcpData(CONST time : REAL; kin : TRcuKinematic; lastParam : REAL)
+   VAR
+      time_ms     : DINT;
+      frame       : TMcuFrame;
+      helpParam   : REAL;
+      segId       : TMcuDbObjID;
+      toolId      : TMcuDbObjID;
+      helpPosId   : TMcuDbObjID;
+      helpPos     : TMcuPosition;
+      helpPosCart : TMcuPosCart;
+      i           : DINT;
+   END_VAR
+
+   time_ms := time * 1000;
+   Sleep(time_ms); 
+   IF NOT tcpDataValid THEN
+      IF segType = eMcuCirc THEN
+         circSegEndParam := kin.actExecData.mActSegParam;
+         segId := kin.actExecData.mActSegmentID;
+         toolId := kin.actExecData.mActToolID;
+      END_IF;
+      
+      // orientation data is present when using ecotalk-macros 
+      // but points are not allways reachable
+      RcuReadTransformedActPos(kin, refSys, frame);
+      tcpOri := frame.mOri;
+      nrAuxJoints := kin.nrOfAuxJoints;
+      FOR i := 0 TO nrAuxJoints - 1 DO
+         auxJoints[i] := kin.actJoints.mPos[i + kin.nrOfMainJoints];
+      END_FOR;
+      RcuPrintVector3(tcpOri, "Orientation calculated (" + GetName() + "): "); 
+
+      tcpDataValid := TRUE;
+   END_IF;
+   lastParam := circSegEndParam;
+END_ROUTINE
+
+ROUTINE SetName()
+   name := INSTANCE_NAME();
+   bNameValid := TRUE;
+END_ROUTINE
+
+ROUTINE GetName() : STRING
+   IF bNameValid THEN
+      RETURN name;
+   ELSE
+      RETURN INSTANCE_NAME();
+   END_IF;
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* private members
+*)
+
+VAR PRIVATE
+   tcpOri          : TMcuVector3;
+   segType         : TMcuSegmentTyp;
+   circSegEndParam : REAL;
+   //circPos         : TRcuPositionCart;
+   tcpDataValid    : BOOL;
+   name            : STRING;
+   bNameValid      : BOOL;
+END_VAR

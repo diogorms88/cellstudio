@@ -1,0 +1,176 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         20.08.2015                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       PneuUnit.xml                                                *
+*    Description: View and operate the pneumatic unit of handler              *
+*    Changes:                                                                 *
+*************************************************************************** -->
+
+
+<VIEW>
+	<MASKS>
+		<MASKDEF maskkey="TeachView.mask.pneuUnit" textdef="userTx" permissiondef="userMenuPermission"
+		         width="572" columns="572" height="385" rows="385" top="1" bottom="1" left="1" right="1">
+		         
+		         <GROUP key="pneuUnit.label.group0" col="1" row="1" columns="572" rows="385" cspan="572" rspan="385">
+		             <GROUP key="pneuUnit.label.group1" col="1" row="1" columns="120" rows="255" cspan="120" rspan="255">
+		                 <IMAGE file="PneuUnit_ModeMaint.gif" col="5" row="15"/>
+		                 <VARSYMBOL var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].iStateMainMode" vartype="TT" halign="left" col="82" row="28">
+	                              <SYMBOL value="0" file="PneuUnit_NOK.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_OK.gif"/>
+	                         </VARSYMBOL> 
+	                         <IMAGE file="PneuUnit_KeySwitch.gif" col="5" row="90"/>
+	                         <VARSYMBOL var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].iStateRobMode" vartype="TT" halign="left" col="82" row="103">
+	                              <SYMBOL value="0" file="PneuUnit_NOK.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_OK.gif"/>
+	                         </VARSYMBOL>
+	                         <IMAGE file="PneuUnit_Deadman.gif" col="5" row="165"/>
+	                         <VARSYMBOL var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].iStateDeadman" vartype="TT" halign="left" col="82" row="178">
+	                              <SYMBOL value="0" file="PneuUnit_NOK.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_OK.gif"/>
+	                         </VARSYMBOL> 
+		             </GROUP>
+                             <GROUP key="pneuUnit.label.group4" col="1" row="256" columns="120" rows="130" cspan="120" rspan="130"
+                                    visiblevar="_system.gRcuFocusedRobot.handler.tool.sAirSupply.bUsed" visiblevartype="TT">
+                                    <IMAGE file="PneuUnit_OK.gif" col="40" row="20" halign="center" 
+                                           visiblevar="_system.gRcuFocusedRobot.handler.tool.sAirSupply.bInput" visiblevartype="TT"/>
+                                    <IMAGE file="PneuUnit_NOK.gif" col="40" row="20" halign="center" 
+                                           visiblevar="!_system.gRcuFocusedRobot.handler.tool.sAirSupply.bInput" visiblevartype="TT"/>
+                             </GROUP>
+                             <GROUP key="pneuUnit.label.group2" col="121" row="1" columns="451" rows="160" cspan="451" rspan="160">
+                                  <!-- Cylinder 1 -->        
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[0].yCylinder[0].bUp" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yCylinder[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.up1" col="100" row="15" cspan="75" rspan="50" halign="stretch" valign="stretch"/> 
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[0].yCylinder[0].bDown" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yCylinder[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.down1" col="100" row="80" cspan="75" rspan="50" halign="stretch" valign="stretch"/>
+                                  <VARSYMBOL var="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yCylinder[0].iState" vartype="TT" halign="left" col="20" row="15"
+                                             visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yCylinder[0].bShow" visiblevartype="TT">
+	                              <SYMBOL value="0" file="PneuUnit_Cyl_Undef.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_Cyl_Up.gif"/>
+	                              <SYMBOL value="2" file="PneuUnit_Cyl_Down.gif"/>
+	                          </VARSYMBOL> 
+	                          <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].yCylinder[0].sHWI_IsUp.bSignal" vartype="TT" enabled="false"
+                                            col="60" row="15" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yCylinder[0].bShow" visiblevartype="TT"/>
+                                  <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].yCylinder[0].sHWI_IsDown.bSignal" vartype="TT" enabled="false"
+                                            col="60" row="90" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yCylinder[0].bShow" visiblevartype="TT"/>   
+                                  <!-- Cylinder 2 -->
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[1].yCylinder[0].bUp" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yCylinder[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.up2" col="250" row="15" cspan="75" rspan="50" halign="stretch" valign="stretch"/> 
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[1].yCylinder[0].bDown" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yCylinder[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.down2" col="250" row="80" cspan="75" rspan="50" halign="stretch" valign="stretch"/>
+                                  <VARSYMBOL var="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yCylinder[0].iState" vartype="TT" halign="left" col="350" row="15"
+                                             visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yCylinder[0].bShow" visiblevartype="TT">
+	                              <SYMBOL value="0" file="PneuUnit_Cyl_Undef.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_Cyl_Up.gif"/>
+	                              <SYMBOL value="2" file="PneuUnit_Cyl_Down.gif"/>
+	                          </VARSYMBOL> 
+	                          <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].yCylinder[0].sHWI_IsUp.bSignal" vartype="TT" enabled="false"
+                                            col="390" row="15" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yCylinder[0].bShow" visiblevartype="TT"/>
+                                  <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].yCylinder[0].sHWI_IsDown.bSignal" vartype="TT" enabled="false"
+                                            col="390" row="90" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yCylinder[0].bShow" visiblevartype="TT"/>      
+                             </GROUP>
+
+
+
+                             <GROUP key="pneuUnit.label.group3" col="121" row="161" columns="451" rows="225" cspan="451" rspan="225">
+                             
+                                  <!-- All Feet Unit 0 -->
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[0].sAllFeet.bBack" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.back1" col="25" row="110" cspan="60" rspan="40" halign="stretch" valign="stretch"/>    
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[0].sAllFeet.bFront" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.front1" col="120" row="110" cspan="60" rspan="40" halign="stretch" valign="stretch"/>
+                                  <!-- Foot 1 -->
+                                  <VARSYMBOL var="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[0].iState" vartype="TT" halign="left" col="5" row="10"
+                                             visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[0].bShow" visiblevartype="TT">
+	                              <SYMBOL value="0" file="PneuUnit_FootUndef.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_FootBack.gif"/>
+	                              <SYMBOL value="2" file="PneuUnit_FootFront.gif"/>
+	                          </VARSYMBOL>
+	                          <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].yFeet[0].sHWI_IsInBack.bSignal" vartype="TT" enabled="false"
+                                            col="10" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[0].bShow" visiblevartype="TT"/>
+                                  <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].yFeet[0].sHWI_IsInFront.bSignal" vartype="TT" enabled="false"
+                                            col="70" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[0].bShow" visiblevartype="TT"/>           
+                                  <!-- Foot 2 -->
+                                  <VARSYMBOL var="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[1].iState" vartype="TT" halign="left" col="100" row="10"
+                                             visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[1].bShow" visiblevartype="TT">
+	                              <SYMBOL value="0" file="PneuUnit_FootUndef.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_FootBack.gif"/>
+	                              <SYMBOL value="2" file="PneuUnit_FootFront.gif"/>
+	                          </VARSYMBOL>
+	                          <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].yFeet[1].sHWI_IsInBack.bSignal" vartype="TT" enabled="false"
+                                            col="105" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[1].bShow" visiblevartype="TT"/>
+                                  <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[0].yFeet[1].sHWI_IsInFront.bSignal" vartype="TT" enabled="false"
+                                            col="165" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[0].yFoot[1].bShow" visiblevartype="TT"/>
+                                  
+                                  <!-- All Feet Unit 1 -->
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[1].sAllFeet.bBack" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.back2" col="245" row="110" cspan="60" rspan="40" halign="stretch" valign="stretch"/>    
+                                  <BUTTON var="_system.RcuUserPage.handlerTool.yOrdersToPneuUnit[1].sAllFeet.bFront" vartype="TT" 
+                                          visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[0].bShow" visiblevartype="TT"
+                                          enablevar="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].bTeachModeRelease" enablevartype="TT" 
+                                          key="pneuUnit.button.front2" col="340" row="110" cspan="60" rspan="40" halign="stretch" valign="stretch"/>
+                                  <!-- Foot 1 -->
+                                  <VARSYMBOL var="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[0].iState" vartype="TT" halign="left" col="235" row="10"
+                                             visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[0].bShow" visiblevartype="TT">
+	                              <SYMBOL value="0" file="PneuUnit_FootUndef.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_FootBack.gif"/>
+	                              <SYMBOL value="2" file="PneuUnit_FootFront.gif"/>
+	                          </VARSYMBOL>
+	                          <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].yFeet[0].sHWI_IsInBack.bSignal" vartype="TT" enabled="false"
+                                            col="240" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[0].bShow" visiblevartype="TT"/>
+                                  <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].yFeet[0].sHWI_IsInFront.bSignal" vartype="TT" enabled="false"
+                                            col="300" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[0].bShow" visiblevartype="TT"/>           
+                                  <!-- Foot 2 -->
+                                  <VARSYMBOL var="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[1].iState" vartype="TT" halign="left" col="330" row="10"
+                                             visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[1].bShow" visiblevartype="TT">
+	                              <SYMBOL value="0" file="PneuUnit_FootUndef.gif"/>
+	                              <SYMBOL value="1" file="PneuUnit_FootBack.gif"/>
+	                              <SYMBOL value="2" file="PneuUnit_FootFront.gif"/>
+	                          </VARSYMBOL>
+	                          <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].yFeet[1].sHWI_IsInBack.bSignal" vartype="TT" enabled="false"
+                                            col="335" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[1].bShow" visiblevartype="TT"/>
+                                  <CHECKBOX var="_system.gRcuFocusedRobot.handler.tool.yPneuUnit[1].yFeet[1].sHWI_IsInFront.bSignal" vartype="TT" enabled="false"
+                                            col="395" row="70" cspan="20" rspan="20" halign="stretch" valign="stretch"
+                                            visiblevar="_system.RcuUserPage.handlerTool.yStatesPneuUnit[1].yFoot[1].bShow" visiblevartype="TT"/>
+                             </GROUP>
+		         </GROUP>
+		</MASKDEF>
+	</MASKS>	
+</VIEW>

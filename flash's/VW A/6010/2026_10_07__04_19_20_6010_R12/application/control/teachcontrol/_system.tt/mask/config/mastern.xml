@@ -1,0 +1,376 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       mastern.xml                                                 *
+*    Description: Showing and operating of Kuka/Duerr drive mastering         *
+*    Changes:     BIT 09.01.2018 - Added user dialog before reference is set  *
+*************************************************************************** -->
+
+<VIEW>
+
+   <MASKDEF key="TeachView.mask.mastern" textfile="userTx" permissiondef="userMenuPermission">  
+      <!-- mastering duerr -->
+      <GROUP key="mastern.label.group1" visiblevar="_system.gRcuFocusedRobot.masterProg.bShowDuerrPage" visiblevartype="TT" 
+             columns="40" rows="164" col="1" row="1"  cspan="164" halign="stretch" rspan="20" valign="stretch">
+ 	      
+ 	 <LABEL key="mastern.label.state" var="_system.gRcuFocusedRobot.masterProg.iActualStatus" vartype="TT"
+ 	        col="3" row="8"/>
+ 	        
+ 	 <IMAGE file="MasternWarning.gif" col="28" row="3" cspan="5" rspan="8" halign="center" visiblevar="_system.gRcuFocusedRobot.masterProg.mShowWarning" visiblevartype="TT"/>       
+ 	        
+ 	 <LABEL key="mastern.label.all" row="8" col="28" cspan="10" halign="stretch" rspan="8" valign="stretch" visiblevar="!_system.gRcuFocusedRobot.masterProg.bShowButtons" visiblevartype="TT"/>
+ 	 <CHECKBOX key="mastern.chkbox.selectAll" var="_system.gRcuFocusedRobot.masterProg.bAllSelectAxes" vartype="TT" 
+                   row="8" col="36" cspan="4"  halign="center"  rspan="10" valign="stretch" visiblevar="!_system.gRcuFocusedRobot.masterProg.bShowButtons" visiblevartype="TT"/>
+                   
+ 	 <!-- selection -->
+ 	 <CHECKBOX key="mastern.chkbox.select_1D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[0]" vartype="TT"
+ 	           visiblevar="_system.gRcSelectedRobotData.showJoint[0]" visiblevartype="TT"
+                   row="34" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_2D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[1]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[1]" visiblevartype="TT"
+                   row="48" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_3D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[2]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[2]" visiblevartype="TT"
+                   row="62" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_4D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[3]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[3]" visiblevartype="TT"
+                   row="76" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_5D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[4]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[4]" visiblevartype="TT"
+                   row="90" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_6D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[5]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[5]" visiblevartype="TT"
+                   row="104" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_7D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[6]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[6]" visiblevartype="TT"
+                   row="118" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_8D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[7]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[7]" visiblevartype="TT"
+                   row="132" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+         <CHECKBOX key="mastern.chkbox.select_9D" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[8]" vartype="TT"
+                   visiblevar="_system.gRcSelectedRobotData.showJoint[8]" visiblevartype="TT"
+                   row="146" col="37" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+ 	 
+ 	 <TABLE key="position.driveTable" col="1" row="20" cspan="40" rspan="146" halign="stretch"
+				valign="stretch" enabled="FALSE">
+		<COLUMN>
+			<ENTRY key="mastern.table.name"    width="6"/>
+			<ENTRY key="mastern.table.actpos"  width="19"/>
+			<ENTRY key="mastern.table.zeropos" width="19"/>
+			<ENTRY key="mastern.table.diff"    width="19"/>
+			<ENTRY key="mastern.table.unit"    width="6"/>
+			<ENTRY key="mastern.table.sensor"  width="14"/>
+			<ENTRY key="mastern.table.select"  width="15"/>			
+		</COLUMN>	
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[0]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[0]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[0]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[0]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[0]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[0]"           vartype="TT"/>	
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[0]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[1]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[1]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[1]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[1]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[1]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[1]"           vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[1]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[2]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[2]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[2]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[2]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[2]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[2]"           vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[2]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[3]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[3]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[3]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[3]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[3]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[3]"           vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[3]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[4]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[4]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[4]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[4]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[4]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[4]"           vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[4]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[5]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[5]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[5]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[5]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[5]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[5]"           vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[5]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[6]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[6]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[6]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[6]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[6]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[6]"           vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[6]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[7]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"    var="_system.gRcSelectedRobotData.jointName[7]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"  var="_system.gRcSelectedRobotData.jointPosValue[7]"         vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos" var="_system.gRcuFocusedRobot.masterProg.yOffset[7]"        vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"    var="_system.gRcuFocusedRobot.masterProg.last_value[7]"     vartype="TT"/>
+			<LABEL key="mastern.label.unit"    var="_system.gRcSelectedRobotData.isRotAxis[7]"             vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[7]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+		<ROW visiblevar="_system.gRcSelectedRobotData.showJoint[8]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"    var="_system.gRcSelectedRobotData.jointName[8]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"  var="_system.gRcSelectedRobotData.jointPosValue[8]"         vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos" var="_system.gRcuFocusedRobot.masterProg.yOffset[8]"        vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"    var="_system.gRcuFocusedRobot.masterProg.last_value[8]"     vartype="TT"/>
+			<LABEL key="mastern.label.unit"    var="_system.gRcSelectedRobotData.isRotAxis[8]"             vartype="TT"/>
+			<VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[8]" vartype="TT" halign="left" >
+			   <SYMBOL value="0" file="MasterNoAuto.gif"/>	
+			   <SYMBOL value="1" file="MasterSensor0.gif"/>
+			   <SYMBOL value="2" file="MasterSensor1.gif"/>
+			</VARSYMBOL>
+			<LABEL key="mastern.label.dummy"/>
+		</ROW>
+         </TABLE>
+      </GROUP>
+      
+      <!-- mastering kuka -->
+      <GROUP key="mastern.label.group2" visiblevar="_system.gRcuFocusedRobot.masterProg.bShowKukaPage" visiblevartype="TT" 
+             columns="40" rows="164" col="1" row="1"  cspan="164" halign="stretch" rspan="20" valign="stretch">
+ 
+             <LABEL key="mastern.label.state" var="_system.gRcuFocusedRobot.masterProg.iActualStatus" vartype="TT"
+ 	            col="3" row="8"/>
+ 	            
+ 	     <IMAGE file="MasternWarning.gif" col="28" row="3" cspan="5" rspan="8" halign="center" visiblevar="_system.gRcuFocusedRobot.masterProg.mShowWarning" visiblevartype="TT"/>       
+ 	          
+             <!-- selection -->
+ 	     <CHECKBOX key="mastern.chkbox.select_1K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[0]" vartype="TT"
+ 	               visiblevar="_system.gRcSelectedRobotData.showJoint[0]" visiblevartype="TT"
+                       row="34" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_2K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[1]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[1]" visiblevartype="TT"
+                       row="48" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_3K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[2]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[2]" visiblevartype="TT"
+                       row="62" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_4K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[3]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[3]" visiblevartype="TT"
+                       row="76" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_5K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[4]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[4]" visiblevartype="TT"
+                       row="90" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_6K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[5]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[5]" visiblevartype="TT"
+                       row="104" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_7K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[6]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[6]" visiblevartype="TT"
+                       row="118" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_8K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[7]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[7]" visiblevartype="TT"
+                       row="132" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+             <CHECKBOX key="mastern.chkbox.select_9K" var="_system.gRcuFocusedRobot.masterProg.yMasterAxis[8]" vartype="TT"
+                       visiblevar="_system.gRcSelectedRobotData.showJoint[8]" visiblevartype="TT"
+                       row="146" col="29" cspan="3"  halign="center"  rspan="12" valign="stretch"/>
+
+             <TABLE key="position.driveTable_1" col="1" row="20" cspan="32" rspan="146" halign="stretch"
+				valign="stretch" enabled="FALSE">
+		    <COLUMN>
+		    	   <ENTRY key="mastern.table.name"    width="5"/>
+		    	   <ENTRY key="mastern.table.actpos"  width="19"/>
+		    	   <ENTRY key="mastern.table.zeropos" width="19"/>
+		    	   <ENTRY key="mastern.table.diff"    width="19"/>
+		    	   <ENTRY key="mastern.table.unit"    width="6"/>
+		    	   <ENTRY key="mastern.table.select"  width="11"/>		
+		    </COLUMN>	
+                    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[0]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[0]"	       vartype="TT"/>
+		    	<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[0]"       vartype="TT"/>
+		    	<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[0]"      vartype="TT"/>
+		    	<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[0]"   vartype="TT"/>
+		    	<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[0]"           vartype="TT"/>
+		    	<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+                    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[1]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[1]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[1]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[1]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[1]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[1]"           vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[2]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[2]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[2]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[2]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[2]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[2]"           vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[3]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[3]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[3]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[3]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[3]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[3]"           vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[4]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[4]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[4]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[4]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[4]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[4]"           vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[5]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[5]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[5]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[5]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[5]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[5]"           vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[6]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"      var="_system.gRcSelectedRobotData.jointName[6]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"    var="_system.gRcSelectedRobotData.jointPosValue[6]"       vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos"   var="_system.gRcuFocusedRobot.masterProg.yOffset[6]"      vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"      var="_system.gRcuFocusedRobot.masterProg.last_value[6]"   vartype="TT"/>
+			<LABEL key="mastern.label.unit"      var="_system.gRcSelectedRobotData.isRotAxis[6]"           vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[7]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"    var="_system.gRcSelectedRobotData.jointName[7]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"  var="_system.gRcSelectedRobotData.jointPosValue[7]"         vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos" var="_system.gRcuFocusedRobot.masterProg.yOffset[7]"        vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"    var="_system.gRcuFocusedRobot.masterProg.last_value[7]"     vartype="TT"/>
+			<LABEL key="mastern.label.unit"    var="_system.gRcSelectedRobotData.isRotAxis[7]"             vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+		    <ROW visiblevar="_system.gRcSelectedRobotData.showJoint[8]" visiblevartype="TT">
+		        <ENTRY key="mastern.entry.name"    var="_system.gRcSelectedRobotData.jointName[8]"	       vartype="TT"/>
+			<ENTRY key="mastern.entry.actpos"  var="_system.gRcSelectedRobotData.jointPosValue[8]"         vartype="TT"/>
+			<ENTRY key="mastern.entry.zeropos" var="_system.gRcuFocusedRobot.masterProg.yOffset[8]"        vartype="TT"/>
+			<ENTRY key="mastern.entry.diff"    var="_system.gRcuFocusedRobot.masterProg.last_value[8]"     vartype="TT"/>
+			<LABEL key="mastern.label.unit"    var="_system.gRcSelectedRobotData.isRotAxis[8]"             vartype="TT"/>
+			<LABEL key="mastern.label.dummy"/>
+		    </ROW>
+             </TABLE>
+             <!--  EMT --> 
+             <LABEL key="mastern.label.sensor" col="34" row="20"/>                                            
+             <IMAGE file="KukaEMT_1.gif" col="35" row="38" halign="left" />                                                      
+             <CHECKBOX var="_system.gRcuFocusedRobot.masterProg.bMasterSensor1" vartype="TT" col="36" row="53" enabled="false"/>    
+             <IMAGE file="KukaEMT_2.gif" col="35" row="78" halign="left" />
+             <CHECKBOX var="_system.gRcuFocusedRobot.masterProg.bMasterSensor2" vartype="TT" col="36" row="93" enabled="false"/>
+						
+	     <!--  Duerr sensor -->
+  	     <VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[6]" vartype="TT" enabled="false"
+  	                visiblevar="_system.gRcuFocusedRobot.drive[6].masteringDuerr" visiblevartype="TT" col="34" row="117" cspan="5" rspan="10" halign="left" >
+	     	<SYMBOL value="0" file="MasterNoAuto_kuka.gif"/>																			
+	     	<SYMBOL value="1" file="MasterSensor0_kuka.gif"/>
+	     	<SYMBOL value="2" file="MasterSensor1_kuka.gif"/>
+	     </VARSYMBOL>		
+	     
+	     <VARSYMBOL var="_system.gRcuFocusedRobot.masterProg.bSensorSignal_duerr[7]" vartype="TT" enabled="false"
+	                visiblevar="_system.gRcuFocusedRobot.drive[7].masteringDuerr" visiblevartype="TT" col="34" row="133" cspan="5" rspan="10" halign="left" >
+	     	<SYMBOL value="0" file="MasterNoAuto_kuka.gif"/>																			
+	     	<SYMBOL value="1" file="MasterSensor0_kuka.gif"/>
+	     	<SYMBOL value="2" file="MasterSensor1_kuka.gif"/>
+	     </VARSYMBOL>		
+
+      </GROUP>
+
+      <GROUP key="mastern.label.group3" visiblevar="_system.gRcuFocusedRobot.masterProg.bShowInfoScpRef" visiblevartype="TT" 
+             columns="40" rows="164" col="1" row="1"  cspan="164" halign="stretch" rspan="20" valign="stretch">
+
+            <LABEL key="mastern.label.infotext1" col="5" row="20"  cspan="30" halign="left" rspan="15" valign="stretch"/>
+	    <LABEL key="mastern.label.infotext2" col="5" row="35"  cspan="30" halign="left" rspan="15" valign="stretch"/>
+	    <LABEL key="mastern.label.infotext3" col="5" row="55"  cspan="30" halign="left" rspan="15" valign="stretch"/>
+	    <LABEL key="mastern.label.infotext4" col="5" row="70"  cspan="30" halign="left" rspan="15" valign="stretch"/>
+	    
+	    <BUTTON key="mastern.button.refscp" var="_system.RcuUserPage.bReferenceSCP" vartype="TT"  maskkey="TeachView.mask.safetyControl" file="Safety64x64.gif"
+	            col="5" row="105" cspan="8" rspan="30" halign="stretch"/>
+	    <LABEL key="mastern.label.refscp" col="5" row="145"  cspan="8" halign="left" rspan="10" valign="stretch"/>
+	            
+	    <BUTTON key="mastern.button.mastering" var="_system.RcuUserPage.bContinueMastering" vartype="TT" file="AxisRef64x64.gif"
+	            col="25" row="105" cspan="8" rspan="30" halign="stretch"/> 
+            <LABEL key="mastern.label.mastering" col="25" row="145"  cspan="8" halign="left" rspan="10" valign="stretch"/>
+      </GROUP>
+
+   </MASKDEF>
+   
+   <MENUDEF key="TeachView.mask.mastern" textdef="userTx"  imagefile="KvtMenuIcon" permissiondef="userMenuPermission">  
+	<MENU>
+		<MENUITEM key="mastern.menu.button_1" var="_system.gRcuFocusedRobot.masterProg.bMasterSelected" vartype="TT"
+		          enablevar="!_system.gRcuFocusedRobot.masterProg.bShowButtons" enablevartype="TT"/>
+		<MENUITEM key="mastern.menu.button_2" var="_system.gRcuFocusedRobot.masterProg.bPreMaster" vartype="TT"
+		          enablevar="!_system.gRcuFocusedRobot.masterProg.bShowButtons" enablevartype="TT"/>
+		<MENUITEM key="mastern.menu.button_3" var="_system.gRcuFocusedRobot.masterProg.bUserYes" vartype="TT"
+		          enablevar="_system.gRcuFocusedRobot.masterProg.bShowButtons" enablevartype="TT"/>
+		<MENUITEM key="mastern.menu.button_4" var="_system.gRcuFocusedRobot.masterProg.bUserNo" vartype="TT"
+		          enablevar="_system.gRcuFocusedRobot.masterProg.bShowButtons" enablevartype="TT"/>
+		<MENUITEM key="mastern.menu.button_5" var="_system.gRcuFocusedRobot.masterProg.bStop" vartype="TT"/>
+		<MENUITEM type="empty"/>
+	</MENU>
+   </MENUDEF>
+   
+</VIEW>

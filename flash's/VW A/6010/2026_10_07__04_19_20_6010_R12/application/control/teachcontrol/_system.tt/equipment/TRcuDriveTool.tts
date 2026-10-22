@@ -1,0 +1,1186 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2006 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         11.12.2006                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       TRcuDriveTool.tts                                           *
+*    Description: Read out indramat-parameters                                *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 
+*)
+(******************************************************************************
+***  Constants    *************************************************************
+******************************************************************************)
+CONSTANT GLOBAL
+  P_ParamMask : DINT := 16#00008000;
+  cMaxDrive    : INT := 16;
+  cMaxRobDrive : INT :=  9;
+END_CONSTANT
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL
+  TRcuState  : (eRcuStateInactive, eRcuStateRunning, eRcuStateError, eRcuStateFinish); 
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  yRunUpload         : ARRAY [cMaxDrive] OF BOOL;         //TeachView save param-list
+  bRunAllUpload      : BOOL;                              
+  yActualState       : ARRAY [cMaxDrive] OF TRcuState;    //Current state for TeachView 
+  yProgress          : ARRAY [cMaxDrive] OF INT;          //Current progress for TeachView 
+  bSaveAllParam      : BOOL;                              //S-0-0192 IDN-list of backup operation data OR S-0-0017 IDN-list of all data
+  yFileNames         : ARRAY [cMaxDrive] OF STRING;       //Name of the File to store
+  yShowDosingDrive   : ARRAY [cgiMaxDosingDrive] OF BOOL; //used for visiblevar on userpage
+  bButtonRelease     : BOOL;                              //release for buttons on userpage
+  bSercosIIused      : BOOL;                              //if SercosII used run this function
+  bSercosIIIused     : BOOL;                              //if SercosIII used do not run this function
+  bEtherCatUsed      : BOOL;                              //if EtherCat used do not run this function
+END_VAR
+
+//-----------------------------------------------------------------------------
+// map to the kinematic and wait for user-activity
+//-----------------------------------------------------------------------------
+ROUTINE Init(myKinematic : TRcuRobot)
+ VAR
+   i       : INT; 
+   j       : INT;
+   yChg    : ARRAY [cMaxDrive] OF BOOL;
+   bChgAll : BOOL;
+   bChg    : BOOL;
+   str     : STRING;
+ END_VAR
+  
+  //map our kinematic to work with
+  locKin := MAP(myKinematic);
+  IF (NOT IS_MAPPED(locKin)) THEN
+     RcuSetMessageOnce(TRcuDriveTool_ErrMappingKin, -1, 1, 0, "TRcuDriveTool.Init");
+     RETURN;
+  END_IF;
+  
+  WAIT gbEquipmentReady;
+  
+  IF gbEthercat THEN
+      locKin.DebugPrint(eTraceEquipment, "TRcuDriveTool.Init für ETHERCAT nicht implementiert");
+     // ??????????????????????????ETHERCAT????????????????????????????
+     RETURN;
+  END_IF;
+  
+  //map the variables for starting upload from TV
+  FOR i:=0 TO cMaxDrive-1 DO
+     yActualState[i] := eRcuStateInactive;
+     yChg[i]          := IS_CHANGED(yRunUpload[i]);
+     IF i < cMaxRobDrive THEN
+        IF IS_MAPPED(locKin.drive[i]) THEN
+           IF NOT (locKin.drive[i].simulated OR locKin.drive[i].ioSimulated) THEN
+              yFileNames[i] := "0" + STR(i+1) + GetKindOfUsage(i);
+           ELSE   
+              yFileNames[i] := "Simulation";
+           END_IF;   
+        ELSE
+           yFileNames[i] := "Not connected";
+        END_IF; 
+     ELSE   
+        j := i - cMaxRobDrive;
+        IF IS_MAPPED(locKin.dosingDrive[j]) THEN
+           IF NOT (locKin.dosingDrive[j].simulated OR locKin.dosingDrive[j].ioSimulated) THEN
+              IF ((i+1) < 10) THEN
+                 str := "0" + STR(i+1);
+              ELSE
+                 str := STR(i+1);
+              END_IF;       
+              yFileNames[i] := str + GetKindOfUsage(i);
+           ELSE
+              yFileNames[i] := "Simulation";
+           END_IF; 
+           yShowDosingDrive[j] := TRUE;
+        ELSE
+           yFileNames[i] := "Not connected";
+     END_IF;
+     END_IF; 
+  END_FOR;
+  START ObserveUploadActive();
+  bChg    := IS_CHANGED(yChg);
+  bChgAll := IS_CHANGED(bRunAllUpload);
+  
+  //wait for user activitiy
+  WHILE TRUE DO
+    WAIT bChg OR bChgAll;
+    IF bRunAllUpload THEN
+       FOR i:=0 TO cMaxDrive-1 DO
+          IF i < cMaxRobDrive THEN
+             IF IS_MAPPED(locKin.drive[i]) THEN
+                IF NOT locKin.drive[i].simulated AND NOT locKin.drive[i].ioSimulated THEN
+                   locKin.DebugPrint(eTraceRcuDrive, "TRcuDriveTool - Leses Liste der zu sichernden Daten von Antrieb " + STR(i+1) + " .");
+                   IF yFileNames[i] = "" THEN
+                     yFileNames[i] := "0" + STR(i+1) + GetKindOfUsage(i);
+                   END_IF;
+                   START SercosDataToFile(locKin.drive[i], yFileNames[i], i);
+                   Sleep(100);
+                   WAIT yActualState[i] <> eRcuStateRunning;
+                ELSE   
+                   RcuSetMessageOnce(TRcuDriveTool_InfDriveInSim, locKin.kinListInx, 1, 0, "TRcuDriveTool.Init", STR(i+1));
+                   START SercosDataToFile(locKin.drive[i], yFileNames[i], i);
+                   Sleep(100);
+                   WAIT yActualState[i] <> eRcuStateRunning;
+                END_IF;  
+             END_IF; 
+          ELSE  
+             j := i - cMaxRobDrive;
+             IF IS_MAPPED(locKin.dosingDrive[j]) THEN
+                IF NOT locKin.dosingDrive[j].simulated AND NOT locKin.dosingDrive[j].ioSimulated THEN
+                   locKin.DebugPrint(eTraceRcuDrive, "TRcuDriveTool - Leses Liste der zu sichernden Daten von Dosierantrieb " + STR(j+1) + " .");
+                   IF yFileNames[i] = "" THEN
+                      IF ((i+1) < 10) THEN
+                         str := "0" + STR(i+1);
+                      ELSE
+                         str := STR(i+1);
+                      END_IF;       
+                      yFileNames[i] := str + GetKindOfUsage(i);
+                   END_IF;
+                   START SercosDataToFile(locKin.dosingDrive[j], yFileNames[i], i);
+                   Sleep(100);
+                   WAIT yActualState[i] <> eRcuStateRunning;
+                ELSE   
+                   RcuSetMessageOnce(TRcuDriveTool_InfDriveInSim, locKin.kinListInx, 1, 0, "TRcuDriveTool.Init", STR(i+1));
+                   START SercosDataToFile(locKin.dosingDrive[j], yFileNames[i], i);
+                   Sleep(100);
+                   WAIT yActualState[i] <> eRcuStateRunning;
+                END_IF;
+             END_IF;
+          END_IF;   
+       END_FOR;
+       bRunAllUpload := FALSE;
+    ELSE
+       FOR i:=0 TO cMaxDrive-1 DO
+         IF yRunUpload[i] THEN
+            IF i < cMaxRobDrive THEN         
+               IF NOT locKin.drive[i].simulated AND NOT locKin.drive[i].ioSimulated THEN
+                  locKin.DebugPrint(eTraceRcuDrive, "TRcuDriveTool - Leses Liste der zu sichernden Daten von Antrieb " + STR(i+1) + " .");
+                  IF yFileNames[i] = "" THEN
+                     yFileNames[i] := "0" + STR(i+1) + GetKindOfUsage(i);
+                  END_IF;
+                  START SercosDataToFile(locKin.drive[i], yFileNames[i], i);
+                  Sleep(100);
+                  WAIT yActualState[i] <> eRcuStateRunning;
+               ELSE   
+                  RcuSetMessageOnce(TRcuDriveTool_InfDriveInSim, locKin.kinListInx, 2, 0, "TRcuDriveTool.Init", STR(i+1));
+                  START SercosDataToFile(locKin.drive[i], yFileNames[i], i);
+                  Sleep(100);
+                  WAIT yActualState[i] <> eRcuStateRunning;
+               END_IF;
+            ELSE
+               j := i - cMaxRobDrive;
+               IF NOT locKin.dosingDrive[j].simulated AND NOT locKin.dosingDrive[j].ioSimulated THEN
+                  locKin.DebugPrint(eTraceRcuDrive, "TRcuDriveTool - Leses Liste der zu sichernden Daten von Dosierantrieb " + STR(j+1) + " .");
+                  IF yFileNames[i] = "" THEN
+                     IF ((i+1) < 10) THEN
+                        str := "0" + STR(i+1);
+                     ELSE
+                        str := STR(i+1);
+                     END_IF;       
+                     yFileNames[i] := str + GetKindOfUsage(i);
+                  END_IF;
+                  START SercosDataToFile(locKin.dosingDrive[j], yFileNames[i], i);
+                  Sleep(100);
+                  WAIT yActualState[i] <> eRcuStateRunning;
+               ELSE   
+                  RcuSetMessageOnce(TRcuDriveTool_InfDriveInSim, locKin.kinListInx, 1, 1, "TRcuDriveTool.Init", STR(j+1));
+                  START SercosDataToFile(locKin.dosingDrive[j], yFileNames[i], i);
+                  Sleep(100);
+                  WAIT yActualState[i] <> eRcuStateRunning;
+               END_IF;               
+            END_IF;
+         END_IF;
+         yRunUpload[i] := FALSE;
+         yChg[i]       := FALSE;  
+       END_FOR;
+    END_IF;
+    
+    bChgAll := FALSE;
+    bChg    := FALSE;
+  END_WHILE;
+
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* private members
+*)
+CONSTANT PRIVATE
+  cIdentMask           : DINT := 16#FFFF;    //seperate the low word
+END_CONSTANT
+
+TYPE PRIVATE
+  tsAttr : STRUCT
+    iRaw       : DINT;
+    sHexString : STRING;
+    iFactor    : DINT;
+    sSize      : TRcuSize;
+    sFormat    : TRcuFormat;
+    iDecimals  : DINT;
+  END_STRUCT;
+  
+  tsParam : STRUCT
+    sID    : STRING;
+    sAttr  : tsAttr;
+    sValue : STRING;
+    iLen   : DINT;
+    yValue : ARRAY [2048] OF STRING[10];
+    sName  : STRING;
+    sUnit  : STRING;
+  END_STRUCT;
+  
+  tsHeaderData : STRUCT
+     sKindOfUsage : STRING;  //S-0-0142
+     sMotorType   : STRING;  //S-0-0141
+     sControllType : STRING; //S-0-0140
+     sFirmware  : STRING;    //S-0-0030
+  END_STRUCT;
+  
+  tsDataList : STRUCT
+    iLen         : DINT;
+    bRead        : BOOL;
+    yParamList2b : TKSC_List2Byte1024;
+    sParam       : tsParam;
+    iFileHandle  : DINT;
+    fileState    : TRcuFileState;
+    sHeaderData  : tsHeaderData;
+  END_STRUCT;
+  
+  TRcuElement   : (eRcuElemName:=2, eRcuElemAttr:=3, eRcuElemUnit:=4, eRcuElemMin:=5, eRcuElemMax:=6, eRcuElemValue:=7, eRcuMaxElem);
+  TRcuSize      : (eSizeReserved := 0, eSizeFixedInt, eSizeFixedDint, eSizeVarSint, eSizeVarInt, eSizeVarDint);
+  TRcuFormat    : (eBinary, eUnsigned, eSigned, eUnsignedHex, eString, eIdNumber, eFloat, eParamNumber);
+  TRcuFileState : (eFileClosed, eOpenFile , eFileIsOpen); 
+END_TYPE
+
+VAR PRIVATE
+  locKin             : MAPTO TRcuRobot;                //kinematic to work with
+END_VAR
+
+//-----------------------------------------------------------------------------
+// read parameter from sercos and write it to a parameterfile
+//-----------------------------------------------------------------------------
+ROUTINE SercosDataToFile(drive : TRcuDrive; sFileName : STRING; CONST rowUserPage : INT) PRIVATE
+ VAR
+   i            : DINT;
+   myDrive      : MAPTO TRcuDrive;
+   iRowUserPage : INT;
+   rProgress    : REAL;
+   rStepPerCent : REAL;
+   str          : STRING;
+   iLen         : DINT;
+   iCount       : SINT;
+   ret          : TKSC_Status;
+   DataList     : tsDataList;   
+ END_VAR
+
+  iRowUserPage := rowUserPage;
+  myDrive      := MAP(drive);
+  IF NOT IS_MAPPED(myDrive) THEN
+     yActualState[iRowUserPage] := eRcuStateError;
+     RETURN;
+  END_IF;   
+  yActualState[iRowUserPage] := eRcuStateRunning;
+  yProgress[iRowUserPage]    := 0;
+  
+  IF myDrive.simulated OR myDrive.ioSimulated THEN
+     WHILE (yProgress[iRowUserPage] < 100) DO
+        yProgress[iRowUserPage] := yProgress[iRowUserPage] + 1;
+        Sleep(96);
+        WAIT TRUE;
+     END_WHILE;
+     yActualState[iRowUserPage] := eRcuStateFinish;
+     RETURN;
+  END_IF;
+  
+  //Check drive type
+  IF myDrive.deviceType = eRcuUndef THEN
+     locKin.DebugPrint(eTraceRcuDrive, "TRcuDriveTool SercosDataToFile - Unbekannter Antriebstyp");
+  END_IF;
+  
+  //Read out the parameterlist S-0-0192
+  IF NOT GetParamListToSave(myDrive, DataList) THEN
+     yActualState[iRowUserPage] := eRcuStateError;
+     RETURN;
+  END_IF;
+  
+  //read parameters for fileheader
+  ret := RcReadSercosString(myDrive.sercHdl, 142, DataList.sHeaderData.sKindOfUsage, 7);
+  IF ret <> eKSC_Ok THEN
+     DataList.sHeaderData.sKindOfUsage := "invalid";
+  END_IF;
+  ret := RcReadSercosString(myDrive.sercHdl, 141, DataList.sHeaderData.sMotorType, 7);
+  IF ret <> eKSC_Ok THEN
+     DataList.sHeaderData.sMotorType := "invalid";
+  END_IF;
+  ret := RcReadSercosString(myDrive.sercHdl, 140, DataList.sHeaderData.sControllType, 7);
+  IF ret <> eKSC_Ok THEN
+     DataList.sHeaderData.sControllType := "invalid";
+  END_IF;
+  ret := RcReadSercosString(myDrive.sercHdl, 30, DataList.sHeaderData.sFirmware, 7);
+  IF ret <> eKSC_Ok THEN
+     DataList.sHeaderData.sFirmware := "invalid";
+  END_IF;
+  
+  //calc progress
+  IF DataList.iLen > 0 THEN
+     rStepPerCent := 100.0 / REAL(DataList.iLen);
+  END_IF;
+  
+  FOR i := 0 TO DataList.iLen - 1 DO
+      //Init data struct
+      ClearParamStruct(DataList.sParam);
+      
+      //Parameter-ID to string
+      FormatValue(DataList.yParamList2b[i], eParamNumber, 0, 1, eSizeVarSint, DataList.sParam.sID);  
+      
+      //Read attribut-value
+      IF NOT GetParamAttrValue(myDrive, DataList.yParamList2b[i], DataList.sParam.sAttr.iRaw) THEN
+         yActualState[iRowUserPage] := eRcuStateError;
+         RETURN;
+      END_IF;
+      
+      //Decode attribute-word
+      DecodeAttributeWord(DataList.sParam.sAttr);
+      
+      //Build hex-string of attribut-word
+      IF DataList.sParam.sAttr.iFactor = 0 THEN
+         str := RcUtils.DecToHexString(DataList.sParam.sAttr.iRaw + 1610612737);
+      ELSE
+         str := RcUtils.DecToHexString(DataList.sParam.sAttr.iRaw);
+      END_IF;
+      iLen := StrLen(str);
+      FOR iCount := iLen TO 7 DO
+          str := StrInsert(str, "0", 1);
+      END_FOR;
+      DataList.sParam.sAttr.sHexString := "0x" + str;
+      
+      //Get the name of the parameter
+      IF NOT GetParamName(myDrive, DataList.yParamList2b[i], DataList.sParam.sName) THEN
+         yActualState[iRowUserPage] := eRcuStateError;
+         RETURN;
+      END_IF;
+      
+      //Binary-, Hex-, String- and ID-values have no unit
+      IF (DataList.sParam.sAttr.sFormat <> eBinary) AND (DataList.sParam.sAttr.sFormat <> eString) AND
+         (DataList.sParam.sAttr.sFormat <> eParamNumber) AND (DataList.sParam.sAttr.sFormat <> eIdNumber) AND
+         (DataList.sParam.sAttr.sFormat <> eUnsignedHex) THEN
+          //Get the unit of the parameter --- wenn Parameter kein Attr besitzt gibt es Fehler (ret = eKSC_Nok)
+         GetParamUnit(myDrive, DataList.yParamList2b[i], DataList.sParam.sUnit);
+      END_IF;
+                 
+      //Get the value of the parameter
+      IF NOT GetParamValue(myDrive, DataList.yParamList2b[i], DataList.sParam) THEN
+         yActualState[iRowUserPage] := eRcuStateError;
+         RETURN;
+      END_IF;
+      
+      IF i >= (DataList.iLen-1) THEN
+         //Build the *.par file and close
+         BuildParFile(DataList, sFileName, TRUE);
+      ELSE
+         //Build the *.par file and open
+         BuildParFile(DataList, sFileName, FALSE);
+      END_IF;
+      
+      rProgress := rProgress + rStepPerCent;
+      yProgress[iRowUserPage] := INT(rProgress + 0.5);
+      WAIT TRUE;
+  END_FOR; 
+
+  yActualState[iRowUserPage] := eRcuStateFinish;
+  
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+// read parameter S-0-0192 IDN-list of backup operation data 
+//                S-0-0017 IDN-list of all data 
+//-----------------------------------------------------------------------------
+ROUTINE GetParamListToSave(drive : TRcuDrive; myDataList : tsDataList) : BOOL PRIVATE
+ VAR
+   i      : DINT;
+   ident  : DINT;
+   ret    : TKSC_Status;
+   iLen   : DINT;
+   yList  : TKSC_List2Byte;
+ END_VAR
+   
+   IF bSaveAllParam THEN
+      ident := 17;      //S-0-0017 IDN-list of all data
+   ELSE
+      ident := 192;    // S-0-0192 IDN-list of backup operation data
+   END_IF;
+   ret := RcReadSercosList2Byte1024(drive.sercHdl, ident, myDataList.yParamList2b, myDataList.iLen);
+   IF (ret = eKSC_Ok) THEN
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(TRcuDriveTool_WarReadParamList, locKin.kinListInx, 1, 0, "TRcuDriveTool.GetParamListToSave", drive.resourceName);
+      RETURN FALSE;
+   END_IF;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the attribut-value of the parameter
+//-----------------------------------------------------------------------------
+ROUTINE GetParamAttrValue(drive : TRcuDrive; VAR_IN ident : DINT; iValue : DINT) : BOOL PRIVATE
+ VAR
+   ret    : TKSC_Status;
+ END_VAR
+ 
+  ident := ident AND cIdentMask;
+  IF ident < 0 THEN //P-Parameter
+     ident := ident + 16#10000;
+  END_IF;
+  ret := RcReadSercosParameter(drive.sercHdl, ident, iValue, 3, TRcuElement(eRcuElemAttr));
+  IF ret = eKSC_Ok THEN
+     RETURN TRUE;
+  ELSE
+     iValue := 0;
+     RcuSetMessageOnce(TRcuDriveTool_WarReadAttribute, locKin.kinListInx, 1, 0, "TRcuDriveTool.GetParamAttrValue", STR(ident), drive.resourceName);
+     RETURN FALSE;
+  END_IF;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the name of the parameter
+//-----------------------------------------------------------------------------
+ROUTINE GetParamName(drive : TRcuDrive; VAR_IN ident : DINT; sName : STRING) : BOOL PRIVATE
+ VAR
+   ret    : TKSC_Status;
+ END_VAR
+ 
+  ident := ident AND cIdentMask;
+  IF ident < 0 THEN  //P-Parameter
+     ident := ident + 16#10000;
+  END_IF;  
+  ret := RcReadSercosString(drive.sercHdl, ident, sName, TRcuElement(eRcuElemName), 3);
+  IF ret = eKSC_Ok THEN
+     RETURN TRUE;
+  ELSE
+     sName := "";
+     RcuSetMessageOnce(TRcuDriveTool_WarReadNameParam, locKin.kinListInx, 1, 0, "TRcuDriveTool.GetParamName", STR(ident), drive.resourceName);
+     RETURN FALSE;
+  END_IF;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the unit of the parameter
+//-----------------------------------------------------------------------------
+ROUTINE GetParamUnit(drive : TRcuDrive; VAR_IN ident : DINT; sUnit : STRING) : BOOL PRIVATE
+ VAR
+   ret    : TKSC_Status;
+ END_VAR
+ 
+  ident := ident AND cIdentMask;
+  IF ident < 0 THEN  //P-Parameter
+     ident := ident + 16#10000;
+  END_IF;
+  ret := RcReadSercosString(drive.sercHdl, ident, sUnit, TRcuElement(eRcuElemUnit), 1);
+  IF ret = eKSC_Ok THEN
+     RETURN TRUE;
+  ELSIF ret = eKSC_Nok THEN    //parameter has no unit, so this state is returned
+     sUnit := "--";
+     RETURN TRUE;
+  ELSE
+     sUnit := "";
+     RcuSetMessageOnce(TRcuDriveTool_WarReadUnitParam, locKin.kinListInx, 1, 0, "TRcuDriveTool.GetParamUnit", STR(ident), drive.resourceName);
+     RETURN FALSE;
+  END_IF;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the value of the parameter
+//-----------------------------------------------------------------------------
+ROUTINE GetParamValue(drive : TRcuDrive; VAR_IN ident : DINT; param : tsParam) : BOOL PRIVATE
+ VAR
+   ret           : TKSC_Status;
+   iValue        : DINT;
+   str           : STRING;
+   data1b        : TKSC_List1Byte2048;
+   data2b        : TKSC_List2Byte1024;
+   data4b        : TKSC_List4Byte512;
+   i             : INT;
+ END_VAR
+ 
+   ident := ident AND cIdentMask;
+   IF ident < 0 THEN  //P-Parameter
+      ident := ident + 16#10000;
+   END_IF;
+   
+   CASE param.sAttr.sSize OF
+      eSizeReserved: 
+             PRINT("  actValue:  !invalid datasize!");
+             RETURN FALSE;
+             
+      eSizeFixedInt, eSizeFixedDint:
+             ret := RcReadSercosParameter(drive.sercHdl, ident, iValue, 3, TRcuElement(eRcuElemValue));
+             IF ret = eKSC_Ok THEN
+                FormatValue(iValue, param.sAttr.sFormat, param.sAttr.iDecimals, param.sAttr.iFactor, 
+                                                                                param.sAttr.sSize, param.sValue);
+             ELSE
+                param.sValue := "";
+                RETURN FALSE;
+             END_IF;
+             
+      eSizeVarSint:
+             IF (param.sAttr.sFormat = eString) THEN      
+                ret := RcReadSercosString(drive.sercHdl, ident, str, TRcuElement(eRcuElemValue), 3);
+                IF ret = eKSC_Ok THEN
+                   param.sValue := str;  
+                ELSE
+                   param.sValue := "";
+                   RETURN FALSE;
+                END_IF;
+             ELSE  //List
+                ret := RcReadSercosList1Byte2048(drive.sercHdl, ident, data1b, param.iLen, 3, TRcuElement(eRcuElemValue));
+                IF ret = eKSC_Ok THEN
+                   FOR i := 0 TO param.iLen-1 DO
+                       str := "";
+                       FormatValue(data1b[i], param.sAttr.sFormat, param.sAttr.iDecimals, param.sAttr.iFactor, param.sAttr.sSize, str);
+                       param.yValue[i] := str;
+                   END_FOR;
+                   //List with no parameters
+                   IF param.iLen = 0 THEN
+                      param.iLen := 9999;
+                   END_IF;
+                ELSE   
+                   param.iLen := 0;
+                   RETURN FALSE;
+                END_IF;
+             END_IF;
+             
+      eSizeVarInt:
+             ret := RcReadSercosList2Byte1024(drive.sercHdl, ident, data2b, param.iLen, 3, TRcuElement(eRcuElemValue));
+             IF ret = eKSC_Ok THEN
+                FOR i := 0 TO param.iLen-1 DO
+                    str := "";
+                    FormatValue(data2b[i], param.sAttr.sFormat, param.sAttr.iDecimals, param.sAttr.iFactor, param.sAttr.sSize, str);
+                    param.yValue[i] := str;
+                END_FOR;
+                //List with no parameters
+                IF param.iLen = 0 THEN
+                   param.iLen := 9999;
+                END_IF;
+             ELSE   
+                param.iLen := 0;
+                RETURN FALSE;
+             END_IF;
+      
+      eSizeVarDint:
+             ret := RcReadSercosList4Byte512(drive.sercHdl, ident, data4b, param.iLen, 3, TRcuElement(eRcuElemValue));
+             IF ret = eKSC_Ok THEN
+                FOR i := 0 TO param.iLen-1 DO
+                    str := "";
+                    FormatValue(data4b[i], param.sAttr.sFormat, param.sAttr.iDecimals, param.sAttr.iFactor, param.sAttr.sSize, str);
+                    param.yValue[i] := str;
+                END_FOR;
+                //List with no parameters
+                IF param.iLen = 0 THEN
+                   param.iLen := 9999;
+                END_IF;
+             ELSE   
+                param.iLen := 0;
+                RETURN FALSE;
+             END_IF;
+   END_CASE;  
+   RETURN TRUE;           
+           
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the value of the parameter
+//-----------------------------------------------------------------------------
+ROUTINE BuildParFile(myDataList : tsDataList; sFileName : STRING; bCloseFile : BOOL) : BOOL PRIVATE
+ VAR
+  sDir            : STRING;
+  sPath           : STRING;
+  sString         : STRING;
+  iLen            : DINT;
+  iLenValue       : DINT;
+  i               : INT;
+  iListIndex      : INT;
+  str             : STRING;
+  iPosCounter     : DINT;
+  iTime           : LINT;
+  sChr            : STRING;
+  sMonth          : STRING[3];
+ END_VAR
+
+
+   IF myDataList.fileState <> eFileIsOpen THEN
+      CatalogReadString(giSysBaseHdl, "applPath", sDir, TRUE);
+      sDir := sDir + "application\indramat";
+      IF NOT MkDir(sDir) THEN                                 //create directory
+         myDataList.fileState := eFileClosed;
+         RcuSetMessageOnce(TRcuDriveTool_WarCreateFolder, locKin.kinListInx, 1, 0, "TRcuDriveTool.BuildParFile", sDir);
+         RETURN FALSE;
+      ELSE
+         sPath       := sDir + "\" + sFileName + ".par";
+         myDataList.iFileHandle := FileOpen(sPath, eFileModeReadWriteDelete); //create file
+         IF myDataList.iFileHandle = 0 THEN
+            myDataList.fileState := eFileClosed;
+            RcuSetMessageOnce(TRcuDriveTool_WarCreateFile, locKin.kinListInx, 1, 0, "TRcuDriveTool.BuildParFile", sPath);
+            RETURN FALSE;
+         ELSE   
+            myDataList.fileState := eFileIsOpen;
+            //write header
+            SysTimerGetUs(iTime);
+            SysTimerString(str, iTime); 
+            sChr := "";
+            iLen := StrLen(str); 
+            str := StrDelete(str, 4, 1);
+            //Day
+            sChr := sChr + StrMid(str, 2, 5) + ".";
+            //Month
+            sMonth := StrMid(str, 3, 1) + ".";
+            CASE sMonth OF
+             "Jan": sChr := sChr + "01.";
+             "Feb": sChr := sChr + "02.";
+             "Mar": sChr := sChr + "03.";
+             "Apr": sChr := sChr + "04.";
+             "May": sChr := sChr + "05.";
+             "Jun": sChr := sChr + "06.";
+             "Jul": sChr := sChr + "07.";
+             "Aug": sChr := sChr + "08.";
+             "Sep": sChr := sChr + "09.";
+             "Oct": sChr := sChr + "10.";
+             "Nov": sChr := sChr + "11.";
+             "Dec": sChr := sChr + "12.";
+            END_CASE;  
+            //Year
+            sChr := sChr + StrMid(str, 4, 17);
+            sChr := sChr + " ";
+            //hour:min:sec
+            sChr := sChr + StrMid(str, 8, 8);
+            str := ";    File generated by TRcuDriveTool:  " + sChr + CHR(13);
+            FileWriteLn(myDataList.iFileHandle, str);
+            str := ";            Anwendungsart:  " + myDataList.sHeaderData.sKindOfUsage + CHR(13);
+            FileWriteLn(myDataList.iFileHandle, str);
+            str := ";                Motor-Typ:  " + myDataList.sHeaderData.sMotorType + CHR(13);
+            FileWriteLn(myDataList.iFileHandle, str);
+            str := ";           Regelgerätetyp:  " + myDataList.sHeaderData.sControllType + CHR(13);
+            FileWriteLn(myDataList.iFileHandle, str);
+            str := ";       Hersteller-Version:  " + myDataList.sHeaderData.sFirmware + CHR(13);
+            FileWriteLn(myDataList.iFileHandle, str);
+            str := ";                 DriveTop:  " + CHR(13);
+            FileWriteLn(myDataList.iFileHandle, str);
+            FileWriteLn(myDataList.iFileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+            FileWriteLn(myDataList.iFileHandle, ";IdentNr  Parameter Name                                      |              Date | Unit          Attribute" + CHR(13));
+            FileWriteLn(myDataList.iFileHandle, ";----------------------------------------------------------------------------------------------------------" + CHR(13));
+         END_IF;   
+      END_IF;
+   END_IF; 
+     
+   //write parameters ID and name
+   sString := myDataList.sParam.sID + "  " + myDataList.sParam.sName;
+   //write parameter value
+   IF (myDataList.sParam.iLen > 0) OR                             //Is it a list-parameter
+      (myDataList.sParam.iLen = 9999) THEN                        //9999 is also a list
+      IF (myDataList.sParam.iLen = 9999) THEN
+         myDataList.sParam.iLen := 1;
+      END_IF;
+      iLen := StrLen(sString);                                            //first param in list
+      iLenValue := StrLen(myDataList.sParam.yValue[0]);
+      IF iLen >= 57 THEN                                                  //format-error of indramat
+         iPosCounter := iLen + 2;                                         //parametername too long
+      ELSE 
+         iPosCounter := 58;
+      END_IF;
+      iLen := 75 - iLen - iLenValue;                                      //fill with blanks until column 82
+      sString := FillStringWithBlanks(sString, iLen);
+      sString := StrInsert(sString, "[000]|", iPosCounter);               //insert listparamcounter
+      sString := sString + myDataList.sParam.yValue[0] + " | ";   //insert listparam
+      IF myDataList.sParam.sUnit <> "" THEN                       //insert unit if existing
+          sString := sString + myDataList.sParam.sUnit;
+      ELSE
+          sString := sString + "--";
+      END_IF;
+      iLen := StrLen(sString);                                           //fill with blanks until column 96
+      iLen := 96 - iLen;                                                 
+      sString := FillStringWithBlanks(sString, iLen);                    //insert attribute
+      sString := sString + myDataList.sParam.sAttr.sHexString + CHR(13);  
+      FileWriteLn(myDataList.iFileHandle, sString);                                  //write line to file
+      sString := "";
+      
+      
+      FOR iListIndex:=1 TO myDataList.sParam.iLen-1 DO            //the rest of the list
+          iLenValue := StrLen(myDataList.sParam.yValue[iListIndex]);
+          iLen := 75 - iLenValue;
+          sString := FillStringWithBlanks(sString, iLen);
+          str := STR(iListIndex);
+          iLen := StrLen(str);
+          IF iLen < 2 THEN                                              //insert listparamcounter
+             str := "[00" + STR(iListIndex) + "]|";
+          ELSIF iLen < 3 THEN
+             str := "[0" + STR(iListIndex) + "]|";
+          ELSE
+             str := "[" + STR(iListIndex) + "]|";
+          END_IF;
+          sString := StrInsert(sString, str, 58);                       //insert listparam
+          sString := sString + myDataList.sParam.yValue[iListIndex] + " | ";
+          IF myDataList.sParam.sUnit <> "" THEN                 //insert unit if existing
+              sString := sString + myDataList.sParam.sUnit + CHR(13);
+          ELSE
+              sString := sString + "--" + CHR(13);
+          END_IF;
+          FileWriteLn(myDataList.iFileHandle, sString);
+          sString := "";
+      END_FOR;
+   ELSE                                    //only single value
+      iLen := StrLen(sString);
+      iLenValue := StrLen(myDataList.sParam.sValue);
+      FOR i:=iLen TO 61 DO
+         sString := sString + " ";
+      END_FOR;
+      sString := sString + "|";
+      IF iLenValue <= 20  THEN
+         iLenValue := 81 - iLenValue;
+         FOR iLen:=63 TO iLenValue-1 DO
+             sString := sString + " ";
+         END_FOR;
+      END_IF;                  
+      sString := sString + myDataList.sParam.sValue + " | ";
+      IF myDataList.sParam.sUnit <> "" THEN
+          sString := sString + myDataList.sParam.sUnit;
+      ELSE
+          sString := sString + "--";
+      END_IF;
+      iLen := StrLen(sString);                                           //fill with blanks until column 96
+      IF iLen <= 96 THEN
+         iLen := 96 - iLen;                                                 
+         sString := FillStringWithBlanks(sString, iLen);
+      ELSE
+         sString := FillStringWithBlanks(sString, 11);
+      END_IF;
+      sString := sString + myDataList.sParam.sAttr.sHexString + CHR(13);  //insert attribute         
+      FileWriteLn(myDataList.iFileHandle, sString);
+   END_IF;
+
+   IF bCloseFile THEN
+      FileWriteLn(myDataList.iFileHandle, ";End of parameter set");
+      StreamClose(myDataList.iFileHandle);                    //close file
+      myDataList.fileState := eFileClosed;
+   END_IF;  
+  
+  RETURN TRUE;
+END_ROUTINE
+
+(*-----------------------------------------------------------------------------
+ Element 3 consists of 4 byte:
+ Bit  0..15: The evaluation factor is an integer without qualifying sign used to
+             convert numeric data into a display format. This factor is set to 1 if not
+             needed for data display (e.g., with text).
+ 
+ Bit 16..18: The control needs to know the data length when writing data.
+             0 0 0 - reserved
+             0 0 1 - operating data is 2 bytes long
+             0 1 0 - operating data is 4 bytes long
+             0 1 1 - reserved
+             1 0 0 - variable length with 1 byte data
+             1 0 1 - variable length with 2 byte data
+             1 1 0 - variable length with 4 byte data
+             1 1 1 - reserved
+             
+ Bit 19:     The function with an ID number shows that it is a command.
+ 
+ Bit 20..22: Data type and display format are used to convert operating data and
+             minimum/maximum input values into the correct display format.
+                     Data type                         | Display format:
+             0 0 0 - binary                            | number binary
+             0 0 1 - integer without sign              | decimal number without sign
+             0 1 0 - integer                           | decimal number with sign
+             0 1 1 - integer without sign              | hexadecimal
+             1 0 0 - expanded character block          | text
+             1 0 1 - integer without sign              | ID number (2 byte)
+             1 1 0 - floating point (simple precision) | decimal number with size and exponent
+                     per ANSI/IEEE Std. 754-1985       | (places after decimal not relevant)          
+             1 1 1 - integer without sign              | parameter number (4 byte)
+             
+ Bit 24..27: The decimal places fix the position of the decimal place for display and
+             inputting operating data. It is additional display information.
+             0 0 0 0 - no decimal places
+             ...
+             1 1 1 1 - 15 decimal places (maximum)
+             
+ Bit 28..30: Bit 30 write protection in CP4:
+             0 - operating data is writable
+             1 - operating data is write protected
+             Bit 29 write protection in CP3:
+             0 - operating data is writable
+             1 - operating data is write protected
+             Bit 28 write protection in CP2:
+             0 - operating data is writable
+             1 - operating data is write protected            
+             
+-----------------------------------------------------------------------------*)
+ROUTINE DecodeAttributeWord(sAttr : tsAttr) PRIVATE
+ VAR
+   iTemp : DINT;
+ END_VAR
+ 
+   //Factor
+   sAttr.iFactor := sAttr.iRaw AND cIdentMask;
+   //Size
+   iTemp := SHR(sAttr.iRaw, 16) AND 7;
+   IF (iTemp = 0) OR (iTemp = 3) OR (iTemp = 7)  THEN
+      sAttr.sSize    := eSizeReserved;
+   ELSIF iTemp = 1 THEN
+      sAttr.sSize    := eSizeFixedInt;
+   ELSIF iTemp = 2 THEN
+      sAttr.sSize    := eSizeFixedDint;
+   ELSIF iTemp = 4 THEN
+      sAttr.sSize    := eSizeVarSint;
+   ELSIF iTemp = 5 THEN
+      sAttr.sSize    := eSizeVarInt;
+   ELSIF iTemp = 6 THEN
+      sAttr.sSize    := eSizeVarDint;
+   END_IF;
+   //Format
+   sAttr.sFormat := TRcuFormat(SHR(sAttr.iRaw, 20) AND 7); 
+   //Decimals
+   sAttr.iDecimals := SHR(sAttr.iRaw, 24) AND 15;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// convert a given DINT-value to string
+//-----------------------------------------------------------------------------
+ROUTINE FormatValue(VAR_IN value : DINT; CONST format : TRcuFormat; CONST decNr : DINT; 
+   CONST factor : DINT; CONST size : TRcuSize; formatedStr : STRING) PRIVATE
+   
+ VAR
+   i        : DINT;
+   bitSize  : DINT;
+   w        : WORD;
+   dw       : DWORD;
+   sintVal  : SINT;
+   intVal   : INT;
+   dintVal  : DINT;
+   longVal  : LINT;
+   realVal  : REAL;
+   str      : STRING;
+   char     : STRING;
+   byte     : BYTE;
+   len1     : DINT;
+   len2     : DINT;
+   lenOver  : DINT;
+   paramNr  : DINT;
+   realConv : TConvResult;
+ END_VAR  
+   
+   //Check bitsize
+   CASE size OF
+      eSizeReserved:
+           formatedStr := "SizeError";
+           RETURN;
+      eSizeVarSint:
+      	   bitSize := 8;
+      eSizeFixedInt:
+           bitSize := 16;
+      eSizeVarInt:
+      	   bitSize := 16;
+      eSizeFixedDint, eSizeVarDint:
+      	  bitSize := 32;
+   END_CASE;	
+   
+   CASE format OF
+      eBinary:
+      	   dintVal := value;
+           str := "";
+           FOR i := 1 TO bitSize DO
+              str := STR(dintVal AND 1) + str;
+              dintVal := SHR(dintVal,1);
+              CASE i OF
+                4,8,12,16,20,24,28: IF (i < (bitSize-1)) THEN 
+                                       str := "." + str;  
+              END_IF;              
+              END_CASE;          
+           END_FOR;
+      	   formatedStr := str + "b";
+      eUnsigned: 	
+           IF value < 0 THEN  
+      	      CASE bitSize OF
+      	        8:  byte := value;
+      	            longVal := byte;
+      	            
+      	        16: w := value;
+                    longVal := w;
+      	        
+      	        32: dw := value;
+                    longVal := dw;
+      	      
+      	      END_CASE;
+      	   ELSE   
+      	      longVal := value;
+      	   END_IF;
+      	   IF factor > 1 THEN
+              longVal := longVal * factor;
+           END_IF;
+           IF decNr > 0 THEN             //value has to be formated
+              str := STR(longVal);
+              len2 := StrLen(str);
+              len1 := len2-decNr;
+              IF len1 < 0 THEN
+                 lenOver := iAbs(len1);
+                 len1 := 0;  //value small 1.0 but bigger 0.0 --> nothing than 0. before dot
+              END_IF;
+              //insert decimalpoint
+              formatedStr := StrLeft(str, len1) + "." + StrRight(str, decNr);
+              //fill with "0" after decimalpoint
+      	      FOR i := 0 TO lenOver-1 DO
+                  formatedStr := StrInsert(formatedStr, "0", 2);
+              END_FOR;
+              //insert leading "0"
+              IF decNr >= len2 THEN
+                 formatedStr := "0" + formatedStr;
+              END_IF;
+           ELSE                    //Don't format the value, it' already correct
+              formatedStr := STR(longVal);
+           END_IF;
+      eSigned:     
+           CASE bitSize OF
+              8:  sintVal := value;
+                  longVal := sintVal;
+                 
+              16: intVal := value;
+                  longVal := intVal;
+              
+              32: longVal := value; 
+      	   END_CASE;
+      	   IF factor > 1 THEN
+              longVal := longVal * factor;
+           END_IF;
+      	   IF decNr > 0 THEN  //value has to be formated
+      	      str := STR(longVal);
+              len2 := StrLen(str);
+              len1 := len2-decNr;
+              IF len1 < 0 THEN
+                 lenOver := iAbs(len1);
+                 len1    := 0;  //value small 1.0 but bigger 0.0 --> nothing than 0. before dot
+              END_IF;
+      	      
+      	      IF longVal >= 0 THEN //value is positive
+      	          //insert decimalpoint
+      	          formatedStr := StrLeft(str, len1) + "." + StrRight(str, decNr);
+      	          //fill with "0" after decimalpoint
+      	          FOR i := 0 TO lenOver-1 DO
+                     formatedStr := StrInsert(formatedStr, "0", 2);
+                  END_FOR;
+                  //insert leading "0"
+                  IF decNr >= len2 THEN
+                     formatedStr := "0" + formatedStr;  
+                  END_IF;  
+                  
+      	      ELSE                 //value is negative
+      	         IF decNr >= (len2-1) THEN
+                     //seperate "-" from Value
+                     //i := decNr -1;
+                     //formatedStr := StrRight(str, i);
+                     formatedStr := StrDelete(str, 1, 1);
+                     //insert leading "0."
+      	             formatedStr := StrInsert(formatedStr, "-0.", 0);
+                     //fill with "0" after decimalpoint
+                     lenOver := decNr - (len2-1);
+                     FOR i := 0 TO lenOver-1 DO
+                        formatedStr := StrInsert(formatedStr, "0", 4);
+                     END_FOR;
+                  ELSE      	            
+      	            //insert decimalpoint
+      	            formatedStr := StrLeft(str, len1) + "." + StrRight(str, decNr);
+                  END_IF;                       	      
+      	      END_IF;
+      	   
+           ELSE                  //Don't format the value, it' already correct
+              formatedStr := STR(longVal);
+           END_IF;
+           
+           
+      eUnsignedHex:
+      	   CASE bitSize OF
+              8:  byte := value;
+                  dw := byte; 
+      	    
+      	      16: w := value;
+                  dw := w;
+      	    
+      	      32: dw := value;
+      	   END_CASE;
+      	   
+           formatedStr := RcUtils.DecToHexString(dw);      	   
+           IF (StrLen(formatedStr) < 4) THEN
+              FOR i := StrLen(formatedStr) TO 3 DO
+                  formatedStr := "0" + formatedStr;
+              END_FOR;
+           END_IF;   
+      	   formatedStr := formatedStr + "h";
+      	   
+      	   
+      eString:	   
+      	   dintVal := value;
+           str := "";
+           FOR i := 1 TO (bitSize / 8) DO
+              str := CHR(dintVal AND 255) + str;
+              dintVal := SHR(dintVal,8);
+           END_FOR;
+           formatedStr := str;
+      eIdNumber, eParamNumber : 	   
+      	   IF value < 0 THEN
+              paramNr := value + 16#8000;
+              char  := "P";
+           ELSIF value >= 16#8000 THEN
+              paramNr := value - 16#8000;
+              char  := "P";
+           ELSE
+              paramNr := value;
+              char  := "S";
+           END_IF;
+           str  := STR(paramNr AND 16#0FFF);
+           len1 := StrLen(str);
+           len2 := 4 - len1 + 1;
+           formatedStr := char + "-" + STR(paramNr / 16#1000) + "-" + StrReplace("0000", str, len1, len2);
+           
+      eFloat:  // float (ANSI/IEEE Std 754-1985)
+       	   RcUtils.BitmaskToReal(value, realVal, realConv);
+      	   CASE realConv OF
+              eRealInvalid : formatedStr := "invalid";
+              eRealOk, eRealDenormalised, ePosZero:
+                 IF factor > 1 THEN  // should factor be considered?
+                   realVal := realVal * factor;
+                 END_IF;
+                 IF realVal < 1.0 THEN
+                    formatedStr := "0" + STR(realVal);  //string correction
+                 ELSE
+                 formatedStr := STR(realVal);
+                 END_IF;
+                 
+              eNegZero     : formatedStr := "-0" + STR(realVal);
+              ePosNan      : formatedStr := "NaN";
+              eNegNan      : formatedStr := "-NaN";
+              ePosInfinite : formatedStr := "infinite";
+              eNegInfinite : formatedStr := "-infinite";  
+           END_CASE;
+   END_CASE;   
+   
+END_ROUTINE
+//-----------------------------------------------------------------------------
+// add blanks to given string
+//-----------------------------------------------------------------------------
+ROUTINE FillStringWithBlanks(sSourceStr : STRING; iBlanks : DINT) : STRING
+ VAR
+  iLen : DINT;
+  i    : DINT;
+  str  : STRING;
+ END_VAR  
+   
+   FOR i:=0 TO iBlanks-1 DO
+      str := str + " ";   
+   END_FOR;
+   iLen := StrLen(sSourceStr) + 1;
+   str := StrInsert(sSourceStr, str, iLen);
+   RETURN str;
+   
+END_ROUTINE 
+
+//-----------------------------------------------------------------------------
+// init sParam struct
+//-----------------------------------------------------------------------------
+ROUTINE ClearParamStruct(myParam : tsParam)
+ VAR
+   i : INT;
+ END_VAR
+ 
+   myParam.sID              := "";
+   myParam.sAttr.iRaw       := 0;
+   myParam.sAttr.sHexString := "";
+   myParam.sAttr.iFactor    := 0;
+   myParam.sAttr.sSize      := eSizeReserved;
+   myParam.sAttr.iDecimals  := 0;
+   myParam.sValue           := "";
+   myParam.iLen             := 0;
+   FOR i:=0 TO 511 DO
+      myParam.yValue[i]     := "";
+   END_FOR;
+   myParam.sName            := "";
+   myParam.sUnit            := "";
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get the usage name of the drive
+//-----------------------------------------------------------------------------
+ROUTINE GetKindOfUsage(myDrive : INT) : STRING
+ VAR
+   ret    : TKSC_Status;
+   str    : STRING;
+ END_VAR
+   
+  IF myDrive < cMaxRobDrive THEN
+  ret := RcReadSercosString(locKin.drive[myDrive].sercHdl, 142, str, 7);
+  IF ret <> eKSC_Ok THEN                                                                            
+     str := "invalid";                                                
+  END_IF;    
+  ELSE   
+     ret := RcReadSercosString(locKin.dosingDrive[myDrive-cMaxRobDrive].sercHdl, 142, str, 7);
+     IF ret <> eKSC_Ok THEN                                                                            
+        str := "invalid";                                                
+     END_IF;
+  END_IF;   
+  RETURN str;
+END_ROUTINE                                                                                       
+
+//-----------------------------------------------------------------------------
+// Build release for buttons on userpage
+//-----------------------------------------------------------------------------
+ROUTINE ObserveUploadActive() PRIVATE   
+ VAR
+  i    : SINT;
+  j    : SINT;
+  yChg : ARRAY [cMaxDrive] OF BOOL;
+  bChg : BOOL;
+ END_VAR
+ 
+   FOR i:=0 TO cMaxDrive-1 DO
+       IF i < cMaxRobDrive THEN
+          IF IS_MAPPED(locKin.drive[i]) THEN
+             yChg[i] := IS_CHANGED(yActualState[i]);
+          END_IF;
+       ELSE   
+          j := i - cMaxRobDrive;
+          IF IS_MAPPED(gRcuFocusedRobot.dosingDrive[j]) THEN
+             yChg[i] := IS_CHANGED(yActualState[i]);
+          END_IF;
+       END_IF;
+   END_FOR;
+   bChg := IS_CHANGED(yChg);
+
+   WHILE TRUE DO  
+     bButtonRelease := TRUE;
+     FOR i:=0 TO cMaxDrive-1 DO
+        IF yActualState[i] = eRcuStateRunning THEN
+           bButtonRelease := FALSE;
+        END_IF;
+        yChg[i] := FALSE;
+     END_FOR;
+     bChg := FALSE;
+     WAIT bChg;
+   END_WHILE;
+
+END_ROUTINE                                                   

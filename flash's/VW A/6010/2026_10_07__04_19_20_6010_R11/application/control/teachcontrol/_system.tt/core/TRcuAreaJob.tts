@@ -1,0 +1,146 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       TRcuAreaJob.tts                                             *
+*    Description: Functionblock for checking robot is in nogo- or             *
+*                 workingarea by MCU                                          *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 13.03.07 BIT: Changes for fixpositions (bypass / unselect)
+*)
+
+VAR
+   areaData      : TMcuArea;
+   areaID        : TMcuDbObjID;
+   inDefinedArea : BOOL;
+END_VAR
+
+//--------------------------------------------------------------------------------------
+// activate a area job to MCU
+//--------------------------------------------------------------------------------------
+ROUTINE ActivateAreaJob(inKin : TRcuKinematic)
+   
+   IF (areaID = 0) THEN
+      inKin.DebugPrint(eTraceAreaJob, "AreaJob - area not valid for job");
+      RETURN;
+   END_IF;
+   
+   kin := MAP(inKin);
+   IF NOT IS_MAPPED(kin) THEN
+      RcuSetMessageOnce(TRcuAreaJob_ErrMappingKin, -1, 1, instId, "TRcuAreaJob.ActivateAreaJob");
+      RETURN;
+   END_IF;
+   
+   IF NOT McuReadAreaHdlName(areaID, hdlName) THEN
+      RcuSetMessageOnce(TRcuAreaJob_ErrMcuCreateJob, kin.kinListInx, 1, instId, "TRcuAreaJob.ActivateAreaJob");
+      RETURN;
+   END_IF;
+   
+   areaState := MAPX(hdlName);
+   
+   //area is assigned correctly
+   activated := TRUE;
+   //check offline if robot is in specified area
+   //CheckRobotInArea();
+   
+   //observe online if robot is in specified area
+   START ObserveAreaState() PRIO 1;
+END_ROUTINE
+
+//--------------------------------------------------------------------------------------
+//check offline if robot is in specified area
+//--------------------------------------------------------------------------------------
+ROUTINE CheckRobotInArea() PRIVATE
+VAR
+   vector : TMcuVector3;
+   refSys : TMcuDbObjID;
+END_VAR;
+
+   IF NOT activated THEN
+      RcuSetMessageOnce(TRcuAreaJob_InfNoAreaDef, kin.kinListInx, 1, instId, "TRcuAreaJob.CheckRobotInArea");
+      inDefinedArea := FALSE;
+      RETURN;
+   END_IF;
+   
+   refSys := McuGetWorldTrsfID();
+   vector := kin.actCartVals.mPos;
+   McuIsPointInArea(vector, refSys, areaID, inDefinedArea);
+         
+END_ROUTINE
+
+//--------------------------------------------------------------------------------------
+// delete a area job to MCU
+//--------------------------------------------------------------------------------------
+ROUTINE DeleteAreaJob()
+
+   STOP ObserveAreaState;
+   inDefinedArea := FALSE;
+   IF areaID <> 0 THEN
+      McuReleaseDbObj(areaID);
+   END_IF;
+   activated     := FALSE;
+   
+END_ROUTINE
+(*******************************************************************************
+* private members
+*)
+VAR PRIVATE
+   kin           : MAPTO TRcuKinematic;
+   areaState     : MAPTO TMcuAreaState;
+   hdlName       : TMcuString;
+   activated     : BOOL;
+   instId        : DINT;
+END_VAR
+
+
+//--------------------------------------------------------------------------------------
+// Observes Changes in the area state from the MCU
+//--------------------------------------------------------------------------------------
+ROUTINE ObserveAreaState() PRIVATE
+VAR
+   bChg : BOOL;
+END_VAR;
+
+   //wait some time until MCU has created area
+   kin.WaitMcMainCycles(1);
+   bChg := IS_CHANGED(areaState);
+   WHILE TRUE DO
+      CASE areaState OF
+         eMcuAreaUnknown: kin.DebugPrint(eTraceAreaJob, " ObserveAreaState : " + areaData.mName + "Area Unkown");
+         
+         eMcuAreaInside:  inDefinedArea := TRUE;
+         
+         eMcuAreaOutside: inDefinedArea := FALSE;
+         
+      END_CASE;
+      bChg := FALSE;
+      WAIT bChg;
+   END_WHILE;
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+*)
+ROUTINE NEW()
+  instId := RcuGetInstanceId();
+END_ROUTINE
+
+ROUTINE DELETE()
+   IF areaID <> 0 THEN
+      McuReleaseDbObj(areaID);
+   END_IF;
+   activated     := FALSE;
+   inDefinedArea := FALSE;
+END_ROUTINE

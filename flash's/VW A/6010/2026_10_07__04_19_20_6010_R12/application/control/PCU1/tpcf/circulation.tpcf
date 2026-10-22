@@ -1,0 +1,105 @@
+//  Version      | ReleaseDate | Respon    | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 2017-09-28  | KLCH      | First release
+//  v2_02.00.00  | 2018-04-06  | KLCH      | Change: additional parameter DiagnosticDeviceNames for command Add_TPStepEvent (PB V2.08.02.03 or higher)
+
+Parameter Option1 MaterialValve1 Circulation HelpGun1
+
+// Step 1: Set global properties
+Call Sub_Set_TPGlobalProperties
+// Step 2: Add all device signals
+Call Sub_Add_TPSignals
+// Step 3: Add all steps
+Call Sub_Add_TPSteps
+// Step 4: Set device signals in all steps
+Call Sub_Set_TPSignals
+// Step 5: Set groups
+Call Sub_Set_TPGroups
+// Step 6: Save program
+Call Sub_Save_TP
+
+END
+
+SubRoutine Sub_Set_TPGlobalProperties
+	Set_TPGlobalProperties CurrentGroup "Circulation" "" 60 False
+Return
+
+SubRoutine Sub_Add_TPSignals
+	Add_TPSignal "Material1.YAVR1.Set"
+	Add_TPSignal "Material1.BMV2F.ActFlowFiltered"
+	Add_TPSignal "Material1.BMV2PA.ActValue"
+	Add_TPSignal "Material1.AMV2FC.ControlType"
+	Add_TPSignal "Material1.AMV2FC.OrderSet"
+	Add_TPSignal "Material1.AMV2FC.SetFlow"
+	Add_TPSignal "Material1.AMV2FC.SetPressure"
+	Add_TPSignal "Material1.AMV2FC.SetNextNozzle"
+	SelectCase MaterialValve1
+		Case 1
+			Add_TPSignal "MaterialSupply1.AYMV1.Set"
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Add_TPSignal "Material1.YHG1.Set"
+	EndSelect
+Return
+
+SubRoutine Sub_Add_TPSteps
+	Add_TPStepTime "Circulation" 180 True ""
+	Add_TPStepEvent "Check" False 1 False 0 True False None 0 And False 0 "" ""
+	Add_TPStepTime "Pause" 60 True ""
+Return
+
+SubRoutine Sub_Set_TPSignals
+	// Set all signals in step 1.
+	// In the following steps set only changes of signals to the step before.
+
+	// Step 1
+	Select_TPStep "Circulation"
+	// First: Apply base settings to all signals
+	Set_TPSignalBool "Material1.YAVR1.Set" True
+	Act_TPSignalAnalog "Material1.BMV2F.ActFlowFiltered" False 0 GreaterEqual 0
+	Act_TPSignalAnalog "Material1.BMV2PA.ActValue" False 0 GreaterEqual 0
+	Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 5
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" True
+	Set_TPSignalAnalog "Material1.AMV2FC.SetFlow" 10
+	Set_TPSignalAnalog "Material1.AMV2FC.SetPressure" 220
+	Set_TPSignalAnalog "Material1.AMV2FC.SetNextNozzle" 1
+	SelectCase MaterialValve1
+		Case 1
+			Set_TPSignalBool "MaterialSupply1.AYMV1.Set" True
+	EndSelect
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" True
+	EndSelect
+
+	// Step 2
+	Select_TPStep "Check"
+	// Modify only signals changed to step before
+	Act_TPSignalAnalog "Material1.BMV2F.ActFlowFiltered" True 0 Greater 0
+	Act_TPSignalAnalog "Material1.BMV2PA.ActValue" True 200 LessEqual 0
+	Set_TPSignalAnalog "Material1.AMV2FC.ControlType" 0
+	Set_TPSignalBool "Material1.AMV2FC.OrderSet" False
+	Set_TPSignalAnalog "Material1.AMV2FC.SetFlow" 0
+	Set_TPSignalAnalog "Material1.AMV2FC.SetPressure" 0
+
+	// Step 3
+	Select_TPStep "Pause"
+	// Modify only signals changed to step before
+	Set_TPSignalBool "Material1.YAVR1.Set" False
+	Act_TPSignalAnalog "Material1.BMV2F.ActFlowFiltered" False 0 GreaterEqual 0
+	Act_TPSignalAnalog "Material1.BMV2PA.ActValue" False 0 GreaterEqual 0
+	SelectCase HelpGun1
+		Case 1
+			Set_TPSignalBool "Material1.YHG1.Set" False
+	EndSelect
+Return
+
+SubRoutine Sub_Set_TPGroups
+	// Set step groups
+	// Set rep groups
+Return
+
+SubRoutine Sub_Save_TP
+	Save_TP "circulation" True
+Return

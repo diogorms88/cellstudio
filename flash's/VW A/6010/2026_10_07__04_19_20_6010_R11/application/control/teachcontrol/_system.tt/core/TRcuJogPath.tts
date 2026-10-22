@@ -1,0 +1,1917 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuJogPath.tts
+*  First Author : pen
+*  Date         : 18.1.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  The path used for manual movement.
+*------------------------------------------------------------------------------
+* 19.09.04 nmr: Consideration Sof W-limitswitches during jogging
+* 16.02.05 nmr: Imherit Tool from actual segment when change into jog-mode 
+*               (earlier the Tool in Jogpath was set too, if the tool in ProgPath
+*               was set. ProgPath-Tool will be set in PreRun so it was possible
+*               that after a programstop the wrong tool (from PreRun) was active.
+* 13.05.05 nmr: SetReposRequest not needed anymore
+* 17.06.05 sbj: Choice of Orientation-Interpolation dependent from kinematic-type
+* 05.07.05 kto: translated into english
+*)
+
+
+INHERIT TRcuPath;
+
+
+(*******************************************************************************
+* globals
+*)
+
+TYPE GLOBAL
+   // enumeration for the different Jog modes
+   TRcuJogMode : (eRcuJogContinuous, eRcuJogIncremental);
+END_TYPE
+
+
+(*******************************************************************************
+* members
+*)
+
+VAR
+   // the coordinate system in which the jogging should take place
+   jogSystem : TRcJogCoordSys;
+
+   // the Jog mode (incremental/continuous)
+   jogMode : TRcuJogMode;
+
+   // the reference system (only important for jogSystem equal to eRcuCoordCart
+   // or eRcuCoordMixed)
+   jogRefSys : TRcuReferenceSystem;
+
+   // vectors for the jogging speed, different vectors are used for different
+   // values of jogSystem
+   jogVectorMainJ   : TMcuVector;  // for eRcuCoordJoints, eRcuCoordMixed,
+                                   // eRcuCoordToolMixed (Base/Wristjoints)
+   jogVectorAuxJ    : TMcuVector;  // for all values
+   jogVectorCartPos : TMcuVector3; // for eRcuCoordCart, eRcuCoordMixed,
+                                   // eRcuCoordToolCart, eRcuCoordToolMixed
+   jogVectorCartOri : TMcuVector3; // for eRcuCoordCart, eRcuCoordToolCart
+                                   // roll, pitch yaw (cardan instead of euler angles)
+   jogVectorAddPos  : ADD_POSITIONS;// for eRcuCoordCart
+
+   // references for limitswitches
+   limitMin : ARRAY [cMcuMaxJ] OF MAPTO BOOL;
+   limitMax : ARRAY [cMcuMaxJ] OF MAPTO BOOL;
+
+   // exception signal, is inverted upon every error condition (e.g. unreachable
+   // positions, singularity ...)
+   exceptionFlipFlop : BOOL;
+
+   // decide whether endpoints of the jogPath are checked against areas in the
+   // offlinelist
+   jogPointCheckArea : BOOL;
+
+   // this counter is increased with every appended segment
+   segmentCount : DINT;
+
+   // typical time between jog-segments in seconds
+   jogPeriod : REAL;
+   // maximum time between jog-segments in seconds
+   maxJogPeriod : REAL;  
+   bDisableMessage : BOOL;
+   reservedToolId : TMcuDbObjID;
+END_VAR
+
+
+// Create the path, set values defined by the kinematic
+ROUTINE Create(kin : TRcuKinematic)
+   VAR
+      s0 : STRING;
+      s : STRING;
+      i : INT;
+   END_VAR
+
+   SUPER.Create(kin);
+   jogStartPos.mAuxJoints.mValidLen := myKinematic.kinematic.mNrOfAuxJoints;
+   jogStartPos.mPosJoints.mJoints.mValidLen := myKinematic.kinematic.mNrOfMainJoints;
+   jogStartPos.mPosMixed.mWristJoints.mValidLen := myKinematic.kinematic.mNrOfWristJoints;
+   jogStartPos.mDBObjTyp := eMcuPermanent;
+   jogStartPos.mName := "jogPoint";
+   jogStartPos.mKinematicID := myKinematic.kinematicMcuId;
+
+   velVectorAux.mValidLen := myKinematic.kinematic.mNrOfAuxJoints;
+   velVectorMain.mValidLen := myKinematic.kinematic.mNrOfMainJoints;
+   
+   // register data for debugging purposes
+   s0 := myKinematic.kinematic.mName + ".jogPath.";
+   s := s0 + "deltaTime";
+   SwoAddRealVariable(deltaTime, s);
+   s := s0 + "appendParam";
+   SwoAddRealVariable(appendParam, s);
+   s := s0 + "segmentCount";
+   SwoAddDIntVariable(segmentCount, s);
+   s := s0 + "iterCount";
+   SwoAddDIntVariable(iterCount, s);
+
+   s0 := myKinematic.kinematic.mName + ".jogPath.jogDynamic.";
+   s := s0 + "jointvelo";
+   SwoAddRealVariable(jogDynamic.mJoint.mVelo, s);
+   s := s0 + "cartvelo";
+   SwoAddRealVariable(jogDynamic.mCart.mVelo, s);
+   s := s0 + "turnvelo";
+   SwoAddRealVariable(jogDynamic.mTurn.mVelo, s);
+   s := s0 + "jointacce";
+   SwoAddRealVariable(jogDynamic.mJoint.mAcce, s);
+   s := s0 + "cartacce";
+   SwoAddRealVariable(jogDynamic.mCart.mAcce, s);
+   s := s0 + "turnacce";
+   SwoAddRealVariable(jogDynamic.mTurn.mAcce, s);
+END_ROUTINE
+
+
+// Give defaultsettings for the dynamic, the overlap and the tool. These settings
+// will be restored by the Reset method. CAUTION: the presented Mcu-objects will
+// be released when the path is deleted!
+// In the JogPath additional controls are necessary to avoid unsupported settings
+// CAUTION: the presented Mcu-objects will be released when they represent
+// unsupported settings and are not set as default for the kinematic!
+ROUTINE SetDefault(dynId : TMcuDbObjID; ovlId : TMcuDbObjID; toolId : TMcuDbObjID)
+   VAR
+      overlapId : TMcuDbObjID;
+      locDynamicId : TMcuDbObjID;
+      acceRampId : TMcuDbObjID;
+      deceRampId : TMcuDbObjID;
+
+      acceRamp : TMcuRamp;
+      deceRamp : TMcuRamp;
+      ovl : TMcuOverlap;
+
+      r : REAL;
+      anyChg : BOOL;
+      chg : BOOL;
+   END_VAR
+
+   IF defaultSet THEN
+      RcuSetMessageOnce(TRcuJogPath_WarJogSetDefaltCall, myKinematic.kinListInx, 1, instId, "TRcuJogPath.SetDefault", INSTANCE_NAME());
+   END_IF;
+   IF (dynId = 0) OR (ovlId = 0) OR (toolId = 0) THEN
+      RcuSetMessageOnce(TRcuJogPath_WarJogSettingInsuff, myKinematic.kinListInx, 1, instId, "TRcuJogPath.SetDefault", INSTANCE_NAME());
+   ELSE
+      defaultSet := TRUE;
+   END_IF;
+
+   locDynamicId := dynId;
+   overlapId := ovlId;
+
+   IF (locDynamicId <> 0) THEN
+      McuReadDynamic(locDynamicId, dynamic);
+      acceRampId := dynamic.mAcceRamp;
+      McuReadRamp(acceRampId, acceRamp);
+      deceRampId := dynamic.mDeceRamp;
+      McuReadRamp(deceRampId, deceRamp);
+
+      // consider ramps
+      IF (acceRamp.mTyp = eMcuTrapez) AND (acceRamp.mRampParam <> acceRamp.mRampParam2) THEN
+         chg := TRUE;
+         r := (acceRamp.mRampParam + acceRamp.mRampParam2) / 2.0;
+         acceRamp.mRampParam := r;
+         acceRamp.mRampParam2 := r;
+         IF (acceRampId <> myKinematic.defaultAcceRampMcuId) THEN
+            McuReleaseDbObj(acceRampId);
+         END_IF;
+         McuCreateRamp(acceRampId, acceRamp);
+      END_IF;
+      IF (deceRamp.mTyp = eMcuTrapez) AND (deceRamp.mRampParam <> deceRamp.mRampParam2) THEN
+         chg := TRUE;
+         r := (deceRamp.mRampParam + deceRamp.mRampParam2) / 2.0;
+         deceRamp.mRampParam := r;
+         deceRamp.mRampParam2 := r;
+         IF (deceRampId <> myKinematic.defaultDeceRampMcuId) THEN
+            McuReleaseDbObj(deceRampId);
+         END_IF;
+         McuCreateRamp(deceRampId, deceRamp);
+      END_IF;
+      dynamic.mAcceRamp := acceRampId;
+      dynamic.mDeceRamp := deceRampId;
+
+      // consider dynamic (jerks)
+      IF dynamic.mJoint.mJerk < 1.0 THEN
+         chg := TRUE;
+         dynamic.mJoint.mJerk := 1.0;
+      END_IF;
+      IF dynamic.mCart.mJerk < 1.0e5 THEN
+         chg := TRUE;
+         dynamic.mCart.mJerk := 1.0e20;
+      END_IF;
+      IF dynamic.mTurn.mJerk < 1.0e5 THEN
+         chg := TRUE;
+         dynamic.mTurn.mJerk := 1.0e20;
+      END_IF;
+      // mUseJointLimForCartSeg has to be disabled, otherwise there is
+      // no smooth jog-movement
+      IF dynamic.mUseJointLimForCartSeg THEN
+         chg := TRUE;
+         dynamic.mUseJointLimForCartSeg := FALSE;
+      END_IF;
+      IF chg THEN
+         IF (locDynamicId <> myKinematic.defaultDynMcuId) THEN
+            McuReleaseDbObj(locDynamicId);
+         END_IF;
+         dynamic.mName := "JogDynamic";
+         IF NOT McuCreateDynamic(locDynamicId, dynamic) THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrCreateDynFail, myKinematic.kinListInx, 1, instId, "TRcuJogPath.SetDefault", INSTANCE_NAME());
+         END_IF;
+      END_IF;
+   END_IF;
+
+   // save changes up to now
+   anyChg := chg;
+
+   IF overlapId <> 0 THEN
+      McuReadOverlap(overlapId, ovl);
+      // consider overlap
+      IF ovl.mOvlDynamic <> dynId THEN
+         chg := FALSE; // changes up to now did not affect the overlap
+      ELSE
+         ovl.mOvlDynamic := locDynamicId;
+      END_IF;
+      IF (ovl.mOvlTyp <> eMcuDynOvl) OR (ovl.mOvlDefTyp <> eMcuSegParam) OR
+         (ovl.mOvlStartPrevSeg <> 0.5) OR (ovl.mOvlEndOnThisSeg <> 0.5) THEN
+         chg := TRUE;
+         ovl.mOvlTyp := eMcuDynOvl;
+         ovl.mOvlDefTyp := eMcuSegParam;
+         ovl.mOvlStartPrevSeg := 0.5;
+         ovl.mOvlEndOnThisSeg := 0.5;
+      END_IF;
+      IF chg THEN
+         IF (overlapId <> myKinematic.defaultOvlMcuId) THEN
+            McuReleaseDbObj(overlapId);
+         END_IF;
+         McuCreateOverlap(overlapId, ovl);
+      END_IF;
+   END_IF;
+
+   // save changes up to now
+   anyChg := anyChg OR chg;
+
+   segHdl.mDynamicID := locDynamicId;
+   segHdl.mOverlapID := overlapId;
+   segHdl.mRobotToolID := toolId;
+
+   defaultDynMcuId := locDynamicId;
+   defaultCartDynMcuId := locDynamicId;
+   dynamicId := locDynamicId;
+   cartDynamicId := locDynamicId;
+
+   defaultOvlMcuId := overlapId;
+   defaultToolMcuId := toolId;
+   defaultAcceRampMcuId := acceRampId;
+   defaultDeceRampMcuId := deceRampId;
+
+   dynamic.mDBObjTyp := eMcuPermanent;
+   dynamicChg := FALSE; // inhibit creation of the dynamic
+
+   // unsupported settings were modified
+   IF anyChg THEN
+      RcuSetMessageOnce(TRcuJogPath_WarJogSettingUnsupp, myKinematic.kinListInx, 1, instId, "TRcuJogPath.SetDefault", INSTANCE_NAME());
+   END_IF;
+END_ROUTINE
+
+
+// is activated by the motionmanager. When this routine is active the jog path is
+// maintained according to the settings and the jog vector. Manages changes in
+// the settings.
+ROUTINE JogMaintainance()
+   VAR
+      tmpSegHdl : TMcuSegHdl;
+   END_VAR
+   
+   // avoid movement directly upon switching to jog-mode
+   ResetJogVector();
+
+   // get shape factors and actual dynamic
+   IF NOT McuReadRampFactor(dynamic.mAcceRamp, accShapeFactor) THEN
+      RcuSetMessageOnce(TRcuJogPath_ErrRdRampFactor, myKinematic.kinListInx, 1, instId, "TRcuJogPath.JogMaintainance", INSTANCE_NAME());
+      myKinematic.ErrorReaction(FALSE);
+   END_IF;
+   IF NOT McuReadRampFactor(dynamic.mDeceRamp, decShapeFactor) THEN
+      RcuSetMessageOnce(TRcuJogPath_ErrRdRampFactor, myKinematic.kinListInx, 2, instId, "TRcuJogPath.JogMaintainance", INSTANCE_NAME());
+      myKinematic.ErrorReaction(FALSE);
+   END_IF;
+   jogDynamic := dynamic;
+
+   // copy the actual tool from the progPath to the jogPath (take the tool from the last segment)
+   // otherwise the tool from the prerun would be used for jogging (the makro 
+   // settool sets the tool in prerun)
+   IF myKinematic.progPath.segmentMcuId <> 0 THEN
+      IF McuReadSegHdl(myKinematic.progPath.segmentMcuId, tmpSegHdl) THEN
+         IF (tmpSegHdl.mRobotToolID <> defaultToolMcuId) AND (tmpSegHdl.mRobotToolID <> segHdl.mRobotToolID) THEN // already released, reserve again
+            myKinematic.DebugPrint(eTraceReposDebug, "JogMaintainance: McuReserveDbObj tmpSegHdl.mRobotToolID = "+STR(tmpSegHdl.mRobotToolID));
+            McuReserveDbObj(tmpSegHdl.mRobotToolID);
+            reservedToolId := tmpSegHdl.mRobotToolID;
+         END_IF;
+         segHdl.mRobotToolID := tmpSegHdl.mRobotToolID;         
+      END_IF;
+   END_IF;
+
+   restart := TRUE;
+   WHILE TRUE DO
+      // wait for a change in the settings
+      WAIT restart;
+      // cancel the active jog-routine
+      STOP JogAction;
+      // copy new settings
+      hlpJogSystem := jogSystem;
+      hlpJogMode := jogMode;
+      hlpJogRefSys := jogRefSys;
+      WAIT myKinematic.isNotMovingOnPath;
+      // restart the jog-routine
+      START JogAction();
+
+      restart := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+// set a new coordinate system for jogging
+ROUTINE SetJogSystem(CONST system : TRcJogCoordSys)
+
+   IF (system <> eJogCoordAxes) AND NOT myKinematic.allDrivesReferenced THEN
+      RcuSetMessageOnce(TRcuJogPath_ErrJogSysReject, myKinematic.kinListInx, 1, instId, "TRcuJogPath.SetJogSystem", INSTANCE_NAME());
+      RETURN;
+   END_IF;
+   jogSystem := system;
+   IF IS_MAPPED(myKinematic) THEN
+      myKinematic.TeachPendantMemories.keyIndex := 0;
+   END_IF; 
+   ResetJogVector();
+   restart := TRUE;
+END_ROUTINE
+
+
+// set a new reference system for jogging in the cartesian or mixed coordinate
+// system
+ROUTINE SetJogRefSys(CONST refSys : TRcuReferenceSystem)
+
+   jogRefSys := refSys;
+   ResetJogVector();
+   restart := TRUE;
+END_ROUTINE
+
+
+// set a new jog mode (continuous / incremental)
+ROUTINE SetJogMode(CONST mode : TRcuJogMode)
+
+   jogMode := mode;
+   ResetJogVector();
+   restart := TRUE;
+END_ROUTINE
+
+
+// perform a step in the incremental jog mode, returns TRUE when the new
+// position was reached or FALSE when not in jog-motion-mode or the mode
+// is continuous.
+ROUTINE DoIncrementalStep() : BOOL
+   VAR
+      chg : BOOL;
+   END_VAR
+
+   IF (myKinematic.motionMode <> eRcuMMgrModeJog) OR (hlpJogMode <> eRcuJogIncremental) THEN
+      RETURN FALSE;
+   END_IF;
+   chg := IS_CHANGED(myKinematic.motionMode);
+   incStepRqu := TRUE;
+   WAIT NOT incStepRqu OR chg;
+   RETURN NOT chg;
+END_ROUTINE
+
+
+// set acceleration ramp
+ROUTINE AcceRamp(type : TMcuRampTyp; param : REAL; param2 : REAL)
+   VAR
+      p1 : REAL;
+      p2 : REAL;
+   END_VAR
+
+   IF (type = eMcuTrapez) AND (param <> param2) THEN
+      p1 := (param + param2) / 2.0;
+      p2 := p1;
+      RcuSetMessageOnce(TRcuJogPath_WarJogSymetrizedRmp, myKinematic.kinListInx, 1, instId, "TRcuJogPath.AcceRamp", INSTANCE_NAME());
+   ELSE
+      p1 := param;
+      p2 := param2;
+   END_IF;
+
+   SUPER.AcceRamp(type, p1, p2);
+   McuReadRampFactor(dynamic.mAcceRamp, accShapeFactor);
+END_ROUTINE
+
+
+// set deceleration ramp
+ROUTINE DeceRamp(type : TMcuRampTyp; param : REAL; param2 : REAL)
+   VAR
+      p1 : REAL;
+      p2 : REAL;
+   END_VAR
+
+   IF (type = eMcuTrapez) AND (param <> param2) THEN
+      p1 := (param + param2) / 2.0;
+      p2 := p1;
+      RcuSetMessageOnce(TRcuJogPath_WarJogSymetrizedRmp, myKinematic.kinListInx, 2, instId, "TRcuJogPath.AcceRamp", INSTANCE_NAME());
+   ELSE
+      p1 := param;
+      p2 := param2;
+   END_IF;
+
+   SUPER.DeceRamp(type, p1, p2);
+   McuReadRampFactor(dynamic.mDeceRamp, decShapeFactor);
+END_ROUTINE
+
+
+ROUTINE Reset() : BOOL
+   
+   segmentCount := 0;
+   RETURN SUPER.Reset();
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+
+TYPE PRIVATE
+   TJointType : (eJointBase, eJointWrist, eJointAux);
+   TCartType : (eCartPos, eCartOri);
+
+   // first index: vector number
+   // second index: 0 - not in nogo-area
+   //               1 - in work area
+   // in general a change from FALSE to TRUE is allowed, a change from TRUE to
+   // FALSE is not allowed
+   TGripperState : ARRAY [cMcuMaxGripperVectors] OF ARRAY [2] OF BOOL;
+END_TYPE
+
+CONSTANT PRIVATE
+   // for decision whether vector is zero or not
+   cEps : REAL := 1.0e-15;
+
+   // accepted secondary velocities relativ to limits
+   cAcceptedVelRel : REAL := 1.3;
+
+   // target velocities relativ to limits after noting that secondary velocities are to high
+   cTargetVelRel : REAL := 1.15;
+
+   // maximum number of iterations in limiting secondary velocities
+   cMaxIter : DINT := 3;
+
+   // factor with which necessary times are multiplied
+   cGenerosity : REAL := 1.1;
+END_CONSTANT
+
+VAR PRIVATE
+   // restart the maintainance because of a relevant change in the settings
+   restart : BOOL;
+
+   // request for a step in the incremental step mode
+   incStepRqu : BOOL;
+
+   // Copies of the settings, help values which the routines actually use. The
+   // original values change asynchronously upon calling the Set-methods.
+   hlpJogSystem : TRcJogCoordSys;
+   hlpJogMode : TRcuJogMode;
+   hlpJogRefSys : TRcuReferenceSystem;
+
+   // start and endposition of the jogsegment
+   jogStartPos : TMcuPosition;
+   jogEndPos : TMcuPosition;
+   jogEndPosFlange : TMcuPosition;
+   jogEndPosElbow : TMcuFrame;   
+
+   // dynamic for the jogsegment
+   jogDynamic : TMcuDynamic;
+   // the calculated time need for the jogsegment
+   deltaTime : REAL;
+
+   // shapefactors for acceleration/deceleration
+   accShapeFactor : REAL;
+   decShapeFactor : REAL;
+
+   // indicates that the jogging position did not change
+   noMovement : BOOL;
+
+   // velocity vectors
+   velVectorMain : TMcuVector; // main joints
+   velVectorAux : TMcuVector;  // auxiliary joints
+   velVectorPos : TMcuVector3; // cartesian position
+   velVectorOri : TMcuVector3; // cartesian orientation
+   velVectorAddPos : ADD_POSITIONS; // additional positions
+
+   // change registration
+   jogVectorChg : ARRAY [5] OF BOOL;
+   anyJogVectorChg : BOOL;
+
+   // gripperdata for gripper checking
+   gripperId : TMcuDbObjID; // Id of the actual gripper
+   gripper : TMcuGripperA; // actual gripper
+   guards  : TMcuGuardPoints;
+
+   // debugging purposes
+   appendParam : REAL;
+   iterCount : DINT;
+  
+   lastWorkId   : ARRAY [cMcuMaxGripperVectors] OF TMcuDbObjID;
+
+END_VAR
+
+
+// create the jog path according to the jog vector
+ROUTINE JogAction() PRIVATE
+   VAR
+      endPosMcuId : TMcuDbObjID;
+      jogDynMcuId : TMcuDbObjID;
+      refSysMcuId : TMcuDbObjID;
+      segType : TMcuSegmentTyp;
+      segParam : REAL;
+      signal : BOOL;
+      deltaFrame : TMcuFrame;
+      deltaPos : TMcuVector3;
+      deltaVector : TMcuVector3;
+      deltaOriKardan : TMcuVector3;
+      state : TMcuInvError;
+      i : DINT;
+      gripperState : TGripperState;
+      factor : REAL;
+      velRelLim : REAL;
+      mInvPosWorld : TMcuFrame;
+      mInvPosExt   : TMcuFrame;
+      worldFrame   : TMcuFrame;
+      posWorld     : TMcuPosCart;
+      extToolPos   : TMcuFrame;
+      invExtTool   : TMcuFrame;
+      tmpAuxJoints : TMcuVector;
+      b            : BOOL;
+      j            : DINT;
+      startAddPos  : ADD_POSITIONS;
+      endAddPos    : ADD_POSITIONS;
+      deltaAddPos  : ADD_POSITIONS;
+   END_VAR
+
+   segmentCount := 0;
+   // check mainmodemanager outputs
+   IF hlpJogSystem <> eJogCoordAxes THEN
+      IF NOT myKinematic.mainModeMgr.jogCart THEN
+         RcuSetMessageOnce(TRcuJogPath_WarJogCartJogReject, myKinematic.kinListInx, 1, instId, "TRcuJogPath.JogAction", INSTANCE_NAME());
+         WAIT FALSE;
+      ELSE
+         // activate condition control
+         START CartConditionCtrl();
+      END_IF;
+   END_IF;
+
+   // segment parameter for the signal
+   IF hlpJogMode = eRcuJogIncremental THEN
+      segParam := 1.0;
+   ELSE
+      segParam := 0.05;
+   END_IF;
+   // actual jointpositions for the start position
+   FOR i := 0 TO myKinematic.nrOfMainJoints - 1 DO
+      jogStartPos.mPosJoints.mJoints.mValues[i] := myKinematic.actJoints.mPos[i];
+   END_FOR;
+   FOR i := myKinematic.nrOfMainJoints TO myKinematic.nrOfJoints - 1 DO
+      jogStartPos.mAuxJoints.mValues[i - myKinematic.nrOfMainJoints] := myKinematic.actJoints.mPos[i];
+   END_FOR;
+   GetActAdditionalPos(startAddPos, myKinematic);
+   SetAdditionalPos(startAddPos, jogStartPos.mPosCart, myKinematic);
+   
+   // forwardtrafo, necessary for cartesian jogging and for testing cartesian limits
+   IF NOT RcuRefSysGetMcuId(hlpJogRefSys, refSysMcuId) THEN
+      RcuSetMessageOnce(TRcuJogPath_WarJogRefSysInvalid, myKinematic.kinListInx, 1, instId, "TRcuJogPath.JogAction", INSTANCE_NAME());
+      RETURN;
+   END_IF;
+   McuForwardTrafoAux(jogStartPos.mPosCart, jogStartPos.mPosJoints, jogStartPos.mAuxJoints,
+      refSysMcuId, myKinematic.kinematicMcuId, segHdl.mRobotToolID);
+
+
+   IF hlpJogSystem = eJogCoordExtTool THEN
+      (* Test 2 *)
+      McuForwardTrafoAux(jogStartPos.mPosCart, jogStartPos.mPosJoints, jogStartPos.mAuxJoints,
+         gMcuWorldRefSysId, myKinematic.kinematicMcuId, segHdl.mRobotToolID);
+      b := McuInvertFrame(mInvPosWorld, jogStartPos.mPosCart.mFrame );
+      IF myKinematic.extTool.mRefChainOfJointsID <> 0 THEN
+         FOR j:=0 TO jogStartPos.mAuxJoints.mValidLen-1 DO
+            tmpAuxJoints.mValues[j] := jogStartPos.mAuxJoints.mValues[j] * gcPi/180; // Grad -> RAD
+         END_FOR; 
+         tmpAuxJoints.mValidLen := jogStartPos.mAuxJoints.mValidLen;
+// Test 2         b := McuExternalToolForwardTrafo(extToolPos, tmpAuxJoints, myKinematic.kinExtToolMcuId, myKinematic.kinematicMcuId);
+// Test 3
+         b := McuCalcFrameFromTrsf(extToolPos, tmpAuxJoints, myKinematic.extTool.mRefChainOfJointsID, myKinematic.kinematicMcuId);
+         b := McuMultiplyFrames(jogStartPos.mPosCart.mFrame, mInvPosWorld, extToolPos);
+      ELSE
+         b := McuMultiplyFrames(jogStartPos.mPosCart.mFrame, mInvPosWorld, myKinematic.actExtTool);
+      END_IF;
+      (* Ende Test 2*)
+   END_IF;
+
+   // set first position, orientation interpolation, segment type
+   CASE hlpJogSystem OF
+   eJogCoordAxes:
+      jogStartPos.mPosTyp := eMcuPosJoints;
+      oriType := eMcuWristJoints;
+      segType := eMcuPTP;
+   eJogCoordWorld, eJogCoordObject, eJogCoordTCP:
+      jogStartPos.mPosTyp := eMcuPosCart;
+      IF myKinematic.allDegreesOfFreedom THEN
+         oriType := eMcuZRotation;
+      ELSE
+         oriType := eMcuWristJoints;
+      END_IF;
+      segType := eMcuLine;
+   eJogCoordExtTool:
+      jogStartPos.mPosTyp := eMcuPosCart;
+      jogStartPos.mPosCart.mRefSysID := refSysMcuId;
+      jogStartPos.mPosCart.mPosInExternalTool := TRUE;
+      IF myKinematic.allDegreesOfFreedom THEN
+         oriType := eMcuZRotation;
+      ELSE
+         oriType := eMcuWristJoints;
+      END_IF;
+      segType := eMcuLine;
+   eJogCoordWorldMixed, eJogCoordObjectMixed, eJogCoordTCPMixed:
+      jogStartPos.mPosTyp := eMcuPosMixed;
+      jogStartPos.mPosMixed.mCartPos := jogStartPos.mPosCart.mFrame.mPos;
+      jogStartPos.mPosMixed.mRefSysID := refSysMcuId;
+      FOR i := 0 TO myKinematic.kinematic.mNrOfWristJoints - 1 DO
+         jogStartPos.mPosMixed.mWristJoints.mValues[i] := jogStartPos.mPosJoints.
+            mJoints.mValues[myKinematic.kinematic.mNrOfBaseJoints + i];
+      END_FOR;
+      oriType := eMcuWristJoints;
+      segType := eMcuLine;
+   END_CASE;
+   jogEndPos := jogStartPos;
+   ResetJogVectorChg();
+
+   // initialize gripperState
+   IF jogPointCheckArea THEN
+      IF NOT HandleGripper(gripperState) THEN
+         RcuSetMessageOnce(TRcuJogPath_ErrJogGrp, myKinematic.kinListInx, 1, instId, "TRcuJogPath.JogAction", INSTANCE_NAME());
+         RETURN;
+      END_IF;
+   END_IF;
+
+   WHILE TRUE DO
+      // in the incremental jog mode wait for a step request
+      IF hlpJogMode = eRcuJogIncremental THEN
+         incStepRqu := FALSE;
+         WAIT incStepRqu;
+      END_IF;
+      // reset common required values
+      deltaTime := jogPeriod;
+      noMovement := TRUE;
+      IF dynamicChg THEN
+         jogDynamic := dynamic;
+      ELSE
+         // reset all velocity and acceleration settings
+         jogDynamic.mCart := dynamic.mCart;
+         jogDynamic.mTurn := dynamic.mTurn;
+      END_IF;
+      jogDynamic.mJoint.mVelo := 0.0;
+      jogDynamic.mJoint.mAcce := 0.0;
+      jogDynamic.mJoint.mDece := 0.0;
+      iterCount := 0;
+
+      // calculate endposition, jog dynamic
+      CASE hlpJogSystem OF
+      eJogCoordAxes:
+         // calculate velocity vectors, required time
+         CalcJointVelocityVector(eJointBase);
+         CalcJointVelocityVector(eJointWrist);
+         CalcJointVelocityVector(eJointAux);
+         IF NOT noMovement THEN
+            PerformVeloReduction(deltaTime, maxJogPeriod / deltaTime);
+            // calculate joint end position
+            REPEAT
+               CalcJointEndPos(deltaTime);
+               velRelLim := 0.0;
+               factor := 1.0;
+               // estimate cartesian speeds when limits are reduced and not jogging incremental
+               IF (hlpJogMode <> eRcuJogIncremental) AND NOT (myKinematic.mainModeMgr.fullSpeed AND myKinematic.interfaceToSCP.bFullSpeedAllowed) THEN
+                  McuForwardTrafoAux(jogEndPos.mPosCart, jogEndPos.mPosJoints, jogEndPos.mAuxJoints,
+                     refSysMcuId, myKinematic.kinematicMcuId, segHdl.mRobotToolID);
+                  CalcCartVelRelLim(eCartPos, deltaTime, velRelLim);
+                  // CalcCartVelRelLim(eCartOri, deltaTime, velRelLim); // orientation speed
+                  IF velRelLim > cAcceptedVelRel THEN
+                     factor := cTargetVelRel / velRelLim;
+                  END_IF;
+                  PerformVeloReduction(deltaTime, factor);
+                  iterCount := iterCount + 1;
+                  END_IF;
+            UNTIL (factor >= 1.0) OR (iterCount >= cMaxIter);
+            // this would be the place for considering softwarelimitswitches
+            ConsiderLimits(TRUE);
+         END_IF;
+
+      eJogCoordWorld, eJogCoordObject, eJogCoordTCP, eJogCoordExtTool:
+         // calculate velocity vectors, required time; joint before cart!
+         CalcJointVelocityVector(eJointAux);
+         CalcCartVelocityVector(eCartPos);
+         CalcCartVelocityVector(eCartOri);
+         CalcAddPosVelocityVector();
+         IF NOT noMovement THEN
+            PerformVeloReduction(deltaTime, maxJogPeriod / deltaTime);
+            // calculate joint and cartesian end positions
+            REPEAT
+               CalcJointEndPos(deltaTime);
+               MultiplyVector3Scalar(deltaPos, velVectorPos, deltaTime);
+               MultiplyVector3Scalar(deltaOriKardan, velVectorOri, deltaTime);
+               
+               // *********************************************
+               FOR i := 0 TO NrOfRobotAdditionalPositions(myKinematic)-1 DO
+                  deltaAddPos[i] := velVectorAddPos[i] * deltaTime;
+               END_FOR;
+               // *********************************************
+               
+               deltaFrame.mPos := deltaPos;
+               deltaFrame.mFrameTyp := gMcuFrameTyp;
+               IF gMcuFrameTyp = eMcuFrameEuler THEN
+                  McuKardanToEuler(deltaFrame.mOri, deltaOriKardan);
+               ELSE
+                  deltaFrame.mOri := deltaOriKardan;
+               END_IF;
+               
+               IF (hlpJogSystem = eJogCoordTCP) OR (hlpJogSystem = eJogCoordExtTool) THEN
+                  
+                  IF (hlpJogSystem = eJogCoordExtTool) THEN
+                      MultiplyVector3Scalar(deltaFrame.mPos, deltaFrame.mPos, -1.0);
+                      MultiplyVector3Scalar(deltaFrame.mOri, deltaFrame.mOri, -1.0);
+                  END_IF;
+                  
+                  McuMultiplyFrames(jogEndPos.mPosCart.mFrame,
+                     jogStartPos.mPosCart.mFrame, deltaFrame);
+               ELSE
+                  McuMultiplyFrames(jogEndPos.mPosCart.mFrame, deltaFrame,
+                     jogStartPos.mPosCart.mFrame);
+                  McuAddVector3(jogEndPos.mPosCart.mFrame.mPos,
+                     jogStartPos.mPosCart.mFrame.mPos, deltaPos);
+               END_IF;
+         
+               (***********************************************************)
+               FOR i := 0 TO NrOfRobotAdditionalPositions(myKinematic)-1 DO
+                  endAddPos[i] := startAddPos[i] + deltaAddPos[i];
+               END_FOR;
+               (***********************************************************)
+         
+               IF hlpJogMode = eRcuJogIncremental THEN 
+                  FOR i := 0 TO 2 DO
+                     IF deltaFrame.mPos.mValues[i] <> 0.0 THEN
+                        GetPrettyPos(jogEndPos.mPosCart.mFrame.mPos.mValues[i], 
+                           deltaFrame.mPos.mValues[i]);
+                     END_IF;
+                     IF deltaFrame.mOri.mValues[i] <> 0.0 THEN
+                        GetPrettyPos(jogEndPos.mPosCart.mFrame.mOri.mValues[i], 
+                           deltaFrame.mOri.mValues[i]);
+                     END_IF;
+                  END_FOR;
+                  //************************************************
+                  FOR i := 0 TO NrOfRobotAdditionalPositions(myKinematic)-1 DO
+                     IF deltaAddPos[i] <> 0.0 THEN
+                        GetPrettyPos(endAddPos[i], deltaAddPos[i]);
+                     END_IF;
+                  END_FOR;
+                  //************************************************
+               END_IF;
+
+               (***********************************************************)
+               SetAdditionalPos(endAddPos, jogEndPos.mPosCart, myKinematic);
+               (***********************************************************)
+
+               IF hlpJogSystem = eJogCoordExtTool THEN
+                  b := McuInvertFrame(mInvPosExt, jogEndPos.mPosCart.mFrame );
+                  IF myKinematic.extTool.mRefChainOfJointsID <> 0 THEN 
+                     FOR j:=0 TO jogStartPos.mAuxJoints.mValidLen-1 DO
+                        tmpAuxJoints.mValues[j] := jogEndPos.mAuxJoints.mValues[j] * gcPi/180; // Grad -> RAD
+                     END_FOR; 
+                     tmpAuxJoints.mValidLen := jogEndPos.mAuxJoints.mValidLen;
+// Test 2                     b := McuExternalToolForwardTrafo(extToolPos, tmpAuxJoints, myKinematic.kinExtToolMcuId, myKinematic.kinematicMcuId);
+// Test 3
+                     b := McuCalcFrameFromTrsf(extToolPos, tmpAuxJoints, myKinematic.extTool.mRefChainOfJointsID, myKinematic.kinematicMcuId);
+                     b := McuMultiplyFrames(posWorld.mFrame , extToolPos, mInvPosExt);
+                  ELSE
+                     b := McuMultiplyFrames(posWorld.mFrame , myKinematic.actExtTool, mInvPosExt);
+                  END_IF;                  
+                  jogEndPos.mPosCart.mPosInExternalTool := TRUE;
+                  posWorld.mRefSysID := gMcuWorldRefSysId;
+                  McuInverseTrafoJointsAux(jogEndPos.mPosJoints, posWorld, jogEndPos.mAuxJoints,
+                     jogStartPos.mPosJoints, myKinematic.kinematicMcuId,
+                     segHdl.mRobotToolID, state);
+               ELSE
+                  McuInverseTrafoJointsAux(jogEndPos.mPosJoints, jogEndPos.mPosCart, jogEndPos.mAuxJoints,
+                     jogStartPos.mPosJoints, myKinematic.kinematicMcuId,
+                     segHdl.mRobotToolID, state);
+               END_IF;
+               velRelLim := 0.0;
+               factor := 1.0;
+               IF state = eMcuInvTrafoOK THEN
+                  // estimate joint speeds when not jogging incremental
+                  IF (hlpJogMode <> eRcuJogIncremental) THEN
+                     CalcJointVelRelLim(eJointBase, deltaTime, velRelLim);
+                     CalcJointVelRelLim(eJointWrist, deltaTime, velRelLim);
+                     IF velRelLim > cAcceptedVelRel THEN
+                        factor := cTargetVelRel / velRelLim;
+                     END_IF;
+                  END_IF;
+               END_IF;
+               PerformVeloReduction(deltaTime, factor);
+               iterCount := iterCount + 1;
+            UNTIL (factor >= 1.0) OR (iterCount >= cMaxIter);
+            HandleInverseState(state);
+            // this would be the place for considering softwarelimitswitches
+            ConsiderLimits(FALSE);
+         END_IF;
+
+      eJogCoordWorldMixed, eJogCoordObjectMixed, eJogCoordTCPMixed:
+         // calculate velocity vectors, required time; joint before cart!
+         CalcJointVelocityVector(eJointWrist);
+         CalcJointVelocityVector(eJointAux);
+         CalcCartVelocityVector(eCartPos);
+         IF NOT noMovement THEN
+            PerformVeloReduction(deltaTime, maxJogPeriod / deltaTime);
+            // calculate joint and cartesian end positions
+            REPEAT
+               CalcJointEndPos(deltaTime);
+               MultiplyVector3Scalar(deltaPos, velVectorPos, deltaTime);
+               IF hlpJogSystem = eJogCoordTCPMixed THEN
+                  McuMultiplyFrameVector(deltaVector, jogStartPos.mPosCart.mFrame,
+                     deltaPos);
+                  McuAddVector3(jogEndPos.mPosMixed.mCartPos,
+                     jogStartPos.mPosMixed.mCartPos, deltaVector);
+               ELSE
+                  McuAddVector3(jogEndPos.mPosMixed.mCartPos,
+                     jogStartPos.mPosMixed.mCartPos, deltaPos);
+               END_IF;
+               IF hlpJogMode = eRcuJogIncremental THEN 
+                  FOR i := 0 TO 2 DO
+                     IF deltaPos.mValues[i] <> 0.0 THEN
+                        GetPrettyPos(jogEndPos.mPosMixed.mCartPos.mValues[i], 
+                           deltaPos.mValues[i]);
+                     END_IF;
+                  END_FOR;
+               END_IF;
+
+               McuWristInverseTrafoJointsAux(jogEndPos.mPosJoints, jogEndPos.mPosMixed,
+                  jogEndPos.mAuxJoints, jogStartPos.mPosJoints, myKinematic.kinematicMcuId,
+                  segHdl.mRobotToolID, state);
+
+               velRelLim := 0.0;
+               factor := 1.0;
+               IF state = eMcuInvTrafoOK THEN
+                  McuForwardTrafoAux(jogEndPos.mPosCart, jogEndPos.mPosJoints, jogEndPos.mAuxJoints,
+                     refSysMcuId, myKinematic.kinematicMcuId, segHdl.mRobotToolID);
+                  // estimate joint speeds when not jogging incremental
+                  IF (hlpJogMode <> eRcuJogIncremental) THEN
+                     CalcJointVelRelLim(eJointBase, deltaTime, velRelLim);
+                     // CalcCartVelRelLim(eCartOri, deltaTime, velRelLim); // orientation speed
+                     IF velRelLim > cAcceptedVelRel THEN
+                        factor := cTargetVelRel / velRelLim;
+                     END_IF;
+                  END_IF;
+               END_IF;
+               PerformVeloReduction(deltaTime, factor);
+               iterCount := iterCount + 1;
+            UNTIL (factor >= 1.0) OR (iterCount >= cMaxIter);
+            HandleInverseState(state);
+            // this would be the place for considering softwarelimitswitches
+            ConsiderLimits(FALSE);
+         END_IF;
+
+      END_CASE;
+
+      IF NOT noMovement AND jogPointCheckArea THEN
+         // check gripperState
+         IF NOT HandleGripper(gripperState) THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrJogGrp, myKinematic.kinListInx, 2, instId, "TRcuJogPath.JogAction", INSTANCE_NAME());
+            RETURN;
+         END_IF;
+      END_IF;
+
+      IF noMovement THEN
+         WAIT anyJogVectorChg;
+         ResetJogVectorChg();
+      ELSE
+      
+         jogEndPos.mUserData.mDataInt[0] := 1;
+         jogEndPos.mUserData.mIntValidLen := 1;
+      
+         // create the position
+         IF lastPosId <> 0 THEN
+            McuReleaseDbObj(lastPosId);
+            lastPosId := 0;
+         END_IF;
+         
+         IF NOT McuCreatePosition(lastPosId, jogEndPos) THEN
+            RcuSetMessageOnce(TRcuProgPath_ErrCreatePos, myKinematic.kinListInx, 1, instId, 
+               "TRcuJogPath.JogAction", jogEndPos.mName, INSTANCE_NAME());
+            RETURN;
+         END_IF;
+         endPosMcuId := lastPosId;
+         // choose dynamic
+         IF hlpJogMode = eRcuJogIncremental THEN
+            jogDynMcuId := 0; // path dynamic for incremental jogging
+         ELSE
+            IF jogDynamic.mJoint.mVelo = 0.0 THEN
+               // necessary to obtain a valid dynamic
+               jogDynamic.mJoint.mVelo := dynamic.mJoint.mVelo;
+            END_IF;
+            IF jogDynamic.mJoint.mAcce = 0.0 THEN
+               jogDynamic.mJoint.mAcce := dynamic.mJoint.mAcce;
+            END_IF;
+            IF jogDynamic.mJoint.mDece = 0.0 THEN
+               jogDynamic.mJoint.mDece := dynamic.mJoint.mDece;
+            END_IF;
+            // mUseJointLimForCartSeg has to be disabled, otherwise there is
+            // no smooth jog-movement
+            IF jogDynamic.mUseJointLimForCartSeg THEN
+               jogDynamic.mUseJointLimForCartSeg := FALSE;
+            END_IF;
+            // jogdynamic otherwise
+            IF NOT McuCreateDynamic(jogDynMcuId, jogDynamic) THEN
+               RcuSetMessageOnce(TRcuJogPath_ErrCreateDynFail, myKinematic.kinListInx, 2, instId, "TRcuJogPath.JogAction", INSTANCE_NAME());
+               RETURN;
+            END_IF;
+         END_IF;
+         // append the jog segment
+         segment.mName := "JogSegment"+STR(segmentCount);
+         (*
+         myKinematic.DebugPrint(eTraceReposDebug, "JogAction: Segment " + segment.mName);
+         myKinematic.DebugPrint(eTraceReposDebug, "JogAction:         jogDynamic.mJoint.mVelo = " + STR(jogDynamic.mJoint.mVelo));
+         myKinematic.DebugPrint(eTraceReposDebug, "JogAction:         jogDynamic.mJoint.mAcce = " + STR(jogDynamic.mJoint.mAcce));
+         myKinematic.DebugPrint(eTraceReposDebug, "JogAction:         jogEndPos               = " + STR(jogEndPos.mPosCart.mAdditionalPos.mValues[0]));
+         myKinematic.DebugPrint(eTraceReposDebug, "JogAction:         Axis 1                  = " + STR(jogEndPos.mPosJoints.mJoints.mValues[0]));
+         *)
+         
+         IF hlpJogSystem = eJogCoordExtTool THEN
+            AppendSegment(endPosMcuId, 0, myKinematic.extToolActive, segType, segParam, signal, jogDynMcuId);
+         ELSIF (hlpJogSystem = eJogCoordAxes) AND myKinematic.extToolActive THEN
+            AppendSegment(endPosMcuId, 0, myKinematic.extToolActive, segType, segParam, signal, jogDynMcuId);
+         ELSE      
+            AppendSegment(endPosMcuId, 0, FALSE, segType, segParam, signal, jogDynMcuId);
+         END_IF;
+         IF jogDynMcuId <> 0 THEN
+            McuReleaseDbObj(jogDynMcuId);
+         END_IF;
+         // parameter on old segment at which the new segment was appended
+         appendParam := myKinematic.actExecData.mActSegParam;
+         // segmentcounter
+         IF segmentCount < 1000000000 THEN
+            segmentCount := segmentCount + 1;
+         ELSE
+            segmentCount := 0;
+         END_IF;
+         // make end position to new start position, wait for signal
+         jogStartPos := jogEndPos;
+         
+         //******************************************
+         FOR i := 0 TO NrOfRobotAdditionalPositions(myKinematic)-1 DO
+            startAddPos[i] := endAddPos[i];
+         END_FOR;
+         //******************************************
+         
+         WAIT signal;
+         signal := FALSE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// consider software limits
+ROUTINE ConsiderLimits(modifyPos : BOOL) PRIVATE
+   VAR
+      i : DINT;
+      j : DINT;
+   END_VAR
+
+   FOR i := 0 TO myKinematic.kinematic.mNrOfMainJoints - 1 DO
+      IF jogEndPos.mPosJoints.mJoints.mValues[i] <= myKinematic.kinematic.mJoints[i].mMinPos THEN
+         IF modifyPos THEN
+            IF jogStartPos.mPosJoints.mJoints.mValues[i] > myKinematic.kinematic.mJoints[i].mMinPos THEN
+               jogEndPos.mPosJoints.mJoints.mValues[i] := myKinematic.kinematic.mJoints[i].mMinPos;
+            ELSIF jogEndPos.mPosJoints.mJoints.mValues[i] < jogStartPos.mPosJoints.mJoints.mValues[i] THEN
+               jogEndPos.mPosJoints.mJoints.mValues[i] := jogStartPos.mPosJoints.mJoints.mValues[i];
+            END_IF;
+         END_IF;
+         IF IS_MAPPED(myRobot) THEN
+            myRobot.drive[i].limitSwitchMinSW := TRUE;
+            myRobot.drive[i].limitSwitchMaxSW := FALSE;
+         END_IF;
+         IF jogEndPos.mPosJoints.mJoints.mValues[i] < jogStartPos.mPosJoints.mJoints.mValues[i] THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrMinSoftEndReach, myKinematic.kinListInx, 1, instId,
+                              "TRcuJogPath.ConsiderLimits", myRobot.drive[i].axesName);
+         END_IF;
+      ELSIF jogEndPos.mPosJoints.mJoints.mValues[i] >= myKinematic.kinematic.mJoints[i].mMaxPos THEN
+         IF modifyPos THEN
+            IF jogStartPos.mPosJoints.mJoints.mValues[i] < myKinematic.kinematic.mJoints[i].mMaxPos THEN
+               jogEndPos.mPosJoints.mJoints.mValues[i] := myKinematic.kinematic.mJoints[i].mMaxPos;
+            ELSIF jogEndPos.mPosJoints.mJoints.mValues[i] > jogStartPos.mPosJoints.mJoints.mValues[i] THEN
+               jogEndPos.mPosJoints.mJoints.mValues[i] := jogStartPos.mPosJoints.mJoints.mValues[i];
+            END_IF;
+         END_IF;
+         IF IS_MAPPED(myRobot) THEN
+            myRobot.drive[i].limitSwitchMinSW := FALSE;
+            myRobot.drive[i].limitSwitchMaxSW := TRUE;
+         END_IF;
+         IF jogEndPos.mPosJoints.mJoints.mValues[i] > jogStartPos.mPosJoints.mJoints.mValues[i] THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrMaxSoftEndReach, myKinematic.kinListInx, 1, instId, 
+                              "TRcuJogPath.ConsiderLimits", myRobot.drive[i].axesName);
+         END_IF;
+      ELSE
+         IF IS_MAPPED(myRobot) THEN
+            myRobot.drive[i].limitSwitchMinSW := FALSE;
+            myRobot.drive[i].limitSwitchMaxSW := FALSE;
+         END_IF;
+      END_IF;
+   END_FOR;
+
+   FOR i := 0 TO myKinematic.kinematic.mNrOfAuxJoints - 1 DO
+      j := myKinematic.kinematic.mNrOfMainJoints + i;
+      IF jogEndPos.mAuxJoints.mValues[i] <= myKinematic.kinematic.mJoints[j].mMinPos THEN
+         IF modifyPos THEN
+            IF jogStartPos.mAuxJoints.mValues[i] > myKinematic.kinematic.mJoints[j].mMinPos THEN
+               jogEndPos.mAuxJoints.mValues[i] := myKinematic.kinematic.mJoints[j].mMinPos;
+            ELSIF jogEndPos.mAuxJoints.mValues[i] < jogStartPos.mAuxJoints.mValues[i] THEN
+               jogEndPos.mAuxJoints.mValues[i] := jogStartPos.mAuxJoints.mValues[i];
+            END_IF;
+         END_IF;
+         IF IS_MAPPED(myRobot) THEN
+            myRobot.drive[j].limitSwitchMinSW := TRUE;
+            myRobot.drive[j].limitSwitchMaxSW := FALSE;
+         END_IF;
+         IF jogEndPos.mAuxJoints.mValues[i] < jogStartPos.mAuxJoints.mValues[i] THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrMinSoftEndReach, myKinematic.kinListInx, 1, instId, 
+                              "TRcuJogPath.ConsiderLimits", myRobot.drive[j].axesName);
+         END_IF;
+      ELSIF jogEndPos.mAuxJoints.mValues[i] >= myKinematic.kinematic.mJoints[j].mMaxPos THEN
+         IF modifyPos THEN
+            IF jogStartPos.mAuxJoints.mValues[i] < myKinematic.kinematic.mJoints[j].mMaxPos THEN
+               jogEndPos.mAuxJoints.mValues[i] := myKinematic.kinematic.mJoints[j].mMaxPos;
+            ELSIF jogEndPos.mAuxJoints.mValues[i] > jogStartPos.mAuxJoints.mValues[i] THEN
+               jogEndPos.mAuxJoints.mValues[i] := jogStartPos.mAuxJoints.mValues[i];
+            END_IF;
+         END_IF;
+         IF IS_MAPPED(myRobot) THEN
+            myRobot.drive[j].limitSwitchMinSW := FALSE;
+            myRobot.drive[j].limitSwitchMaxSW := TRUE;
+         END_IF;
+         IF jogEndPos.mAuxJoints.mValues[i] > jogStartPos.mAuxJoints.mValues[i] THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrMaxSoftEndReach, myKinematic.kinListInx, 1, instId,
+                              "TRcuJogPath.ConsiderLimits", myRobot.drive[j].axesName);
+         END_IF;
+      ELSE
+         IF IS_MAPPED(myRobot) THEN
+            myRobot.drive[j].limitSwitchMinSW := FALSE;
+            myRobot.drive[j].limitSwitchMaxSW := FALSE;
+         END_IF;
+      END_IF;
+   END_FOR;
+END_ROUTINE
+
+
+// calculate absolute velocity vector for a certain type of joints
+ROUTINE CalcJointVelocityVector(CONST jointType : TJointType) PRIVATE
+   VAR
+      jogVector : MAPTO TMcuVector;   // relevant jogvector
+      velVector : MAPTO TMcuVector;   // relevant velocity vector
+      nrOfJoints : DINT;              // number of joints
+      startInxFull : DINT;            // start index in full array (Mainjoints +
+                                      // AuxJoints)
+      startInxReduced : DINT;         // start index in position vectors
+      subDyn : TMcuSubDyn;            // for CalcMinTime, absolute values!
+      i : DINT;
+      relVel : REAL;
+      actVelReduction : REAL;            // actual speedreduction
+      time : REAL;
+      actSubDyn : MAPTO TMcuSubDyn;
+      actSubDyn0 : MAPTO TMcuSubDyn;
+      factor : REAL;
+   END_VAR
+
+   // deduce values to work on
+   actSubDyn := MAP(jogDynamic.mJoint);
+   actSubDyn0 := MAP(dynamic.mJoint);
+   CASE jointType OF
+   eJointBase:
+      jogVector := MAP(jogVectorMainJ);
+      nrOfJoints := myKinematic.kinematic.mNrOfBaseJoints;
+      velVector := MAP(velVectorMain);
+   eJointWrist:
+      jogVector := MAP(jogVectorMainJ);
+      nrOfJoints := myKinematic.kinematic.mNrOfWristJoints;
+      startInxFull := myKinematic.kinematic.mNrOfBaseJoints;
+      startInxReduced := myKinematic.kinematic.mNrOfBaseJoints;
+      velVector := MAP(velVectorMain);
+   eJointAux:
+      jogVector := MAP(jogVectorAuxJ);
+      nrOfJoints := myKinematic.kinematic.mNrOfAuxJoints;
+      startInxFull := myKinematic.kinematic.mNrOfMainJoints;
+      velVector := MAP(velVectorAux);
+   END_CASE;
+
+   // in incremental mode just copy jog-vectors on vel-vectors
+   IF hlpJogMode = eRcuJogIncremental THEN
+      FOR i := 0 TO nrOfJoints - 1 DO
+         velVector.mValues[startInxReduced + i] := jogVector.mValues[startInxReduced + i];
+      END_FOR;
+      deltaTime := 1;
+      noMovement := FALSE;
+      WAIT TRUE; // supply point for coroutine-switch
+      RETURN;
+   END_IF;
+
+   // calculate new values for all joints
+   FOR i := 0 TO nrOfJoints - 1 DO
+      relVel := rAbs(jogVector.mValues[startInxReduced + i]); // relativ to path value
+      IF relVel > cEps THEN
+         noMovement := FALSE;
+         IF relVel > 1.0 THEN
+            relVel := 1.0;
+         END_IF;
+         relVel := relVel * actSubDyn0.mVelo; // relativ to limit
+
+         // absolute values for calculation of the required time
+         subDyn.mVelo := relVel * myKinematic.kinematic.
+                        mJoints[startInxFull + i].mDynLimits.mVelo;
+         subDyn.mAcce := myKinematic.kinematic.
+                        mJoints[startInxFull + i].mDynLimits.mAcce; // limit
+         subDyn.mDece := myKinematic.kinematic.
+                        mJoints[startInxFull + i].mDynLimits.mDece; // limit
+
+         // consider reduced limits
+         IF NOT (myKinematic.mainModeMgr.fullSpeed AND myKinematic.interfaceToSCP.bFullSpeedAllowed) THEN
+            actVelReduction := myKinematic.veloLimits.mJoints.mValues[startInxFull + i] /
+               myKinematic.kinematic.mJoints[startInxFull + i].mDynLimits.mVelo;
+            IF relVel > actVelReduction THEN
+               relVel := actVelReduction;
+               subDyn.mVelo := myKinematic.veloLimits.mJoints.mValues[startInxFull + i];
+            END_IF;
+         END_IF;
+
+         // register maximum joint velocity
+         IF actSubDyn.mVelo < relVel THEN
+            actSubDyn.mVelo := relVel;
+         END_IF;
+
+         // calculate the required time
+         time := CalcMinTime(subDyn);
+
+         // set time and accelerations, obey acceleration limits
+         IF time >= jogPeriod THEN
+            // targetTime can not be obeyed even with acceleration limits
+            actSubDyn.mAcce := 1.0;
+            actSubDyn.mDece := 1.0;
+         ELSE
+            // acceleration could be reduced
+            factor := time / jogPeriod; // < 1.0
+            time := jogPeriod;
+            // register maximum required acceleration
+            IF actSubDyn.mAcce < factor THEN
+               actSubDyn.mAcce := factor;
+               actSubDyn.mDece := factor;
+            END_IF;
+         END_IF;
+
+         // register maximum required time
+         IF deltaTime < time THEN
+            deltaTime := time;
+         END_IF;
+
+         // write velocity
+         IF jogVector.mValues[startInxReduced + i] > 0.0 THEN
+            velVector.mValues[startInxReduced + i] := subDyn.mVelo;
+         ELSE
+            velVector.mValues[startInxReduced + i] := - subDyn.mVelo;
+         END_IF;
+      ELSE
+         velVector.mValues[startInxReduced + i] := 0.0;
+      END_IF;
+      WAIT TRUE; // supply point for coroutine-switch
+   END_FOR;
+END_ROUTINE
+
+
+// calculate absolute velocity vector for a certain cartesian vector
+ROUTINE CalcCartVelocityVector(CONST cartType : TCartType) PRIVATE
+   VAR
+      jogVector : MAPTO TMcuVector3;  // relevant jogvector
+      velVector : MAPTO TMcuVector3;  // relevant velocity vector
+      actSubDyn : MAPTO TMcuSubDyn;
+      actSubDyn0 : MAPTO TMcuSubDyn;
+      limit : MAPTO REAL;             // for considering reduced limits
+      len : REAL;
+      factor : REAL;
+      time : REAL;
+   END_VAR
+
+   // deduce values to work on
+   CASE cartType OF
+   eCartPos:
+      jogVector := MAP(jogVectorCartPos);
+      velVector := MAP(velVectorPos);
+      actSubDyn := MAP(jogDynamic.mCart);
+      actSubDyn0 := MAP(dynamic.mCart);
+      limit := MAP(myKinematic.veloLimits.mCart);
+   eCartOri:
+      jogVector := MAP(jogVectorCartOri);
+      velVector := MAP(velVectorOri);
+      actSubDyn := MAP(jogDynamic.mTurn);
+      actSubDyn0 := MAP(dynamic.mTurn);
+      limit := MAP(myKinematic.veloLimits.mTurn);
+   END_CASE;
+
+   // in incremental mode just copy jog-vectors on vel-vectors
+   IF hlpJogMode = eRcuJogIncremental THEN
+      velVector := jogVector;
+      deltaTime := 1;
+      noMovement := FALSE;
+      RETURN;
+   END_IF;
+
+   len := jogVector.mValues[0] * jogVector.mValues[0] + jogVector.mValues[1] *
+      jogVector.mValues[1] + jogVector.mValues[2] * jogVector.mValues[2];
+   IF len > cEps THEN
+      noMovement := FALSE;
+      Sqrt(len, len); // length of the jogvector
+      // set velocity
+      IF len > 1.0 THEN
+         actSubDyn.mVelo := actSubDyn0.mVelo;
+      ELSE
+         actSubDyn.mVelo := len * actSubDyn0.mVelo;
+      END_IF;
+
+      // consider reduced limits
+      IF NOT (myKinematic.mainModeMgr.fullSpeed AND myKinematic.interfaceToSCP.bFullSpeedAllowed) THEN
+         IF actSubDyn.mVelo > limit THEN
+            actSubDyn.mVelo := limit;
+         END_IF;
+      END_IF;
+
+      // calculate the time for acceleration and deceleration
+      time := deltaTime / cGenerosity;
+
+      // set accelerations
+      actSubDyn.mAcce := actSubDyn.mVelo / time / accShapeFactor;
+      actSubDyn.mDece := actSubDyn.mVelo / time / decShapeFactor;
+
+      // write velocity
+      factor := actSubDyn.mVelo / len;
+      MultiplyVector3Scalar(velVector, jogVector, factor);
+   ELSE
+      velVector.mValues[0] := 0.0;
+      velVector.mValues[1] := 0.0;
+      velVector.mValues[2] := 0.0;
+   END_IF;
+   WAIT TRUE; // supply point for coroutine-switch
+END_ROUTINE
+
+
+// calculate absolute velocity vector for additional positions
+ROUTINE CalcAddPosVelocityVector() PRIVATE
+   VAR
+      jogVector : MAPTO ADD_POSITIONS; // relevant jogvector
+      velVector : MAPTO ADD_POSITIONS;  // relevant velocity vector
+      nrOfJoints : DINT;              // number of joints
+      startInxFull : DINT;            // start index in full array (Mainjoints +
+                                      // AuxJoints)
+      subDyn : TMcuSubDyn;            // for CalcMinTime, absolute values!
+      i : DINT;
+      relVel : REAL;
+      actVelReduction : REAL;            // actual speedreduction
+      time : REAL;
+      actSubDyn : MAPTO TMcuSubDyn;
+      actSubDyn0 : MAPTO TMcuSubDyn;
+      mDynLimits : TMcuSubDyn;
+      factor : REAL;
+      dyn : ADD_POS_DYN; 
+      ReducedVel : ADD_POSITIONS;
+   END_VAR
+
+   // deduce values to work on
+   actSubDyn  := MAP(jogDynamic.mJoint);
+   actSubDyn0 := MAP(dynamic.mJoint);
+   GetAdditionalPosDyn(myKinematic, dyn, ReducedVel);
+   jogVector := MAP(jogVectorAddPos);
+   velVector := MAP(velVectorAddPos);
+
+   // in incremental mode just copy jog-vectors on vel-vectors
+   IF hlpJogMode = eRcuJogIncremental THEN
+      velVector := jogVector;
+      deltaTime := 1;
+      noMovement := FALSE;
+      RETURN;
+   END_IF;
+
+   FOR i := 0 TO NrOfRobotAdditionalPositions(myKinematic)-1  DO
+      mDynLimits := dyn[i];
+      relVel := rAbs(jogVector[i]); 
+      IF relVel > cEps THEN
+         noMovement := FALSE;
+         IF relVel > 1.0 THEN
+            relVel := 1.0;
+         END_IF;
+         relVel := relVel * actSubDyn0.mVelo; // relativ to limit
+         // myKinematic.DebugPrint(eTraceReposDebug, "CalcAddPosVelocityVector: relVel = " + STR(relVel));
+
+         // absolute values for calculation of the required time
+         subDyn.mVelo := relVel * mDynLimits.mVelo;
+         subDyn.mAcce := mDynLimits.mAcce; // limit
+         subDyn.mDece := mDynLimits.mDece; // limit
+
+         // consider reduced limits
+         IF NOT (myKinematic.mainModeMgr.fullSpeed AND myKinematic.interfaceToSCP.bFullSpeedAllowed) THEN
+            actVelReduction := ReducedVel[i] /
+               mDynLimits.mVelo;
+            IF relVel > actVelReduction THEN
+               relVel := actVelReduction;
+               subDyn.mVelo := ReducedVel[i];
+            END_IF;
+         END_IF;
+
+         // register maximum joint velocity
+         IF actSubDyn.mVelo < relVel THEN
+            actSubDyn.mVelo := relVel;
+         END_IF;
+
+         // calculate the required time
+         time := CalcMinTime(subDyn);
+
+         // set time and accelerations, obey acceleration limits
+         IF time >= jogPeriod THEN
+            // targetTime can not be obeyed even with acceleration limits
+            actSubDyn.mAcce := 1.0;
+            actSubDyn.mDece := 1.0;
+         ELSE
+            // acceleration could be reduced
+            factor := time / jogPeriod; // < 1.0
+            time := jogPeriod;
+            // register maximum required acceleration
+            IF actSubDyn.mAcce < factor THEN
+               actSubDyn.mAcce := factor;
+               actSubDyn.mDece := factor;
+            END_IF;
+         END_IF;
+
+         // register maximum required time
+         IF deltaTime < time THEN
+            deltaTime := time;
+         END_IF;
+
+         // write velocity
+         IF jogVector[i] > 0.0 THEN
+            velVector[i] := subDyn.mVelo;
+         ELSE
+            velVector[i] := - subDyn.mVelo;
+         END_IF;
+      ELSE
+         velVector[i] := 0.0;
+      END_IF;
+   END_FOR;
+   WAIT TRUE; // supply point for coroutine-switch
+END_ROUTINE
+
+
+
+// estimate the maximal joint velocity overflow
+ROUTINE CalcJointVelRelLim(CONST jointType : TJointType; CONST dt : REAL;
+   maxVelRelLim : REAL)
+   PRIVATE
+   VAR
+      p1 : MAPTO TMcuVector;   // relevant startvector
+      p2 : MAPTO TMcuVector;   // relevant endvector
+      nrOfJoints : DINT;       // number of joints
+      startInx : DINT;         // start index in vectors
+      i : DINT;
+      vel : REAL;
+      f : REAL;
+   END_VAR
+
+   // no joint limits when in incremental mode
+   IF hlpJogMode = eRcuJogIncremental THEN
+      RcuSetMessageOnce(TRcuJogPath_InfJogCallInapprop, myKinematic.kinListInx, 1, instId, "TRcuJogPath.CalcJointVelRelLim", INSTANCE_NAME());
+      RETURN;
+   END_IF;
+
+   p1 := MAP(jogStartPos.mPosJoints.mJoints);
+   p2 := MAP(jogEndPos.mPosJoints.mJoints);
+
+   // deduce values to work on
+   CASE jointType OF
+   eJointBase:
+      nrOfJoints := myKinematic.kinematic.mNrOfBaseJoints;
+   eJointWrist:
+      nrOfJoints := myKinematic.kinematic.mNrOfWristJoints;
+      startInx := myKinematic.kinematic.mNrOfBaseJoints;
+   eJointAux:
+      RETURN; // for auxiliary joints this calculation is not necessary
+   END_CASE;
+
+   // calculate overflow factors for all joints
+   FOR i := 0 TO nrOfJoints - 1 DO
+      vel := (p2.mValues[startInx + i] - p1.mValues[startInx + i]) / dt;
+      IF vel <> 0.0 THEN
+         vel := rAbs(vel);
+         IF (myKinematic.mainModeMgr.fullSpeed AND myKinematic.interfaceToSCP.bFullSpeedAllowed) THEN
+            f := vel / myKinematic.kinematic.mJoints[startInx + i].mDynLimits.mVelo;
+         ELSE
+            f := vel / myKinematic.veloLimits.mJoints.mValues[startInx + i];
+         END_IF;
+
+         // register maximum velRel
+         IF f > maxVelRelLim THEN
+            maxVelRelLim := f;
+         END_IF;
+      END_IF;
+      WAIT TRUE; // supply point for coroutine-switch
+   END_FOR;
+
+END_ROUTINE
+
+
+// estimate the maximal cartesian velocity overflow
+ROUTINE CalcCartVelRelLim(CONST cartType : TCartType; CONST dt : REAL;
+   maxVelRelLim : REAL) PRIVATE
+   VAR
+      limit : MAPTO REAL;
+      len : REAL;
+      vel : REAL;
+      f  : REAL;
+      p1 : MAPTO TMcuVector3;
+      p2 : MAPTO TMcuVector3;
+      dp : TMcuVector3;
+   END_VAR
+
+   // no cartesian limits when speed not reduced or in incremental mode
+   IF (myKinematic.mainModeMgr.fullSpeed AND myKinematic.interfaceToSCP.bFullSpeedAllowed) OR (hlpJogMode = eRcuJogIncremental) THEN
+      RcuSetMessageOnce(TRcuJogPath_InfJogCallInapprop, myKinematic.kinListInx, 2, instId, "TRcuJogPath.CalcCartVelRelLim", INSTANCE_NAME());
+      RETURN;
+   END_IF;
+
+   CASE cartType OF
+   eCartPos:
+      p1 := MAP(jogStartPos.mPosCart.mFrame.mPos);
+      p2 := MAP(jogEndPos.mPosCart.mFrame.mPos);
+      limit := MAP(myKinematic.veloLimits.mCart);
+      // difference vector
+      dp.mValues[0] := p2.mValues[0] - p1.mValues[0];
+      dp.mValues[1] := p2.mValues[1] - p1.mValues[1];
+      dp.mValues[2] := p2.mValues[2] - p1.mValues[2];
+      // distance
+      len := dp.mValues[0] * dp.mValues[0] + dp.mValues[1] * dp.mValues[1] +
+         dp.mValues[2] * dp.mValues[2];
+      IF len <> 0.0 THEN
+         Sqrt(len, len);
+         // speed
+         vel := len / dt;
+         // velocity overflow
+         f := vel / limit;
+
+         // register maximum velRel
+         IF f > maxVelRelLim THEN
+            maxVelRelLim := f;
+         END_IF;
+      END_IF;
+
+   eCartOri:
+      p1 := MAP(jogStartPos.mPosCart.mFrame.mOri);
+      p2 := MAP(jogEndPos.mPosCart.mFrame.mOri);
+      limit := MAP(myKinematic.veloLimits.mTurn);
+      RETURN; // no consideration of orientation limits
+   END_CASE;
+
+END_ROUTINE
+
+
+// calculate the minimum time for a path on which the required speed can be
+// maintained
+ROUTINE CalcMinTime(CONST subDyn : TMcuSubDyn) : REAL PRIVATE
+   VAR
+      tAccDec : REAL;
+      tAcc : REAL;
+      tDec : REAL;
+   END_VAR
+
+   // time which would be required for acceleration and deceleration
+   tAcc := subDyn.mVelo * (1/subDyn.mAcce/accShapeFactor);
+   tDec := subDyn.mVelo * (1/subDyn.mDece/decShapeFactor);
+
+   // take the longer time (necessary because of MCU intern treatment)
+   IF tAcc <= tDec THEN
+      tAccDec := tDec;
+   ELSE
+      tAccDec := tAcc;
+   END_IF;
+   tAccDec := tAccDec * cGenerosity;
+
+   // the time for accelerating and decelerating (average speed is half topspeed)
+   // would be twice this value, but this is the time for generating the necessary
+   // path at constant speed
+   RETURN tAccDec;
+END_ROUTINE
+
+
+// Calculate the joint endposition from the velocity vectors. The treatment of
+// joint limitswitches is included here, but only for jogging in the joints
+// coordinate system!
+ROUTINE CalcJointEndPos(CONST dt : REAL) PRIVATE
+   VAR
+      i : DINT;
+      endInx : DINT;
+      inxOffs : DINT;
+      delta : REAL;
+   END_VAR
+
+   // Mainjoints
+   IF hlpJogSystem = eJogCoordAxes THEN
+      endInx := myKinematic.kinematic.mNrOfMainJoints - 1;
+      FOR i := 0 TO endInx DO
+         delta := velVectorMain.mValues[i] * dt;
+         jogEndPos.mPosJoints.mJoints.mValues[i] :=
+            jogStartPos.mPosJoints.mJoints.mValues[i] + delta;
+         IF (hlpJogMode = eRcuJogIncremental) AND (delta <> 0.0) THEN
+            GetPrettyPos(jogEndPos.mPosJoints.mJoints.mValues[i], delta);
+         END_IF;
+      END_FOR;
+   ELSIF (hlpJogSystem = eJogCoordWorldMixed) OR (hlpJogSystem = eJogCoordObjectMixed) OR 
+         (hlpJogSystem = eJogCoordTCPMixed) THEN
+      endInx := myKinematic.kinematic.mNrOfWristJoints - 1;
+      inxOffs := myKinematic.kinematic.mNrOfBaseJoints;
+      FOR i := 0 TO endInx DO
+         delta := velVectorMain.mValues[i + inxOffs] * dt;
+         jogEndPos.mPosMixed.mWristJoints.mValues[i] := 
+            jogStartPos.mPosMixed.mWristJoints.mValues[i] + delta;
+         IF (hlpJogMode = eRcuJogIncremental) AND (delta <> 0.0) THEN
+            GetPrettyPos(jogEndPos.mPosMixed.mWristJoints.mValues[i], delta);
+         END_IF;
+      END_FOR;
+   END_IF;
+
+   // Auxjoints
+   endInx := myKinematic.kinematic.mNrOfAuxJoints - 1;
+   inxOffs := myKinematic.kinematic.mNrOfMainJoints;
+   FOR i := 0 TO endInx DO
+      delta := velVectorAux.mValues[i] * dt;
+      jogEndPos.mAuxJoints.mValues[i] := jogStartPos.mAuxJoints.mValues[i] + delta;
+      IF (hlpJogMode = eRcuJogIncremental) AND (delta <> 0.0) THEN
+         GetPrettyPos(jogEndPos.mAuxJoints.mValues[i], delta);
+      END_IF;
+   END_FOR;
+END_ROUTINE
+
+
+// launch restart when condition for cartesian jogging vanishes
+ROUTINE CartConditionCtrl()
+
+   WAIT NOT myKinematic.mainModeMgr.jogCart;
+   IF NOT bDisableMessage THEN      
+      RcuSetMessageOnce(TRcuJogPath_ErrJogLostCondCard, myKinematic.kinListInx, 1, instId, "TRcuJogPath.CartConditionCtrl", INSTANCE_NAME());
+   END_IF;
+   bDisableMessage := FALSE;
+   restart := TRUE;
+END_ROUTINE
+
+
+// reset the change indicators for the jogvectors
+ROUTINE ResetJogVectorChg() PRIVATE
+
+   jogVectorChg[0] := FALSE;
+   jogVectorChg[1] := FALSE;
+   jogVectorChg[2] := FALSE;
+   jogVectorChg[3] := FALSE;
+   jogVectorChg[4] := FALSE;
+   anyJogVectorChg := FALSE;
+END_ROUTINE
+
+
+// set all jogVectors to zero
+ROUTINE ResetJogVector() PRIVATE
+   VAR
+      zeroVector : TMcuVector;
+      zeroVector3 : TMcuVector3;
+   END_VAR
+
+   jogVectorMainJ := zeroVector;
+   jogVectorAuxJ := zeroVector;
+   jogVectorCartPos := zeroVector3;
+   jogVectorCartOri := zeroVector3;
+END_ROUTINE
+
+
+// react to a certain state of an inverse transformation
+ROUTINE HandleInverseState(CONST state : TMcuInvError) PRIVATE
+
+   CASE state OF
+   eMcuInvTrafoOK :
+      RETURN;
+   eMcuPosNotReachable : RcuSetMessageOnce(TRcuJogPath_InfJogPosNotReach, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleInverseState", INSTANCE_NAME());
+   eMcuOriNotReachable : RcuSetMessageOnce(TRcuJogPath_InfJogOriNotReach, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleInverseState", INSTANCE_NAME());
+   eMcuSingular : RcuSetMessageOnce(TRcuJogPath_InfJogPosSingular, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleInverseState", INSTANCE_NAME());
+   eMcuConvergence : RcuSetMessageOnce(TRcuJogPath_InfJogPosNotConver, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleInverseState", INSTANCE_NAME());
+   ELSE 
+      RcuSetMessageOnce(TRcuJogPath_InfJogInvTrafoError, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleInverseState", INSTANCE_NAME());
+   END_CASE;
+
+   jogEndPos := jogStartPos;
+   ResetJogVector();
+   ResetJogVectorChg();
+   noMovement := TRUE;
+   exceptionFlipFlop := NOT exceptionFlipFlop;
+END_ROUTINE
+
+
+// check gripper points at the endposition against working areas
+ROUTINE HandleGripper(state : TGripperState) : BOOL PRIVATE
+   VAR
+      i            : DINT;
+      refSysId     : TMcuDbObjID;
+      posOut       : TMcuVector3;
+      newState     : TGripperState;
+      nogoId       : TMcuDbObjID;
+      workId       : TMcuDbObjID;  
+      area         : TMcuArea;
+      stopFlag     : BOOL;
+      ret          : BOOL;      
+      jogEndPosLoc : TMcuPosition;
+      gripperOffsets: TMcuGripperVectors; 
+      guardPositions: TMcuGuardPositions;
+      trafoState: TMcuTrafoError;
+   END_VAR
+
+   jogEndPosFlange.mPosCart.mFrame.mFrameTyp := eMcuFrameKardan; 
+   jogEndPosLoc := jogEndPos;
+
+   IF gbGuardsAvailable THEN
+      // nothing to do without gripper
+      IF segHdl.mGripperID <> 0 THEN
+         // reload gripper when unknown Id
+         IF segHdl.mGripperID <> gripperId THEN
+            gripperId := segHdl.mGripperID;
+            //IF NOT McuReadGripperA(gripperId, gripper) THEN
+            IF NOT McuReadGuardPoints(gripperId, guards) THEN
+               RcuSetMessageOnce(TRcuJogPath_WarJogReadGripFail, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleGripper", INSTANCE_NAME());
+               RETURN FALSE;
+            END_IF;
+         END_IF;
+
+         //  Berechnung der Positionen aller Guards
+         ret := McuCalcGuardPositions(myKinematic.kinematicMcuId, jogEndPosLoc.mPosJoints.mJoints, jogEndPosLoc.mAuxJoints, 
+                                      segHdl.mRobotToolID, gripperId, guardPositions, trafoState);
+         IF ret = FALSE THEN
+            RETURN FALSE;
+         END_IF;
+
+         FOR i := 0 TO guards.mNrOfGuardPoints - 1 DO
+            IF ret THEN
+               McuIsPointInSpace(myKinematic.kinematicMcuId, guardPositions.mGuardPositions[i].mPosition.mPos, gMcuWorldRefSysId, workId, nogoId);
+               newState[i][0] := (nogoId = 0);
+               newState[i][1] := (workId <> 0);
+               IF (NOT newState[i][0]) AND state[i][0] THEN
+                  // entering nogoarea!
+                  stopFlag := TRUE;
+                  bDisableMessage := TRUE; 
+                  McuReadArea(nogoId, area);
+               END_IF;
+               IF (NOT newState[i][1]) AND state[i][1] THEN
+                  // leaving workarea!
+                  stopFlag := TRUE;
+                  bDisableMessage := TRUE; 
+                  McuReadArea(lastWorkId[i], area);
+               END_IF;
+               lastWorkId[i] := workId;
+            END_IF;
+         END_FOR;
+
+         IF stopFlag THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrJgWrkAreaVil, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleGripper", area.mName);
+            jogEndPos := jogStartPos;
+            ResetJogVector();
+            ResetJogVectorChg();
+            noMovement := TRUE;
+            exceptionFlipFlop := NOT exceptionFlipFlop;
+         ELSE
+            state := newState;
+         END_IF;
+      END_IF;
+   ELSE
+      // nothing to do without gripper
+      IF segHdl.mGripperID <> 0 THEN
+         // reload gripper when unknown Id
+         IF segHdl.mGripperID <> gripperId THEN
+            gripperId := segHdl.mGripperID;
+            IF NOT McuReadGripperA(gripperId, gripper) THEN
+               RcuSetMessageOnce(TRcuJogPath_WarJogReadGripFail, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleGripper", INSTANCE_NAME());
+               RETURN FALSE;
+            END_IF;
+         END_IF;
+
+         //  Berechnung aller Greiferoffsets eines Greiferobjektes
+         ret := McuCalcGripperOffsets(myKinematic.kinematicMcuId, jogEndPosLoc.mPosJoints.mJoints, jogEndPosLoc.mAuxJoints, 
+                                      segHdl.mRobotToolID, gripperId, gripperOffsets, trafoState);
+         IF ret = FALSE THEN
+            RETURN FALSE;
+         END_IF;  
+
+         FOR i := 0 TO gripper.mNrOfVectors - 1 DO
+            IF ret THEN              
+               McuIsPointInSpace(myKinematic.kinematicMcuId, gripperOffsets.mOffsets[i], gMcuWorldRefSysId, workId, nogoId);
+               newState[i][0] := (nogoId = 0);
+               newState[i][1] := (workId <> 0);
+               IF (NOT newState[i][0]) AND state[i][0] THEN
+                  // entering nogoarea!
+                  stopFlag := TRUE;
+                  bDisableMessage := TRUE; 
+                  McuReadArea(nogoId, area);
+               END_IF;
+               IF (NOT newState[i][1]) AND state[i][1] THEN
+                  // leaving workarea!
+                  stopFlag := TRUE;
+                  bDisableMessage := TRUE; 
+                  McuReadArea(lastWorkId[i], area);
+               END_IF;
+               lastWorkId[i] := workId;
+            END_IF;
+         END_FOR;
+
+         IF stopFlag THEN
+            RcuSetMessageOnce(TRcuJogPath_ErrJgWrkAreaVil, myKinematic.kinListInx, 1, instId, "TRcuJogPath.HandleGripper", area.mName);
+            jogEndPos := jogStartPos;
+            ResetJogVector();
+            ResetJogVectorChg();
+            noMovement := TRUE;
+            exceptionFlipFlop := NOT exceptionFlipFlop;
+         ELSE
+            state := newState;
+         END_IF;
+      END_IF;
+   END_IF;   
+   RETURN TRUE;
+END_ROUTINE
+
+
+// multiply a 3 component vector with a scalar
+ROUTINE MultiplyVector3Scalar(result : TMcuVector3; CONST vec : TMcuVector3;
+   CONST scalar : REAL) PRIVATE
+
+   result.mValues[0] := scalar * vec.mValues[0];
+   result.mValues[1] := scalar * vec.mValues[1];
+   result.mValues[2] := scalar * vec.mValues[2];
+END_ROUTINE
+
+
+// multiply a vector with a scalar, vec.mValidLen is used and copied!
+ROUTINE MultiplyVectorScalar(result : TMcuVector; CONST vec : TMcuVector;
+   CONST scalar : REAL) PRIVATE
+   VAR
+      i : DINT;
+      endInx : DINT;
+   END_VAR
+
+   endInx := vec.mValidLen - 1;
+   FOR i := 0 TO endInx DO
+      result.mValues[i] := scalar * vec.mValues[i];
+   END_FOR;
+   result.mValidLen := vec.mValidLen;
+END_ROUTINE
+
+
+// reduce velocities, time and accelerations
+ROUTINE PerformVeloReduction(dt : REAL; VAR_IN factor : REAL)
+   VAR
+      ft : REAL; // factor for time reduction
+      fa : REAL; // factor for acceleration reduction
+      r : REAL;  // current factor for desired time reduction
+   END_VAR
+
+   IF (factor < 1.0) AND (hlpJogMode <> eRcuJogIncremental) THEN
+
+      CASE hlpJogSystem OF
+      eJogCoordAxes:
+         MultiplyVectorScalar(velVectorMain, velVectorMain, factor);
+         MultiplyVectorScalar(velVectorAux, velVectorAux, factor);
+      eJogCoordWorld, eJogCoordObject, eJogCoordTCP:
+         MultiplyVector3Scalar(velVectorPos, velVectorPos, factor);
+         MultiplyVector3Scalar(velVectorOri, velVectorOri, factor);
+         MultiplyVectorScalar(velVectorAux, velVectorAux, factor);
+      eJogCoordWorldMixed, eJogCoordObjectMixed, eJogCoordTCPMixed:
+         MultiplyVector3Scalar(velVectorPos, velVectorPos, factor);
+         MultiplyVectorScalar(velVectorMain, velVectorMain, factor);
+         MultiplyVectorScalar(velVectorAux, velVectorAux, factor);
+      END_CASE;
+
+      jogDynamic.mCart.mVelo := jogDynamic.mCart.mVelo * factor;
+      jogDynamic.mTurn.mVelo := jogDynamic.mTurn.mVelo * factor;
+      jogDynamic.mJoint.mVelo := jogDynamic.mJoint.mVelo * factor;
+
+      r := jogPeriod / dt;
+      IF r >= 1.0 THEN
+         // no time reduction necessary, only acceleration reduction
+         ft := 1.0;
+         fa := factor;
+      ELSIF r <= factor THEN
+         // everything into time reduction
+         ft := factor;
+         fa := 1.0;
+      ELSE
+         // split between time and acceleration reduction
+         ft := r;
+         fa := factor / r;
+      END_IF;
+
+      dt := dt * ft;
+
+      jogDynamic.mCart.mAcce := jogDynamic.mCart.mAcce * fa;
+      jogDynamic.mTurn.mAcce := jogDynamic.mTurn.mAcce * fa;
+      jogDynamic.mJoint.mAcce := jogDynamic.mJoint.mAcce * fa;
+
+      jogDynamic.mCart.mDece := jogDynamic.mCart.mAcce;
+      jogDynamic.mTurn.mDece := jogDynamic.mTurn.mAcce;
+      jogDynamic.mJoint.mDece := jogDynamic.mJoint.mAcce;
+   END_IF;
+END_ROUTINE
+
+
+// round value according to increment-size inc
+ROUTINE GetPrettyPos(value : REAL; CONST inc : REAL) PRIVATE
+   VAR
+      roundVal : DINT;
+      roundPrec : REAL;
+   END_VAR
+   
+   IF inc = 0.0 THEN
+      RETURN;
+   END_IF;
+   roundPrec := rAbs(inc);
+   IF value < 0.0 THEN
+      roundVal := value / roundPrec - 0.5;   
+   ELSE
+      roundVal := value / roundPrec + 0.5;
+   END_IF;
+   value := roundVal * roundPrec;
+END_ROUTINE
+
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   SUPER.NEW();
+   noLookAhead := TRUE; // deactivate Lookahead for Jogpath
+   jogVectorChg[0] := IS_CHANGED(jogVectorMainJ);
+   jogVectorChg[2] := IS_CHANGED(jogVectorAuxJ);
+   jogVectorChg[3] := IS_CHANGED(jogVectorCartPos);
+   jogVectorChg[4] := IS_CHANGED(jogVectorCartOri);
+   anyJogVectorChg := IS_CHANGED(jogVectorChg);
+   jogRefSys := eRcuRefSystemWorld; // default Jog-System is World
+   SetJogSystem(eJogCoordAxes);
+   
+   jogPeriod := 0.15; // default jogPeriod
+   maxJogPeriod := 0.3; // default maxJogPeriod
+END_ROUTINE
+
+
+ROUTINE DELETE()
+   VAR
+      s0 : STRING;
+      s : STRING;
+   END_VAR
+
+   SUPER.DELETE();
+
+   // unregister data for debugging purposes
+   IF IS_MAPPED(myKinematic) THEN
+      s0 := myKinematic.kinematic.mName + ".jogPath.";
+      s := s0 + "deltaTime";
+      SwoRemoveVariable(s);
+      s := s0 + "appendParam";
+      SwoRemoveVariable(s);
+      s := s0 + "segmentCount";
+      SwoRemoveVariable(s);
+      s := s0 + "iterCount";
+      SwoRemoveVariable(s);
+
+      s0 := myKinematic.kinematic.mName + ".jogPath.jogDynamic.";
+      s := s0 + "jointvelo";
+      SwoRemoveVariable(s);
+      s := s0 + "cartvelo";
+      SwoRemoveVariable(s);
+      s := s0 + "turnvelo";
+      SwoRemoveVariable(s);
+      s := s0 + "jointacce";
+      SwoRemoveVariable(s);
+      s := s0 + "cartacce";
+      SwoRemoveVariable(s);
+      s := s0 + "turnacce";
+      SwoRemoveVariable(s);
+   END_IF;
+END_ROUTINE

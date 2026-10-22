@@ -1,0 +1,106 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 12.05.2016  | STL    | First release
+//  v2_01.01.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+//  v2_01.02.00  | 12.12.2017  | KLCH   | Change: modified selection for circulation
+//  v2_01.03.00  | 10.07.2018  | KLCH   | Change: generate time programs (copy operation not needed)
+//  v2_01.04.00  | 05.10.2018  | KLCH   | AddOn: Circ_OnRobot_NoRL; use Common_CheckChannel_MaterialSupply1, ..2
+
+Imports Common MaterialValve1
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion
+
+Call Main_Circulation
+Call Common_Sealing_GenerateTimeProg
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Circulation
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			Call Circulation_Material1
+		Case EcoDose_SM_PCL
+			Call Circulation_MultiMaterial
+		Case EcoDose_SM_SM
+			Call Circulation_MultiMaterial
+		Case EcoDose_PCL
+			Call Circulation_Material1
+		Case EcoDose_PCL_PCL
+			Call Circulation_MultiMaterial
+		CaseElse
+			Message Wrong process type (Circulation)!!
+	EndSelect
+	
+	Call Main_MaterialValve1
+Return
+
+SubRoutine Circulation_Material1
+	Call Common_CheckChannel_MaterialSupply1
+
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YAVR1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YAVR1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.YFDR1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.YFDR1
+		Delete
+	Endif
+	
+	SelectCase Circulation
+		Case Circ_ToReturnLine
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+			Call Common_AddDevice_YAVR1
+		Case Circ_OnRobot_NoRL
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+			Call Common_AddDevice_YAVR1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+			Call Common_AddValve_FDR1
+		CaseElse
+			// No_Circulation
+	EndSelect
+Return
+
+SubRoutine Circulation_MultiMaterial
+	Call Common_CheckChannel_MaterialSupply1
+	Call Common_CheckChannel_MaterialSupply2
+	
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YAVR1_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YAVR1_1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.YAVR1_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.YAVR1_2
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.YFDR1_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1.YFDR1_1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.YFDR1_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2.YFDR1_2
+		Delete
+	Endif
+	
+	SelectCase Circulation
+		Case Circ_ToReturnLine
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+			Call Common_AddDevice_YAVR1_1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+			Call Common_AddDevice_YAVR1_2
+		Case Circ_OnRobot_NoRL
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+			Call Common_AddDevice_YAVR1_1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+			Call Common_AddDevice_YAVR1_2
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply1
+			Call Common_AddValve_FDR1_1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].MaterialSupply2
+			Call Common_AddValve_FDR1_2
+		CaseElse
+			// No_Circulation
+	EndSelect
+Return

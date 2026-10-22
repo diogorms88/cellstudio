@@ -1,0 +1,193 @@
+;==========================================================
+; GSD-File  for ET 200R Modifiziert M.Ermer ATD TD INA BT
+; MLFB        : 6ES7 143-2BH00-0AB0 (Handlingmodul)
+; MLFB        : 6ES7 143-2BH50-0AB0 (Schweißmodul)
+; GSDRevision : 4
+; Version     : 24.06.02  GW  2.1
+; File        : SIEM80A8.GSD
+;==========================================================
+; Changes      :MG2939  #16.05.00 
+; Die EIN/AUS-Gänge werden nicht mehr mit CFG sondern mit PRM eingestellt,
+; und als Eingänge vorbelegt.  
+;
+; Changes      : 
+;==========================================================
+; Changes      :EM4031  #21.02.02 
+; # Sync Freeze eingezogen
+; # Publisher Support eingezogen
+; # Info Text eingezogen
+; # Gerätespezifische Diagnose eingezogen
+;==========================================================
+; Changes      :MG2939 
+; # Info Text   geändert
+; # MLFB-Nummer geändert
+; # Ordernumber geändert
+; # Fehlertexte geändert
+;==========================================================
+; Changes      :GW2074  #24.06.02
+; # GSD_Revision=4
+; # Module 2 Text max. 30 Zch.
+; # MaxTsdr optimiert
+;==========================================================
+
+;==========================================================
+#Profibus_DP
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; <Prm-Text-Def-List>
+;----------------------------------------------------------
+PrmText=1
+Text(0)="Digitaler Eingang"
+Text(1)="Digitaler Ausgang"
+EndPrmText
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; <Ext-User-Prm-Data-Def-List>
+;----------------------------------------------------------
+ExtUserPrmData=1 "Kanaltyp fuer E/A 0"
+Bit(0) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=2 "Kanaltyp fuer E/A 1"
+Bit(1) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=3 "Kanaltyp fuer E/A 2"
+Bit(2) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=4 "Kanaltyp fuer E/A 3"
+Bit(3) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=5 "Kanaltyp fuer E/A 4"
+Bit(4) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=6 "Kanaltyp fuer E/A 5"
+Bit(5) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=7 "Kanaltyp fuer E/A 6"
+Bit(6) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+ExtUserPrmData=8 "Kanaltyp fuer E/A 7"
+Bit(7) 0 0-1
+Prm_Text_Ref=1
+EndExtUserPrmData
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; <Unit-Definition-List>
+GSD_Revision=4
+Vendor_Name="SIEMENS"
+Model_Name="ET200R"
+Revision="V1.0"
+;----------------------------------------------------------
+Ident_Number=0x80A8
+Protocol_Ident=0
+Station_Type=0
+;----------------------------------------------------------
+;Releases
+;----------------------------------------------------------
+Hardware_Release="1.0"
+Software_Release="0.1"
+;----------------------------------------------------------
+;Baudraten
+;----------------------------------------------------------
+9.6_supp=1
+19.2_supp=1
+45.45_supp=1
+93.75_supp=1
+187.5_supp=1
+500_supp=1
+1.5M_supp=1
+3M_supp=1
+6M_supp=1
+12M_supp=1
+;----------------------------------------------------------
+;Buszeiten
+;----------------------------------------------------------
+MaxTsdr_9.6   =  15
+MaxTsdr_19.2  =  15
+MaxTsdr_45.45 =  15
+MaxTsdr_93.75 =  15
+MaxTsdr_187.5 =  15
+MaxTsdr_500   =  15
+MaxTsdr_1.5M  =  25
+MaxTsdr_3M    =  50
+MaxTsdr_6M    = 100
+MaxTsdr_12M   = 200
+;----------------------------------------------------------
+;Sync Freeze
+;----------------------------------------------------------
+Freeze_Mode_supp=0
+Sync_Mode_supp=0
+;----------------------------------------------------------
+Implementation_Type = "DPC31"
+Bitmap_Device       = "ET200R_N"
+Bitmap_SF           = "ET200R_S"
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; Slave-Specification:
+OrderNumber= "6ES7 143-2BH*0-0AB0"  
+
+Auto_Baud_supp=1    ;ok
+Set_Slave_Add_supp = 0    ;ok
+
+Min_Slave_Intervall=1     ;ok
+
+Max_Diag_Data_Len=18    ;ok
+
+Modul_Offset=1      ;ok
+Slave_Family=3@ET200R   ;ok
+Modular_Station=1 ;0
+Max_Module=1 
+Max_Input_Len=2
+Max_Output_Len=1
+Max_Data_Len=3
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; UserPrmData: Length and Preset:
+User_Prm_Data_Len   = 4                     ;ok                          
+User_Prm_Data       = 0x00,0x00,0x00,0xFF   ;ok
+Max_User_Prm_Data_Len=4  ; 3 const + 1 für E/A  ;ok
+Ext_User_Prm_Data_Const(0)=0x00,0x00,0x00,0xFF  ;ok
+
+Ext_User_Prm_Data_Ref(3)=1
+Ext_User_Prm_Data_Ref(3)=2
+Ext_User_Prm_Data_Ref(3)=3
+Ext_User_Prm_Data_Ref(3)=4
+Ext_User_Prm_Data_Ref(3)=5
+Ext_User_Prm_Data_Ref(3)=6
+Ext_User_Prm_Data_Ref(3)=7
+Ext_User_Prm_Data_Ref(3)=8
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; <Module-Definition-List>
+;----------------------------------------------------------
+Module = "6ES7 143-2BH00-0AB0 Handling"   0xC0,0x00,0x01
+1
+EndModule
+Module = "6ES7 143-2BH50-0AB0 Schweißmod" 0xC0,0x00,0x01
+2
+EndModule
+;ET200R-W (Schweißmodul): 6ES7 143-2BH00-0AB0
+;ET200R-H (Handling):     6ES7 143-2BH50-0AB0
+;----------------------------------------------------------
+
+;----------------------------------------------------------
+;Info Text
+;----------------------------------------------------------
+Info_text="ET200R ist ein Digitales Ein/Ausgabemodul für Roboter"
+
+;----------------------------------------------------------
+; Publisher
+;----------------------------------------------------------
+Publisher_supp=1;
+
+;----------------------------------------------------------
+; Gerätespezifische Fehler
+;----------------------------------------------------------
+Unit_Diag_Bit(24) = "DA X0-X1 Überlast/Kurzschluss   "
+Unit_Diag_Bit(25) = "DA X2-X3 Überlast/Kurzschluss   "
+Unit_Diag_Bit(26) = "Fehlende 24V Lastspannung (US2) "
+Unit_Diag_Bit(27) = "DA X0-X3 Überlast Summenstrom   "
+Unit_Diag_Bit(28) = "DE X0-X3 Überlast/Kurzschluss   "
+Unit_Diag_Bit(29) = "DE X4-X7 Überlast/Kurzschluss   "
+Unit_Diag_Bit(30) = "Fehlerinfo 30 Reserviert        "
+Unit_Diag_Bit(31) = "Fehlerinfo 31 Reserviert        "

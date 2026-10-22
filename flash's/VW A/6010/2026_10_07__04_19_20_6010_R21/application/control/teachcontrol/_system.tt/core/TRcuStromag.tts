@@ -1,0 +1,149 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuStromag.tts                                              *
+*   Description: Funcionallity for the stromag-brake                          *
+*-----------------------------------------------------------------------------*
+*   12.10.05 BIT: 
+*)
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT PRIVATE
+  cTimeTillBrakeIsOn  : DINT   := 4000;   // Time =>  4000 ms or  4 sec
+END_CONSTANT
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR  
+  bOutStromagOn  : MAPTO BOOL;
+  bBrakeError    : BOOL;
+END_VAR
+
+VAR PRIVATE
+  instId         : DINT;
+  bEnableStromag : BOOL;
+  bInvertStromag : BOOL;
+  bInPressureOk  : MAPTO BOOL;
+  bStromagIsOn   : BOOL;
+  locKinematic   : MAPTO TRcuRobot;
+END_VAR
+
+(******************************************************************************
+***  read values from the catalog   *******************************************
+******************************************************************************)
+ROUTINE ReadConfig(myKinematic : TRcuRobot) 
+ VAR
+  handle       : DINT;
+  iTemp        : DINT;    // temp catalogvalue
+ END_VAR
+ 
+   locKinematic := MAP(myKinematic);
+      
+   IF NOT locKinematic.bRcuSimulatesAllDrives THEN       
+       bOutStromagOn := MAPX(cHW_OutputOn[locKinematic.kinListInx]);
+       bInPressureOk := MAPX(cHW_InputPressure[locKinematic.kinListInx]);
+       IF CatalogGetHandleRelative(locKinematic.rcCatHdl, "StromagBrake", handle) THEN
+          IF NOT CatalogReadIntRange(handle, "EnableStromag", iTemp, 0, 1, TRUE) THEN 
+             bEnableStromag := FALSE;
+          ELSE
+             bEnableStromag := (iTemp = 1);
+             IF bEnableStromag THEN
+                IF NOT CatalogReadIntRange(handle, "InvertStromag", iTemp, 0, 1, TRUE) THEN 
+                   bInvertStromag := FALSE;
+                ELSE
+                   bInvertStromag := (iTemp = 1);
+                END_IF;
+             END_IF;
+             PRINT("Stromag cfg read !!!!");
+          END_IF;
+       ELSE
+          RcuSetMessageOnce(TRcuStromag_ErrNoHandlStromag, locKinematic.kinListInx, 1, instId, "TRcuStromag.ReadConfig");
+       END_IF;
+       IF (NOT IS_MAPPED(bOutStromagOn) AND bEnableStromag) THEN
+          RcuSetMessageOnce(TRcuStromag_ErrMapToHWFailed, locKinematic.kinListInx, 1, instId, "TRcuStromag.ReadConfig", cHW_OutputOn[locKinematic.kinListInx]);
+       ELSIF (NOT IS_MAPPED(bInPressureOk) AND bEnableStromag) THEN
+          RcuSetMessageOnce(TRcuStromag_ErrMapToHWFailed, locKinematic.kinListInx, 2, instId, "TRcuStromag.ReadConfig", cHW_InputPressure[locKinematic.kinListInx]);
+       ELSIF bEnableStromag THEN
+          START SwitchOnOff();      
+       END_IF;
+       
+   END_IF;
+
+END_ROUTINE
+
+(******************************************************************************
+***  switch on/off brake ******************************************************
+******************************************************************************)
+ROUTINE SwitchOnOff()
+ VAR
+   bChgError   : BOOL := FALSE;
+ END_VAR
+ 
+  bChgError := IS_CHANGED(locKinematic.bRcuAnyErrorPending);
+  WHILE TRUE DO
+     bOutStromagOn := NOT locKinematic.bRcuAnyErrorPending;  
+     bStromagIsOn  := NOT locKinematic.bRcuAnyErrorPending;
+     IF bStromagIsOn THEN
+        START StromagCheck();
+     ELSE
+        STOP StromagCheck;
+        bBrakeError := FALSE;
+     END_IF;
+     WAIT bChgError;
+     bChgError := FALSE;
+  END_WHILE;  
+
+END_ROUTINE
+
+(******************************************************************************
+***  check if stromag pressure is present *************************************
+******************************************************************************)
+ROUTINE StromagCheck()
+ VAR
+   bFirstRun : BOOL := TRUE;
+   bChgPres  : BOOL;
+ END_VAR
+ 
+  bChgPres     := IS_CHANGED(bInPressureOk);
+  WHILE TRUE DO
+    Sleep(cTimeTillBrakeIsOn);
+    IF (((bInvertStromag AND bInPressureOk) OR (NOT bInvertStromag AND NOT bInPressureOk)) AND bFirstRun) THEN 
+       bBrakeError := TRUE;
+       locKinematic.SetMotionMode(eRcuMMgrModeStop);
+       locKinematic.StopAllDrives();
+       RcuSetMessageOnce(TRcuStromag_ErrStromagOnNoPress, locKinematic.kinListInx, 1, instId, "TRcuStromag.StromagCheck");
+       bFirstRun := FALSE;
+    ELSIF (((bInvertStromag AND bInPressureOk) OR (NOT bInvertStromag AND NOT bInPressureOk)) AND NOT bFirstRun) THEN
+       bBrakeError := TRUE;
+       locKinematic.SetMotionMode(eRcuMMgrModeStop);
+       locKinematic.StopAllDrives();
+       RcuSetMessageOnce(TRcuStromag_ErrStromagPressLost, locKinematic.kinListInx, 1, instId, "TRcuStromag.StromagCheck");
+    ELSE   
+       bBrakeError := FALSE;
+    END_IF;
+    bFirstRun := FALSE;
+    bChgPres  := FALSE;
+    WAIT (bChgPres AND ((bInvertStromag AND bInPressureOk) OR (NOT bInvertStromag AND NOT bInPressureOk)));
+ END_WHILE;
+
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+******************************************************************************)
+ROUTINE NEW()
+  instId        := RcuGetInstanceId(); //instance identification number (for Errors)
+END_ROUTINE

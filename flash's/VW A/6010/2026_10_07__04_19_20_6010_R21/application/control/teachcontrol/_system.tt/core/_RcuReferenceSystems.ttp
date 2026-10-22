@@ -1,0 +1,469 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : _RcuReferenceSystems.ttp
+*  First Author : pen
+*  Date         : 11.1.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  supply cartesian reference systems
+*------------------------------------------------------------------------------
+* 20.01.05 nmr: New routines to set and organize coordinatesystem for
+*               Mcu-Actualdata: RcuSetRefSysForActCartVals,
+*               SetMcuRefSysToWorld, RestoreRefSysForActCartVals
+* 16.02.05 nmr: TRcRefSysValidArray moved to RcData
+* 24.03.05 nmr: New info, if recovering referencesystem for Mcu-actualdata 
+*               failed (in Routine RestoreRefSysForActCartVals())
+* 05.07.05 kto: Text translated into english 
+* 03.11.06 BMA: Semaphore for the coordinate system for actCartVals
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+TYPE GLOBAL
+   // Element of the array of reference systems
+   TRcuRefSysElement : STRUCT
+      refSysMcuId : TMcuDbObjID;
+      baseRefSys : TRcuReferenceSystem;
+      tracking : BOOL;
+      updateType : TMcuUpdateTyp;  // tracking update type, normal: eMcuUpdateSMemIntern
+
+      // list data
+      self  : TRcuReferenceSystem; // own name
+      next  : TRcuReferenceSystem; // next system with the same base
+      prev  : TRcuReferenceSystem; // previous system with the same base
+      child : TRcuReferenceSystem; // system which has this system as base
+   END_STRUCT;
+END_TYPE
+
+VAR GLOBAL
+   // array of frames for tracking
+   gyRcuTrackingFrame : ARRAY [eRcuNrOfRefSystems] OF MAPTO TMcuFrame;
+
+   // flag which indicates that eRcuRefSystemWorld is valid
+   gbRcuRefSysReady : BOOL;
+   
+   // bit-mask indicating valid systems
+   giRcRefSysValidMask : DINT;
+
+   // bit-mask indicating valid systems for TV
+   giTvRefSysValidMask : DINT;
+END_VAR
+
+
+(*-----------------------------------------------------------------------------
+* Set one of the reference systems
+*)
+ROUTINE RcuRefSysSet(CONST refSys : TRcuReferenceSystem; CONST frame :
+   TMcuFrame; CONST baseRefSys : TRcuReferenceSystem; CONST tracking :
+   BOOL; CONST name : STRING) : BOOL GLOBAL
+
+   // frame isn't considered in case of tracking
+   IF (frame.mFrameTyp <> gMcuFrameTyp) AND NOT tracking THEN
+      RcuSetMessageOnce(_RcuRefSystems_ErrWrTpOfFrame, -1, 1, 0, "_RcuReferenceSystems.RcuRefSysSet");
+      RETURN FALSE;
+   END_IF;
+   IF tracking THEN
+      RETURN RefSysSet(refSys, frame, baseRefSys, eMcuUpdateSMemIntern, FALSE, name);
+   ELSE
+      RETURN RefSysSet(refSys, frame, baseRefSys, eMcuUpdateNot, TRUE, name);
+   END_IF;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set one of the reference systems
+*)
+ROUTINE RcuRefSysSetKardan(CONST refSys : TRcuReferenceSystem; CONST kardan :
+   TMcuFrame; CONST baseRefSys : TRcuReferenceSystem; CONST tracking :
+   BOOL; CONST name : STRING) : BOOL GLOBAL
+   VAR
+      frame : TMcuFrame; 
+   END_VAR
+   
+   frame := kardan;
+   IF gMcuFrameTyp = eMcuFrameEuler THEN
+      McuKardanToEuler(frame.mOri, kardan.mOri);
+      frame.mFrameTyp := eMcuFrameEuler;
+   END_IF;
+   IF tracking THEN
+      RETURN RefSysSet(refSys, frame, baseRefSys, eMcuUpdateSMemIntern, FALSE, name);
+   ELSE
+      RETURN RefSysSet(refSys, frame, baseRefSys, eMcuUpdateNot, TRUE, name);
+   END_IF;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set one of the reference systems with a special update type
+*)
+ROUTINE RcuRefSysSetSpecial(CONST refSys : TRcuReferenceSystem; CONST baseRefSys : 
+      TRcuReferenceSystem; CONST updateType : TMcuUpdateTyp; CONST name : STRING) : BOOL GLOBAL
+   VAR
+      frame : TMcuFrame;
+   END_VAR
+
+   IF (updateType <= eMcuUpdateNot) OR (updateType = eMcuUpdateLink) OR
+         (updateType = eMcuUpdateSMemSimu) OR (updateType = eMcuUpdateSMemIntern) OR
+         (updateType >= eMcuMaxUpdateTyp) THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSTraIn, -1, 1, 0, "_RcuReferenceSystems.RcuRefSysSetSpecial", STR(updateType));
+      RETURN FALSE;
+   END_IF;
+   RETURN RefSysSet(refSys, frame, baseRefSys, updateType, FALSE, name);
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read an element of the array of reference systems
+*)
+ROUTINE RcuRefSysRead(CONST refSys : TRcuReferenceSystem; elem :
+   TRcuRefSysElement) : BOOL GLOBAL
+
+   IF (refSys = eRcuRefSystemInvalid) OR (refSys = eRcuNrOfRefSystems) THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSInval, -1, 1, 0, "_RcuReferenceSystems.RcuRefSysRead", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+   elem := rcuReferenceSystem[refSys];
+   RETURN elem.refSysMcuId <> 0;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Read the Mcu-Id of the given referencesystem. Returns false when the system
+* is not yet created or when it is not valid or when any of the needed systems
+* is not valid.
+*)
+ROUTINE RcuRefSysGetMcuId(CONST refSys : TRcuReferenceSystem; id : TMcuDbObjID) :
+   BOOL GLOBAL
+   VAR
+      actRefSys : TRcuReferenceSystem;
+   END_VAR
+
+   IF (refSys = eRcuRefSystemInvalid) OR (refSys = eRcuNrOfRefSystems) THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSInval, -1, 2, 0, "_RcuReferenceSystems.RcuRefSysGetMcuId", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+   id := rcuReferenceSystem[refSys].refSysMcuId;
+   IF id = 0 THEN
+      RETURN FALSE;
+   END_IF;
+   actRefSys := refSys;
+   WHILE actRefSys <> eRcuRefSystemWorld DO
+      IF (giRcRefSysValidMask AND gyBits[actRefSys]) = 0 THEN
+         RETURN FALSE;
+      END_IF;
+      actRefSys := rcuReferenceSystem[actRefSys].baseRefSys;
+   END_WHILE;
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set a reference system as valid. Especially useful for systems with tracking.
+*)
+ROUTINE RcuRefSysActivate(CONST refSys : TRcuReferenceSystem) : BOOL GLOBAL
+
+   IF (refSys = eRcuRefSystemInvalid) OR (refSys = eRcuNrOfRefSystems) THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSInval, -1, 3, 0, "_RcuReferenceSystems.RcuRefSysActivate", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+   IF rcuReferenceSystem[refSys].refSysMcuId <> 0 THEN
+      giRcRefSysValidMask := giRcRefSysValidMask OR gyBits[refSys];
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(_RcuRefSystems_WarRSNotEx, -1, 1, 0, "_RcuReferenceSystems.RcuRefSysActivate", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set a reference system as not valid. Especially useful for systems with
+* tracking.
+*)
+ROUTINE RcuRefSysDeactivate(CONST refSys : TRcuReferenceSystem) : BOOL GLOBAL
+
+   IF (refSys = eRcuRefSystemInvalid) OR (refSys = eRcuNrOfRefSystems) THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSInval, -1, 4, 0, "_RcuReferenceSystems.RcuRefSysDeactivate", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+   IF rcuReferenceSystem[refSys].refSysMcuId <> 0 THEN
+      giRcRefSysValidMask := giRcRefSysValidMask AND NOT gyBits[refSys];
+      RETURN TRUE;
+   ELSE
+      RcuSetMessageOnce(_RcuRefSystems_WarRSNotEx, -1, 2, 0, "_RcuReferenceSystems.RcuRefSysDeactivate", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Set a reference system for the mcu actual data
+*)
+(*
+ROUTINE RcuSetRefSysForActCartVals(CONST kinID: TMcuDbObjID; 
+   VAR_IN refSysID: TMcuDbObjID; CONST refSys: TRcuReferenceSystem) : BOOL GLOBAL
+VAR
+   actRefSysMcuId : TMcuDbObjID;
+END_VAR   
+
+   actRefSysMcuId := McuGetRefSysForActCartVals(kinID);
+   IF (actRefSysMcuId <> refSysID) THEN
+      IF NOT McuSetRefSysForActCartVals(kinID, refSysID) THEN
+         RcuSetMessageOnce(_RcuRefSystems_ErrSetRSFAV, 1, 0, "_RcuReferenceSystems.RcuSetRefSysForActCartVals", STR(refSysID));
+         RETURN FALSE;
+      ELSE
+         DebugPrint(eTraceCommon, "RefSys for actCartVals set to refSys(" + STR(refSys) + "), refSysId: " + STR(refSysID));
+      END_IF;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+*)
+
+(*******************************************************************************
+* private members
+*)
+
+TYPE PRIVATE
+   // type of the creation mark array
+   TMarkArray : ARRAY [eRcuNrOfRefSystems] OF BOOL;
+   
+   TRefSysList : ARRAY [cgiRcuMaxKinematics] OF TRcuReferenceSystem;
+END_TYPE
+
+
+VAR PRIVATE
+   // array of reference systems
+   rcuReferenceSystem : ARRAY [eRcuNrOfRefSystems] OF TRcuRefSysElement;
+
+   // array of creation marks (used for cycle-dependence recognition)
+   refSysMark : TMarkArray;
+END_VAR
+
+
+(*-----------------------------------------------------------------------------
+* Set one of the reference systems
+*)
+ROUTINE RefSysSet(CONST refSys : TRcuReferenceSystem; CONST frame :
+      TMcuFrame; CONST baseRefSys : TRcuReferenceSystem; 
+      CONST updateType : TMcuUpdateTyp; CONST valid : BOOL; CONST name : STRING) : BOOL PRIVATE
+   VAR
+      trsf : TMcuTransformation;
+      marks : TMarkArray;
+      smName : STRING;
+      head : TRcuReferenceSystem;
+      tail : TRcuReferenceSystem;
+      isTracking : BOOL;
+      sema : TRcuSemaphore;
+   END_VAR
+
+   isTracking := (updateType <> eMcuUpdateNot);
+   IF (refSys = eRcuRefSystemInvalid) OR (refSys = eRcuRefSystemWorld) OR (refSys
+         = eRcuNrOfRefSystems) OR (baseRefSys = eRcuRefSystemInvalid) OR (baseRefSys
+         = eRcuNrOfRefSystems) THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSInval, -1, 5, 0, "_RcuReferenceSystems.RefSysSet", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+   sema.Lock(eRefSysSetSemaphore);
+   // reset the array of creation marks
+   refSysMark := marks;
+
+   // remove mapping of the tracking-frame
+   gyRcuTrackingFrame[refSys] := MAPX("");
+   giRcRefSysValidMask := giRcRefSysValidMask AND NOT gyBits[refSys];
+
+   // delete an existing reference system with this index
+   IF rcuReferenceSystem[refSys].refSysMcuId <> 0 THEN
+      //SetMcuRefSysToWorld(refSys);
+      McuReleaseDbObj(rcuReferenceSystem[refSys].refSysMcuId);
+      rcuReferenceSystem[refSys].refSysMcuId := 0;
+   END_IF;
+
+   // remove reference system from its list
+   IF rcuReferenceSystem[refSys].baseRefSys <> eRcuRefSystemInvalid THEN
+      IF rcuReferenceSystem[rcuReferenceSystem[refSys].baseRefSys].child = refSys THEN
+         // is child of base, go to next elem
+         rcuReferenceSystem[rcuReferenceSystem[refSys].baseRefSys].child :=
+            rcuReferenceSystem[refSys].next;
+      END_IF;
+      IF rcuReferenceSystem[rcuReferenceSystem[refSys].baseRefSys].child = refSys THEN
+         // is still child of base, base has no longer children
+         rcuReferenceSystem[rcuReferenceSystem[refSys].baseRefSys].child :=
+            eRcuRefSystemInvalid;
+      ELSE
+         // update links
+         rcuReferenceSystem[rcuReferenceSystem[refSys].next].prev :=
+            rcuReferenceSystem[refSys].prev;
+         rcuReferenceSystem[rcuReferenceSystem[refSys].prev].next :=
+            rcuReferenceSystem[refSys].next;
+      END_IF;
+   END_IF;
+   rcuReferenceSystem[refSys].self := refSys;
+   rcuReferenceSystem[refSys].prev := refSys;
+   rcuReferenceSystem[refSys].next := refSys;
+   rcuReferenceSystem[refSys].baseRefSys := eRcuRefSystemInvalid;
+
+   // fill the transformation data sheet
+   trsf.mDBObjTyp := eMcuPermanent;
+   trsf.mRefSysID := rcuReferenceSystem[baseRefSys].refSysMcuId;
+   IF trsf.mRefSysID = 0 THEN
+      RcuSetMessageOnce(_RcuRefSystems_WarRSBNotEx, -1, 1, 0, "_RcuReferenceSystems.RefSysSet", STR(baseRefSys));
+      RETURN FALSE; // the base is not yet existing
+   END_IF;
+
+   trsf.mUpdData.mUpdTyp := updateType;
+   IF isTracking THEN
+      trsf.mName := name + " (TrackingSys"+STR(refSys) + ")";
+   ELSE
+      trsf.mName := name + " (RefSys"+STR(refSys) + ")";
+      trsf.mFrame := frame;
+   END_IF;
+
+   // create the transformation-object
+   IF NOT McuCreateTrsf(rcuReferenceSystem[refSys].refSysMcuId, trsf) THEN
+      RcuSetMessageOnce(_RcuRefSystems_ErrCreatTrsf, -1, 1, 0, "_RcuReferenceSystems.RefSysSet");
+      RETURN FALSE;
+   END_IF;
+
+   // fill the remaining members of the corresponding arrayelement
+   rcuReferenceSystem[refSys].baseRefSys := baseRefSys;
+   rcuReferenceSystem[refSys].tracking := isTracking;
+   rcuReferenceSystem[refSys].updateType := updateType;
+   IF valid THEN
+      giRcRefSysValidMask := giRcRefSysValidMask OR gyBits[refSys];
+   ELSE
+      giRcRefSysValidMask := giRcRefSysValidMask AND NOT gyBits[refSys];
+   END_IF;
+   // insert in list
+   head := rcuReferenceSystem[baseRefSys].child; // index of first elem of child-list
+   IF head = eRcuRefSystemInvalid THEN
+      // first child
+      rcuReferenceSystem[baseRefSys].child := refSys;
+   ELSE
+      tail := rcuReferenceSystem[head].prev; // index of last elem of child-list
+      // insert before head
+      rcuReferenceSystem[refSys].next := head;
+      rcuReferenceSystem[refSys].prev := tail;
+      rcuReferenceSystem[tail].next := refSys;
+      rcuReferenceSystem[head].prev := refSys;
+   END_IF;
+
+   IF isTracking THEN
+      // map the tracking-frame
+      McuReadTrsfSMemName(rcuReferenceSystem[refSys].refSysMcuId, smName);
+      gyRcuTrackingFrame[refSys] := MAPX(smName);
+      gyRcuTrackingFrame[refSys].mFrameTyp := gMcuFrameTyp;
+   END_IF;
+
+   // automatically update dependent reference systems
+   IF NOT ManageRefSysChange(refSys) THEN
+      RcuSetMessageOnce(_RcuRefSystems_ErrRefSyUDep, -1, 1, 0, "_RcuReferenceSystems.RefSysSet");
+      RETURN FALSE;
+   END_IF;
+
+   //RestoreRefSysForActCartVals();
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* Look for reference systems which use the modified system as base reference
+* system, create them with new base-Id. Recursive.
+*)
+ROUTINE ManageRefSysChange(CONST refSys : DINT) : BOOL PRIVATE
+   VAR
+      trsf : TMcuTransformation;
+      actChild : TRcuReferenceSystem;
+      head : TRcuReferenceSystem;
+   END_VAR
+
+   // check for cyclic dependence
+   IF refSysMark[refSys] THEN // cyclic dependence recognized!
+      RcuSetMessageOnce(_RcuRefSystems_ErrRfSCyclDp, -1, 1, 0, "_RcuReferenceSystems.ManageRefSysChange");
+      RETURN FALSE;
+   END_IF;
+   // mark the reference system
+   refSysMark[refSys] := TRUE;
+
+   head := rcuReferenceSystem[refSys].child;
+   actChild := head;
+   IF actChild <> eRcuRefSystemInvalid THEN
+      REPEAT
+         IF (rcuReferenceSystem[actChild].baseRefSys <> refSys) OR
+            (rcuReferenceSystem[actChild].refSysMcuId = 0) THEN
+            RcuSetMessageOnce(_RcuRefSystems_FaErrRefSys, -1, 1, 0, "_RcuReferenceSystems.ManageRefSysChange");
+            WAIT FALSE;
+         END_IF;
+         // create new transformation with new RefSysID
+         IF NOT McuReadTrsf(rcuReferenceSystem[actChild].refSysMcuId, trsf) THEN
+            RcuSetMessageOnce(_RcuRefSystems_ErrReadTrsf, -1, 1, 0, "_RcuReferenceSystems.ManageRefSysChange");
+            RETURN FALSE;
+         END_IF;
+         //SetMcuRefSysToWorld(actChild);
+         McuReleaseDbObj(rcuReferenceSystem[actChild].refSysMcuId);
+         rcuReferenceSystem[actChild].refSysMcuId := 0;
+         trsf.mRefSysID := rcuReferenceSystem[refSys].refSysMcuId;
+
+         (* keep names, no change needed 
+                  IF rcuReferenceSystem[actChild].tracking THEN
+                     trsf.mName := "TrackingSys"+STR(actChild);
+                  ELSE
+                     trsf.mName := "RefSys"+STR(actChild);
+                  END_IF;
+         *)
+         IF NOT McuCreateTrsf(rcuReferenceSystem[actChild].refSysMcuId, trsf) THEN
+            giRcRefSysValidMask := giRcRefSysValidMask AND NOT gyBits[actChild];
+            RcuSetMessageOnce(_RcuRefSystems_ErrCreatTrsf, -1, 2, 0, "_RcuReferenceSystems.ManageRefSysChange");
+            RETURN FALSE;
+         END_IF;
+         // update dependent systems
+         IF NOT ManageRefSysChange(actChild) THEN
+            RETURN FALSE;
+         END_IF;
+         actChild := rcuReferenceSystem[actChild].next;
+      UNTIL actChild = head;
+   END_IF;
+
+   RETURN TRUE;
+END_ROUTINE
+
+
+(*******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   WAIT gMcuIsMapped;
+   gMcuWorldRefSysId := McuGetWorldTrsfID();
+   rcuReferenceSystem[eRcuRefSystemWorld].refSysMcuId := gMcuWorldRefSysId;
+   giRcRefSysValidMask := gyBits[eRcuRefSystemWorld];
+   gbRcuRefSysReady := TRUE;
+END_ROUTINE
+
+
+ROUTINE DELETE()
+   VAR
+      i : TRcuReferenceSystem;
+   END_VAR
+
+   FOR i := 1 TO eRcuNrOfRefSystems - 1 DO
+      IF rcuReferenceSystem[i].refSysMcuId <> 0 THEN
+         //SetMcuRefSysToWorld(i);
+         McuReleaseDbObj(rcuReferenceSystem[i].refSysMcuId);
+      END_IF;
+   END_FOR;
+END_ROUTINE
+

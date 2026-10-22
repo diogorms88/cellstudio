@@ -1,0 +1,123 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 20.12.2016  | KTO    | First release
+
+Parameter OptionPDA
+
+	
+	Call Main_OptionPDA
+
+END
+
+SubRoutine Main_OptionPDA
+	SelectCase OptionPDA
+		//no pda
+		Case PDA_v0
+		//paint robot
+			Call Sub_OptionPDA_v0
+		Case PDA_v10	
+			Call Sub_OptionPDA_v10
+		//paint robot & opener	
+		Case PDA_v11	
+			Call Sub_OptionPDA_v11
+		//paint robot & opener & opener
+		Case PDA_v12	
+			Call Sub_OptionPDA_v12
+		//opener	
+		Case PDA_v15	
+			Call Sub_OptionPDA_v15
+		//opener & opener
+		Case PDA_v16
+			Call Sub_OptionPDA_v16
+		//opener & opener & opener
+		Case PDA_v17
+			Call Sub_OptionPDA_v17
+	EndSelect
+	
+	SelectCase OptionPDA
+		Case PDA_v0
+			Message Please set [RC]activatePDA=0 in robotcontrol.cfg
+		CaseElse
+			Message Please add [RC]activatePDA = 1 in robotcontrol.cfg and execute ..\ieccontrol\SetPDA_DeviceName.bat
+	EndSelect		
+Return
+
+
+SubRoutine Sub_OptionPDA_v0
+	//delete pda file
+	FSDeleteFile ..\..\..\ieccontrol\pcu1\engineeringfiles\ab_pda_pcu.pu
+	//copy dummy pda file
+	FSCopy ..\..\..\..\..\pda_patterns\noPDA\ab_pda_pcu.pu		..\..\..\ieccontrol\pcu1\engineeringfiles
+	//delete pda file
+	FSDeleteFile ..\..\..\ieccontrol\pcu1\engineeringfiles\HW_PDA_PCU1.sv
+	FSDeleteFile ..\..\..\ieccontrol\rcu1\engineeringfiles\HW_PDA_RCU1.sv
+	FSDeleteFile ..\..\..\ieccontrol\rcu2\engineeringfiles\HW_PDA_RCU2_1.sv
+	FSDeleteFile ..\..\..\ieccontrol\rcu2\engineeringfiles\HW_PDA_RCU2_2.sv
+	FSDeleteFile ..\..\..\ieccontrol\rcu3\engineeringfiles\HW_PDA_RCU3_1.sv
+	FSDeleteFile ..\..\..\ieccontrol\rcu3\engineeringfiles\HW_PDA_RCU3_2.sv
+Return
+
+SubRoutine Sub_OptionPDA_v10
+	//delete dummy file
+	FSDeleteFile ..\..\..\ieccontrol\pcu1\engineeringfiles\ab_pda_pcu.pu
+	//copy process specific pda file
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\ab_pda_pcu.pu		..\..\..\ieccontrol\pcu1\engineeringfiles
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_PCU1.sv		..\..\..\ieccontrol\pcu1\engineeringfiles
+    //copy first kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU1.sv		..\..\..\ieccontrol\rcu1\engineeringfiles
+Return
+
+SubRoutine Sub_OptionPDA_v11
+	//delete dummy file
+	FSDeleteFile ..\..\..\ieccontrol\pcu1\engineeringfiles\ab_pda_pcu.pu
+	//copy process specific pda file
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\ab_pda_pcu.pu		..\..\..\ieccontrol\pcu1\engineeringfiles
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_PCU1.sv		..\..\..\ieccontrol\pcu1\engineeringfiles
+
+    //copy first kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU1.sv		..\..\..\ieccontrol\rcu1\engineeringfiles
+	//copy second kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU2_1.sv		..\..\..\ieccontrol\rcu2\engineeringfiles
+Return
+
+SubRoutine Sub_OptionPDA_v12
+	//delete dummy file
+	FSDeleteFile ..\..\..\ieccontrol\pcu1\engineeringfiles\ab_pda_pcu.pu
+	//copy process specific pda file
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\ab_pda_pcu.pu		..\..\..\ieccontrol\pcu1\engineeringfiles
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_PCU1.sv		..\..\..\ieccontrol\pcu1\engineeringfiles
+    //copy first kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU1.sv		..\..\..\ieccontrol\rcu1\engineeringfiles
+	//copy second kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU2_1.sv		..\..\..\ieccontrol\rcu2\engineeringfiles
+	//copy third kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU3_1.sv		..\..\..\ieccontrol\rcu3\engineeringfiles
+Return
+
+
+SubRoutine Sub_OptionPDA_v15
+    //copy first kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU1.sv		..\..\..\ieccontrol\rcu1\engineeringfiles
+Return
+
+SubRoutine Sub_OptionPDA_v16
+    //copy first kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU1.sv		..\..\..\ieccontrol\rcu1\engineeringfiles
+	//copy second kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU2_2.sv		..\..\..\ieccontrol\rcu2\engineeringfiles
+Return
+
+SubRoutine Sub_OptionPDA_v17
+    //copy first kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU1.sv		..\..\..\ieccontrol\rcu1\engineeringfiles
+	//copy second kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU2_2.sv		..\..\..\ieccontrol\rcu2\engineeringfiles
+	//copy third kinematic files
+	FSCopy ..\..\..\..\..\pda_patterns\PDA\HW_PDA_RCU3_2.sv		..\..\..\ieccontrol\rcu3\engineeringfiles
+Return
+
+
+
+
+
+

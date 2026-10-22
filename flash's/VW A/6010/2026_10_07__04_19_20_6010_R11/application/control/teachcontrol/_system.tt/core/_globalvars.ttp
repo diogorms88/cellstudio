@@ -1,0 +1,63 @@
+CONSTANT GLOBAL
+   ciAuto                     : DINT := 1;
+   ciT1                       : DINT := 2;
+   ciT2                       : DINT := 3;
+   ciSleep                    : DINT := 4;
+   cgiNumberOfHandlerPartPos  : SINT := 4 + 1;  // (maximal) number of part positions + 1
+   cgiMaxNumberOfParts        : SINT := 4 + 1; // maximal number of handled parts + 1
+   cgiMaxNumberOfHandlerParts : SINT := 4;      // maximal number of handled parts
+      cgiMaxNumOfHandlers        : SINT := 6;      // maximal number of handlers
+   cgiMaxNumOfOrderer         : SINT := 6;      // maximal number of ordering robots
+   cgiMaxNumOfParts           : SINT := 8;      // maximal number of parts
+   cgiMaxNumOfPartsInputs     : SINT := 4;      // maximal number of part inputs (Byte 0..3=PartX, Byte 4..7=PartY)
+   cgiMaxNumOfPositions       : SINT := 8;      // maximal number of positions
+   cgiMaxDosingDrive          : SINT := 16;
+   cgiMaxS3Devices            : INT  := 50;     //maximum Nr of devices that can be connected to the master
+   cgiMaxECATDevices          : INT  := 30;     //maximum Nr of devices that can be connected to the master
+   cgiHMI_Grey                : INT  := 1;
+   cgiHMI_Green               : INT  := 2;
+   cgiHMI_Red                 : INT  := 4;
+   cgiHMI_Yellow              : INT  := 8;
+   cgrMaxInteger              : REAL :=  32767.0; //Range of Integer used for type cast 
+   cgrMinInteger              : REAL := -32768.0; //Range of Integer used for type cast 
+END_CONSTANT
+
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL
+  //Fixpos
+  TRcuFixposOption : (eNoOption, eWithoutAux, eBypass, eUnselect, eBrakeCheck, eHomeWithoutAux, eHomeWithAux, eRefScp, eSyncPos);
+  //Handler
+  THandlerIniPart : (StartHomePos, StartPart1, StartPart2, StartPart3, StartPart4);
+  THandlerEndPart : (StopHomePos, StopPart1, StopPart2, StopPart3, StopPart4);
+   //Drives
+  TRcuDriveType : (eRcuUndef, eRcuEcoDrive, eRcuIndraDrive, eRcuIndraDriveCS);
+  TRcuDriveBus  : (eRcuUndefBus, eRcuSercos2, eRcuSercos3);
+  // Enumeration of the Drive States
+  TRcuDriveComStatus : (eRcuDriveComNotReady, eRcuDriveComVoltageDisabled, eRcuDriveComSwitchOnDisabled, eRcuDriveComReadyToSwitchOn,
+                       eRcuDriveComSwitchedOn, eRcuDriveComOpEnabled, eRcuDriveComMalf, eRcuDriveComMalfReactionActive,
+                       eRcuDriveComQuickstopActive, eRcuDriveComMaxNum);
+  TRcuCfgDriveStatus : (eRcuCfgDriveStateError, eRcuCfgDriveStateWarning, eRcuCfgDriveStateTargetReached, 
+                        eRcuCfgDriveStateHomingAttained, eRcuCfgDriveStatePowerFail, eRcuCfgDriveStateBrakeOpen, eRcuCfgDriveStateMaxNum);  
+  
+  //RcUtils
+  TConvResult : (eRealInvalid, eRealOk, eRealDenormalised, ePosZero, eNegZero, 
+                                       ePosNan, eNegNan, ePosInfinite, eNegInfinite);
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR GLOBAL
+   giMinFixposNr         : INT;     // first prognr of fixpos 
+   giSimProgNr           : DINT;    // program number selection
+   giSimVariante         : DINT;    // variant selection
+   gySimVisionData       : ARRAY [1..6] OF INT;
+   gbSimStrobeProg       : BOOL;   // strobe program number
+   gbSimStartProg        : BOOL;   // start program
+   gbSimAckVisionData    : BOOL;   // acknowledge vision data
+   gbSimErrorQuit        : BOOL;   // error quit
+   gbSimRobotRelease     : BOOL;   // 
+   giFieldBusSlaveType   : DINT;   //TypeStandard=0, TypeRehau=1
+END_VAR

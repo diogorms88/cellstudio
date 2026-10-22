@@ -1,0 +1,120 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2003 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : RcuMessageManager.ttp
+*  First Author : pen
+*  Date         : 27.1.2003
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  General error-handling, typically set TeachPendant-Leds according to Error-state.
+*------------------------------------------------------------------------------
+* 19.09.04 nmr: automatic reset of the at present inevitable errors,
+*               cyclical Profibus error is now always set off with the same ID,
+*               as soon as "DataExchange started" comes, the setting of the
+*               cyclical message is stopped
+* 03.11.04 BMA: changed ResetAllPendingErrors because gbPLCErrorQuit is pending
+*               several seconds and thus the condition for deleting the buffer
+*               was fulfilled several times
+* 07.12.04 BMA  removed CheckSercosClass1
+* 16.02.05 nmr  added Trace output in case of error quit
+* 22.03.05 nmr: chanded prints into Debug prints
+* 08.06.05 nmr: again added CheckSercosClass1
+* 11.07.05 nmr: removed CheckSercosClass1 and CheckProfibusDataExchange because in
+*               the meantime this is done by the firmware
+* 05.08.05 nmr: added CheckInterpolatorFallenBack to create a StaRep when 
+*               the mcu-forecast-interpolator falls back the main-interpolator
+* 13.10.05 BMA: Reset of all pending messages (not only errors)
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+
+VAR GLOBAL
+   // indicates that unacknowledged errors or errors are present
+//   gbRcuAnyErrorPending : BOOL;
+END_VAR
+
+
+
+(*******************************************************************************
+* members
+*)
+
+
+VAR
+   stateOk         : MAPTO BOOL;  // no unacknowledged errors or errors present
+   stateNotOk      : MAPTO BOOL;  // unacknowledged errors or errors present
+//   resetErrors     : MAPTO BOOL;  // unacknowledged errors or errors should be resetet
+END_VAR
+
+
+(*******************************************************************************
+* private members
+*)
+
+
+// set an error state to all mapped outputs
+ROUTINE ObserveStates() PRIVATE
+VAR
+   bChgFocusedKin : BOOL;
+   bChgKinError   : ARRAY [cgiRcuMaxKinematics] OF BOOL;
+   bChgError      : BOOL;
+   i              : SINT;
+END_VAR
+   
+   WAIT gbEquipmentReady; 
+   bChgFocusedKin := IS_CHANGED(gRcData.selectedRobot);
+   FOR i:=0 TO giNumberOfRobots -1 DO
+      bChgKinError[i] := IS_CHANGED(PaintRobot[i].bRcuAnyErrorPending);
+   END_FOR;
+   bChgError := IS_CHANGED(bChgKinError);
+   
+   WHILE TRUE DO     
+      IF IS_MAPPED(stateOk) THEN
+         stateOk := NOT gRcuFocusedKinematic.bRcuAnyErrorPending;
+      END_IF;
+      IF IS_MAPPED(stateNotOk) THEN
+         stateNotOk := gRcuFocusedKinematic.bRcuAnyErrorPending;
+      END_IF;
+      WAIT bChgFocusedKin OR bChgError;
+      Sleep(200);
+      FOR i:=0 TO giNumberOfRobots -1 DO
+        bChgKinError[i] := FALSE;
+      END_FOR;
+      bChgFocusedKin := FALSE;
+      bChgError      := FALSE;
+   END_WHILE;
+    
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+   VAR
+      i          : DINT;
+   END_VAR
+   
+   FOR i:=0 TO giNumberOfRobots -1 DO
+     WAIT PaintRobot[i].initRobComplete;
+   END_FOR;
+   START ObserveStates();
+END_ROUTINE
+
+ROUTINE DELETE()
+
+   IF IS_MAPPED(stateOk) THEN
+      stateOk := FALSE;
+   END_IF;
+   IF IS_MAPPED(stateNotOk) THEN
+      stateNotOk := FALSE;
+   END_IF;
+END_ROUTINE

@@ -1,0 +1,29 @@
+// 04.07.05 kto: translated into english
+
+// vel  ... absolute axisvelocity
+// axis ... axis, using this velocity
+ROUTINE PTPAbs(pos : TRcuPosition; vel : REAL; axis : DINT) GLOBAL
+   VAR
+      elem : TRcuKinListElem; // element with the kinematicreference
+      veloLim : REAL;
+   END_VAR
+   
+   IF RcData.CheckKin(elem, "PTPAbs") THEN
+      IF (axis <= 0) OR (axis > elem.kin.kinematic.mNrOfJoints) THEN
+         RcuSetMessageOnce(PtpAbsMakro_ErrPathParOutOfRng, elem.kin.kinListInx, 1, 0, "PtpAbsMakro.PTPAbs", "axis");
+         elem.kin.ErrorReaction(FALSE);
+      END_IF;      
+      IF vel <= 0 THEN
+         RcuSetMessageOnce(PtpAbsMakro_ErrPathParOutOfRng, elem.kin.kinListInx, 2, 0, "PtpAbsMakro.PTPAbs", "vel");
+         elem.kin.ErrorReaction(FALSE);
+      END_IF;      
+      veloLim := elem.kin.kinematic.mJoints[axis-1].mDynLimits.mVelo;
+      IF vel > veloLim THEN
+         elem.kin.progPath.dynamic.mJoint.mVelo := 1.0;
+      ELSE
+         elem.kin.progPath.dynamic.mJoint.mVelo := vel/veloLim;
+      END_IF;
+      
+      elem.kin.progPath.Ptp(pos);
+   END_IF;
+END_ROUTINE

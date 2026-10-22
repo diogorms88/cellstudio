@@ -1,0 +1,715 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuSwitch.tts                                               *
+*   Description: Functions of one Handlertoolswitch                           *
+*-----------------------------------------------------------------------------*
+* 
+*)
+
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT GLOBAL
+  cgiMaxSeachCyclesSwitch  : SINT := 10;
+END_CONSTANT
+
+VAR
+  //config
+  sName               : STRING;
+  iUnitNr             : SINT := -1;
+  bUsePresSensor      : BOOL;
+  
+   //control          
+  bDoMaxCheck         : BOOL;       // do max check 
+  bDoMinCheck         : BOOL;       // do min check 
+  bDoPartCheck        : BOOL;       // do part check
+  bDoIdleCheck        : BOOL;       // check switch in idle pos
+  bPartShiftUsed      : BOOL;
+  bSearchActive       : BOOL;        //part search is running 
+  
+  //states                          
+  iState              : DINT;       //show the state of this switch on TV
+  bShowOnTV           : BOOL;
+  bState              : BOOL;
+  bPartPresent        : BOOL;
+  bShowPartPresent    : BOOL;       //show the part paresent of this switch on TV
+  bInactive           : BOOL;
+  iInactive           : DINT;
+  bSetPartPresent     : BOOL;
+  bResetPart          : BOOL;
+  UserInfo            : DINT;
+  iForcedPartState    : DINT;
+  
+  //new for search
+  iSeachCycles        : DINT;       //count of current search cycles
+  iSearchCounter      : DINT := 1;  //counts movements at partcontrol
+  bMovedInStep        : BOOL;       //moved in step then prevent backward move
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//   read values from catalog
+//------------------------------------------------------------------------------------------------------
+ROUTINE init(kin : TRcuRobot; catHdl : DINT; iDevNr : SINT) : BOOL
+ VAR
+  tmp : DINT;
+  s   : STRING; 
+ END_VAR
+ 
+  myKin := MAP(kin);
+  IF NOT CatalogReadString(catHdl, "Name", sName, FALSE) THEN
+     sName := "Switch " + STR(myKin.handler.tool.yUnit[iUnitNr].iCountSwitch);
+  END_IF;
+  CASE iDevNr OF
+    0: sInputName := cHW_InSwitch1[myKin.kinListInx];
+    1: sInputName := cHW_InSwitch2[myKin.kinListInx];
+    2: sInputName := cHW_InSwitch3[myKin.kinListInx];
+    3: sInputName := cHW_InSwitch4[myKin.kinListInx];
+  END_CASE;
+  IF CatalogReadIntRange(catHdl, "Opener", tmp, 0, 1, FALSE) THEN
+     bOpener := (tmp = 1);
+  END_IF; 
+  IF NOT CatalogReadIntRange(catHdl, "DelayTimeOn", diDelayOn, 0, cMaxDelay, FALSE) THEN
+    diDelayOn   := 0;
+  END_IF;
+  IF NOT CatalogReadIntRange(catHdl, "DelayTimeOff", diDelayOff, 0, cMaxDelay, FALSE) THEN
+     diDelayOff  := 0;
+  END_IF;
+  IF CatalogReadIntRange(catHdl, "UsePresSensor", tmp, 0, 1, FALSE) THEN
+     bUsePresSensor := (tmp = 1);
+  END_IF;
+  //map input signal (when PneuTool is used the switches 0 and 1 are reserved for part detection and overload control) 
+  CASE iDevNr OF
+    0: IF myKin.handler.tool.anyPneuToolUsed THEN
+          sInputName := "myKin.handler.tool.yPneuTool[0].sPartCtrl.bDetected_PinDown";
+          Input      := MAP(myKin.handler.tool.yPneuTool[0].sPartCtrl.bDetected_PinDown);
+       ELSE
+          sInputName := cHW_InSwitch1[myKin.kinListInx];
+          Input      := MAPX(sInputName);
+       END_IF;    
+    1: IF myKin.handler.tool.anyPneuToolUsed THEN
+          sInputName := "myKin.handler.tool.yPneuTool[0].sPartCtrl.bOverload_PinDown";
+          Input      := MAP(myKin.handler.tool.yPneuTool[0].sPartCtrl.bOverload_PinDown);
+       ELSE
+           sInputName := cHW_InSwitch2[myKin.kinListInx];
+           Input      := MAPX(sInputName);
+       END_IF;
+    2: IF myKin.handler.tool.anyPneuToolUsed THEN
+          sInputName := "myKin.handler.tool.yPneuTool[0].sPartCtrl.bDetected_PinUp";
+          Input      := MAP(myKin.handler.tool.yPneuTool[0].sPartCtrl.bDetected_PinUp);
+       ELSE
+          sInputName := cHW_InSwitch3[myKin.kinListInx];
+          Input      := MAPX(sInputName);
+       END_IF;
+    3: IF myKin.handler.tool.anyPneuToolUsed THEN
+          sInputName := "myKin.handler.tool.yPneuTool[0].sPartCtrl.bOverload_PinUp";
+          Input      := MAP(myKin.handler.tool.yPneuTool[0].sPartCtrl.bOverload_PinUp);
+       ELSE
+          sInputName := cHW_InSwitch4[myKin.kinListInx];
+          Input := MAPX(sInputName);
+       END_IF;
+  END_CASE;
+  
+  IF NOT IS_MAPPED(Input) THEN
+     RcuSetMessageOnce(TRcuSwitch_ErrMapToHwFailed, myKin.kinListInx, 1, instId, "TRcuSwitch.CheckInput", sInputName);
+     RETURN FALSE;  
+  ELSE
+     //use simulated signal (Laptop/WinMOD)
+     IF (gbSimulationOS OR gbFBSSActive) THEN
+        Input := MAP(SimInput);
+     END_IF;     
+     //assign softlog signals
+     s := myKin.kinematic.mName + ".handler." + sName + " MaxActive";
+     SwoAddBoolVariable(bDoMaxCheck, s);
+     s := myKin.kinematic.mName + ".handler." + sName + " MinActive";
+     SwoAddBoolVariable(bDoMinCheck, s);
+     s := myKin.kinematic.mName + ".handler." + sName + " PartActive";
+     SwoAddBoolVariable(bDoPartCheck, s);
+     s := myKin.kinematic.mName + ".handler." + sName + " IdleCheck";
+     SwoAddBoolVariable(bDoIdleCheck, s);
+     s := myKin.kinematic.mName + ".handler." + sName + " Input";
+     SwoAddBoolVariable(Input, s);
+     //add switch signal to data recorder
+     CASE iDevNr OF
+       0: myKin.dataRecorder.RecCyclicBool(eBool_HandlerSwitch1, bState);
+       1: myKin.dataRecorder.RecCyclicBool(eBool_HandlerSwitch2, bState);
+       2: myKin.dataRecorder.RecCyclicBool(eBool_HandlerSwitch3, bState);
+       3: myKin.dataRecorder.RecCyclicBool(eBool_HandlerSwitch4, bState);
+     END_CASE;
+     //start cyclic functions
+     START CheckInput();
+     START ObserveMaxLimit();
+     START ObserveIdlePos();
+     START CheckKinIsStepping();
+     //MinLimit observation makes no sence with pressure sensor
+     IF NOT bUsePresSensor THEN
+        START ObservePartCheck();
+        START ObserveMinLimit();
+     ELSE
+        START ObservePartFromPresSens();
+        bShowPartPresent := TRUE;
+     END_IF;
+     RETURN TRUE;
+  END_IF;
+
+END_ROUTINE
+
+//******************************************************************************
+// private
+CONSTANT PRIVATE
+  cMaxDelay        : DINT := 500;  //Maximum delaytime 500ms
+END_CONSTANT
+
+VAR PRIVATE
+  instId             : DINT;    // instance identification number
+  Input              : MAPTO BOOL;
+  SimInput           : BOOL;
+  bSignal            : BOOL;
+  myKin              : MAPTO TRcuRobot;
+  sLogText           : STRING;
+  bOpener            : BOOL;
+  diDelayOn          : DINT;
+  diDelayOff         : DINT;
+  sInputName         : STRING;
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+//   observe if max limit exeeded and set error
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveMaxLimit() PRIVATE
+  VAR
+    bErrorChk : BOOL;
+  END_VAR 
+  
+  bDoMaxCheck := FALSE;
+  WHILE TRUE DO
+     WHILE (bDoMaxCheck) DO
+       IF bDoMaxCheck THEN
+          IF bState THEN
+             RcuSetMessageOnce(TRcuSwitch_ErrHndlMaxLimitError, myKin.kinListInx, 1, instId, "TRcuSwitch.ObserveMaxLimit", sName);
+             WAIT NOT myKin.svMotionAllowed;
+             WAIT myKin.svMotionAllowed;
+             bErrorChk := TRUE;
+          END_IF; 
+       END_IF; 
+       WAIT bState OR bErrorChk OR (NOT bDoMaxCheck);
+       bErrorChk := FALSE;
+     END_WHILE;
+     IOSimulation();
+     WAIT (bDoMaxCheck);
+     IOSimulation();
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   observe if min limit exeeded and set error
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveMinLimit() PRIVATE
+  VAR
+    bErrorChk : BOOL;
+  END_VAR 
+  
+  bDoMinCheck := FALSE;
+  WHILE TRUE DO
+     WHILE (bDoMinCheck) DO
+        IF bDoMinCheck THEN
+           IF NOT bState THEN
+              RcuSetMessageOnce(TRcuSwitch_ErrHndlMinLim, myKin.kinListInx, 1, instId, "TRcuSwitch.ObserveMinLimit", sName);
+              WAIT NOT myKin.svMotionAllowed;
+              IF gbIsTrackingStation THEN  //when robot is tracking, we've to wait until repos is done to reduce conveyor lag    
+                 WAIT myKin.svMotionAllowed;                   //all ok from message system
+                 IF (myKin.mainModeMgr.mode = ciAuto) THEN     //mode auto - wait until repos is finished
+                    WAIT myKin.selectingFlow.running;          //wait until teachprog is running
+                    myKin.WaitMcMicroCycles(3);                //wait some cycles until repos is started and flag "reposActive" is set
+                    WAIT NOT myKin.reposPath.reposActive;      //wait until repos is finished
+                 END_IF;           
+              ELSE
+                 WAIT myKin.svMotionAllowed;
+              END_IF;
+              bErrorChk := TRUE;
+           END_IF; 
+        END_IF; 
+        WAIT (NOT bState) OR bErrorChk OR (NOT bDoMinCheck);
+        bErrorChk := FALSE;
+     END_WHILE;
+     IOSimulation();
+     WAIT (bDoMinCheck);
+     IOSimulation();
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   observe PartCheck
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObservePartCheck () PRIVATE
+  VAR
+   bErrorChk : BOOL;
+  END_VAR
+  
+  bDoPartCheck := FALSE;
+  WHILE TRUE DO
+     WHILE (bDoPartCheck AND NOT bPartShiftUsed) DO
+        IF (bDoPartCheck AND NOT bPartShiftUsed) THEN
+           myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PartCheck - Check signal=" + STR(bState) + " of switch " + sName);
+           IF NOT bState THEN
+              RcuSetMessageOnce(TRcuSwitch_ErrPartLost, myKin.kinListInx, 1, instId, "TRcuSwitch.ObservePartCheck", sName);
+              WAIT NOT myKin.svMotionAllowed;
+              IF gbIsTrackingStation THEN  //when robot is tracking, we've to wait until repos is done to reduce conveyor lag    
+                 WAIT myKin.svMotionAllowed;                   //all ok from message system
+                 IF (myKin.mainModeMgr.mode = ciAuto) THEN     //mode auto - wait until repos is finished
+                    WAIT myKin.selectingFlow.running;          //wait until teachprog is running
+                    myKin.WaitMcMicroCycles(3);                //wait some cycles until repos is started and flag "reposActive" is set
+                    WAIT NOT myKin.reposPath.reposActive;      //wait until repos is finished
+                    myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PartCheck - switch " + sName + " - repos finished");
+                 END_IF;           
+              ELSE
+                 WAIT myKin.svMotionAllowed;
+                 myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PartCheck - switch " + sName + " - MotionAllowed again");
+              END_IF;             
+              bErrorChk := TRUE;
+           END_IF;   
+        END_IF;   
+        WAIT (NOT bState) OR bErrorChk OR (NOT bDoPartCheck);
+        bErrorChk := FALSE;
+     END_WHILE;
+     IOSimulation();
+     WAIT (bDoPartCheck AND NOT bPartShiftUsed);
+     myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, "PartCheck - started on switch " + sName);
+     IOSimulation();
+  END_WHILE; 
+       
+END_ROUTINE 
+
+//------------------------------------------------------------------------------
+//   check if part is present from pressure sensor, only positiv edge is nedded
+//------------------------------------------------------------------------------
+ROUTINE ObservePartFromPresSens()
+  VAR
+    bChgSwitch   : BOOL;
+    bChgPartCtrl : BOOL;
+    bChgPresent  : BOOL;
+  END_VAR 
+   
+   bChgSwitch   := IS_CHANGED(bState);
+   bChgPartCtrl := IS_CHANGED(bDoPartCheck);
+   bChgPresent  := IS_CHANGED(bPartPresent);
+   WHILE TRUE DO
+      IF (bDoPartCheck AND bState) THEN
+         bPartPresent := TRUE;
+      END_IF;
+      IF NOT bDoPartCheck THEN
+         bPartPresent := FALSE;
+      END_IF;
+      bChgSwitch   := FALSE;
+      bChgPartCtrl := FALSE;
+      bChgPresent  := FALSE;
+      IOSimulation();
+      WAIT bChgSwitch OR bChgPartCtrl OR bChgPresent; 
+      IOSimulation();
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   observe if switch is in idle position when no control is active and no ghost running
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveIdlePos() PRIVATE 
+ VAR
+  idleChkLastCyc : BOOL;
+ END_VAR
+ 
+   WHILE TRUE DO
+      //idle check active and other control is started, stop idle check
+      IF (bDoMaxCheck OR bDoMinCheck OR bDoPartCheck) AND bDoIdleCheck THEN
+         bDoIdleCheck := FALSE;
+         sLogText := "IdleCheck stopped on switch " + sName + " cause other check runs";
+         myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+      //do not run idle check in ghost or teachmode   
+      ELSIF ((myKin.fieldbusIn.IgnorePartControl.svBool AND NOT gbSimulationOS) OR (NOT myKin.mainModeMgr.externControl)) AND bDoIdleCheck THEN   
+          bDoIdleCheck := FALSE;
+          sLogText := "IdleCheck stopped on switch " + sName + " cause (IgnorePartControl PLC)";
+          myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+      //switch in idle position, stop idle check, all o.k.
+      ELSIF (NOT bState) AND bDoIdleCheck THEN    
+          bDoIdleCheck := FALSE;      
+          sLogText := "IdleCheck stopped on switch " + sName + " cause State OK";
+          myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);     
+      //idle check active and feedback from switch --> error wrong state of switched    
+      ELSIF bDoIdleCheck THEN
+         IF NOT idleChkLastCyc THEN 
+            WAIT NOT myKin.isNotMovingOnPath;
+         END_IF;
+         RcuSetMessageOnce(TRcuSwitch_ErrSwitchNotIdle, myKin.kinListInx, 1, instId, "TRcuSwitch.ObserveIdlePos", sName);
+         WAIT NOT myKin.svMotionAllowed;
+         WAIT myKin.svMotionAllowed;
+      END_IF;
+      idleChkLastCyc := bDoIdleCheck;
+      //wait until idle check is started by RESERVE from TeachControl
+      WAIT bDoIdleCheck;
+      sLogText := "IdleCheck started on switch " + sName;
+      myKin.logger.SetLoggerStep(myKin.handler.iLoggerNumber, sLogText);
+   END_WHILE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//   Check the state of the Input
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckInput() PRIVATE
+  VAR
+    bInputChg     : BOOL; 
+    bTimerIsUp    : BOOL;
+    bTimerRuns    : BOOL;
+    sBuffer       : STRING; 
+  END_VAR
+  
+  sBuffer := myKin.kinematic.mName + ".handler." + sName + " MaxActive";
+  SwoAddBoolVariable(bDoMaxCheck, sBuffer);
+  sBuffer := myKin.kinematic.mName + ".handler." + sName + " MinActive";
+  SwoAddBoolVariable(bDoMinCheck, sBuffer);
+  sBuffer := myKin.kinematic.mName + ".handler." + sName + " PartActive";
+  SwoAddBoolVariable(bDoPartCheck, sBuffer);
+  sBuffer := myKin.kinematic.mName + ".handler." + sName + " IdleCheck";
+  SwoAddBoolVariable(bDoIdleCheck, sBuffer);
+  sBuffer := myKin.kinematic.mName + ".handler." + sName + " Input";
+  SwoAddBoolVariable(Input, sBuffer);
+  
+  bInputChg := IS_CHANGED(Input);
+  bInputChg := TRUE;   //run through once
+  WHILE TRUE DO  
+      bShowOnTV := TRUE;
+      IF bOpener THEN
+         bSignal := NOT Input;
+      ELSE
+         bSignal := Input;
+      END_IF;
+      //switched state
+      IF (bSignal AND (diDelayOff <= 0)) THEN   //If Delay is 0
+         bState := FALSE;
+         SysTimerClear(bTimerIsUp);
+         bTimerIsUp := FALSE;
+         bTimerRuns := FALSE;
+      ELSIF (bSignal AND (diDelayOff > 0) AND NOT bTimerRuns) THEN
+         bTimerIsUp := FALSE;
+         SysTimerSet(diDelayOff, bTimerIsUp);
+         bTimerRuns := TRUE;
+      ELSIF (bSignal AND bTimerIsUp) THEN
+         bState := FALSE;
+         SysTimerClear(bTimerIsUp);
+         bTimerIsUp := FALSE;
+         bTimerRuns := FALSE;
+      END_IF;
+      //unswitched state
+      IF (NOT bSignal AND (diDelayOn <= 0)) THEN   //If Delay is 0
+         bState := TRUE;
+         SysTimerClear(bTimerIsUp);
+         bTimerIsUp := FALSE;
+         bTimerRuns := FALSE;
+      ELSIF (NOT bSignal AND (diDelayOn > 0) AND NOT bTimerRuns) THEN
+         bTimerIsUp := FALSE;
+         SysTimerSet(diDelayOn, bTimerIsUp);
+         bTimerRuns := TRUE;
+      ELSIF (NOT bSignal AND bTimerIsUp) THEN
+         bState := TRUE;
+         SysTimerClear(bTimerIsUp);
+         bTimerIsUp := FALSE;
+         bTimerRuns := FALSE;
+      END_IF;
+      IF bOpener THEN
+         IF bState THEN
+            iState := 1;
+         ELSE
+            iState := 2;
+         END_IF;
+      ELSE
+         IF bState THEN
+            iState := 3;
+         ELSE
+            iState := 4;
+         END_IF;
+      END_IF;
+      //Wait until Input has changed or timer is up
+      WAIT (bInputChg OR bTimerIsUp);  
+      bInputChg := FALSE;
+  END_WHILE;    
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//  simulate switch input 
+//------------------------------------------------------------------------------
+ROUTINE IOSimulation() PRIVATE
+
+ IF gbSimulationOS OR gbFBSSActive THEN //execute only in simulation
+    IF bDoMaxCheck THEN
+       IF bOpener THEN
+          SimInput := FALSE;
+       ELSE
+          SimInput := TRUE;
+       END_IF;
+    END_IF;
+    IF bDoMinCheck OR bDoPartCheck THEN
+       IF bOpener THEN
+          SimInput := TRUE;
+       ELSE
+          SimInput := FALSE;
+       END_IF;
+    END_IF;
+    IF NOT (bDoMaxCheck OR bDoMinCheck OR bDoPartCheck) THEN
+       IF bOpener THEN
+          SimInput := FALSE;
+       ELSE
+          SimInput := TRUE;
+       END_IF;
+    END_IF;
+    myKin.WaitMcMicroCycles(1);  //ROUTINE CheckInput() needs 1 cycle to handle input
+ END_IF;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   check if kin has moved in step to prevent backward move (wrong calc in MCU)
+//------------------------------------------------------------------------------
+ROUTINE CheckKinIsStepping() PRIVATE
+
+  WHILE TRUE DO
+    WAIT myKin.selectingFlow.isStepping AND bDoPartCheck AND (NOT bMovedInStep);
+    bMovedInStep := TRUE;
+    WAIT (NOT bDoPartCheck);
+    bMovedInStep := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Set amount of search cycles for part control
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetSearchCycles(cycles : SINT) 
+
+  IF bDoPartCheck OR bSearchActive THEN
+     RETURN;
+  ELSIF (cycles <= 0) OR (cycles > cgiMaxSeachCyclesSwitch) THEN
+     RcuSetMessageOnce(TRcuUnit_ErrNoOfSearchCycl, myKin.kinListInx, 1, instId, "TRcuSwitch.SetSearchCycles", STR(cycles));
+     RETURN;
+  ELSE
+     iSeachCycles     := cycles;
+     bShowPartPresent := TRUE;
+     bPartShiftUsed   := TRUE;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Activate max limit observation
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetMaxLimit(activate : BOOL)
+  IF bInactive THEN
+     RETURN;
+  ELSE
+     bDoMaxCheck := activate;    //switch on/off observation
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Activate min limit observation
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetMinLimit(activate : BOOL)
+  IF bInactive THEN
+     RETURN;
+  //for Part_Search the config pressure sensor is needed even common switch is used and min limit is working with switch
+  //ELSIF bUsePresSensor THEN
+  //   RcuSetMessageOnce(TRcuHandlerTool_ErrNSwitThisUni, myKin.kinListInx, 3, instId, "TRcuSwitch.SetMinLimit", "MinCheck");
+  //   RETURN;
+  ELSE
+     bDoMinCheck := activate;    //switch on/off observation
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Activate part check
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetPartCheck()
+ VAR
+   Val      : tMacroValue;
+   i        : SINT;
+ END_VAR
+ bDoPartCheck := TRUE;    //activate it
+ bPartPresent := FALSE;   //reset part state
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------------------------------------------------
+//  called from EcoTalk - check if part is present - RETURN ePartPresent ePartNotPresent ePartRedo ePartMoveBack ePartError
+//-------------------------------------------------------------------------------------------------------------------------------
+ROUTINE GetPartPresent(appendLate : BOOL) : BOOL
+  VAR 
+    i : SINT;
+  END_VAR
+  
+  //switch is inactive --> switch off observation 
+  IF bInactive THEN
+     bSearchActive    := FALSE;
+     bDoPartCheck     := FALSE; 
+     bPartShiftUsed   := FALSE;
+     RETURN TRUE;
+  END_IF;
+  
+  // A P P E N D  L A T E
+  //needNextSegPreDelay activate then check part in prerun and check part already active otherwise try again in mainrun
+  IF appendLate THEN
+     IF bDoPartCheck AND bPartPresent THEN
+        myKin.DebugPrint(eTraceRcuHandler, "Part present - AppendLate");
+        bSearchActive    := FALSE;
+        bDoPartCheck     := FALSE; 
+        bPartShiftUsed   := FALSE;
+        RETURN TRUE;  //Part already present
+     ELSE
+        RETURN FALSE; //Part not present jet, do it again in mainrun
+     END_IF;
+  // M A I N R U N
+  ELSE
+     IF NOT bDoPartCheck THEN
+        RcuSetMessageOnce(TRcuUnit_ErrPartCheckNActv, myKin.kinListInx, 3, instId, "TRcuSwitch.GetPartPresent", sName);
+        bSearchActive  := FALSE;
+        bPartShiftUsed := FALSE;
+        RETURN FALSE;
+     ELSE
+        iSearchCounter := iSearchCounter + 1;
+        IF bPartPresent THEN
+           bSearchActive    := FALSE;
+           bDoPartCheck     := FALSE; 
+           bPartShiftUsed   := FALSE;
+           iSearchCounter   := 1;
+           RETURN TRUE;  //Part present
+        //part isn't present and seachcounter is smaller than cycles given by TeachIn   
+        ELSIF (iSearchCounter <= iSeachCycles) THEN
+           IF bMovedInStep THEN  //robot moved in STEP --> McuCreatePathPosRelativeDyn calculates wrong values
+              bSearchActive := FALSE;
+              RcuSetMessageOnce(TRcuUnit_ErrNoBackMoveInStep, myKin.kinListInx, 2, instId, "TRcuSwitch.GetPartPresent");
+              RETURN FALSE;
+           ELSE
+              bSearchActive := TRUE;         //PartCheck is active
+              myKin.DebugPrint(eTraceRcuHandler, "Handlerswitch - move backward - release movement ctrl");
+              myKin.handler.tool.bLastBackwardMove    := FALSE;
+              myKin.handler.tool.bReleaseMovementCtrl := TRUE;
+              RETURN FALSE;
+           END_IF;
+        //part isn't present
+        ELSE
+           IF (myKin.mainModeMgr.mode = ciAuto) THEN 
+              myKin.DebugPrint(eTraceRcuHandler, "Handlerswitch - part not present - release movement ctrl");
+              myKin.handler.tool.bLastBackwardMove    := TRUE;
+              myKin.handler.tool.bReleaseMovementCtrl := TRUE;
+           ELSE
+              bDoPartCheck     := FALSE; 
+           END_IF;
+           bSearchActive    := FALSE;
+           bPartShiftUsed   := FALSE;
+           iSearchCounter   := 1;
+           RcuSetMessageOnce(TRcuHandlerTool_ErrPartNPresent, myKin.kinListInx, 1, instId, "TRcuSwitch.GetPartPresent");
+           RETURN FALSE;
+        END_IF;
+     END_IF;
+  END_IF;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  Stop part check
+//------------------------------------------------------------------------------------------------------
+ROUTINE StopPartCheck()
+  IF bInactive THEN
+     RETURN;
+  ELSIF bPartShiftUsed THEN
+     RcuSetMessageOnce(TRcuHandlerTool_ErrCmdSearch, myKin.kinListInx, 1, instId, "TRcuSwitch.StopPartCheck", "GET_PART(..,Stop,..)");
+  ELSIF bUsePresSensor AND NOT bDoPartCheck THEN
+     bPartShiftUsed := FALSE;
+     RcuSetMessageOnce(TRcuUnit_ErrPartCheckNActv, myKin.kinListInx, 2, instId, "TRcuSwitch.StopPartCheck", sName);
+  ELSIF bUsePresSensor AND NOT bPartPresent THEN
+     bPartShiftUsed := FALSE;
+     RcuSetMessageOnce(TRcuHandlerTool_ErrPartNPresent, myKin.kinListInx, 2, instId, "TRcuSwitch.StopPartCheck");
+  ELSE
+     bPartShiftUsed := FALSE;
+     bDoPartCheck   := FALSE;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  activate or deactivate this switch
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetActive(active : BOOL; OPTIONAL beginAuto : BOOL) 
+  IF active THEN
+     bInactive        := FALSE;
+     iInactive        := 1;
+     bSetPartPresent  := FALSE;
+     bResetPart       := FALSE;
+     iForcedPartState := 0;
+     IF IS_USED(beginAuto) AND beginAuto THEN
+        bDoMaxCheck    := FALSE;
+        bDoMinCheck    := FALSE;
+        bDoPartCheck   := FALSE;
+        bPartPresent   := FALSE;
+        iSearchCounter := 1;
+        iSeachCycles   := 0;
+        bPartShiftUsed := FALSE;
+        bSearchActive  := FALSE;
+        UserInfo       := 7;
+     END_IF;
+  ELSE
+     bInactive        := TRUE;
+     iInactive        := 0;
+     bSetPartPresent  := FALSE;
+     bResetPart       := FALSE;
+     iForcedPartState := 0;
+     bDoMaxCheck      := FALSE;
+     bDoMinCheck      := FALSE;
+     bDoPartCheck     := FALSE;
+     bPartPresent     := FALSE;
+     iSearchCounter   := 1;
+     iSeachCycles     := 0;
+     bPartShiftUsed   := FALSE;
+     bSearchActive    := FALSE;
+     UserInfo         := 7;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   systemroutine - controller bootup
+//------------------------------------------------------------------------------
+ROUTINE NEW()
+  instId        := RcuGetInstanceId();
+END_ROUTINE  
+
+//------------------------------------------------------------------------------
+//   systemroutine - teachprogramm is started now
+//------------------------------------------------------------------------------
+ROUTINE RESERVE()
+  IF IS_MAPPED(myKin) THEN
+     IF myKin.mainModeMgr.externControl THEN
+        //start idleposcheck only if no other control is active
+        IF NOT (bDoMaxCheck OR bDoMinCheck OR bDoPartCheck OR bInactive OR 
+                myKin.handler.tool.anyPneuUnitUsed OR myKin.handler.tool.anyPneuToolUsed OR myKin.homing.bHomingRun) THEN
+           bDoIdleCheck := TRUE;
+        END_IF;
+     END_IF; 
+  END_IF;  
+END_ROUTINE      
+
+//------------------------------------------------------------------------------
+//   systemroutine - teachprogramm is finished now
+//------------------------------------------------------------------------------
+ROUTINE RELEASE()
+  IF IS_MAPPED(myKin) THEN
+     IF myKin.mainModeMgr.externControl THEN
+        bDoIdleCheck := FALSE;
+     END_IF;
+  END_IF;
+END_ROUTINE

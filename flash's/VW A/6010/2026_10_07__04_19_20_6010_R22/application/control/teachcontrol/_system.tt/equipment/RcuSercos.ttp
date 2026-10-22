@@ -1,0 +1,661 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2006 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         11.12.2006                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       RcuSercos.ttp                                               *
+*    Description: useful functions for sercos-access                          *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 
+*)
+TYPE GLOBAL
+  TKSC_List1Byte2048 : ARRAY [2048] OF SINT;
+  TKSC_List2Byte1024 : ARRAY [1024] OF INT;
+  TKSC_List4Byte512  : ARRAY [512] OF DINT;
+  TKSC_List8Byte256  : ARRAY [256] OF LINT;
+END_TYPE
+
+CONSTANT PRIVATE
+  cTimeLimitPhase   : INT := 20000; //20000ms
+  cTimeLimitStop    : INT := 2000; //2000ms
+END_CONSTANT
+
+//------------------------------------------------------------------------------
+// change the sercos com phase
+//------------------------------------------------------------------------------
+ROUTINE RcChangeSercosPhase(iKinIndex : DINT; iTargetPhase : INT) GLOBAL
+  VAR
+    bTimeout   : BOOL;
+    iTemp      : INT;
+    sErrorText : STRING;
+  END_VAR
+   
+   IF PaintRobot[iKinIndex].bRcuSimulatesAllDrives THEN
+      gmSercosRing.targetComPhase := iTargetPhase;
+      gmSercosRing.actComPhase := gmSercosRing.targetComPhase;
+      RETURN;
+   END_IF;
+   DESELECT PaintRobot[iKinIndex];
+   PaintRobot[iKinIndex].disableDriveStart := TRUE;       
+   SysTimerSet(cTimeLimitStop, bTimeout);                   
+   WAIT (PaintRobot[iKinIndex].actExecData.mIsStoppedJoints AND NOT PaintRobot[iKinIndex].actExecData.mIsPathProgress
+         AND NOT PaintRobot[iKinIndex].actExecData.mIsSingleJointLimOn OR bTimeout);         
+   IF bTimeout THEN
+      bTimeout := FALSE;
+      PaintRobot[iKinIndex].disableDriveStart := FALSE;
+      iTemp      := (cTimeLimitStop / 1000);
+      sErrorText := STR(iTemp);
+      RcuSetMessageOnce(RcuUserPage_ErrTimeStopJoints, PaintRobot[iKinIndex].kinListInx, 1, 0, "RcuUserPage.ChangePhase", sErrorText);
+      RETURN;
+   END_IF;   
+   IF PaintRobot[iKinIndex].updateActive THEN
+      PaintRobot[iKinIndex].QuickstopAllDrives();
+   END_IF;
+   IF IS_MAPPED(gmSercosRing) THEN
+      gmSercosRing.targetComPhase := iTargetPhase;
+      SysTimerSet(cTimeLimitPhase, bTimeout);
+      WAIT (gmSercosRing.actComPhase = gmSercosRing.targetComPhase) OR bTimeout;
+      IF bTimeout THEN
+         bTimeout := FALSE;
+         PaintRobot[iKinIndex].disableDriveStart := FALSE;
+         iTemp      := (cTimeLimitPhase / 1000);
+         sErrorText := STR(iTemp);
+         RcuSetMessageOnce(RcuUserPage_ErrChangePhase, PaintRobot[iKinIndex].kinListInx, 1, 0, "RcuUserPage.ChangePhase", sErrorText);
+         RETURN;
+      END_IF;
+   END_IF;
+   WAIT IS_FINISHED;
+   PaintRobot[iKinIndex].disableDriveStart := FALSE;
+
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+// reads S-0-0030 Controller type
+//-----------------------------------------------------------------------------
+ROUTINE RcGetSercosDriveType(CONST sercHdl : DINT; type : TRcuDriveType) : BOOL GLOBAL
+ VAR 
+   val       : DINT;
+   str       : STRING;
+   i         : DINT;
+   ret       : TKSC_Status;
+   ident     : DINT;
+ END_VAR
+ 
+  ident := 30; //S-0-0030
+  ret := RcReadSercosString(sercHdl, ident, str, 7);
+  IF ret = eKSC_Ok THEN
+     //EcoDrives
+     i := StrFind(str, "SMT");
+     IF i <> 0 THEN
+        type := eRcuEcoDrive;
+        RETURN TRUE;
+     END_IF;
+     i := StrFind(str, "FGP");
+     IF i <> 0 THEN
+        type := eRcuEcoDrive;
+        RETURN TRUE;
+     END_IF;
+     //IndraDrives
+     i := StrFind(str, "MPB");
+     IF i <> 0 THEN
+        type := eRcuIndraDrive;
+        RETURN TRUE;
+     END_IF;
+     i := StrFind(str, "MPH");
+     IF i <> 0 THEN
+        type := eRcuIndraDrive;
+        RETURN TRUE;
+     END_IF;
+     //IndradriveCS
+     i := StrFind(str, "MPE");
+     IF i <> 0 THEN
+        type := eRcuIndraDriveCS;
+        RETURN TRUE;
+     END_IF;
+     //no string matches = Type undef
+     IF i = 0 THEN
+        type := eRcuUndef;
+        RcuSetMessageOnce(RcuSercos_WarUnknownDriveTyp, -1, 1, 0, "RcuSercos.RcGetSercosDriveType");
+        RETURN FALSE;
+     END_IF;
+  ELSE
+    type := eRcuUndef;
+    RcuSetMessageOnce(RcuSercos_WarUnknownDriveTyp, -1, 2, 0, "RcuSercos.RcGetSercosDriveType");
+    RETURN FALSE;
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads S-0-0140 bus type
+//-----------------------------------------------------------------------------
+ROUTINE RcGetSercosBusType(CONST sercHdl : DINT; bus : TRcuDriveBus) : BOOL GLOBAL
+ VAR 
+   val       : DINT;
+   str       : STRING;
+   i         : DINT;
+   j         : DINT;
+   k         : DINT;
+   ret       : TKSC_Status;
+   ident     : DINT;
+ END_VAR
+ 
+  ident := 140; //S-0-0140
+  ret := RcReadSercosString(sercHdl, ident, str, 7);
+  IF ret = eKSC_Ok THEN 
+     //HCS01.1 means always SercosIII
+     i := StrFind(str, "HCS01.1");
+     IF i <> 0 THEN
+        bus := eRcuSercos3;
+        RETURN TRUE;
+     END_IF;
+     i := StrFind(str, "HCS02.1");
+     j := StrFind(str, "HCS03.1");
+     k := StrFind(str, "DKC");
+     //HCS02.1 / HCS03.1 means both, SercosII or SercosIII possible, now we have to read P-0-1520
+     IF (i <> 0) OR (j <> 0) THEN
+        ident := 1520 + P_ParamMask; //P-0-1520
+        ret := RcReadSercosString(sercHdl, ident, str, 7);
+        IF ret = eKSC_Ok THEN
+           //HCS02.1 / HCS03.1 means both, SercosII or SercosIII possible
+           i := StrFind(str, "-SE-");
+           j := StrFind(str, "-ET-");
+           //when -SE- or -ET- is found we have sercosII
+           IF (i <> 0) OR (j <> 0) THEN
+              bus := eRcuSercos2;
+              RETURN TRUE;
+           END_IF;
+           i := StrFind(str, "-S3-");
+           //when -S3- is found we have sercosIII
+           IF (i <> 0) THEN
+              bus := eRcuSercos3;
+              RETURN TRUE;
+           END_IF;
+           //no string matches = Bus undef
+           IF (i = 0) AND (j = 0) THEN
+              bus := eRcuUndefBus;
+              RcuSetMessageOnce(RcuSercos_WarUnknownBusTyp, -1, 1, 0, "RcuSercos.RcGetSercosBusType");
+              RETURN FALSE;
+           END_IF;
+        ELSE
+           bus := eRcuUndefBus;
+           RcuSetMessageOnce(RcuSercos_WarUnknownBusTyp, -1, 2, 0, "RcuSercos.RcGetSercosBusType");
+           RETURN FALSE;
+        END_IF;
+     //DKC is SercosII
+     ELSIF (k <> 0) THEN
+        bus := eRcuSercos2;
+        RETURN TRUE;
+     ELSE
+        bus := eRcuUndefBus;
+        RcuSetMessageOnce(RcuSercos_WarUnknownBusTyp, -1, 3, 0, "RcuSercos.RcGetSercosBusType");
+        RETURN FALSE;
+     END_IF;
+  ELSE
+    bus := eRcuUndefBus;
+    RcuSetMessageOnce(RcuSercos_WarUnknownBusTyp, -1, 4, 0, "RcuSercos.RcGetSercosBusType");
+    RETURN FALSE;
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+// reads a string from sercos
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosString(CONST sercHdl : DINT; CONST ident : DINT; value : STRING;
+                            element : DINT; OPTIONAL maxAttempts : DINT) : TKSC_Status GLOBAL
+VAR
+   maxLength : DINT := 256;
+   max       : DINT := 5;
+   ret       : TKSC_Status;
+   data      : TKSC_List1Byte;
+   nrOfElem  : DINT;
+   i         : DINT;
+   str       : STRING;
+   int       : DINT;
+END_VAR
+   
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   ret := RcReadSercosList1Byte(sercHdl, ident, data, nrOfElem, max, element);
+      
+   IF ret = eKSC_ReadLengthError THEN
+      DebugPrint(eTraceRcuDrive, "RcReadSercosString - datasize exceeds read-buffer");
+      RETURN ret;
+   ELSIF ret <> eKSC_Ok THEN
+      //DebugPrint(eTraceRcuDrive, "RcReadSercosString - could not read value");
+      value := "ERROR - !!no value";
+      RETURN ret;
+   END_IF;
+   
+   FOR i := 0 TO nrOfElem-1 DO
+      int := BYTE(data[i]);
+      IF int = 253 THEN // ^2
+         str := str + "²";
+      ELSIF int = 129 THEN
+         str := str + "ü"; 
+      ELSIF int = 132 THEN
+         str := str + "ä";
+      ELSIF int = 142 THEN
+         str := str + "Ä";   
+      ELSIF int = 148 THEN
+         str := str + "ö";  
+      ELSIF int = 154 THEN
+         str := str + "Ü";
+      ELSIF int = 225 THEN
+         str := str + "ß";
+      ELSIF int = 248 THEN
+         str := str + "°";   
+      ELSE
+         str := str + CHR(int);
+      END_IF;
+      
+   END_FOR;
+   value := str;
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameter from sercos  Optional element (default=7 => value)
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosParameter(CONST sercHdl : DINT; CONST ident : DINT; data : DINT; 
+   OPTIONAL maxAttempts : DINT; OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR 
+   i    : DINT;
+   ret  : TKSC_Status;
+   max  : DINT := 5;
+   elem : DINT := 7;
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_ReadParam(sercHdl, ident, elem, data);
+   UNTIL (ret = eKSC_Ok) OR (i > max); 
+   
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameterlist of 1Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosList1Byte(CONST sercHdl : DINT; CONST ident : DINT; 
+             data : TKSC_List1Byte; nrElem : DINT; OPTIONAL maxAttempts : DINT; 
+                                            OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR  
+   i      : DINT;
+   ret    : TKSC_Status;
+   max    : DINT := 5;
+   elem   : DINT := 7;
+   nrByte : DINT := 512;  //max size of buffer
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_ReadParamList1Byte(sercHdl, ident, elem, data, nrByte, nrElem);
+   UNTIL (ret = eKSC_Ok) OR (i > max); 
+   
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// continues a parameterlist of 1Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcGetSercosList1Byte(CONST sercHdl : DINT; CONST ident : DINT;
+                 startIdx : DINT; data : TKSC_List1Byte; nrElem : DINT;
+                                      OPTIONAL maxAttempts : DINT) : TKSC_Status GLOBAL
+VAR
+  i      : DINT;
+  ret    : TKSC_Status;
+  max    : DINT := 5;
+  nrByte : DINT := 1024;  //max size of buffer           
+END_VAR
+    
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_GetParamList1Byte(sercHdl, ident, startIdx, data, nrByte, nrElem);
+   UNTIL (ret = eKSC_Ok) OR (i > max);            
+               
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameterlist of 1Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosList1Byte2048(CONST sercHdl : DINT; CONST ident : DINT; 
+                data : TKSC_List1Byte2048; nrElem : DINT; OPTIONAL maxAttempts : DINT; 
+                                              OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR  
+   i      : DINT;
+   ret    : TKSC_Status;
+   max    : DINT := 5;
+   elem   : DINT := 7;
+   iLen   : DINT;
+   yList  : TKSC_List1Byte;
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   ret := RcReadSercosList1Byte(sercHdl, ident, yList, iLen, max, elem);
+   IF (ret <> eKSC_Ok) THEN
+      RETURN ret;
+   ELSE
+      nrElem := iLen;
+      FOR i:=0 TO iLen-1 DO
+          data[i] := yList[i];
+          WAIT TRUE;
+      END_FOR;
+      IF (iLen = 1024) THEN
+         iLen := 0;
+         ret := RcGetSercosList1Byte(sercHdl, ident, 1024, yList, iLen, max);
+         IF (ret <> eKSC_Ok) THEN
+            RETURN ret;
+         ELSE
+            nrElem := nrElem + iLen;
+            FOR i:=0 TO iLen-1 DO
+                data[i+1024] := yList[i];
+                WAIT TRUE;
+            END_FOR;
+            IF (iLen = 1024) THEN
+               PRINT("The parameterlist of RcReadSercosList1Byte2048 is too long");
+            END_IF;
+            RETURN ret;
+         END_IF;
+      END_IF;
+      RETURN ret;
+   END_IF;
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameterlist of 2Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosList2Byte(CONST sercHdl : DINT; CONST ident : DINT; 
+                data : TKSC_List2Byte; nrElem : DINT; OPTIONAL maxAttempts : DINT; 
+                                              OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR  
+   i      : DINT;
+   ret    : TKSC_Status;
+   max    : DINT := 5;
+   elem   : DINT := 7;
+   nrByte : DINT := 1024;  //max size of buffer
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_ReadParamList2Byte(sercHdl, ident, elem, data, nrByte, nrElem);
+   UNTIL (ret = eKSC_Ok) OR (i > max); 
+   
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// continues a parameterlist of 2Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcGetSercosList2Byte(CONST sercHdl : DINT; CONST ident : DINT;
+                 startIdx : DINT; data : TKSC_List2Byte; nrElem : DINT;
+                                      OPTIONAL maxAttempts : DINT) : TKSC_Status GLOBAL
+VAR
+  i      : DINT;
+  ret    : TKSC_Status;
+  max    : DINT := 5;
+  nrByte : DINT := 1024;  //max size of buffer           
+END_VAR
+    
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_GetParamList2Byte(sercHdl, ident, startIdx, data, nrByte, nrElem);
+   UNTIL (ret = eKSC_Ok) OR (i > max);            
+               
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameterlist of 2Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosList2Byte1024(CONST sercHdl : DINT; CONST ident : DINT; 
+                data : TKSC_List2Byte1024; nrElem : DINT; OPTIONAL maxAttempts : DINT; 
+                                              OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR  
+   i      : DINT;
+   ret    : TKSC_Status;
+   max    : DINT := 5;
+   elem   : DINT := 7;
+   iLen   : DINT;
+   yList  : TKSC_List2Byte;
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   ret := RcReadSercosList2Byte(sercHdl, ident, yList, iLen, max, elem);
+   IF (ret <> eKSC_Ok) THEN
+      RETURN ret;
+   ELSE
+      nrElem := iLen;
+      FOR i:=0 TO iLen-1 DO
+          data[i] := yList[i];
+          WAIT TRUE;
+      END_FOR;
+      IF (iLen = 512) THEN
+         iLen := 0;
+         ret := RcGetSercosList2Byte(sercHdl, ident, 512, yList, iLen, max);
+         IF (ret <> eKSC_Ok) THEN
+            RETURN ret;
+         ELSE
+            nrElem := nrElem + iLen;
+            FOR i:=0 TO iLen-1 DO
+                data[i+512] := yList[i];
+                WAIT TRUE;
+            END_FOR;
+            IF (iLen = 512) THEN
+               PRINT("The parameterlist of RcReadSercosList2Byte1024 is too long");
+            END_IF;
+            RETURN ret;
+         END_IF;
+      END_IF;
+      RETURN ret;
+   END_IF;
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameterlist of 4Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosList4Byte(CONST sercHdl : DINT; CONST ident : DINT; 
+                data : TKSC_List4Byte; nrElem : DINT; OPTIONAL maxAttempts : DINT; 
+                                              OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR  
+   i      : DINT;
+   ret    : TKSC_Status;
+   max    : DINT := 5;
+   elem   : DINT := 7;
+   nrByte : DINT := 1024;  //max size of buffer
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_ReadParamList4Byte(sercHdl, ident, elem, data, nrByte, nrElem);
+   UNTIL (ret = eKSC_Ok) OR (i > max); 
+   
+   RETURN ret;
+END_ROUTINE
+//-----------------------------------------------------------------------------
+// continues a parameterlist of 4Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcGetSercosList4Byte(CONST sercHdl : DINT; CONST ident : DINT;
+                 startIdx : DINT; data : TKSC_List4Byte; nrElem : DINT;
+                                      OPTIONAL maxAttempts : DINT) : TKSC_Status GLOBAL
+VAR
+  i      : DINT;
+  ret    : TKSC_Status;
+  max    : DINT := 5;
+  nrByte : DINT := 1024;  //max size of buffer           
+END_VAR
+    
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_GetParamList4Byte(sercHdl, ident, startIdx, data, nrByte, nrElem);
+   UNTIL (ret = eKSC_Ok) OR (i > max);            
+               
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// reads a parameterlist of 2Byte-fields from sercos 
+//-----------------------------------------------------------------------------
+ROUTINE RcReadSercosList4Byte512(CONST sercHdl : DINT; CONST ident : DINT; 
+                data : TKSC_List4Byte512; nrElem : DINT; OPTIONAL maxAttempts : DINT; 
+                                              OPTIONAL element : DINT) : TKSC_Status GLOBAL
+VAR  
+   i      : DINT;
+   ret    : TKSC_Status;
+   max    : DINT := 5;
+   elem   : DINT := 7;
+   iLen   : DINT;
+   yList  : TKSC_List4Byte;
+END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   ret := RcReadSercosList4Byte(sercHdl, ident, yList, iLen, max, elem);
+   IF (ret <> eKSC_Ok) THEN
+      RETURN ret;
+   ELSE
+      nrElem := iLen;
+      FOR i:=0 TO iLen-1 DO
+          data[i] := yList[i];
+          WAIT TRUE;
+      END_FOR;
+      IF (iLen = 256) THEN
+         iLen := 0;
+         ret := RcGetSercosList4Byte(sercHdl, ident, 256, yList, iLen, max);
+         IF (ret <> eKSC_Ok) THEN
+            RETURN ret;
+         ELSE
+            nrElem := nrElem + iLen;
+            FOR i:=0 TO iLen-1 DO
+                data[i+256] := yList[i];
+                WAIT TRUE;
+            END_FOR;
+            IF (iLen = 256) THEN
+               PRINT("The parameterlist of RcReadSercosList4Byte512 is too long");
+            END_IF;
+            RETURN ret;
+         END_IF;
+      END_IF;
+      RETURN ret;
+   END_IF;
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// writes a parameter to sercos  Optional element (default=7 => value)
+//-----------------------------------------------------------------------------
+ROUTINE RcWriteSercosParameter(CONST sercHdl : DINT; CONST ident : DINT; data : DINT; 
+   OPTIONAL maxAttempts : DINT; OPTIONAL element : DINT) : TKSC_Status GLOBAL
+  VAR 
+     i    : DINT;
+     ret  : TKSC_Status;
+     max  : DINT := 2;
+     elem : DINT := 7;
+  END_VAR
+
+   IF IS_USED(maxAttempts) THEN
+      max := maxAttempts;
+   END_IF;
+   IF IS_USED(element) THEN
+      elem := element;
+   END_IF;
+   REPEAT
+      i := i + 1;
+      ret := KSC_WriteParam(sercHdl, ident, elem, data);
+   UNTIL (ret = eKSC_Ok) OR (i > max); 
+   IF (ret = eKSC_Ok) AND (i > 1) THEN
+      DebugPrint(eTraceRcuDrive, "Writing parameter " + STR(ident) + 
+         " failed " + STR(i-1) + " times");
+   END_IF;
+   RETURN ret;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// writes a parameter to sercos  Optional element (default=7 => value)
+//-----------------------------------------------------------------------------
+ROUTINE GetDevNameFromHwEndPoint(CONST hwEndPoint : STRING; devName : STRING) : BOOL GLOBAL
+  VAR
+   hwHdl    : DINT;
+   modHdl   : DINT;
+   devHdl   : DINT;
+   catName  : STRING;
+  END_VAR
+ 
+    IF IoGetIoHdl(hwEndPoint, hwHdl) THEN               //get handle of HW-Endpoint
+       IF CatalogGetParent(hwHdl, modHdl) THEN          //get handle of module
+          IF CatalogGetParent(modHdl, devHdl) THEN      //get handle of device
+             IF CatalogReadString (devHdl, "name", devName, TRUE) THEN
+                RETURN TRUE;
+             END_IF;
+          END_IF;
+       END_IF;
+    END_IF;
+    RETURN FALSE;
+   
+END_ROUTINE

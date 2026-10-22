@@ -1,0 +1,1320 @@
+(*------------------------------------------------------------------------------
+*                             (c) 2004 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*-------------------------------------------------------------------------------
+*  Component    : RC
+*  Modul        : RcUtils.ttp
+*  First Author : nmr
+*  Date         : 15.12.2004
+*-------------------------------------------------------------------------------
+*  Description:
+*
+*  useful functions, especially for handling data from mcu-db
+*  this functions are especially useful for goldenRepos and when using 
+*  trigger-points as path-points (-> handling of circ-segments)
+*-------------------------------------------------------------------------------
+* 16.02.05 nmr: enlargements concerning GoldenRepos (RcuReadSegNext, RcuRevertCirc,
+*               RecreateSegOnPath), new routine WordToInt
+* 25.04.05 nmr: new routine RcuCalculateSegmentLength
+* 15.07.05 nmr: Instead of using DebugPrint for every PRINT in RcuPrintPosition, 
+*               RcuPrintActPos and RcuPrintUserData its more effective to
+*               test giTraceWord at the beginning of the function
+*)
+
+USER;
+
+TYPE GLOBAL
+  TDataATEX : STRUCT
+    bCheckNecessary : BOOL;
+    iSavedTimerValue    : INT;
+  END_STRUCT;  
+  
+  TBrakeTestData : STRUCT
+     execState : DINT;
+     testDate  : STRING;
+     autoCheck : BOOL;
+  END_STRUCT;
+END_TYPE
+
+VAR GLOBAL
+   DataATEX       : ARRAY [cgiRcuMaxKinematics] OF TDataATEX SAVE;
+   DataToolREF    : ARRAY [cgiRcuMaxKinematics] OF TOOLVALS SAVE;
+   DataToolMESS   : ARRAY [cgiRcuMaxKinematics] OF TOOLVALS SAVE;
+   DataToolOLD    : ARRAY [cgiRcuMaxKinematics] OF TOOLVALS SAVE;
+   DataTooldeltaX : ARRAY [cgiRcuMaxKinematics] OF DELTAVALS SAVE;
+   DataTooldeltaY : ARRAY [cgiRcuMaxKinematics] OF DELTAVALS SAVE;
+   DataTooldeltaZ : ARRAY [cgiRcuMaxKinematics] OF DELTAVALS SAVE;
+   SavedFocusedKinListInx : DINT SAVE;
+   BrakeTestData  : ARRAY [cgiRcuMaxKinematics] OF ARRAY [cMcuMaxJ] OF TBrakeTestData SAVE;
+   SavedVirtWallCrc : ARRAY [cgiRcuMaxKinematics] OF DINT SAVE;   
+END_VAR
+
+// called by system-function RUN from EndUser-Programs
+// todo
+ROUTINE DORUN(name : STRING) GLOBAL
+
+   ;
+END_ROUTINE
+
+
+// called by system-function KILL from EndUser-Programs
+// todo
+ROUTINE DOKILL(name : STRING) GLOBAL
+
+   ;
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* globals
+*)
+
+ROUTINE CreateDBname(kinNr: DINT; altName : STRING): STRING GLOBAL
+VAR
+   progName : STRING;
+   lineNr   : DINT;
+   handle   : DINT;
+   name     : STRING;
+END_VAR
+
+   IF GetUserProgInfo(progName, lineNr, handle) THEN
+      name := progName + ":" + STR(lineNr);
+   ELSE
+      name := STR(kinNr) + "." + altName;
+   END_IF;
+//   PRINT("CreateDBname: " + name);
+   RETURN name;
+END_ROUTINE
+
+// compares 2 callstacks, a linear program is assumed (does not work with loops)
+// result < 0: runtime position in stack1 comes before position in stack2
+// result > 0: runtime position in stack1 comes after position in stack2
+// result = 0: same position
+// if stacks have a different root, FALSE is returned
+ROUTINE RcCompareStacks(CONST stack1 : TUserProgStackInfo; CONST stack2 : TUserProgStackInfo; 
+   result : DINT; OPTIONAL VAR_IN offset : DINT) : BOOL GLOBAL
+VAR
+   depth1 : DINT;
+   depth2 : DINT;
+   offst  : DINT;
+END_VAR
+
+   IF IS_USED(offset) THEN
+      offst := offset;
+   ELSE
+      offst := 0;
+   END_IF;
+   
+   depth1 := offst;
+   depth2 := offst;
+   IF (depth1 >= stack1.depth) OR (depth2 >= stack2.depth) THEN
+      result := 0;
+      RETURN FALSE;
+   END_IF;
+   IF stack1.progNames[depth1] = stack2.progNames[depth2] THEN
+      IF stack1.lineNrs[depth1] = stack2.lineNrs[depth2] THEN
+         IF (depth1 = stack1.depth-1) AND (depth2 = stack2.depth-1) THEN
+            result := 0;
+            RETURN TRUE; // stacks are equal
+         ELSE
+            RETURN RcCompareStacks(stack1, stack2, result, offst+1);
+         END_IF;
+      ELSE
+         result := stack1.lineNrs[depth1] - stack2.lineNrs[depth2];
+         RETURN TRUE;
+      END_IF;
+   ELSE
+      RETURN FALSE; // not compareable
+   END_IF;
+END_ROUTINE
+
+
+// reads the id of the segment previous to the given segment. Overlap-segments 
+// are ignored. Returns false if no segment is found
+ROUTINE RcuReadSegPrev(CONST segID : TMcuDbObjID; prevSegID : TMcuDbObjID; 
+      CONST useFirstSeg : BOOL; OPTIONAL segName : STRING) : BOOL GLOBAL
+   VAR
+      tmpId  : TMcuDbObjID;
+      prevId : TMcuDbObjID;
+      locSeg : TMcuSegment;
+      locName : STRING;
+      startSeg : BOOL;
+   END_VAR
+   
+   locSeg.mSegTyp := eMcuNoSegTyp;
+   tmpId := segID;
+   prevSegID := 0;
+   IF IS_USED(segName) THEN
+      segName := "";
+   END_IF;
+   // cartesian-overlap segments have to be skipped
+   WHILE (locSeg.mSegTyp = eMcuNoSegTyp) AND (tmpId <> 0) AND NOT startSeg DO  
+      IF NOT McuReadSegPrev(tmpId, prevId) THEN
+         DebugPrint(eTraceMotionStep, "RcuReadSegPrev: No segment previous to segment " + STR(tmpId));
+         RETURN FALSE;
+      END_IF;
+      IF NOT McuReadSegment(prevId, locSeg) AND (locSeg.mSegTyp <> eMcuNoSegTyp) THEN
+         RcuResetMessage(TRcuReposPath_WarPCallFailed, 0, 1, 0, 
+            "RcUtils.RcuReadSegPrev", "McuReadSegment", "prevId");
+         RETURN FALSE;
+      END_IF;
+      // avoid moving back to path-setup-segment
+      startSeg := (NOT useFirstSeg) AND (StrLeft(locSeg.mName,18) = "RebuildPathSegment");
+      IF NOT startSeg THEN
+         tmpId := prevId;
+         locName := locSeg.mName;
+      END_IF;
+   END_WHILE;
+   IF tmpId <> segID THEN
+      prevSegID := tmpId;
+      IF IS_USED(segName) THEN
+         segName := locName;
+      END_IF;
+   ELSE
+      prevSegID := 0;
+   END_IF;
+   RETURN (prevSegID <> 0) AND (prevSegID <> segID);
+END_ROUTINE
+
+
+(*
+   reads the id of the segment next to the given segment. Overlap-segments 
+   are ignored. Returns false if no segment is found
+*)
+ROUTINE RcuReadSegNext(CONST segID: TMcuDbObjID; nextSegID: TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      tmpId  : TMcuDbObjID;
+      nextId : TMcuDbObjID;
+      locSeg : TMcuSegment;
+   END_VAR
+   
+   locSeg.mSegTyp := eMcuNoSegTyp;
+   tmpId := segID;
+   WHILE (locSeg.mSegTyp = eMcuNoSegTyp) AND (tmpId <> 0) DO  // cartesian-overlap segments have to been skipped
+      IF NOT McuReadSegNext(tmpId, nextId) THEN
+         nextSegID := 0;
+         RETURN FALSE;
+      END_IF;
+      IF NOT McuReadSegment(nextId, locSeg) AND (locSeg.mSegTyp <> eMcuNoSegTyp) THEN
+         nextSegID := 0;
+         RETURN FALSE;
+      END_IF;
+      tmpId := nextId;
+   END_WHILE;
+   nextSegID := tmpId;
+   RETURN nextSegID <> 0;
+END_ROUTINE
+
+
+// create a pathpos from given segment 'segId', path 'pathId' 
+// and kinematic 'kinematic' on segment-parameter 'param' with name 'name'. 
+// writes resulting pathPosId in parameter 'pathPosId'.
+// returns 'false' on failure
+ROUTINE RcuCreatePathPos(CONST segId : TMcuDbObjID; CONST param : REAL; 
+      CONST name : TMcuString; CONST kinematic : TRcuKinematic; 
+      CONST pathId : TMcuDbObjID; pathPosId : TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      pathPos : TMcuPosition;
+   END_VAR
+   
+   pathPos.mDBObjTyp                := eMcuPermanent;
+   pathPos.mName                    := name;
+   pathPos.mPosTyp                  := eMcuPosPath;
+   pathPos.mPosPath.mOccurenceCount := 0;
+   pathPos.mKinematicID             := kinematic.kinematicMcuId;
+   pathPos.mPosPath.mPathID         := pathId;
+   pathPos.mPosPath.mSegmentID      := segId;
+   pathPos.mPosPath.mSegmentParam   := param;
+   pathPos.mPosPath.mUseMainRefJoints   := TRUE;
+   pathPos.mPosJoints.mJoints.mValues   := kinematic.actExecData.mLastPathJoints.mValues;
+   pathPos.mPosJoints.mJoints.mValidLen := kinematic.actExecData.mLastPathJoints.mValidLen;
+   pathPos.mJointsOffsetID         := 0;
+   // get info for mcu limiter messages
+   pathPos.mUserData.mDataInt[0] := -1;
+   pathPos.mUserData.mIntValidLen := 1;
+   IF NOT McuCreatePosition(pathPosId, pathPos) THEN
+      RcuSetMessageOnce(RcUtils_ErrCreatePos, kinematic.kinListInx, 1, 0, "RcUtils.RcuCreatePathPos", name);
+      McuReleaseDbObj(pathId);
+      RETURN FALSE;
+   END_IF;
+   kinematic.DebugPrint(eTraceMotionModesFine, "Create pathPos in RcUtils: "+STR(pathPosId));
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Transforms given position into given refSys
+ROUTINE RcuTransformPosToCart(CONST p : TMcuPosition; cartPos : TMcuPosCart; 
+      CONST refSys : TRcuReferenceSystem; CONST kinMcuId : TMcuDbObjID; 
+      CONST toolMcuId : TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      refSysMcuId : TMcuDbObjID;
+      errorState : TMcuInvError;
+      success : BOOL;
+      jointPos : TMcuPosJoints;
+   END_VAR
+
+   IF RcuRefSysGetMcuId(refSys, refSysMcuId) THEN
+      CASE p.mPosTyp OF
+      eMcuPosJoints : 
+         success := McuForwardTrafoAux(cartPos, p.mPosJoints, p.mAuxJoints, refSysMcuId, kinMcuId, toolMcuId); 
+      eMcuPosCart : 
+         success := McuTransformPosCart(cartPos, p.mPosCart, refSysMcuId); 
+      eMcuPosMixed :
+         McuWristInverseTrafoMode(jointPos, p.mPosMixed, kinMcuId, toolMcuId, errorState);
+         IF errorState = 0 THEN
+            success := McuForwardTrafo(cartPos, jointPos, refSysMcuId, kinMcuId, toolMcuId);               
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(RcUtils_ErrInvPosType, -1, 1, 0, "RcUtils.RcuTransformPosToCart", p.mName);
+         RETURN FALSE;
+      END_CASE;
+      
+      IF NOT success THEN
+         RcuSetMessageOnce(RcUtils_ErrTrsfFail, -1, 1, 0, "RcUtils.RcuTransformPosToCart", p.mName);
+         RETURN FALSE;
+      ELSE
+         RETURN TRUE;
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(RcUtils_ErrNoRefSysMcuID, -1, 1, 0, "RcUtils.RcuTransformPosToCart", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+END_ROUTINE
+
+(*
+// Transforms given position into object system + external tool
+ROUTINE RcuTransformPosToCartExt(VAR_IN p : TMcuPosition; cartPos : TMcuPosCart; 
+      CONST extTool : BOOL; CONST kin : TRcuKinematic) : BOOL GLOBAL
+   VAR
+      refSysMcuId : TMcuDbObjID;
+      errorState : TMcuInvError;
+      success : BOOL;
+      jointPos : TMcuPosJoints;
+      refSys : TRcuReferenceSystem;
+      kinMcuId : TMcuDbObjID; 
+      toolMcuId : TMcuDbObjID; 
+   END_VAR
+   
+   refSys := kin.RcuRefSystemObject;
+   kinMcuId := kin.kinematicMcuId;
+   toolMcuId := kin.progPath.segHdl.mRobotToolID;
+   
+   IF RcuRefSysGetMcuId(refSys, refSysMcuId) THEN
+      IF extTool THEN
+         CASE p.mPosTyp OF
+         eMcuPosJoints : 
+            success := McuForwardTrafoAux(cartPos, p.mPosJoints, p.mAuxJoints, refSysMcuId, kinMcuId, toolMcuId); 
+            IF success THEN
+               success := McuInvertFrame(cartPos.mFrame, cartPos.mFrame );
+            END_IF;
+         eMcuPosCart :
+            IF refSysMcuId = p.mPosCart.mRefSysID THEN
+               cartPos := p.mPosCart;
+               success := TRUE;
+            ELSE
+               p.mPosCart.mPosInExternalTool := FALSE;
+               success := McuTransformPosCart(cartPos, p.mPosCart, refSysMcuId); 
+               IF success THEN
+                  success := McuInvertFrame(cartPos.mFrame, cartPos.mFrame );
+               END_IF;
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(RcUtils_ErrInvPosType, -1, 1, 0, "RcUtils.RcuTransformPosToCart", p.mName);
+            RETURN FALSE;
+         END_CASE;
+      ELSE
+         CASE p.mPosTyp OF
+         eMcuPosJoints : 
+            success := McuForwardTrafoAux(cartPos, p.mPosJoints, p.mAuxJoints, refSysMcuId, kinMcuId, toolMcuId); 
+         eMcuPosCart : 
+            success := McuTransformPosCart(cartPos, p.mPosCart, refSysMcuId); 
+         eMcuPosMixed :
+            McuWristInverseTrafoMode(jointPos, p.mPosMixed, kinMcuId, toolMcuId, errorState);
+            IF errorState = 0 THEN
+               success := McuForwardTrafo(cartPos, jointPos, refSysMcuId, kinMcuId, toolMcuId);               
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(RcUtils_ErrInvPosType, -1, 1, 0, "RcUtils.RcuTransformPosToCart", p.mName);
+            RETURN FALSE;
+         END_CASE;
+      END_IF;
+      
+      IF NOT success THEN
+         RcuSetMessageOnce(RcUtils_ErrTrsfFail, -1, 1, 0, "RcUtils.RcuTransformPosToCart", p.mName);
+         RETURN FALSE;
+      ELSE
+         RETURN TRUE;
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(RcUtils_ErrNoRefSysMcuID, -1, 1, 0, "RcUtils.RcuTransformPosToCart", STR(refSys));
+      RETURN FALSE;
+   END_IF;
+
+END_ROUTINE
+*)
+
+// calculates the length of given segment
+// the type of the segment is not considered, for all
+// calculations the straight path between start- end endpoint is taken
+// so this calculation is only an approximation
+ROUTINE RcuCalculateSegmentLength(CONST seg : TMcuDbObjID; 
+      CONST kinematicMcuId : TMcuDbObjID; length : REAL) : BOOL GLOBAL
+   VAR
+      locSegHdl : TMcuSegHdl;
+      locSeg    : TMcuSegment;
+      startPos  : TMcuPosition;
+      endPos    : TMcuPosition;
+      cartStart : TMcuPosCart; 
+      cartEnd   : TMcuPosCart;  
+      segVector : TMcuVector3;
+   END_VAR  
+
+   IF McuReadSegment(seg, locSeg) AND McuReadSegHdl(seg, locSegHdl) THEN
+      IF McuReadPosition(locSeg.mPosStart, startPos) AND 
+            McuReadPosition(locSeg.mPosEnd, endPos) THEN
+         IF RcuTransformPosToCart(startPos, cartStart, eRcuRefSystemWorld, 
+                  kinematicMcuId, locSegHdl.mRobotToolID) AND 
+               RcuTransformPosToCart(endPos, cartEnd, eRcuRefSystemWorld, 
+                  kinematicMcuId, locSegHdl.mRobotToolID) THEN
+            McuSubVector3(segVector, cartEnd.mFrame.mPos, cartStart.mFrame.mPos);
+            length := McuLenVector3(segVector);
+            RETURN TRUE;
+         END_IF;
+      END_IF;
+   END_IF;
+   length := 0.0;
+   RETURN FALSE;
+END_ROUTINE
+
+
+(*
+// reverts a circ for backward movement
+// writes resulting id of intermediate position in parameter 'helpPosId'
+// returns 'false' on failure
+ROUTINE RcuRevertCirc(CONST circId : TMcuDbObjID; CONST startParam : REAL; 
+      CONST endParam : REAL; CONST kinematic : TRcuKinematic; 
+      helpPosId : TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      circ  : TMcuSegment;
+      param : REAL;
+   END_VAR
+   
+   IF (startParam = 0.0) AND (endParam = 1.0) THEN  // nothing to do - switch startpos with endpos
+      IF NOT McuReadSegment(circId, circ) THEN
+         RETURN FALSE;
+      END_IF;  
+      helpPosId := circ.mCirc.mHelpPos;
+      RETURN TRUE;
+   ELSE
+      param := (startParam + endParam) / 2.0;
+      RETURN RcuCreatePosOnNewPath(circId, param, kinematic, helpPosId);
+   END_IF; 
+END_ROUTINE
+*)
+
+(*
+// create a position on a new path on given segment and given segment param
+// returns the id of the new position
+// this position is a position on a path without overlapping, this
+// is useful for repositioning or backward movement, where a non-overlaped pos
+// is needed
+ROUTINE RcuCreatePosOnNewPath(CONST segId : TMcuDbObjID; CONST segParam : REAL;
+   CONST kinematic : TRcuKinematic; posId : TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      newPathPosId : TMcuDbObjID; 
+      retVal : BOOL;
+      newPathId : TMcuDbObjID;  
+   END_VAR
+
+   IF NOT RcuCreatePathPosOnNewPath(segId, segParam, kinematic, newPathPosId, newPathId) THEN
+      RETURN FALSE;
+   END_IF;
+   retVal := McuCreatePosFromPathPos(newPathPosId, posId);
+   McuReleaseDbObj(newPathPosId);
+   START DelayedPathRelease(newPathId);
+   RETURN retVal;
+END_ROUTINE
+*)
+
+ROUTINE DelayedPathRelease(id : TMcuDbObjID) GLOBAL
+VAR
+   appendFreeHdlName : STRING;
+   appendFree : MAPTO BOOL;
+END_VAR   
+
+   McuReadAppendFreeHdlName(id, appendFreeHdlName);
+   appendFree := MAPX(appendFreeHdlName);
+   WAIT appendFree;
+   McuReleaseDbObj(id);
+END_ROUTINE
+
+// similar to RcuCreatePosOnNewPath, but this function is for segments
+// that have not been added to the path previous.
+// therefore you can give a previous segment and a segHdl
+ROUTINE RcuCreatePosOnNewPathSpecial(CONST segId : TMcuDbObjID; 
+   CONST segParam : REAL; CONST kinematic : TRcuKinematic; posId : TMcuDbObjID; 
+   CONST lastSegId : TMcuDbObjID; segHdl : TMcuSegHdl) : BOOL GLOBAL
+   VAR
+      newPathPosId : TMcuDbObjID; 
+      newPathId : TMcuDbObjID; 
+      retVal : BOOL;
+   END_VAR
+
+   IF NOT RcuCreatePathPosOnNewPathSpecial(segId, segParam, kinematic, 
+         newPathPosId, lastSegId, segHdl, newPathId) THEN
+      RETURN FALSE;
+   END_IF;
+   retVal := McuCreatePosFromPathPos(newPathPosId, posId);
+   McuReleaseDbObj(newPathPosId);
+   START DelayedPathRelease(newPathId);
+   RETURN retVal;
+END_ROUTINE
+
+
+// create a path-position on a new path on given segement and given segment param
+// returns the id of the new path-position and the id of the new path
+// this position is a position on a path without overlapping, this
+// is useful for repositioning or backward movement, where a non-overlaped pos
+// is needed
+ROUTINE RcuCreatePathPosOnNewPath(CONST segId : TMcuDbObjID; CONST segParam : REAL;
+   CONST kinematic : TRcuKinematic; pathPosId : TMcuDbObjID; newPathId : TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      newPath   : TMcuPath;
+      prevSegId : TMcuDbObjID; 
+      newSegId  : TMcuDbObjID; 
+   END_VAR
+
+   newPath.mDBObjTyp := eMcuPermanent;
+   newPath.mKinematicID := kinematic.kinematicMcuId;
+    IF NOT McuCreatePath(newPathId, newPath) THEN
+      RETURN FALSE;
+   END_IF;     
+   // read previous segment and append it to the empty path
+   IF RcuReadSegPrev(segId, prevSegId, FALSE) THEN
+      IF NOT RecreateSegOnPath(prevSegId, newPathId, kinematic, newSegId) THEN
+         START DelayedPathRelease(newPathId);
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   // append current segment to new path
+   IF RecreateSegOnPath(segId, newPathId, kinematic, newSegId) THEN
+      IF RcuCreatePathPos(newSegId, segParam, "newPathPos", kinematic, newPathId, pathPosId) THEN
+         RETURN TRUE;
+      END_IF;
+   END_IF;   
+   START DelayedPathRelease(newPathId);
+   RETURN FALSE;
+END_ROUTINE
+
+
+// similar to RcuCreatePathPosOnNewPath, but this function is for segments
+// that have not been added to the path previous.
+// therefore you can give a previous segment and a segHdl
+ROUTINE RcuCreatePathPosOnNewPathSpecial(CONST segId : TMcuDbObjID; CONST segParam : REAL;
+   CONST kinematic : TRcuKinematic; pathPosId : TMcuDbObjID; 
+   CONST lastSegId : TMcuDbObjID; segHdl : TMcuSegHdl; newPathId : TMcuDbObjID) : BOOL GLOBAL
+   VAR
+      newPath   : TMcuPath;
+      newSegId  : TMcuDbObjID; 
+   END_VAR
+
+   newPath.mDBObjTyp := eMcuPermanent;
+   newPath.mKinematicID := kinematic.kinematicMcuId;
+   IF NOT McuCreatePath(newPathId, newPath) THEN
+      RETURN FALSE;
+   END_IF;     
+    // append previous segment to the empty path
+   IF RecreateSegOnPath(lastSegId, newPathId, kinematic, newSegId) THEN
+      // append current segment to new path
+      IF RecreateSegOnPathSegHdl(segId, newPathId, kinematic, newSegId, segHdl) THEN
+         IF RcuCreatePathPos(newSegId, segParam, "newPathPos", kinematic, newPathId, pathPosId) THEN  
+            RETURN TRUE;
+         END_IF;   
+      END_IF;
+   END_IF;
+   START DelayedPathRelease(newPathId);
+   RETURN FALSE;
+END_ROUTINE
+
+
+ROUTINE RcuPrintPosition(posId : TMcuDbObjID; OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+VAR
+   pos : TMcuPosition;
+   pos2     : TMcuPosition;
+   pJ       : TMcuPosJoints;
+   tmpPosId : TMcuDbObjID;
+   state    : TMcuInvError;
+   toolId   :  TMcuDbObjID;
+   str      : STRING;
+END_VAR
+   
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+         RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   IF NOT McuReadPosition(posId, pos) THEN
+      PRINT("Unable to read position " + STR(posId));
+      iCntMinorError := iCntMinorError + 1;
+      RETURN;
+   END_IF;
+   CASE pos.mPosTyp OF
+      eMcuPosJoints : 
+         PRINT("JOINTS  " + pos.mName);
+         RcuPrintVector(pos.mPosJoints.mJoints,     "Joints:      ", traceLevel);
+         RcuPrintVector(pos.mAuxJoints, "AuxJoints:   ", traceLevel);
+      eMcuPosCart   : 
+         PRINT("CART    " + pos.mName);
+         PRINT("RefSys:       " + STR(pos.mPosCart.mRefSysID));
+         RcuPrintVector3(pos.mPosCart.mFrame.mPos,  "CartPos:     ", traceLevel);
+         RcuPrintVector3(pos.mPosCart.mFrame.mOri,  "CartOri:     ", traceLevel);
+         IF pos.mPosCart.mMode.mIsValid THEN
+            PRINT("Mode:         " + STR(pos.mPosCart.mMode.mConfig));
+            RcuPrintIntVector(pos.mPosCart.mMode.mTurns,  "Turns:        ", traceLevel);
+         END_IF;
+         RcuPrintVector(pos.mAuxJoints, "AuxJoints:   ");
+         PRINT("--------");
+      eMcuPosMixed  :
+         PRINT("MIXED   " + pos.mName);
+         PRINT("RefSys:       " + STR(pos.mPosMixed.mRefSysID));
+         RcuPrintVector3(pos.mPosMixed.mCartPos,    "CartPos:     ", traceLevel);
+         RcuPrintVector(pos.mPosMixed.mWristJoints, "WristJoints: ", traceLevel);
+         RcuPrintVector(pos.mAuxJoints, "AuxJoints:   ", traceLevel);
+      eMcuPosPath   :
+         IF pos.mPosPath.mPathID = gRcuFocusedKinematic.progPath.pathMcuId THEN
+            str := "progpath";
+         ELSIF pos.mPosPath.mPathID = gRcuFocusedKinematic.jogPath.pathMcuId THEN
+            str := "jogpath";
+         ELSIF pos.mPosPath.mPathID = gRcuFocusedKinematic.reposPath.pathMcuId THEN 
+            str := "repospath";
+         ELSIF pos.mPosPath.mPathID = gRcuFocusedKinematic.noPath.pathMcuId THEN 
+            str := "nopath";
+         ELSE
+            str := "invalidpath";
+         END_IF;
+         PRINT("POSPATH " + pos.mName + " ("+STR(posId)+")");
+         PRINT("Param:     " + STR(pos.mPosPath.mSegmentParam));
+         PRINT("SegmentID: " + STR(pos.mPosPath.mSegmentID));
+         PRINT("PathID:    " + STR(pos.mPosPath.mPathID) + " ("+str+")");
+         IF pos.mPosJoints.mJoints.mValidLen <> 0 THEN
+            RcuPrintVector(pos.mPosJoints.mJoints,     "RefJoints:   ", traceLevel);
+         END_IF;
+         IF pos.mPosCart.mMode.mIsValid THEN
+            PRINT("Mode:         " + STR(pos.mPosCart.mMode.mConfig));
+            RcuPrintIntVector(pos.mPosCart.mMode.mTurns,  "Turns:          ", traceLevel);
+         END_IF;        
+         IF McuGetToolFromPathPos(posId, toolId) THEN        
+            PRINT("ToolID:       " + STR(toolId));
+         END_IF;
+         PRINT("--------");
+         IF NOT McuCreatePosFromPathPos(posId, tmpPosId) THEN
+            PRINT("Unable to create regular position");
+            PRINT("--------");
+            iCntMinorError := iCntMinorError + 1;
+            RETURN;
+         END_IF;
+         IF NOT McuReadPosition(tmpPosId, pos2) THEN
+            PRINT("Unable to read newly created regular position");
+            PRINT("--------");
+            iCntMinorError := iCntMinorError + 1;
+            RETURN;
+         END_IF;
+         McuReleaseDbObj(tmpPosId);
+         CASE pos2.mPosTyp OF
+            eMcuPosJoints : 
+               PRINT("JOINTPOS");
+               RcuPrintVector(pos2.mPosJoints.mJoints,     "Joints:      ", traceLevel);
+               RcuPrintVector(pos2.mAuxJoints, "AuxJoints:   ", traceLevel);
+            eMcuPosCart   : 
+               PRINT("CARTPOS");
+               PRINT("RefSys:       " + STR(pos2.mPosCart.mRefSysID));
+               RcuPrintVector3(pos2.mPosCart.mFrame.mPos,  "CartPos:     ", traceLevel);
+               RcuPrintVector3(pos2.mPosCart.mFrame.mOri,  "CartOri:     ", traceLevel);
+               IF pos2.mPosCart.mMode.mIsValid THEN
+                  PRINT("Mode:         " + STR(pos2.mPosCart.mMode.mConfig));
+                  RcuPrintIntVector(pos2.mPosCart.mMode.mTurns,  "Turns:        ", traceLevel);
+                  McuInverseTrafoModeAux(pJ, pos2.mPosCart, pos2.mAuxJoints,
+                     gRcuFocusedKinematic.kinematicMcuId, toolId, state);
+                  RcuPrintJointVector(pJ.mJoints.mValues, pJ.mJoints.mValidLen, "Joints:      ", traceLevel);
+                  PRINT("InverseState: " + STR(state));
+               ELSIF pos.mPosJoints.mJoints.mValidLen <> 0 THEN
+                  McuInverseTrafoJointsAux(pJ, pos2.mPosCart, pos2.mAuxJoints, pos.mPosJoints, 
+                     gRcuFocusedKinematic.kinematicMcuId, toolId, state);
+                  RcuPrintJointVector(pJ.mJoints.mValues, pJ.mJoints.mValidLen, "Joints:      ", traceLevel);
+                  PRINT("InverseState: " + STR(state));
+               ELSE
+                  PRINT("Joints:       unable to calculate joint position");
+                  PRINT("InverseState: no inverse transformation performed");
+                  iCntMinorError := iCntMinorError + 1;
+               END_IF;
+               RcuPrintVector(pos2.mAuxJoints, "AuxJoints:   ", traceLevel);
+               PRINT("--------");
+            eMcuPosMixed  :
+               PRINT("MIXEDPOS");
+               PRINT("RefSys:       " + STR(pos2.mPosMixed.mRefSysID));
+               RcuPrintVector3(pos2.mPosMixed.mCartPos,    "CartPos:     ", traceLevel);
+               IF pos2.mPosMixed.mMode.mIsValid THEN
+                  PRINT("Mode:         " + STR(pos2.mPosMixed.mMode.mConfig));
+                  RcuPrintIntVector(pos2.mPosMixed.mMode.mTurns,  "Turns:        ", traceLevel);
+                  McuWristInverseTrafoModeAux(pJ, pos2.mPosMixed, pos2.mAuxJoints,
+                     gRcuFocusedKinematic.kinematicMcuId, toolId, state);
+               ELSE
+                  McuWristInverseTrafoJointsAux(pJ, pos2.mPosMixed, pos2.mAuxJoints, pos.mPosJoints, 
+                     gRcuFocusedKinematic.kinematicMcuId, toolId, state);
+               END_IF;
+               RcuPrintJointVector(pJ.mJoints.mValues, pJ.mJoints.mValidLen, "BaseJoints:  ", traceLevel);
+               PRINT("InverseState: " + STR(state));
+               RcuPrintVector(pos2.mPosMixed.mWristJoints, "WristJoints: ", traceLevel);
+               RcuPrintVector(pos2.mAuxJoints, "AuxJoints:   ", traceLevel);
+         END_CASE;
+   END_CASE;
+   PRINT("--------");
+END_ROUTINE
+
+
+ROUTINE RcuPrintActPos(kin : TRcuKinematic; OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+          RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   PRINT("ACTJOINTS");
+   RcuPrintJointVector(kin.actJoints.mPos, kin.actJoints.mValidLen, "Joints:      ");
+   PRINT("--------");
+   PRINT("ACTCART");
+   PRINT("RefSys:      " + STR(McuGetRefSysForActCartVals(kin.kinematicMcuId)));
+   RcuPrintVector3(kin.actCartVals.mPos,  "CartPos:     ");
+   RcuPrintVector3(kin.actCartVals.mOri,  "CartOri:     "); 
+   IF kin.actCartVals.mRobotMode.mIsValid THEN
+      PRINT("Mode:         " + STR(kin.actCartVals.mRobotMode.mConfig));
+      RcuPrintIntVector(kin.actCartVals.mRobotMode.mTurns,  "Turns:        ");   
+   END_IF;
+   PRINT("ToolID:      " + STR(kin.actExecData.mActToolID));
+   PRINT("--------");
+END_ROUTINE
+
+
+ROUTINE RcuPrintUserData(OPTIONAL ud : TMcuUserData; OPTIONAL objId : TMcuDbObjID; OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+VAR
+   userData  : TMcuUserData;
+   nrOfInt   : DINT;
+   nrOfFloat : DINT;
+   i         : DINT;
+END_VAR
+
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+          RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   IF IS_USED(ud) THEN
+      userData := ud;
+   ELSIF IS_USED(objId) THEN
+      IF NOT McuReadUserData(objId, nrOfInt, nrOfFloat, userData) THEN
+         PRINT("Unable to read user-data");
+         iCntMinorError := iCntMinorError + 1;
+         RETURN;
+      END_IF;
+   ELSE
+      PRINT("No UserData");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN;
+   END_IF;
+   PRINT("--------");
+   FOR i := 0 TO userData.mIntValidLen - 1 DO
+      PRINT("userDataInt["+STR(i)+"]: "+STR(userData.mDataInt[i]));
+   END_FOR;
+   FOR i := 0 TO userData.mFloatValidLen - 1 DO
+      PRINT("userDataFloat["+STR(i)+"]: "+STR(userData.mDataFloat[i]));
+   END_FOR;
+   PRINT("--------");
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Prints CallStack-information, if 0 is given, the current callstack is
+* printed
+*)
+ROUTINE RcuPrintUserProgCallStack(CONST stackHdl : DINT; OPTIONAL VAR_IN headline : STRING;
+   OPTIONAL CONST traceLevel : TTraceLevel) : BOOL GLOBAL
+VAR
+   info : TUserProgStackInfo;
+   i : DINT; pos : DINT;
+   str : STRING; projStr : STRING;
+END_VAR
+
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+          RETURN TRUE;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN TRUE;
+   END_IF;
+   
+   IF GetUserProgCallStackInfo(stackHdl, info) THEN
+      str := info.progNames[0] + ":" + STR(info.lineNrs[0]);
+      pos := StrFindRight(info.progNames[0], ".");
+      IF pos <> 0 THEN
+         projStr := StrLeft(info.progNames[0], pos);
+      END_IF;
+      FOR i := 1 TO info.depth - 1 DO
+         // array-order has changed with TC 3.00
+         IF StrFind(info.progNames[i], projStr) = 1 THEN // dont print kinematic and project again if they have not changed
+            str := str + "." + StrDelete(info.progNames[i], pos, 0) + ":" + STR(info.lineNrs[i]);
+         ELSE
+            str := str + "." + info.progNames[i] + ":" + STR(info.lineNrs[i]);
+            pos := StrFindRight(info.progNames[i], ".");
+            IF pos <> 0 THEN
+               projStr := StrLeft(info.progNames[i], pos);
+            END_IF;
+         END_IF;
+      END_FOR;
+      IF IS_USED(headline) THEN
+         str := headline + ": " + str;
+      END_IF;
+      PRINT(str);
+      RETURN TRUE;
+   ELSE
+      str := "no call-stack information (hdl: " + STR(stackHdl) + ") read";
+      IF IS_USED(headline) THEN
+         str := headline + ": " + str;
+      END_IF;
+      PRINT(str);
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* Prints CallStack-information, if 0 is given, the current callstack is
+* printed
+*)
+ROUTINE RcuPrintUserProgCallStack2(CONST stack : TUserProgStackInfo; OPTIONAL VAR_IN headline : STRING;
+   OPTIONAL CONST traceLevel : TTraceLevel) : BOOL GLOBAL
+VAR
+   i : DINT; pos : DINT;
+   str : STRING; projStr : STRING;
+END_VAR
+
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+          RETURN TRUE;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN TRUE;
+   END_IF;
+   
+   str := stack.progNames[0] + ":" + STR(stack.lineNrs[0]);
+   pos := StrFindRight(stack.progNames[0], ".");
+   IF pos <> 0 THEN
+      projStr := StrLeft(stack.progNames[0], pos);
+   END_IF;
+   FOR i := 1 TO stack.depth - 1 DO
+      IF StrFind(stack.progNames[i], projStr) = 1 THEN // dont print kinematic and project again if they have not changed
+         str := str + "." + StrDelete(stack.progNames[i], pos, 0) + ":" + STR(stack.lineNrs[i]);
+      ELSE
+         str := str + "." + stack.progNames[i] + ":" + STR(stack.lineNrs[i]);
+         pos := StrFindRight(stack.progNames[i], ".");
+         IF pos <> 0 THEN
+            projStr := StrLeft(stack.progNames[i], pos);
+         END_IF;
+      END_IF;
+   END_FOR;
+   IF IS_USED(headline) THEN
+      str := headline + ": " + str;
+   END_IF;
+   PRINT(str);
+   RETURN TRUE;
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* Prints position and orientation of frame
+*)
+ROUTINE RcuPrintFullPosition(frame : TMcuFrame; 
+   OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+   
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+         RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   RcuPrintVector3(frame.mPos, "position:    ", traceLevel);
+   RcuPrintVector3(frame.mOri, "orientation: ", traceLevel);
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Prints elements of vector v
+*)
+ROUTINE RcuPrintVector3(VAR_IN v : TMcuVector3; VAR_IN str : STRING; 
+   OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+   
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+         RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   PRINT(str + RealToStr(v.mValues[0], 6) + " " + RealToStr(v.mValues[1], 6) + 
+      " " + RealToStr(v.mValues[2],6));
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Prints elements of vector v (TMcuVector)
+*)
+ROUTINE RcuPrintVector(VAR_IN v : TMcuVector; VAR_IN str : STRING; 
+   OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+VAR
+   i : DINT;
+   s : STRING;
+END_VAR
+   
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+         RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   FOR i := 0 TO v.mValidLen - 1 DO
+      s := s + RealToStr(v.mValues[i], 6) + " ";
+   END_FOR;
+   PRINT(str + s);
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Prints elements of vector v (TMcuIntVector)
+*)
+ROUTINE RcuPrintIntVector(VAR_IN v : TMcuVecInt; VAR_IN str : STRING; 
+   OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+VAR
+   i : DINT;
+   s : STRING;
+END_VAR
+   
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+         RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   FOR i := 0 TO v.mValidLen - 1 DO
+      s := s + RealToStr(v.mValues[i], 6) + " ";
+   END_FOR;
+   PRINT(str + s);
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* Prints elements of vector v (TMcuJointVector)
+*)
+ROUTINE RcuPrintJointVector(VAR_IN v : TMcuJointVector; len : DINT; VAR_IN str : STRING; 
+   OPTIONAL CONST traceLevel : TTraceLevel) GLOBAL
+VAR
+   i : DINT;
+   s : STRING;
+END_VAR
+   
+   IF IS_USED(traceLevel) THEN
+      IF (giTraceWord AND gyBits[traceLevel]) = 0 THEN
+         RETURN;
+      END_IF;
+   ELSIF (giTraceWord AND gyBits[eTraceCommon]) = 0 THEN
+      RETURN;
+   END_IF;
+   FOR i := 0 TO len - 1 DO
+      s := s + RealToStr(v[i], 6) + " ";
+   END_FOR;
+   PRINT(str + s);
+END_ROUTINE
+
+
+// converts a word-value into an int-value (only the 2 lowest bytes are considered)
+ROUTINE WordToInt(VAR_IN word : DINT) : DINT GLOBAL
+VAR
+   dint : DINT;
+   high : DINT;
+   low  : DINT;
+END_VAR
+
+   low := word MOD 256;
+   high := (word / 256) MOD 256;
+   dint := high*256 + low;
+   IF high > 127 THEN
+      dint := dint - 65536;
+   END_IF;
+   RETURN dint;
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* members
+*)
+
+VAR USER
+   bBrowseVersions : BOOL;
+END_VAR
+
+
+(*------------------------------------------------------------------------------
+* private members
+*)
+
+// read given segment, create it again and append it to given path
+ROUTINE RecreateSegOnPath(CONST segId : TMcuDbObjID; CONST pathId : TMcuDbObjID; 
+   CONST kin : TRcuKinematic; newSegId : TMcuDbObjID) : BOOL PRIVATE
+VAR
+   pathSegHdl : TMcuSegHdl;
+   seg        : TMcuSegment;
+   segExecData : TMcuSegExecData;
+   appendFree : MAPTO BOOL;
+   appendFreeHdlName : STRING;
+END_VAR
+
+   IF NOT McuReadSegHdlExtended(segId, pathSegHdl, segExecData) THEN
+      RETURN FALSE;
+   END_IF;
+   IF NOT McuReadSegment(segId, seg) THEN
+      RETURN FALSE;
+   END_IF;
+   IF NOT McuCreateSegment(newSegId, seg, kin.kinematicMcuId) THEN
+      RETURN FALSE;
+   END_IF;
+   pathSegHdl.mSegmentID := newSegId;
+   pathSegHdl.mJobSet.mValidLen := 0;
+   pathSegHdl.mTargetMode := segExecData.mMode;
+   McuReadAppendFreeHdlName(pathId, appendFreeHdlName);
+   appendFree := MAPX(appendFreeHdlName);
+   WAIT appendFree;
+   RETURN McuAppendToPath(kin.kinematicMcuId, pathId, pathSegHdl);
+END_ROUTINE
+
+
+// read given segment, create it again and append it to given path using given
+// segmentHandler
+ROUTINE RecreateSegOnPathSegHdl(CONST segId : TMcuDbObjID; CONST pathId : TMcuDbObjID; 
+   CONST kin : TRcuKinematic; newSegId : TMcuDbObjID; VAR_IN pathSegHdl : TMcuSegHdl) : BOOL PRIVATE
+VAR
+   seg        : TMcuSegment;
+   appendFree : MAPTO BOOL;
+   appendFreeHdlName : STRING;
+END_VAR
+
+   IF NOT McuReadSegment(segId, seg) THEN
+      RETURN FALSE;
+   END_IF;
+   IF NOT McuCreateSegment(newSegId, seg, kin.kinematicMcuId) THEN
+      RETURN FALSE;
+   END_IF;
+   pathSegHdl.mSegmentID := newSegId;
+   pathSegHdl.mJobSet.mValidLen := 0;
+   // wait until append possible, then append the segment
+   McuReadAppendFreeHdlName(pathId, appendFreeHdlName);
+   appendFree := MAPX(appendFreeHdlName);
+   WAIT appendFree;
+   RETURN McuAppendToPath(kin.kinematicMcuId, pathId, pathSegHdl);
+END_ROUTINE
+
+// Wait until an integer variable reaches a given value or timeout. Returns TRUE 
+// if the value is reached and FALSE in case of a timeout
+ROUTINE WaitForIntValueTO(CONST var : DINT; CONST value : DINT; CONST
+   time : DINT) : BOOL GLOBAL
+   VAR
+      timeout : BOOL;
+   END_VAR
+
+   SysTimerSet(time, timeout);
+   WAIT (var = value) OR timeout;
+   RETURN NOT timeout;
+END_ROUTINE
+
+ROUTINE WaitIOCycles(cnt : DINT) GLOBAL
+VAR
+   signal : BOOL;
+   i      : DINT;
+END_VAR
+
+   IF ExternalHandleHdl(iIOUpdateHdl, signal) <> 0 THEN
+      FOR i := 1 TO cnt DO
+         WAIT signal;
+         signal := FALSE;
+      END_FOR;
+   END_IF;
+END_ROUTINE
+
+
+(*------------------------------------------------------------------------------
+* private members
+*)
+
+
+VAR PRIVATE
+   iIOUpdateHdl : DINT;
+END_VAR
+
+
+ROUTINE BrowseVersions() PRIVATE
+VAR
+   fileHdl  : DINT := -1;
+   fileName : STRING;
+   filePath : STRING;
+   rootHdl  : DINT;
+   compHdl  : DINT;
+END_VAR
+
+   WHILE TRUE DO
+      WAIT bBrowseVersions;
+      bBrowseVersions := FALSE;
+      rootHdl := CatalogGetRoot();
+      IF CatalogGetHandle("System", compHdl) THEN
+         IF CatalogReadString(compHdl, "applPath", filePath, TRUE) THEN
+            IF CatalogReadString(compHdl, "firmwareVersion", fileName, TRUE) THEN
+               filePath := filePath + fileName + ".txt";
+               FileDelete(filePath);
+               fileHdl := FileOpen(filePath, eFileModeReadWrite);
+               IF fileHdl <> -1 THEN
+                  FileWriteLn(fileHdl, fileName);
+                  PRINT("");
+                  PRINT(fileName);
+                  FileWriteLn(fileHdl, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+                  PRINT("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      BrowseLevel(rootHdl, fileHdl);
+      IF fileHdl <> -1 THEN
+         FileWriteLn(fileHdl, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+         StreamClose(fileHdl);
+      END_IF;
+      PRINT("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ReadVersion(CONST hdl : DINT; version : STRING) : BOOL PRIVATE
+VAR
+   s : STRING;
+END_VAR
+
+   IF CatalogReadString(hdl, "componentVersionString", s, TRUE) THEN
+       version := s;
+   ELSIF CatalogReadString(hdl, "componentVersion", s, TRUE) THEN
+       version := s;
+   ELSIF CatalogReadString(hdl, "firmwareVersion", s, TRUE) THEN
+       version := s;
+   ELSE
+       version := "";
+       RETURN FALSE;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE BrowseLevel(CONST hdl : DINT; CONST fileHdl : DINT) PRIVATE
+VAR
+   dirHdl   : DINT;
+   version  : STRING;
+   name     : STRING;
+   str      : STRING;
+END_VAR
+
+   IF hdl <> 0 THEN
+      IF CatalogGetFirst(hdl, dirHdl) THEN
+         BrowseLevel(dirHdl, fileHdl);
+      END_IF;
+      CatalogGetName(hdl, name);
+      IF ReadVersion(hdl, version) THEN
+         name := name + "               ";
+         str := StrLeft(name, 15) + ": " + version;
+      ELSIF (name = "System.sysConfigurationVersion") OR 
+            (name = "System.sysMasterVersion") THEN
+         CatalogReadString(hdl, "", version, TRUE);
+         name := "System                         ";
+         str := StrLeft(name, 15) + ": " + version;
+      ELSE 
+         str := "";
+      END_IF;
+      IF str <> "" THEN
+         PRINT(str);
+         IF fileHdl <> -1 THEN
+            FileWriteLn(fileHdl, str);
+         END_IF;
+      END_IF;
+      WHILE CatalogGetNext(dirHdl, dirHdl) DO
+         BrowseLevel(dirHdl, fileHdl);
+      END_WHILE;
+      WAIT TRUE;
+   END_IF;
+END_ROUTINE
+
+//Convert a decimal value into hexstring
+ROUTINE DecToHexString(VAR_IN iDecVal : LINT) : STRING
+ VAR
+   yHexString : ARRAY [16] OF STRING[1]; 
+   sHexString : STRING;
+   iMask      : INT := 1;
+ END_VAR
+ 
+   yHexString[0] := "0";
+   yHexString[1] := "1";
+   yHexString[2] := "2";
+   yHexString[3] := "3";
+   yHexString[4] := "4";
+   yHexString[5] := "5";
+   yHexString[6] := "6";
+   yHexString[7] := "7";
+   yHexString[8] := "8";
+   yHexString[9] := "9";
+   yHexString[10] := "A";
+   yHexString[11] := "B";
+   yHexString[12] := "C";
+   yHexString[13] := "D";
+   yHexString[14] := "E";
+   yHexString[15] := "F";  
+   
+   sHexString := "";
+   REPEAT
+     iMask  := iDecVal MOD 16;
+     iDecVal := LINT(iDecVal / 16);
+     sHexString := yHexString[iMask] + sHexString;
+   UNTIL (iDecVal < 1);
+   
+   RETURN sHexString;
+   
+END_ROUTINE
+
+//Convert a decimal value into binarystring
+ROUTINE DecToBinString(VAR_IN iDecVal : DINT) : STRING
+ VAR
+   yBinString : ARRAY [2] OF STRING[1]; 
+   sBinString : STRING;
+   iMask      : INT := 1;
+ END_VAR
+ 
+   yBinString[0] := "0";
+   yBinString[1] := "1";
+      
+   sBinString := "";
+   REPEAT
+     iMask  := iDecVal MOD 2;
+     iDecVal := INT(iDecVal / 2);
+     sBinString := yBinString[iMask] + sBinString;
+   UNTIL (iDecVal < 1);
+   
+   RETURN sBinString;
+   
+END_ROUTINE
+
+// Transforms a bitmask into a real value, according to ANSI/IEEE Std 754-1985:
+// sEEEEEEE EMMMMMMM MMMMMMMM MMMMMMMM, x = s*m*b^e, m=1+M/d, e=E-B, b=2, B=2^(r-1)-1, d=2^p, r=8, p=23
+// bitmask .. bit-coded real
+// value   .. converted real value
+// res     .. conversion result (NaN, Infinite, Ok, ...)
+// returns true if a number has been calculated, false on NaN or Inifinite input
+ROUTINE BitmaskToReal(VAR_IN bitmask : DWORD; value : REAL; res : TConvResult) : BOOL
+VAR
+   E : DINT;
+   M : DINT;
+   S : REAL;
+   m : REAL;
+   B    : DINT CONST := 127; // 2^7-1 (2^(r-1)-1)
+   Emax : DINT CONST := 255; // 2^8-1 (2^r-1)
+   d    : DINT CONST := 16#00800000; // 2^23 (2^p)
+END_VAR
+
+   value := 0.0;
+   E := SHR(bitmask, 23) AND 16#FF;
+   M := bitmask AND 16#007FFFFF;
+   IF SHR(bitmask,31) = 1 THEN
+      S := -1.0;
+   ELSE 
+      S := 1.0;
+   END_IF;
+   IF (E = 0) AND (M = 0) THEN
+      value := S * 0.0;
+      IF S < 0 THEN
+         res := eNegZero;
+      ELSE
+         res := ePosZero;
+      END_IF;
+   ELSIF (E = Emax) AND (M = 0) THEN
+      IF S < 0 THEN
+         res := eNegInfinite;
+      ELSE
+         res := ePosInfinite;
+      END_IF;
+   ELSIF (E = Emax) AND (M > 0) THEN
+      IF S < 0 THEN
+         res := eNegNan;
+      ELSE
+         res := ePosNan;
+      END_IF;
+   ELSE
+      m := S * M / d;
+      IF (E = 0) AND (M > 0) THEN  // denormalised real number - value to small
+         E := 1 - B;
+         res := eRealDenormalised;
+      ELSE  // normalised real number
+         E := E - B;
+         m := S + m; 
+         res := eRealOk;
+      END_IF;
+      value := Expt(2, E) * m;
+   END_IF;
+   RETURN (res = eRealOk) OR (res = eRealDenormalised) OR (res = ePosZero) OR (res = eNegZero);
+END_ROUTINE
+
+ROUTINE SaveAtexTimer() GLOBAL
+  WriteSaveValuesEx(eSaveProgram, "RcUtils");
+END_ROUTINE
+
+ROUTINE SaveToolData() GLOBAL
+  WriteSaveValuesEx(eSaveProgram, "RcUtils");
+END_ROUTINE
+
+ROUTINE SaveFocusedKin()
+    VAR
+    focusFlipFlop     : BOOL;    
+    END_VAR
+   WAIT gbBootupFinished;
+   focusFlipFlop := IS_CHANGED(gbRcuFocusFlipFlop);
+    WHILE TRUE DO
+        SavedFocusedKinListInx := gRcuFocusedKinematic.kinListInx;
+        WriteSaveValues(eSaveProgram, "RcUtils");        
+        WAIT focusFlipFlop;
+        focusFlipFlop := FALSE;
+    END_WHILE;
+
+END_ROUTINE
+
+ROUTINE SaveBrakeTestData() GLOBAL
+  WriteSaveValuesEx(eSaveProgram, "RcUtils");
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   LookUpHandle("IO.UpdTimer1", eHandleTypeTimer, iIOUpdateHdl);
+   START BrowseVersions();
+END_ROUTINE
+
+

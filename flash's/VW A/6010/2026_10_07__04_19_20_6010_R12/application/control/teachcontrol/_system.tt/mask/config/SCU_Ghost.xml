@@ -1,0 +1,431 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Friese                                                      *
+*    E-Mail:      heiko.Friese@durr.com                                       *
+*                                                                             *
+*    Modul:       SCU_Ghost.xml                                               *
+*    Description: Showing and operating of ghost bodies for SCU               *
+*    Changes:     -                                                           *
+*************************************************************************** -->
+
+
+<VIEW>
+	<MASKDEF key="TeachView.mask.SCU_Ghost" textfile="userTx" height="2000" >  
+ 		<GROUP key="SCU_Ghost.ueberschrift2" rows="147" columns="2" row="1" col="1" halign="stretch" valign="stretch">      
+       		<GROUP key="" rows="13" columns="38" row="1" col="1" rspan="12" cspan="2"  halign="stretch" valign="stretch">    
+			
+				<!--
+          		<LABEL key="Process" col="21" row="1" cspan="12" halign="left"/> 
+      	  		<TEXTFIELD var="SCU.SV_ScuControlPanel.cpProcessState" vartype="SV" enabled="FALSE" col="27" row="1" cspan="3" halign="center"/>  
+                -->                        
+      	  
+      	  		<BUTTON key="SCU_Ghost.Ctrl_ModeGhost" cspan="8" var="SCU.SV_SCU2HMI.tGhost.i_mStartGhostMode" vartype="SV" enablevar="SCU.SV_SCU2HMI.tGhost.o_mRelGhostMode" enablevartype="SV" col="1"  row="1"  /> 
+         		<BUTTON key="SCU_Ghost.Ctrl_ModeReal"  cspan="8" var="SCU.SV_SCU2HMI.tGhost.i_mStartRealMode"  vartype="SV" enablevar="SCU.SV_SCU2HMI.tGhost.o_mRelRealMode"  enablevartype="SV" col="10" row="1"  />
+                  
+         		<LABEL key="SCU_Ghost.GhostModeActive" col="13" row="6" cspan="12" halign="left"/>  
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.o_mGhostModeActive" vartype="SV" col="10" row="6" enabled="false" cspan="3"/>
+      	  
+         		<BUTTON key="SCU_Ghost.Ctrl_Start" cspan="8" var="SCU.SV_SCU2HMI.tGhost.i_mStart" vartype="SV" enablevar="SCU.SV_SCU2HMI.tGhost.o_mRelStart" enablevartype="SV" col="1"  row="6"  /> 
+         		<BUTTON key="SCU_Ghost.Ctrl_Stop"  cspan="8" var="SCU.SV_SCU2HMI.tGhost.i_mStop"  vartype="SV" enablevar="SCU.SV_SCU2HMI.tGhost.o_mRelStop"  enablevartype="SV" col="10" row="10"  />
+         		<BUTTON key="SCU_Ghost.Ctrl_Reset" cspan="8" var="SCU.SV_SCU2HMI.tGhost.i_mAbort" vartype="SV" enablevar="SCU.SV_SCU2HMI.tGhost.o_mRelAbort" enablevartype="SV" col="1"  row="10" />
+        
+	        	<LABEL key="SCU_Ghost.No_color" col="24" row="4" cspan="12" halign="left"/>  
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.i_mNoProcess" vartype="SV" enablevar="SCU.SV_EPSGhostData.Ctrl.o_mRelOptions" enablevartype="SV" col="21" row="4" enabled="true" cspan="3"/>
+
+         		<LABEL key="SCU_Ghost.No_motion" col="24" row="6" cspan="12" halign="left"/>
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.i_mNoMotion" vartype="SV" enablevar="SCU.SV_EPSGhostData.Ctrl.o_mRelOptions" enablevartype="SV" col="21" row="6" enabled="true" cspan="3"/>
+
+         		<LABEL key="SCU_Ghost.No_conveyor" col="24" row="8" cspan="12" halign="left"/> 
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.i_mSimConveyor" vartype="SV" enablevar="SCU.SV_EPSGhostData.Ctrl.o_mRelOptions" enablevartype="SV" col="21" row="8" enabled="true" cspan="3"/>
+	
+   	     		<LABEL key="SCU_Ghost.RBuffer" row="10" col="24"  cspan="13"  halign="left"/>                                       
+	        	<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.i_mRingbuffer" vartype="SV" col="21" row="10" enabled="true" cspan="3"/>
+ 		
+   		
+    		</GROUP>
+       	
+       	
+	 		<GROUP key="Bodydata" rows="80" columns="40" row="13" col="1" rspan="135" cspan="2" halign="stretch" valign="stretch">   
+	    
+	    		<GROUP key="Bodydata1" rows="40" columns="80" row="1" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">                      	
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[1].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+               		
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[1].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata2" rows="40" columns="80" row="11" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[2].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[2].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+				</GROUP>  
+        
+	    		<GROUP key="Bodydata3" rows="40" columns="80" row="21" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[3].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[3].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata4" rows="40" columns="80" row="31" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[4].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[4].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata5" rows="40" columns="80" row="41" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[5].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[5].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata6" rows="40" columns="80" row="51" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[6].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[6].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata7" rows="40" columns="80" row="61" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[7].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[7].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        
+	    		<GROUP key="Bodydata8" rows="40" columns="80" row="71" col="1" rspan="10" cspan="40" halign="stretch" valign="stretch">
+               	
+	            	<LABEL key="ExtTypNr" row="1" col="2" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].i_iTypeNo" vartype="SV" row="1" col="15" cspan="8" halign="stretch" />
+             
+               		<LABEL key="ExtColNr" row="8" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].i_iColorNo" vartype="SV" row="8" col="15" cspan="8" halign="stretch" />
+               	
+               		<LABEL key="Gap" row="15" col="2"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].i_iBodyGap" vartype="SV" row="15" col="15" cspan="8" halign="stretch" />
+               	
+	            	<LABEL key="Partarea" row="1" col="35" halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].i_dRepair" vartype="SV" row="1" col="45" cspan="34" halign="stretch" />
+             
+               		<LABEL key="Variant" row="8" col="35"  halign="stretch"/> 
+               		<NUMFIELD var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].i_dVariant" vartype="SV" row="8" col="45" cspan="34" halign="stretch" />
+               	
+               		<LABEL key="Select" row="15" col="55"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_EPSGhostData.Bodydata[8].Select" vartype="SV" row="15" col="65"  />
+               	
+               		<LABEL key="NoPaint" row="24" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mNoPaint" vartype="SV" row="24" col="14"   />
+                               	              	
+               		<LABEL key="NoApplication" row="24" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mNoApplication" vartype="SV" row="24" col="35"   />
+                               	              	
+               		<LABEL key="ShortPurge" row="24" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mShortPurge" vartype="SV" row="24" col="53"   />
+               		
+					<LABEL key="AtomPurge" row="24" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mLongPurge" vartype="SV" row="24" col="76"   />
+										
+               		<LABEL key="AtomClean" row="32" col="2"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mCleanAtomizer" vartype="SV" row="32" col="14"   />
+
+               		<LABEL key="CapClean" row="32" col="20"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mPurgeAircap" vartype="SV" row="32" col="35"   />
+                               	              	
+               		<LABEL key="CleanElectr" row="32" col="40"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.mCleanElectrodes" vartype="SV" row="32" col="53"   />
+
+               		<LABEL key="2nd Run" row="32" col="60"  halign="stretch"/> 
+               		<CHECKBOX var="SCU.SV_SCU2HMI.tGhost.yGhostData[8].sOptions.m2ndRun" vartype="SV" row="32" col="76"   />
+               		
+        		</GROUP>  
+        	</GROUP> 
+	    </GROUP>		  
+   </MASKDEF>
+</VIEW>
+

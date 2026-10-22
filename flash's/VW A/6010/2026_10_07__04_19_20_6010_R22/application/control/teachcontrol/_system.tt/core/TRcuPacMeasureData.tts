@@ -1,0 +1,339 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : TRcuPacMeasureData.ttp                                      *
+*   Description : Measure data                                                *
+*-----------------------------------------------------------------------------*)
+
+CONSTANT
+   cMaxNoOfPoints      : INT := 200;
+   cPacMeasureLimitUndefined : REAL := -1.0;
+END_CONSTANT
+
+TYPE GLOBAL
+   TRcuPacMeasurePoint : STRUCT
+      iPointNo        : INT;
+      rFilmThickness  : REAL;
+      Coord           : TRcuPositionCart;
+      bDeviceNotReady : BOOL;
+   END_STRUCT;
+   
+   TRcuPacMeasureLimits : STRUCT
+      rThicknMinError   : REAL := cPacMeasureLimitUndefined;
+      rThicknMinWarning : REAL := cPacMeasureLimitUndefined;
+      rThicknMaxWarning : REAL := cPacMeasureLimitUndefined;
+      rThicknMaxError   : REAL := cPacMeasureLimitUndefined;
+   END_STRUCT;
+
+   TRcuPacMeasureErrorCounter : STRUCT
+      iPointsError          : MAPTO BYTE;
+      iPointsUnderThicknMin : MAPTO BYTE;
+      iPointsAboveThicknMax : MAPTO BYTE;
+   END_STRUCT;
+   
+   TRcuPacMeasureErrors : STRUCT
+      ErrorCounters : ARRAY[1..cPacPLCErrorSignalsMaxNoOfAreas] OF  TRcuPacMeasureErrorCounter;
+      
+      PointsUnderThicknMin : ARRAY[1..cResultDataMaxNoOfPoints] OF INT;
+      PointsOverThicknMax : ARRAY[1..cResultDataMaxNoOfPoints] OF INT;
+      PointsError : ARRAY[1..cResultDataMaxNoOfPoints] OF INT;
+   END_STRUCT;
+   
+   TRcuPacEcoatCompColor : STRUCT
+      EcoatCalib       : REAL;
+      EcoatFactor      : REAL;
+      EcoatOffset      : REAL;
+   END_STRUCT;
+
+   TRcuPacEcoatCompType : STRUCT
+      EcoatRef       : REAL;
+      EcoatDaily     : REAL;
+   END_STRUCT;
+   
+   TRcuPacTornadoLine : STRUCT
+      bEnable    : BOOL;
+      StartPoint : TMcuVector3;
+      EndPoint   : TMcuVector3;   
+   END_STRUCT;
+END_TYPE
+
+VAR
+   iToken            : INT;
+   sExtColor         : STRING;
+   iExtColorNo       : INT;
+   iColorGroup       : INT;
+   sExtType          : STRING;
+   iExtTypeNo        : INT;
+   sBodyId           : STRING;
+   sSkidNo           : STRING;
+   sKinName          : STRING;
+   iVariant          : INT;
+   iNoOfPoints       : INT;
+   Points            : ARRAY[1..cMaxNoOfPoints] OF TRcuPacMeasurePoint;
+   Limits            : TRcuPacMeasureLimits;
+   ErrorCounts       : TRcuPacMeasureErrors;
+   EcoatCompColor    : TRcuPacEcoatCompColor;
+   EcoatCompType     : TRcuPacEcoatCompType;
+   EcoatCompPoints   : TRcuEcoatCompDef;
+   TornadoLine       : TRcuPacTornadoLine;
+END_VAR
+
+VAR PRIVATE
+  myRobot           : MAPTO TRcuRobot;
+END_VAR
+
+ROUTINE Init(locRobot : TRcuRobot)
+   myRobot := MAP(locRobot);
+END_ROUTINE
+
+ROUTINE Reset()
+   VAR
+      i : INT;
+   END_VAR
+   
+   iToken      := -1;
+   sKinName    := "";
+   sExtType    := "";
+   sExtColor   := "";
+   sBodyId     := "";
+   sSkidNo     := "";
+   iVariant    := 0;
+   iNoOfPoints := 0;
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC: TRcuPacMeasureData.Reset");
+
+   FOR i:= 1 TO cPacPLCErrorSignalsMaxNoOfAreas DO
+      IF IS_MAPPED(ErrorCounts.ErrorCounters[i].iPointsError) THEN
+         ErrorCounts.ErrorCounters[i].iPointsError          := 0;
+         myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Reset ErrorCounts[" + STR(i) + "].iPointsError"); 
+      END_IF;
+
+      IF IS_MAPPED(ErrorCounts.ErrorCounters[i].iPointsUnderThicknMin) THEN
+         ErrorCounts.ErrorCounters[i].iPointsUnderThicknMin := 0;
+         myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Reset ErrorCounts[" + STR(i) + "].iPointsUnderThicknMin"); 
+      END_IF;
+
+      IF IS_MAPPED(ErrorCounts.ErrorCounters[i].iPointsAboveThicknMax) THEN
+         ErrorCounts.ErrorCounters[i].iPointsAboveThicknMax := 0;
+         myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Reset ErrorCounts[" + STR(i) + "].iPointsUnderThicknMax"); 
+      END_IF;
+   END_FOR;
+   
+   FOR i := 1 TO cResultDataMaxNoOfPoints DO
+      ErrorCounts.PointsUnderThicknMin[i] := 0;
+      ErrorCounts.PointsOverThicknMax[i]  := 0;
+      ErrorCounts.PointsError[i]          := 0;
+   END_FOR;
+   
+   TornadoLine.StartPoint.mValues[0] := 0.0;
+   TornadoLine.StartPoint.mValues[1] := 0.0;
+   TornadoLine.StartPoint.mValues[2] := 0.0;
+
+   TornadoLine.EndPoint.mValues[0] := 0.0;
+   TornadoLine.EndPoint.mValues[1] := 0.0;
+   TornadoLine.EndPoint.mValues[2] := 0.0;
+END_ROUTINE
+
+ROUTINE WriteHeaderDataToFile(fileHandle : DINT)
+   IF fileHandle <> -1 THEN
+      IF iToken <> -1 THEN
+         RcuFileUtils.FileWriteLnWithCrLf(fileHandle, STR(iToken)); // 1 ... 7 for synchronisation with external measurement device
+      END_IF;
+   
+      sBodyId := StrRtrim(sBodyId);
+      IF sBodyId <> "" THEN
+         RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sBodyId);    
+      ELSE
+         RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "0");    
+      END_IF;
+      
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sExtType );
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, STR(iVariant));
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sExtColor);
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, RcuDateTimeUtils.GetDateString()); // DD.MM.YYYY
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, RcuDateTimeUtils.GetTimeString()); // HH:MM:SS
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, StrMid(sKinName,1,2)); // R11 --> 1, R21 --> 2
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sKinName + " " +  sExtType + " " + STR(iVariant));
+      RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "SD=0"); // Compatibility issue: Sun roof = Yes (1) or No(0) 
+      
+      sSkidNo := StrRtrim(sSkidNo);
+      IF sSkidNo <> "" THEN
+         RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sSkidNo);
+      ELSE
+         RcuFileUtils.FileWriteLnWithCrLf(fileHandle, "0");
+      END_IF;
+   END_IF;   
+END_ROUTINE
+
+ROUTINE WriteMeasureDataToFile(fileHandle : DINT)
+   VAR
+      l : DINT;
+   END_VAR
+   
+   IF fileHandle <> -1 THEN
+      FOR l := 1 TO iNoOfPoints  DO
+        WriteMeasurePointToFile(fileHandle, Points[l]);
+      END_FOR;
+   END_IF;   
+END_ROUTINE
+
+ROUTINE WriteMeasurePointToFile(fileHandle : DINT;
+                                measurePoint : TRcuPacMeasurePoint) 
+                                PRIVATE
+   VAR
+      sLine : STRING;
+      i     : INT;
+      j     : INT;
+   END_VAR
+
+   sLine := "";
+   
+   j := 0;
+   FOR i := 0 TO 2 DO
+      sLine := sLine + STR(measurePoint.Coord.frame.mPos.mValues[i]) + ",";
+      j := j + 1;
+   END_FOR;
+   
+   FOR i := 0 TO 2 DO
+      sLine := sLine + STR(measurePoint.Coord.frame.mOri.mValues[i]) + ",";
+      j := j + 1;
+   END_FOR;
+   
+   IF  measurePoint.Coord.nrAuxJoints > 0 THEN
+      FOR i:= 0 TO measurePoint.Coord.nrAuxJoints-1 DO
+         sLine := sLine + STR(measurePoint.Coord.auxJoints[i]) + ",";      
+         j := j + 1;
+      END_FOR;
+   END_IF;
+   
+   FOR i:=j TO 9 DO
+      sLine := sLine + "0,";      
+   END_FOR;
+   
+   sLine := sLine + STR(measurePoint.rFilmThickness);
+   
+   IF measurePoint.bDeviceNotReady THEN
+      sLine := sLine + "1,";      
+   ELSE
+      sLine := sLine + "0,";      
+   END_IF;
+
+   RcuFileUtils.FileWriteLnWithCrLf(fileHandle, sLine);
+END_ROUTINE
+
+ROUTINE GetEcoatDiff(CONST pointNo : INT) : REAL
+   VAR
+      r : REAL := 0.0;
+   END_VAR
+   
+   IF ((pointNo>0) AND (pointNo<=cPacMaxNoOfPoints)) THEN
+      myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat at measure point:                   " + STR(EcoatCompPoints.EcoatValues[pointNo])); 
+      myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat calibration:                        " + STR(EcoatCompColor.EcoatCalib)); 
+      myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat on reference point:                 " + STR(EcoatCompType.EcoatRef)); 
+      myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat on reference point (Daily updated): " + STR(EcoatCompType.EcoatDaily)); 
+
+      r := (EcoatCompPoints.EcoatValues[pointNo] - EcoatCompColor.EcoatCalib) + 
+           (EcoatCompType.EcoatDaily - EcoatCompType.EcoatRef);
+   END_IF;
+   
+   RETURN r;
+END_ROUTINE
+
+ROUTINE SetAndCheckFilmThickness(point : TRcuPacMeasurePoint; 
+                                 filmThickness : REAL)
+   VAR
+      rCorr            : REAL := 0;
+      iErrorCounterIdx : INT  := 1;
+   END_VAR
+
+   point.rFilmThickness := filmThickness;
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Measure value from PTP: " + STR(point.rFilmThickness)); 
+
+   IF point.rFilmThickness <> cPacFilmThicknessNotValid THEN
+      IF ((point.iPointNo>0) AND (point.iPointNo<=cPacMaxNoOfPoints)) THEN
+        myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat compensation factor: " + STR(EcoatCompColor.EcoatFactor)); 
+        myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat compensation offset: " + STR(EcoatCompColor.EcoatOffset)); 
+        
+        rCorr := ((EcoatCompColor.EcoatFactor *GetEcoatDiff(point.iPointNo) + EcoatCompColor.EcoatOffset));
+      END_IF;
+   END_IF;
+
+   myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Ecoat compensation value:                " + STR(rCorr)); 
+
+   point.rFilmThickness := point.rFilmThickness - rCorr;
+   
+   myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: Compensated value:                        " + STR(point.rFilmThickness)); 
+
+   
+   IF TornadoLine.bEnable THEN
+      iErrorCounterIdx := GetErrorCounterIndex(TornadoLine, point.Coord);
+   END_IF;
+
+   IF point.rFilmThickness = cPacFilmThicknessNotValid THEN
+      IF IS_MAPPED(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsError) THEN
+         ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsError := BYTE(INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsError) + 1);
+
+         IF INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsError) <= cResultDataMaxNoOfPoints THEN
+            ErrorCounts.PointsError[INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsError)] := point.iPointNo;            
+         END_IF;
+         
+         myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: ErrorCounts.iPointsError is incremented. (" + STR(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsError) + ")"); 
+      END_IF;
+   ELSIF (Limits.rThicknMinError <> cPacMeasureLimitUndefined) AND (point.rFilmThickness <= Limits.rThicknMinError)  THEN   
+      IF IS_MAPPED(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsUnderThicknMin) THEN
+         ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsUnderThicknMin := BYTE(INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsUnderThicknMin) + 1);
+
+         IF INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsUnderThicknMin) <= cResultDataMaxNoOfPoints THEN
+            ErrorCounts.PointsUnderThicknMin[INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsUnderThicknMin)] := point.iPointNo;            
+         END_IF;
+
+         myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: ErrorCounts.iPointsUnderThicknMin is incremented. (" + STR(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsUnderThicknMin) + ")"); 
+      END_IF;
+   ELSIF (Limits.rThicknMaxError <> cPacMeasureLimitUndefined) AND (point.rFilmThickness >= Limits.rThicknMaxError) THEN
+      IF IS_MAPPED(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsAboveThicknMax) THEN
+         ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsAboveThicknMax := BYTE(INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsAboveThicknMax) + 1);
+
+         IF INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsAboveThicknMax) <= cResultDataMaxNoOfPoints THEN
+            ErrorCounts.PointsOverThicknMax[INT(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsAboveThicknMax)] := point.iPointNo;            
+         END_IF;
+
+         myRobot.DebugPrint(eTracePaintChecker, "PAC measure data: ErrorCounts.iPointsAboveThicknMax is incremented. (" + STR(ErrorCounts.ErrorCounters[iErrorCounterIdx].iPointsAboveThicknMax) + ")"); 
+      END_IF;
+   END_IF;                                 
+END_ROUTINE
+
+ROUTINE GetErrorCounterIndex(tornadoLine : TRcuPacTornadoLine; coords : TRcuPositionCart) : INT
+   VAR
+      m       : REAL;
+      n       : REAL;
+      idx     : INT := 1;
+      zOnLine : REAL; 
+   END_VAR
+   
+   IF tornadoLine.EndPoint.mValues[0] - tornadoLine.StartPoint.mValues[0] <> 0 THEN
+      m := (tornadoLine.EndPoint.mValues[2] - tornadoLine.StartPoint.mValues[2]) / (tornadoLine.EndPoint.mValues[0] - tornadoLine.StartPoint.mValues[0]);
+      n := tornadoLine.EndPoint.mValues[2] - m * tornadoLine.EndPoint.mValues[0];
+      
+      zOnLine := m * coords.frame.mPos.mValues[0] + n;
+      
+      IF coords.frame.mPos.mValues[2] >= zOnLine THEN
+        idx := 2;
+      ELSE
+        idx := 1;
+      END_IF;
+   END_IF;
+   
+   RETURN idx;   
+END_ROUTINE

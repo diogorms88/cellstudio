@@ -1,0 +1,755 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2017 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuDataRecorder.tts                                         *
+*   Description: Send events with data to be recorded by DataRecorder         *
+*-----------------------------------------------------------------------------*)
+
+//***************************************************************************************
+// Constants
+CONSTANT PRIVATE
+   cMaxBoolMachProtocol      : INT := 3;
+   cMaxIntMachProtocol       : INT := 3;
+   cMaxDintMachProtocol      : INT := 3;
+   cMaxRealMachProtocol      : INT := 6;
+   cMaxWordMachProtocol      : INT := 1;
+   cMaxDwordMachProtocol     : INT := 1;
+   cMaxStringMachProtocol    : INT := 1;
+   
+   cMaxBoolCyclicValues      : INT := 10;
+   cMaxIntCyclicValues       : INT := 5;
+   cMaxDintCyclicValues      : INT := 5;
+   cMaxRealCyclicValues      : INT := 10;
+   cMaxRealTcpValues         : INT := 8;
+END_CONSTANT
+
+//***************************************************************************************
+// Types  
+TYPE GLOBAL
+  TCyclicBoolSig : (eBool_HandlerSwitch1, eBool_HandlerSwitch2, eBool_HandlerSwitch3, eBool_HandlerSwitch4, eBool_NotUsed5,
+                    eBool_NotUsed6, eBool_NotUsed7, eBool_NotUsed8, eBool_NotUsed9, eBool_NotUsed10); 
+                    
+  TCyclicIntSig : (eInt_NotUsed1, eInt_NotUsed2, eInt_NotUsed3, eInt_NotUsed4, eInt_NotUsed5);
+                    
+  TCyclicDintSig : (eDint_HandlerSensor1, eDint_HandlerSensor2, eDint_NotUsed3, eDint_NotUsed4, eDint_NotUsed5);                  
+                    
+  TCyclicRealSig : (eReal_PosJoint1, eReal_PosJoint2, eReal_PosJoint3, eReal_PosJoint4, eReal_PosJoint5,
+                    eReal_PosJoint6, eReal_PosJoint7, eReal_PosJoint8, eReal_PosJoint9, eReal_PosJoint10);
+                    
+  TTcpValue : (eReal_TcpPosX, eReal_TcpPosY, eReal_TcpPosZ, eReal_TcpPosA, eReal_TcpPosB, eReal_TcpPosC, eReal_TcpVeloSet, eReal_TcpVeloAct);
+END_TYPE
+
+TYPE PRIVATE
+  tsBoolParam : STRUCT
+     diIdent : DINT;
+     bValue  : BOOL;
+  END_STRUCT;
+  tsBoolParams : STRUCT 
+    iNr : INT;
+    y : ARRAY [cMaxBoolMachProtocol] OF tsBoolParam;
+  END_STRUCT;
+  
+  tsIntParam : STRUCT 
+    diIdent : DINT;
+    iValue  : INT;
+  END_STRUCT;
+  tsIntParams : STRUCT 
+    iNr : INT;
+    y   : ARRAY [cMaxIntMachProtocol] OF tsIntParam;
+  END_STRUCT;
+  
+  tsDintParam : STRUCT 
+    diIdent : DINT;
+    diValue : DINT;
+  END_STRUCT;
+  tsDintParams : STRUCT 
+    iNr : INT;
+    y : ARRAY [cMaxDintMachProtocol] OF tsDintParam;
+  END_STRUCT;
+  
+  tsRealParam : STRUCT 
+    diIdent : DINT;
+    rValue  : REAL;
+  END_STRUCT;
+  tsRealParams : STRUCT 
+    iNr : INT;
+    y   : ARRAY [cMaxRealMachProtocol] OF tsRealParam;
+  END_STRUCT;
+   
+  tsWordParam : STRUCT 
+    diIdent : DINT;
+    wValue  : WORD;
+  END_STRUCT;
+  tsWordParams : STRUCT 
+    iNr : INT;
+    y   : ARRAY [cMaxWordMachProtocol] OF tsWordParam;
+  END_STRUCT; 
+  
+  tsDwordParam : STRUCT 
+    diIdent : DINT;
+    dwValue : DWORD;
+  END_STRUCT;
+  tsDwordParams : STRUCT 
+    iNr : INT;
+    y   : ARRAY [cMaxDwordMachProtocol] OF tsDwordParam;
+  END_STRUCT;
+   
+  tsStringParam : STRUCT 
+    diIdent : DINT;
+    zValue  : STRING;
+  END_STRUCT;
+  tsStringParams : STRUCT 
+    iNr : INT;
+    y   : ARRAY [cMaxStringMachProtocol] OF tsStringParam;
+  END_STRUCT;
+  
+  tsEventMachProtocol : STRUCT
+     iRcuNr            : INT;
+     iBodyID           : LINT;
+     iEventComp        : INT;
+     iEventNr          : INT;
+     sBoolParams       : tsBoolParams;
+     sIntParams        : tsIntParams;
+     sDintParams       : tsDintParams;
+     sRealParams       : tsRealParams;
+     sWordParams       : tsWordParams;
+     sDwordParams      : tsDwordParams;
+     sStringParams     : tsStringParams;
+  END_STRUCT;  
+  
+  tsCyclicValues : STRUCT
+     yBool : ARRAY [cMaxBoolCyclicValues] OF BOOL;
+     yInt  : ARRAY [cMaxIntCyclicValues]  OF INT;
+     yDint : ARRAY [cMaxDintCyclicValues] OF DINT;
+     yReal : ARRAY [cMaxRealCyclicValues] OF REAL;
+     yTcp  : ARRAY [cMaxRealTcpValues] OF REAL;  
+  END_STRUCT;
+  
+  TEventNr : (eEv_Nr_Mastering:=1, eEv_Nr_BrakeTest:=10, eEv_Nr_Vision:=20, eEv_Nr_BeginProg:=100, eEv_Nr_EndProg:=101, eEv_Nr_WaitConv:=102, eEv_Nr_ObjectFrame:=103, eEv_Nr_ToolFrame:=104);
+                 
+  TSignal_IDs : (eID_Int_Axis:=110, 
+                 eID_Bool_Ok:=400,       eID_Real_Offset:=401, eID_Real_Diff:=402, eID_Bool_Manual:=403, eID_Bool_Relative:=404,
+                 eID_Real_Distance:=501, eID_StringName:=506, 
+                 eID_Real_ValX:=800,     eID_Real_ValY:=801,   eID_Real_ValZ:=802, eID_Real_ValA:=803,   eID_Real_ValB:=804,     eID_Real_ValC:=805);                                 
+END_TYPE
+
+//***************************************************************************************
+// Variables
+VAR PRIVATE
+   locKin           : MAPTO TRcuKinematic;
+   diBodyID         : MAPTO DINT;
+   event            : MAPTO tsEventMachProtocol;
+   bInterfaceMapped : BOOL;
+   sCyclicValues    : MAPTO tsCyclicValues;
+   sLastProgName    : STRING;
+END_VAR
+
+
+(*---------------------------------------------------------------------------------------
+Send the value of a boolean signal to data recorder. 
+Up to 10 boolean values a possible. These values are recorded cyclical
+
+Signal-Nr:    Usage:     
+-----------------------------------------------------------------------------------------
+ 0            HandlerSwitch1
+ 1            HandlerSwitch2
+ 2            HandlerSwitch3
+ 3            HandlerSwitch4
+ 4            Not used
+ 5            Not used
+ 6            Not used
+ 7            Not used
+ 8            Not used
+ 9            Not used
+*)			
+ROUTINE RecCyclicBool(VAR_IN signalID : TCyclicBoolSig; signal : BOOL)
+
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSIF (signalID >= cMaxBoolCyclicValues) THEN
+     RETURN;
+  ELSE
+     sCyclicValues.yBool[signalID] := UPDATE(signal);
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send the value of a integer signal to data recorder. 
+Up to 5 integer values a possible. These values are recorded cyclical
+
+Signal-Nr:    Usage:     
+-----------------------------------------------------------------------------------------
+ 0            Not used
+ 1            Not used
+ 2            Not used
+ 3            Not used
+ 4            Not used
+*)
+ROUTINE RecCyclicInt(VAR_IN signalID : TCyclicIntSig; signal : INT)
+ VAR
+   chg : BOOL;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSIF (signalID >= cMaxIntCyclicValues) THEN
+     RETURN;
+  ELSE
+     chg := IS_CHANGED(signal);
+     WHILE TRUE DO
+       sCyclicValues.yInt[signalID] := signal;    
+       WAIT chg;
+       chg := FALSE;
+     END_WHILE;
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send the value of a double integer signal to data recorder. 
+Up to 5 double integer values a possible. These values are recorded cyclical
+
+Signal-Nr:    Usage:     
+-----------------------------------------------------------------------------------------
+ 0            HandlerSensor1
+ 1            HandlerSensor2
+ 2            Not used
+ 3            Not used
+ 4            Not used
+*)
+ROUTINE RecCyclicDint(VAR_IN signalID : TCyclicDintSig; signal : DINT)
+ VAR
+   chg : BOOL;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSIF (signalID >= cMaxIntCyclicValues) THEN
+     RETURN;
+  ELSE
+     chg := IS_CHANGED(signal);
+     WHILE TRUE DO
+       sCyclicValues.yDint[signalID] := signal;    
+       WAIT chg;
+       chg := FALSE;
+     END_WHILE;
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send the value of a float signal to data recorder. 
+Up to 10 real values a possible. These values are recorded cyclical
+
+Signal-Nr:    Usage:     
+-----------------------------------------------------------------------------------------
+ 0            Joint 1
+ 1            Joint 2
+ 2            Joint 3
+ 3            Joint 4
+ 4            Joint 5
+ 5            Joint 6
+ 6            Joint 7
+ 7            Joint 8
+ 8            Joint 9
+ 9            Joint 10
+*)
+ROUTINE RecCyclicReal(VAR_IN signalID : TCyclicRealSig; signal : REAL)
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSIF (signalID >= cMaxRealCyclicValues) THEN
+     RETURN;
+  ELSE
+     WHILE TRUE DO
+       sCyclicValues.yReal[signalID] := signal;    
+       locKin.WaitMcMicroCycles(1);
+     END_WHILE;
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send the value of a float signal to data recorder. 
+Up to 10 real values a possible. These values are recorded cyclical
+
+Signal-Nr:    Usage:     
+-----------------------------------------------------------------------------------------
+ 0            Joint 1
+ 1            Joint 2
+ 2            Joint 3
+ 3            Joint 4
+ 4            Joint 5
+ 5            Joint 6
+ 6            Joint 7
+ 7            Joint 8
+ 8            Joint 9
+ 9            Joint 10
+*)
+ROUTINE RecTcpValue(VAR_IN signalID : TTcpValue; signal : REAL)
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSIF (signalID >= cMaxRealTcpValues) THEN
+     RETURN;
+  ELSE
+     WHILE TRUE DO
+       sCyclicValues.yTcp[signalID] := signal;    
+       locKin.WaitMcMicroCycles(1);
+     END_WHILE;
+  END_IF;
+END_ROUTINE
+
+
+
+(*---------------------------------------------------------------------------------------
+Send vision frame to data recorder
+
+TYPE:    Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+Vision   1100      20        Ok             400       BOOL
+                             Relative       404       BOOL
+                             X              800       REAL
+                             Y              801       REAL
+                             Z              802       REAL
+                             A              803       REAL
+                             B              804       REAL
+                             C              805       REAL
+*)			
+ROUTINE RecVisionData(dataRelative : BOOL; dataOk : BOOL; data : TMcuFrame)
+ VAR
+   eventData : tsEventMachProtocol;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //Boolean values
+     eventData.sBoolParams.iNr          := 0;
+     //BOOL-Nr. 1 - Data OK
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].diIdent := eID_Bool_Ok;
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].bValue  := dataOk;
+     eventData.sBoolParams.iNr          := 1;
+     //BOOL-Nr. 2 - Data Relative
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].diIdent := eID_Bool_Relative;
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].bValue  := dataRelative;
+     eventData.sBoolParams.iNr          := 2;
+     
+     //Float values
+     eventData.sRealParams.iNr          := 0;
+     //REAL-Nr. 1 - Displacement X
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValX;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := data.mPos.mValues[0];
+     eventData.sRealParams.iNr          := 1;
+     //REAL-Nr. 2 - Displacement Y
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValY;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := data.mPos.mValues[1];
+     eventData.sRealParams.iNr          := 2;
+     //REAL-Nr. 3 - Displacement Z
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValZ;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := data.mPos.mValues[2];
+     eventData.sRealParams.iNr          := 3;
+     //REAL-Nr. 4 - Displacement A
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValA;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := data.mOri.mValues[0];
+     eventData.sRealParams.iNr          := 4;
+     //REAL-Nr. 5 - Displacement B
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValB;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := data.mOri.mValues[1];
+     eventData.sRealParams.iNr          := 5;
+     //REAL-Nr. 6 - Displacement C
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValC;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := data.mOri.mValues[2];
+     eventData.sRealParams.iNr          := 6;
+     
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     eventData.iEventNr       := eEv_Nr_Vision;
+     
+     SET_EVENT(event, eventData);
+     locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - Vision - DataOk=" + STR(eventData.sBoolParams.y[0].bValue) + " Relative=" + STR(eventData.sBoolParams.y[1].bValue) +     
+                                   " [" + RealToStr(eventData.sRealParams.y[0].rValue,6) + " " + RealToStr(eventData.sRealParams.y[1].rValue,6) + " " + RealToStr(eventData.sRealParams.y[2].rValue,6) + "]" +
+                                   " [" + RealToStr(eventData.sRealParams.y[3].rValue,6) + " " + RealToStr(eventData.sRealParams.y[4].rValue,6) + " " + RealToStr(eventData.sRealParams.y[5].rValue,6) + "]");
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send brake test result to data recorder
+
+TYPE:         Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+Brake test    1100      10        Ok             400       BOOL
+                                  Axis-Nr.       110       INT
+*)			
+ROUTINE RecBrakeTest(axisNr : INT; testOk : BOOL)
+ VAR
+   eventData : tsEventMachProtocol;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //Boolean values
+     eventData.sBoolParams.iNr          := 0;
+     //BOOL-Nr. 1 - Data OK
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].diIdent := eID_Bool_Ok;
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].bValue  := testOk;
+     eventData.sBoolParams.iNr          := 1;
+     
+     //Integer values
+     eventData.sIntParams.iNr           := 0;
+     //INT-Nr. 1 - Axis-Nr.
+     eventData.sIntParams.y[eventData.sIntParams.iNr].diIdent   := eID_Int_Axis;
+     eventData.sIntParams.y[eventData.sIntParams.iNr].iValue    := axisNr;
+     eventData.sIntParams.iNr           := 1; 
+     
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     eventData.iEventNr       := eEv_Nr_BrakeTest;
+     
+     SET_EVENT(event, eventData);
+     locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - BrakeTest - ResultOk=" + STR(eventData.sBoolParams.y[0].bValue) + " AxisNr=" + STR(eventData.sIntParams.y[0].iValue));
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send information about mastering to data recorder
+
+TYPE:         Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+Mastering     1100      01        Manual (T1)    403       BOOL
+                                  Axis-Nr.       110       INT
+                                  Offset         401       REAL
+                                  Difference     402       REAL
+*)			
+ROUTINE RecAxisMastering(axisNr : INT; auto : BOOL; offset : REAL; diff : REAL)
+ VAR
+   eventData : tsEventMachProtocol;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //Boolean values
+     eventData.sBoolParams.iNr          := 0;
+     //BOOL-Nr. 1 - Data OK
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].diIdent := eID_Bool_Manual;
+     eventData.sBoolParams.y[eventData.sBoolParams.iNr].bValue  := NOT auto;
+     eventData.sBoolParams.iNr          := 1;
+     
+     //Integer values
+     eventData.sIntParams.iNr           := 0;
+     //INT-Nr. 1 - Axis-Nr.
+     eventData.sIntParams.y[eventData.sIntParams.iNr].diIdent   := eID_Int_Axis;
+     eventData.sIntParams.y[eventData.sIntParams.iNr].iValue    := axisNr;
+     eventData.sIntParams.iNr           := 1; 
+     
+     //Float values
+     eventData.sRealParams.iNr          := 0;
+     //REAL-Nr. 1 - Mastering offset
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_Offset;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := offset;
+     eventData.sRealParams.iNr          := 1;
+     //REAL-Nr. 2 - Difference to last reference
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_Diff;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := diff;
+     eventData.sRealParams.iNr          := 2;
+     
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     eventData.iEventNr       := eEv_Nr_Mastering;
+     
+     SET_EVENT(event, eventData);
+     locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - Mastering - Manual=" + STR(eventData.sBoolParams.y[0].bValue) + " AxisNr=" + STR(eventData.sIntParams.y[0].iValue) +
+                                   " Offset=" + RealToStr(eventData.sRealParams.y[0].rValue,6) + " Difference=" + RealToStr(eventData.sRealParams.y[1].rValue,6));
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send program name to data recorder
+
+TYPE:         Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+Program name  1100      100       BeginProg      506       STRING
+                        101       EndProg        506       STRING
+*)			
+ROUTINE RecProgramName(beginProg : BOOL; name : STRING[128])
+ VAR
+   eventData : tsEventMachProtocol;
+   progName  : STRING;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //cut leading "kinx." from string
+     progName := name;
+     IF (StrLeft(progName, 3) = "kin") THEN
+         progName := StrDelete(progName, StrFind(progName, "."), 1);
+     END_IF;
+     //check if last prog name is empty -- if not the event for ending of last program wasn't set
+     IF (sLastProgName <> "") AND (beginProg OR (progName <> sLastProgName)) THEN
+        //String values
+        eventData.sStringParams.iNr          := 0;
+        //STRING-Nr. 1 - Program name
+        eventData.sStringParams.y[eventData.sStringParams.iNr].diIdent := eID_StringName;
+        eventData.sStringParams.y[eventData.sStringParams.iNr].zValue  := sLastProgName;
+        eventData.sStringParams.iNr          := 1;           
+        //event data
+        eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+        eventData.iBodyID        := diBodyID;
+        eventData.iEventComp     := 1100;
+        eventData.iEventNr       := eEv_Nr_EndProg;
+        SET_EVENT(event, eventData);
+        locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - Generated EndProg - Programmname=" + eventData.sStringParams.y[0].zValue);
+        sLastProgName            := "";        
+     END_IF;
+        
+     //String values
+     eventData.sStringParams.iNr          := 0;
+     //STRING-Nr. 1 - Program name
+     eventData.sStringParams.y[eventData.sStringParams.iNr].diIdent := eID_StringName;
+     eventData.sStringParams.y[eventData.sStringParams.iNr].zValue  := progName;
+     eventData.sStringParams.iNr          := 1;
+      
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     IF beginProg THEN
+        eventData.iEventNr := eEv_Nr_BeginProg;
+        sLastProgName      := progName;
+        locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - BeginProg - Programmname=" + eventData.sStringParams.y[0].zValue);
+     ELSE
+        eventData.iEventNr := eEv_Nr_EndProg;
+        sLastProgName      := "";
+        locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - EndProg - Programmname=" + eventData.sStringParams.y[0].zValue);
+     END_IF; 
+     SET_EVENT(event, eventData);
+     
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send value of wait conveyor to data recorder
+
+TYPE:          Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+WaitConveyor   1100      102       Distance       501       REAL
+*)			
+ROUTINE RecWaitConveyor(distance : REAL)
+ VAR
+   eventData : tsEventMachProtocol;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //Float values
+     eventData.sRealParams.iNr          := 0;
+     //REAL-Nr. 1 - Displacement X
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_Distance;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := distance;
+     eventData.sRealParams.iNr          := 1;
+          
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     eventData.iEventNr       := eEv_Nr_WaitConv;
+     
+     SET_EVENT(event, eventData);
+     locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - WaitConveyor - ConvVal=" + RealToStr(eventData.sRealParams.y[0].rValue,6));
+  END_IF;
+END_ROUTINE
+
+
+(*---------------------------------------------------------------------------------------
+Send frame of SET_OBJECT to data recorder
+
+TYPE:          Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+ObjectFrame    1100      103       Name           506       STRING
+                                   X              800       REAL
+                                   Y              801       REAL
+                                   Z              802       REAL
+                                   A              803       REAL
+                                   B              804       REAL
+                                   C              805       REAL
+*)			
+ROUTINE RecObject(name : STRING; frame : TMcuFrame)
+ VAR
+   eventData : tsEventMachProtocol;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //String values
+     eventData.sStringParams.iNr        := 0;
+     //STRING-Nr. 1 - Program name
+     eventData.sStringParams.y[eventData.sStringParams.iNr].diIdent := eID_StringName;
+     eventData.sStringParams.y[eventData.sStringParams.iNr].zValue  := name;
+     eventData.sStringParams.iNr        := 1;
+     //Float values
+     eventData.sRealParams.iNr          := 0;
+     //REAL-Nr. 1 - Displacement X
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValX;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mPos.mValues[0];
+     eventData.sRealParams.iNr          := 1;
+     //REAL-Nr. 2 - Displacement Y
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValY;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mPos.mValues[1];
+     eventData.sRealParams.iNr          := 2;
+     //REAL-Nr. 3 - Displacement Z
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValZ;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mPos.mValues[2];
+     eventData.sRealParams.iNr          := 3;
+     //REAL-Nr. 4 - Displacement A
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValA;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mOri.mValues[0];
+     eventData.sRealParams.iNr          := 4;
+     //REAL-Nr. 5 - Displacement B
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValB;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mOri.mValues[1];
+     eventData.sRealParams.iNr          := 5;
+     //REAL-Nr. 6 - Displacement C
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValC;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mOri.mValues[2];
+     eventData.sRealParams.iNr          := 6;
+     
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     eventData.iEventNr       := eEv_Nr_ObjectFrame;
+     
+     SET_EVENT(event, eventData);
+     locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - OBJECT - Name=" + eventData.sStringParams.y[0].zValue +     
+                                   " [" + RealToStr(eventData.sRealParams.y[0].rValue,6) + " " + RealToStr(eventData.sRealParams.y[1].rValue,6) + " " + RealToStr(eventData.sRealParams.y[2].rValue,6) + "]" +
+                                   " [" + RealToStr(eventData.sRealParams.y[3].rValue,6) + " " + RealToStr(eventData.sRealParams.y[4].rValue,6) + " " + RealToStr(eventData.sRealParams.y[5].rValue,6) + "]");
+  END_IF;
+END_ROUTINE
+
+(*---------------------------------------------------------------------------------------
+Send frame of SET_TOOL to data recorder
+
+TYPE:          Comp:     ID:       Signal:        ID:       Type:
+-----------------------------------------------------------------------------------------
+ToolFrame      1100      104       Name           506       STRING
+                                   X              800       REAL
+                                   Y              801       REAL
+                                   Z              802       REAL
+                                   A              803       REAL
+                                   B              804       REAL
+                                   C              805       REAL
+*)			
+ROUTINE RecTool(name : STRING; frame : TMcuFrame)
+ VAR
+   eventData : tsEventMachProtocol;
+ END_VAR
+ 
+  IF NOT bInterfaceMapped THEN
+     RETURN;
+  ELSE
+     //String values
+     eventData.sStringParams.iNr        := 0;
+     //STRING-Nr. 1 - Program name
+     eventData.sStringParams.y[eventData.sStringParams.iNr].diIdent := eID_StringName;
+     eventData.sStringParams.y[eventData.sStringParams.iNr].zValue  := name;
+     eventData.sStringParams.iNr        := 1;
+     //Float values
+     eventData.sRealParams.iNr          := 0;
+     //REAL-Nr. 1 - Displacement X
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValX;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mPos.mValues[0];
+     eventData.sRealParams.iNr          := 1;
+     //REAL-Nr. 2 - Displacement Y
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValY;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mPos.mValues[1];
+     eventData.sRealParams.iNr          := 2;
+     //REAL-Nr. 3 - Displacement Z
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValZ;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mPos.mValues[2];
+     eventData.sRealParams.iNr          := 3;
+     //REAL-Nr. 4 - Displacement A
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValA;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mOri.mValues[0];
+     eventData.sRealParams.iNr          := 4;
+     //REAL-Nr. 5 - Displacement B
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValB;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mOri.mValues[1];
+     eventData.sRealParams.iNr          := 5;
+     //REAL-Nr. 6 - Displacement C
+     eventData.sRealParams.y[eventData.sRealParams.iNr].diIdent := eID_Real_ValC;
+     eventData.sRealParams.y[eventData.sRealParams.iNr].rValue  := frame.mOri.mValues[2];
+     eventData.sRealParams.iNr          := 6;
+     
+     //event data
+     eventData.iRcuNr         := gyiNrRcu[locKin.kinListInx];
+     eventData.iBodyID        := diBodyID;
+     eventData.iEventComp     := 1100;
+     eventData.iEventNr       := eEv_Nr_ToolFrame;
+     
+     SET_EVENT(event, eventData);
+     locKin.logger.SetProtocolText("TRcuDataRecorder", "SET_EVENT - TOOL - Name=" + eventData.sStringParams.y[0].zValue +     
+                                   " [" + RealToStr(eventData.sRealParams.y[0].rValue,6) + " " + RealToStr(eventData.sRealParams.y[1].rValue,6) + " " + RealToStr(eventData.sRealParams.y[2].rValue,6) + "]" +
+                                   " [" + RealToStr(eventData.sRealParams.y[3].rValue,6) + " " + RealToStr(eventData.sRealParams.y[4].rValue,6) + " " + RealToStr(eventData.sRealParams.y[5].rValue,6) + "]");
+  END_IF;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------
+//Startup
+ROUTINE Create(myKin : TRcuKinematic) 
+
+  locKin := MAP(myKin);
+  IF NOT IS_MAPPED(locKin) THEN
+     PRINT("DataRecorder -");
+     PRINT("DataRecorder - Kinematic for data recorder not mapped --> recording values/events not possible !!!");
+     PRINT("DataRecorder -");
+     RETURN;
+  END_IF;
+  
+  diBodyID := MAPX(cSV_SlaveBodyID[locKin.kinListInx]);
+  IF NOT IS_MAPPED(diBodyID) THEN
+     PRINT("DataRecorder -");
+     PRINT("DataRecorder - BodyID=" + cSV_SlaveBodyID[locKin.kinListInx] + " for data recorder not mapped --> recording values/events not possible !!!");
+     PRINT("DataRecorder -");
+     RETURN;    
+  END_IF;
+  
+  sCyclicValues := MAPX(cSV_CyclicValuesDataRecorder[locKin.kinListInx]);
+  IF NOT IS_MAPPED(sCyclicValues) THEN
+     PRINT("DataRecorder -");
+     PRINT("DataRecorder - Cyclic values=" + cSV_CyclicValuesDataRecorder[locKin.kinListInx] + " for data recorder not mapped --> recording values/events not possible !!!");
+     PRINT("DataRecorder -");
+     RETURN;    
+  END_IF;
+  
+  WAIT (gyiNrRcu[locKin.kinListInx] > 0);
+  
+  event := MAPX(cSV_EventDataRecorder);
+  IF NOT IS_MAPPED(event) THEN
+     PRINT("DataRecorder -");
+     PRINT("DataRecorder - Event data=" + cSV_EventDataRecorder + " for data recorder not mapped --> recording values/events not possible !!!");
+     PRINT("DataRecorder -");
+     RETURN;
+  END_IF;
+  
+  bInterfaceMapped := TRUE;
+ 
+END_ROUTINE

@@ -1,0 +1,295 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuLogger.tts                                               *
+*   Description: Cyclic loggers shown on teachview and written to files       *
+*-----------------------------------------------------------------------------*
+*   07.09.06 BIT: 
+*)
+(******************************************************************************
+***  Constant *****************************************************************
+******************************************************************************)
+CONSTANT GLOBAL
+  cMaxLoggers       : SINT   := 3;                               //Amount of loggers
+  cMaxLogSteps      : INT    := 50;                              //Amount of logsteps
+END_CONSTANT
+
+CONSTANT PRIVATE
+  cMaxLogFiles      : INT    := 5;                               //build X logfile before first one would be overwritten
+  cMaxSizePerFile   : DINT   := 1000000;                         //size of one log-file => 1MB
+  cCyleTime         : INT    := 100;                             //update time of a step every 100ms
+END_CONSTANT
+
+(******************************************************************************
+***  Types ********************************************************************
+******************************************************************************)
+TYPE PRIVATE
+   tLogField : STRUCT
+     sText   : STRING;
+     rTime   : REAL;
+   END_STRUCT;
+   
+   tLogger   : STRUCT
+     sName               : STRING := "not active";
+     yLogSteps           : ARRAY [cMaxLogSteps] OF tLogField;
+     bInProgress         : BOOL;
+     bTimeOut            : BOOL;
+     iLogStep            : INT;
+     sOldLogText         : STRING;
+   END_STRUCT;  
+   
+   tsEventProtocolData : STRUCT
+     iBodyID           : LINT;
+     sFUname           : STRING[32];
+     sLocation         : STRING[64];
+     sMessage          : STRING[255];
+   END_STRUCT;
+  
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  bLoggingActive    : BOOL;
+  bCfgRead          : BOOL;
+  iUsedLoggers      : INT;
+  yLogger           : ARRAY [cMaxLoggers] OF tLogger;
+  myRobot           : MAPTO TRcuRobot;
+  event             : MAPTO tsEventProtocolData;
+  dwBodyID          : MAPTO DINT;
+  bInitProtocolDone : BOOL;
+END_VAR
+
+(******************************************************************************
+*** Start one logger if free and get token (Token=0 no free logger) ***********
+******************************************************************************)
+ROUTINE ActivateLogger(sName : STRING; locKinematic : TRcuKinematic) : INT
+ VAR
+  j      : DINT;
+  sPath  : STRING;
+  sFile  : STRING;
+  bFound : BOOL;
+ END_VAR
+   
+   IF NOT IS_MAPPED(myRobot) THEN
+      myRobot := MAP(PaintRobot[locKinematic.kinListInx]);
+   END_IF;
+   IF NOT bCfgRead THEN                        //read cfg-file only one time
+      IF CatalogReadInt(giRcBaseHdl, "activateLogging", j, TRUE) THEN
+         bLoggingActive := (j=1);
+      END_IF;
+      IF CatalogReadString(giSysBaseHdl, "rootPath", sPath, FALSE) THEN
+         sPath := sPath + "protocol/log/";
+      ELSE  
+         sPath := "c:/Control/protocol/log/";
+      END_IF;
+      bCfgRead := TRUE;
+   END_IF; 
+   IF NOT IS_MAPPED(event) THEN
+      event := MAPX(cSV_EventProtocol);
+      IF NOT IS_MAPPED(event) THEN
+         PRINT("!!! Mapping of IEC EVENT for writing protocols failed !!!");
+         bLoggingActive := FALSE;
+      ELSE   
+         //delete old logfiles at bootup --> not needed any more
+         IF FileGetFirst(sPath, sFile) THEN
+            bFound := TRUE;
+            WHILE bFound DO
+               sPath  := sFile; 
+               bFound := FileGetNext (sFile, sFile);
+               IF (StrFind(sPath, "_Index.txt") > 0) OR (StrFind(sPath, "_Log_") > 0) THEN 
+                  IF FileDelete(sPath) THEN
+                     PRINT("Old log-file = " + sPath + " deleted");
+                  END_IF;
+               END_IF;
+            END_WHILE;
+         END_IF;
+      END_IF;
+   END_IF;
+   IF NOT IS_MAPPED(dwBodyID) THEN
+      dwBodyID := MAPX(cSV_SlaveBodyID[myRobot.kinListInx]);
+   END_IF;
+   IF (iUsedLoggers < cMaxLoggers) AND bLoggingActive THEN
+       yLogger[iUsedLoggers].bInProgress := TRUE;
+       yLogger[iUsedLoggers].sName := sName;        //if logging active, not all used
+       START Logger(iUsedLoggers);                  //start endless loop for one logger
+       iUsedLoggers := iUsedLoggers + 1;
+       RETURN iUsedLoggers;
+   ELSIF NOT bLoggingActive  THEN                   //logging not active
+       RETURN 0;
+   ELSE
+      RcuSetMessageOnce(TRcuLogger_InfNoFreeToken, myRobot.kinListInx, 1, 0, "TRcuLogger.ActivateLogger");
+      RETURN 0;                                     //all loggers are used
+   END_IF;   
+END_ROUTINE  
+
+(******************************************************************************
+*** logger function (one logger) **********************************************
+******************************************************************************)
+ROUTINE Logger(iLogNumber : INT) PRIVATE
+ VAR
+   iMyNumber         : INT;      //local number of this logger
+   sFilePath         : STRING; 
+   iLen              : DINT;     //lenght of one line
+   I                 : DINT;     //counter
+   J                 : INT;
+   bChgStep          : BOOL;     //new logstep was added
+   bNewStep          : BOOL;     //new logstep is set
+   iActTime          : LINT;     //actual time
+   iStartTime        : LINT;     //start of a new step
+   sChr              : STRING;
+   sLogString        : STRING;
+   
+   iFigure           : DINT;
+   iTempStep         : INT;
+ END_VAR
+ 
+ iMyNumber := iLogNumber;  
+ WAIT myRobot.initRobComplete;      //wait until the robotcofig is read
+ 
+ //--------- cyclic logger -----------------------------------------------------------------------------
+ bChgStep := IS_CHANGED(yLogger[iMyNumber].iLogStep);
+ yLogger[iMyNumber].bInProgress := FALSE;
+ WHILE TRUE DO
+    WAIT bChgStep OR yLogger[iMyNumber].bTimeOut;     //Wait until new logstep or steptime has changed
+    IF bChgStep THEN                                  //separate timeupdate or new step
+       bNewStep := TRUE; 
+       bChgStep := FALSE;
+    END_IF;             
+    yLogger[iMyNumber].bTimeOut := FALSE;
+    
+    SysTimerGetUs(iActTime);                                           //Get systemtime in µs
+    iActTime := iActTime / 10000;                                      //cascade it to xxx,xx sec
+    IF bNewStep THEN
+       iStartTime := iActTime;                                         //starting time of this step
+    END_IF;
+    
+    IF (yLogger[iMyNumber].iLogStep = 0) THEN
+       yLogger[iMyNumber].yLogSteps[cMaxLogSteps-1].rTime := (iActTime - iStartTime) / 100.0;
+    ELSE
+      yLogger[iMyNumber].yLogSteps[yLogger[iMyNumber].iLogStep-1].rTime := (iActTime - iStartTime) / 100.0;
+    END_IF;
+    SysTimerSet(cCyleTime, yLogger[iMyNumber].bTimeOut);
+    bNewStep := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+    
+(******************************************************************************
+*** insert next step into logger **********************************************
+******************************************************************************)
+ROUTINE SetLoggerStep (iLogNumber : INT; sText : STRING)
+ 
+  START DoLoggerStep (iLogNumber, sText);
+  
+END_ROUTINE
+
+(******************************************************************************
+*** Map kinematic and IEC event to write protocols ****************************
+******************************************************************************)
+ROUTINE InitProtocol(CONST iRobot : DINT)
+  event := MAPX(cSV_EventProtocol);
+  IF NOT IS_MAPPED(event) THEN
+     PRINT("!!! Mapping of IEC EVENT for writing protocols failed !!!");
+     RETURN;
+  END_IF;
+
+  myRobot := MAP(PaintRobot[iRobot]);
+  IF NOT IS_MAPPED(myRobot) THEN
+     PRINT("!!! Mapping of PaintRobot for writing protocols failed !!!");
+     RETURN;
+  END_IF;
+  bInitProtocolDone := TRUE;
+END_ROUTINE
+
+(******************************************************************************
+*** print text direct to IEC protocol *****************************************
+******************************************************************************)
+ROUTINE SetProtocolText (sLocation : STRING; sText : STRING)
+ VAR
+  iRcuNr : INT;
+  data : tsEventProtocolData;
+ END_VAR
+ 
+  IF NOT bInitProtocolDone THEN
+     PRINT("!!! Init not done, unable to write protocols !!!");
+  ELSE
+     data.sFUname   := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]);
+     data.sLocation := sLocation;
+     data.sMessage  := sText;
+     SET_EVENT(event, data);
+  END_IF;
+END_ROUTINE
+
+(******************************************************************************
+*** insert next step into logger **********************************************
+******************************************************************************)
+ROUTINE DoLoggerStep (iLogNumber : INT; sText : STRING) PRIVATE
+ VAR
+   sLogText          : STRING;
+   sTime             : STRING;
+   iTime             : LINT;
+   sChr              : STRING;
+   str               : STRING[3];
+   I                 : DINT;
+   iLen              : DINT;
+   data              : tsEventProtocolData;
+ END_VAR  
+   
+  IF (iLogNumber < 1) OR NOT myRobot.initRobComplete THEN
+     RETURN;  //token not valid or init of robot is still running
+  END_IF;
+  
+  IF (sText = yLogger[iLogNumber - 1].sOldLogText) THEN  
+     RETURN;   //don't print the same string two times
+  ELSE
+     sLogText := sText;                            
+     yLogger[iLogNumber - 1].sOldLogText := sLogText;                       
+     WAIT NOT yLogger[iLogNumber - 1].bInProgress; //wait logger isn't used by others
+     yLogger[iLogNumber - 1].bInProgress := TRUE;  //block logger for others
+     
+     //enter log text
+     yLogger[iLogNumber - 1].yLogSteps[yLogger[iLogNumber - 1].iLogStep].sText := sLogText;
+     
+     //set event to IEC
+     IF IS_MAPPED(dwBodyID) THEN
+        data.iBodyID := dwBodyID;
+     ELSE
+        data.iBodyID := 0;
+     END_IF;
+     data.sFUname := "RCU" + STR(gyiNrRcu[myRobot.kinListInx]);
+     data.sLocation := yLogger[iLogNumber - 1].sName;
+     data.sMessage  := sLogText;
+     SET_EVENT(event, data);
+     
+     //Delete next logfield
+     IF (yLogger[iLogNumber - 1].iLogStep < (cMaxLogSteps-2)) THEN
+        yLogger[iLogNumber - 1].yLogSteps[yLogger[iLogNumber - 1].iLogStep + 1].sText := "";
+        yLogger[iLogNumber - 1].yLogSteps[yLogger[iLogNumber - 1].iLogStep + 1].rTime := 0.0;
+     ELSE
+        yLogger[iLogNumber - 1].yLogSteps[0].sText := "";
+        yLogger[iLogNumber - 1].yLogSteps[0].rTime := 0.0;
+     END_IF;
+     
+     IF (yLogger[iLogNumber - 1].iLogStep = (cMaxLogSteps-1)) THEN
+        yLogger[iLogNumber - 1].iLogStep := 0;     //check array-index
+     ELSE
+        yLogger[iLogNumber - 1].iLogStep := yLogger[iLogNumber - 1].iLogStep + 1;
+     END_IF;
+     
+     yLogger[iLogNumber - 1].bInProgress := FALSE;  //release logger for others
+  END_IF;
+  
+END_ROUTINE

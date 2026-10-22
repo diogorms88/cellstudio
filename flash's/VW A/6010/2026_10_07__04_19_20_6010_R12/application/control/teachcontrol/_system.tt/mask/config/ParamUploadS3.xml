@@ -1,0 +1,528 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       ParamUploadS3.xml                                           *
+*    Description: Saving *.par files of all sercos 3 devices                  *
+*    Changes:     -                                                           *
+*************************************************************************** -->
+
+<VIEW>
+
+   <MASKDEF maskkey="TeachView.mask.paramUploadS3" textdef="userTx" permissiondef="userMenuPermission"
+		         columns="572" height="3400" rows="1360" top="1" bottom="1" left="1" right="1"> 
+            
+      <GROUP key="paramUploadS3.group.saveall" col="1" row="1" columns="572" rows="35" cspan="572" rspan="35" top="1" bottom="1" left="1" right="1">
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.mSaveAll" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+                     key="paramUploadS3.button.savealldev" col="25" row="1" cspan="130" rspan="30"/>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.mSaveDrives" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+                     key="paramUploadS3.button.savealldrv" col="175" row="1" cspan="130" rspan="30"/>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.mSaveIOs" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+                     key="paramUploadS3.button.saveallIO" col="325" row="1" cspan="130" rspan="30"/>
+             <LABEL key="paramUploadS3.label.allParam" row="25" col="350" cspan="200" halign="right" rspan="10" valign="stretch"/>       
+             <CHECKBOX var="system.SV_S3ControlPanel.sDataParamSave.mSaveAllParam" vartype="SV" 
+                       enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV"
+	                   col="480" row="6" cspan="50" rspan="18" halign="stretch" valign="stretch"/>        
+      </GROUP>      
+
+      <GROUP col="1" row="35" columns="572" rows="11" cspan="572" rspan="11">
+             <LABEL key="paramUploadS3.label.InSim"      row="2" col="250" cspan="30" halign="stretch" rspan="8" valign="stretch"/>
+             <LABEL key="paramUploadS3.label.state"      row="2" col="320" cspan="30" halign="stretch" rspan="8" valign="stretch"/>
+      </GROUP>
+      
+      <GROUP col="1" row="45" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mShow" visiblevartype="SV">
+             <!-- Device 1 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[1].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[1].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[1].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice1" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="59" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mShow" visiblevartype="SV">
+             <!-- Device 2 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[2].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[2].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[2].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice2" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	             
+	    <GROUP col="1" row="73" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mShow" visiblevartype="SV">
+             <!-- Device 3 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[3].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[3].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[3].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice3" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>        
+	             
+	    <GROUP col="1" row="87" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mShow" visiblevartype="SV">
+             <!-- Device 4 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[4].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[4].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[4].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice4" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>         
+	             
+	    <GROUP col="1" row="101" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mShow" visiblevartype="SV">
+             <!-- Device 5 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[5].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[5].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[5].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice5" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>        
+	     
+      <GROUP col="1" row="115" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mShow" visiblevartype="SV">
+             <!-- Device 6 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[6].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[6].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[6].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice6" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="129" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mShow" visiblevartype="SV">
+             <!-- Device 7 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[7].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[7].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[7].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice7" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="143" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mShow" visiblevartype="SV">
+             <!-- Device 8 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[8].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[8].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[8].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice8" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="157" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mShow" visiblevartype="SV">
+             <!-- Device 9 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[9].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[9].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[9].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice9" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="171" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mShow" visiblevartype="SV">
+             <!-- Device 10 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[10].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[10].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[10].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice10" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="185" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mShow" visiblevartype="SV">
+             <!-- Device 11 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[11].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[11].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[11].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice11" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="199" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mShow" visiblevartype="SV">
+             <!-- Device 12 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[12].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[12].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[12].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice12" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="213" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mShow" visiblevartype="SV">
+             <!-- Device 13 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[13].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[13].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[13].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice13" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="227" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mShow" visiblevartype="SV">
+             <!-- Device 14 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[14].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[14].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[14].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice14" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="241" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mShow" visiblevartype="SV">
+             <!-- Device 15 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[15].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[15].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[15].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice15" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="255" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mShow" visiblevartype="SV">
+             <!-- Device 16 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[16].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[16].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[16].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice16" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="269" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mShow" visiblevartype="SV">
+             <!-- Device 17 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[17].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[17].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[17].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice17" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="283" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mShow" visiblevartype="SV">
+             <!-- Device 18 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[18].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[18].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[18].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice18" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="297" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mShow" visiblevartype="SV">
+             <!-- Device 19 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[19].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[19].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[19].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice19" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="311" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mShow" visiblevartype="SV">
+             <!-- Device 20 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[20].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[20].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[20].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice20" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+	    <GROUP col="1" row="325" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mShow" visiblevartype="SV">
+             <!-- Device 21 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[21].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[21].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[21].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice21" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+	    
+      <GROUP col="1" row="339" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mShow" visiblevartype="SV">
+             <!-- Device 22 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[22].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[22].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[22].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice22" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="353" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mShow" visiblevartype="SV">
+             <!-- Device 23 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[23].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[23].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[23].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice23" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="367" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mShow" visiblevartype="SV">
+             <!-- Device 24 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[24].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[24].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[24].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice24" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="381" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mShow" visiblevartype="SV">
+             <!-- Device 25 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[25].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[25].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[25].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice25" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="395" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mShow" visiblevartype="SV">
+             <!-- Device 26 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[26].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[26].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[26].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice26" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="409" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mShow" visiblevartype="SV">
+             <!-- Device 27 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[27].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[27].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[27].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice27" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="423" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mShow" visiblevartype="SV">
+             <!-- Device 28 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[28].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[28].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[28].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice28" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="437" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mShow" visiblevartype="SV">
+             <!-- Device 29 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[29].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[29].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[29].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice29" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+      <GROUP col="1" row="451" columns="572" rows="15" cspan="572" rspan="15" visiblevar="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mShow" visiblevartype="SV">
+             <!-- Device 30 -->
+	           <TEXTFIELD var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].zName" vartype="SV" enabled="true" col="15" row="3" cspan="200" rspan="10" halign="stretch"/>        
+             <CHECKBOX var="system.SV_System2HMI.sS3_Diagnose.ySlaves[30].mSimulated" vartype="SV" enabled="false"
+	                     col="253" row="3" cspan="40" rspan="10" halign="stretch" valign="stretch"/>             
+             <VARSYMBOL var="system.SV_S3ControlPanel.sDataParamSave.yDevice[30].iState" vartype="SV" halign="left" col="330" row="3" cspan="20" rspan="10">
+	                <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	                <SYMBOL value="1" file="Disc_Run.gif"/>
+	                <SYMBOL value="2" file="Disc_Err.gif"/>
+	                <SYMBOL value="3" file="Disc_Ok.gif"/>
+	           </VARSYMBOL>                   
+             <BUTTON var="system.SV_S3ControlPanel.sDataParamSave.yDevice[30].mDoUpload" vartype="SV" 
+                     enablevar="system.SV_S3ControlPanel.sDataParamSave.mReleaseInputs" enablevartype="SV" 
+	                   key="paramUploadS3.button.saveDevice30" col="400" row="2" cspan="100" rspan="12" halign="stretch" valign="stretch"/>  
+	    </GROUP>
+
+   </MASKDEF>
+</VIEW>

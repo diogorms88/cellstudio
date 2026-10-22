@@ -1,0 +1,160 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 28.01.2014  | SMOH   | Combine LASD Options 27 and 18 + Option14(BMV1T)--> Option27 + Busmaster--> Option14
+//  v2_01.02.00  | 28.04.2014  | KLCH   | Bugfix: correction of Option14 (export for HMI not ok)
+//  v2_01.03.00  | 21.11.2016  | KLCH   | Change: redesign; check Option1 + further options instead of Option2
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion
+
+Call Main_Option3
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option3
+	SelectNode RPC1.R11
+	SelectCase Option1 // Process type
+		Case EcoDose_PCL
+			Call Option3_AddDeviceToMaterial1
+		Case EcoDose_PCL_PCL
+			Call Option3_AddDeviceToMaterial1_Multi
+			Call Option3_AddDeviceToMaterial2_Multi
+		Case EcoDose_SM_PCL
+			Call Option3_AddDeviceToMaterial2_Multi
+		CaseElse
+			Message Wrong process type (Main_Option3)!!
+	EndSelect
+Return
+
+SubRoutine Option3_AddDeviceToMaterial1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase Option3
+		Case 1
+			Call Common_AddDevice_BMV2TE
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2TE
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7 134-4NB50-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2TE
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2TE
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    9 //CPX Analog input temperature - CPX-4AI-T
+					CaseElse
+						Message ElectricalVersion not supported !! (Option3_AddDeviceToMaterial1)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BMV2TE)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option3_AddDeviceToMaterial1_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE_1
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase Option3
+		Case 1
+			Call Common_AddDevice_BMV2TE_1
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2TE_1
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2TE_1
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7 134-4NB50-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2TE_1
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2TE_1
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    9 //CPX Analog input temperature - CPX-4AI-T
+					CaseElse
+						Message ElectricalVersion not supported !! (Option3_AddDeviceToMaterial1_Multi)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BMV2TE_1)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return
+
+SubRoutine Option3_AddDeviceToMaterial2_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2TE_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2TE_2
+		Delete
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2
+	SelectCase Option3
+		Case 1
+			Call Common_AddDevice_BMV2TE_2
+	EndSelect
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2TE_2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material2.BMV2TE_2
+		SelectCase Option14 // Variant of bus system
+			Case Profibus
+				SelectTab [HWSignals]
+				SelectHWSignal HWI_wBMV2TE_2
+	  			BusType 1 //Profibus-DP
+	  			Vendor  1 //Siemens
+	  			Card    5 //Analog input temperature - 6ES7 134-4NB50-0AB0
+			Case SercosIII
+				SelectCase ElectricalVersion
+					Case El_V1
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2TE_2
+						BusType 6 //Sercos III
+						Vendor  2 //Phoenix Contact
+						Card    3 //Analog input temperature - IB IL TEMP 2 RTD-PAC
+					Case El_V2
+						SelectTab [HWSignals]
+						SelectHWSignal HWI_wBMV2TE_2
+						BusType 6 //Sercos III
+						Vendor  19 //FESTO
+						Card    9 //CPX Analog input temperature - CPX-4AI-T
+					CaseElse
+						Message ElectricalVersion not supported !! (Option3_AddDeviceToMaterial2_Multi)
+				EndSelect
+			CaseElse
+				Message Wrong bus master (BMV2TE_2)!! Only Profibus and Sercos III supported
+		EndSelect
+	Endif
+Return

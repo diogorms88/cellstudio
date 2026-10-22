@@ -1,0 +1,489 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Carl-Benz-Strasse 34                                                     *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2010 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         01.01.2010                                                  *
+*    Author :     Koch                                                        *
+*    E-Mail:      Nico.Koch@durr.com                                          *
+*                                                                             *
+*    Modul:       TRcuGluing.tts                                              *
+*    Description:                                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------
+*)
+
+
+TYPE
+  GluingButtonType : (eButtonsFixing, eButtonsVacuum, eButtonsBlowOff);
+END_TYPE
+  
+VAR
+  // Requests
+  bReqFixingOn          : BOOL;
+  bReqFixingOff         : BOOL;
+  bReqVacuumOn          : BOOL;
+  bReqVacuumOff         : BOOL;
+  bReqStartBlowOff      : BOOL;
+  bReqStopBlowOff       : BOOL;
+  
+  // Enabled flags
+  bFixingOnEnabled   : BOOL;
+  bFixingOffEnabled  : BOOL;
+  bVacuumOnEnabled   : BOOL;
+  bVacuumOffEnabled  : BOOL;
+  bStartBlowOffEnabled : BOOL;
+  bStopBlowOffEnabled  : BOOL;
+  
+  // "Yes/no" Buttons
+  bButtonYes      : BOOL; 
+  bButtonNo       : BOOL;
+  
+  bButtonClear      : BOOL;
+
+  // Visibility "Yes/no" Buttons
+  bYesNoVisible      : BOOL;
+  bFixingYesNoVisible      : BOOL;
+  bVacuumYesNoVisible      : BOOL;
+  bBlowOffYesNoVisible      : BOOL;
+
+  iGluingStepIn : WORD;
+  iGluingStepOut : WORD;
+  iGluingState : WORD;
+  
+  iSeamCheckActPathVelo           : MAPTO INT;
+  btSeamCheckActivate             : MAPTO BYTE;
+  
+  bSendVeloToSeamCheck           : BOOL;  // cfg
+  bGripperFixingAvailable        : BOOL;  // cfg
+  bGripperVaccumAvailable        : BOOL;  // cfg
+  bGripperBlowOffAvailable       : BOOL;  // cfg
+  bGlassDetectAvailable          : BOOL;  // cfg
+
+END_VAR
+
+VAR PRIVATE
+  myRobot   : MAPTO TRcuRobot;
+
+  bInterlock : BOOL;  // global marker to interlock more than one request before the first request is proceeeded
+  
+  bButtonYesChanged  : BOOL;
+  bButtonNoChanged   : BOOL;
+  bRefresh           : BOOL;
+END_VAR
+
+
+ROUTINE init(locRobot : TRcuRobot)
+  VAR
+      handle : DINT;
+      str    : STRING;
+      value  : DINT;
+      i      : INT;
+  END_VAR
+   
+  myRobot := MAP(locRobot);
+  
+  bInterlock := FALSE;  
+
+   // read catalog
+   str := "KINEMATIC:" + STR(myRobot.kinListInx) + ".Gluing";
+   IF CatalogGetHandleRelative(giRcBaseHdl, str, handle) THEN
+      IF NOT CatalogReadInt(handle, "SendVeloToSeamCheck", value, TRUE) THEN
+         RcuSetMessageOnce(TRcuGluing_WarnIncomplConf, myRobot.kinListInx, 1, 0, "TRcuGluing.init", STR(myRobot.kinListInx), "SendVeloToSeamCheck");
+      END_IF;
+  
+      IF NOT CatalogReadInt(handle, "GripperFixingAvailable", value, TRUE) THEN
+         RcuSetMessageOnce(TRcuGluing_WarnIncomplConf, myRobot.kinListInx, 1, 0, "TRcuGluing.init", STR(myRobot.kinListInx), "GripperFixingAvailable");
+      END_IF;
+  
+      IF NOT CatalogReadInt(handle, "GripperVaccumAvailable", value, TRUE) THEN
+         RcuSetMessageOnce(TRcuGluing_WarnIncomplConf, myRobot.kinListInx, 1, 0, "TRcuGluing.init", STR(myRobot.kinListInx), "GripperVaccumAvailable");
+      END_IF;
+  
+  
+      IF NOT CatalogReadInt(handle, "GripperBlowOffAvailable", value, TRUE) THEN
+         RcuSetMessageOnce(TRcuGluing_WarnIncomplConf, myRobot.kinListInx, 1, 0, "TRcuGluing.init", STR(myRobot.kinListInx), "GripperBlowOffAvailable");
+      END_IF;
+      
+      IF NOT CatalogReadInt(handle, "GlassDetectAvailable", value, TRUE) THEN
+         RcuSetMessageOnce(TRcuGluing_WarnIncomplConf, myRobot.kinListInx, 1, 0, "TRcuGluing.init", STR(myRobot.kinListInx), "GlassDetectAvailable");
+      END_IF;
+  
+   ELSE
+      RcuSetMessageOnce(TRcuGluing_WarnIncomplConf, myRobot.kinListInx, 2, 0, "TRcuGluing.init", STR(myRobot.kinListInx));
+   END_IF;    
+   
+   // Necessary for ISRA seamstar bead control system
+   IF bSendVeloToSeamCheck THEN
+      iSeamCheckActPathVelo         := MAPX(cHW_OutSeamCheckActPathVelo[myRobot.kinListInx]); 
+      IF NOT IS_MAPPED(iSeamCheckActPathVelo) THEN
+         RcuSetMessageOnce(TRcuGluing_FaErrVarNotMap, myRobot.kinListInx, 1, 0, "TRcuGluing.init", cHW_OutSeamCheckActPathVelo[myRobot.kinListInx]);
+      END_IF; 
+ 
+      btSeamCheckActivate           := MAPX(cHW_OutSeamCheckActivate[myRobot.kinListInx]); 
+      IF NOT IS_MAPPED(btSeamCheckActivate) THEN
+         RcuSetMessageOnce(TRcuGluing_FaErrVarNotMap, myRobot.kinListInx, 2, 0, "TRcuGluing.init", cHW_OutSeamCheckActivate[myRobot.kinListInx]);
+      ELSE
+         SwoAddByteVariable(btSeamCheckActivate, myRobot.GetName() + ".Gluing.btSeamCheckActivate");
+      END_IF; 
+   END_IF;
+  
+   START ObserveKeyFixingOn();  
+   START ObserveKeyFixingOff();
+
+   START ObserveKeyVaccumOn();  
+   START ObserveKeyVacuumOff();
+
+   START ObserveKeyStartBlowOff();  
+   START ObserveKeyStopBlowOff();
+
+   START ObserveKeyClear();
+   START RefreshDisplay();
+   START ObserveMainModes();
+ 
+   bFixingYesNoVisible := FALSE;
+   bVacuumYesNoVisible := FALSE;
+   bBlowOffYesNoVisible := FALSE;
+  
+END_ROUTINE
+
+
+ROUTINE ObserveMainModes()
+VAR
+   bChgModeExt : BOOL;
+END_VAR
+   bChgModeExt := IS_CHANGED(myRobot.mainModeMgr.externControl);
+   
+   WHILE TRUE DO
+      bChgModeExt := FALSE;
+      WAIT bChgModeExt;
+         IF NOT myRobot.mainModeMgr.externControl THEN
+            IF bSendVeloToSeamCheck AND IS_MAPPED(btSeamCheckActivate) THEN
+               btSeamCheckActivate := 0;
+            END_IF;
+         END_IF;
+   END_WHILE; 
+END_ROUTINE
+
+
+ROUTINE RefreshDisplay()
+VAR
+  bChg1 : BOOL;
+  bChg2 : BOOL;
+  bChg3 : BOOL;
+  bChg4 : BOOL;
+  bChg5 : BOOL;
+  bChg6 : BOOL;
+  bChg7 : BOOL;
+  bChg8 : BOOL;
+  bAllowedMainMode : BOOL;
+END_VAR
+  
+   IF bGripperFixingAvailable THEN
+      bChg1 := IS_CHANGED(myRobot.fieldbusIn.Fixing.svBool);
+   END_IF;
+  
+   IF bGripperVaccumAvailable THEN
+      bChg2 := IS_CHANGED(myRobot.fieldbusIn.Vacuum.svBool);
+   END_IF;
+  
+   IF bGripperBlowOffAvailable THEN
+      bChg3 := IS_CHANGED(myRobot.fieldbusIn.BlowOff.svBool);
+   END_IF;   
+  
+  bChg4 := IS_CHANGED(myRobot.mainModeMgr.mode);
+  bChg5 := IS_CHANGED(myRobot.fieldbusIn.PlcOrder.svByte);
+  bChg6 := IS_CHANGED(myRobot.fieldbusOut.PlcOrder.svByte);
+  bChg7 := IS_CHANGED(bRefresh);
+  bChg8 := IS_CHANGED(myRobot.fieldbusIn.PlcState.svByte);
+
+  bButtonYesChanged := IS_CHANGED(bButtonYes);
+  bButtonNoChanged := IS_CHANGED(bButtonNo);
+
+  WHILE TRUE DO
+    iGluingStepIn  :=  myRobot.fieldbusIn.PlcOrder.svByte;
+    iGluingStepOut :=  myRobot.fieldbusOut.PlcOrder.svByte;
+    iGluingState   := myRobot.fieldbusIn.PlcState.svByte;
+     
+    bAllowedMainMode := (myRobot.mainModeMgr.mode = ciT1) OR (myRobot.mainModeMgr.mode = ciT2);
+ 
+    IF bGripperFixingAvailable THEN
+      bFixingOnEnabled :=  NOT myRobot.fieldbusIn.Fixing.svBool AND bAllowedMainMode;
+      bFixingOffEnabled := myRobot.fieldbusIn.Fixing.svBool AND bAllowedMainMode;
+    END_IF;
+    
+    IF bGripperVaccumAvailable THEN
+      bVacuumOnEnabled := NOT myRobot.fieldbusIn.Vacuum.svBool AND bAllowedMainMode;
+      bVacuumOffEnabled := myRobot.fieldbusIn.Vacuum.svBool AND bAllowedMainMode;
+    END_IF;
+    
+    IF bGripperBlowOffAvailable THEN
+      bStartBlowOffEnabled := NOT myRobot.fieldbusIn.BlowOff.svBool AND bAllowedMainMode;
+      bStopBlowOffEnabled := myRobot.fieldbusIn.BlowOff.svBool AND bAllowedMainMode;
+    END_IF;
+    
+    bChg1 := FALSE;
+    bChg2 := FALSE;
+    bChg3 := FALSE;
+    bChg4 := FALSE; 
+    bChg5 := FALSE; 
+    bChg6 := FALSE; 
+    bChg7 := FALSE;
+    bChg8 := FALSE;
+    bRefresh := FALSE;
+    
+    WAIT bChg1 OR bChg2 OR bChg3 OR bChg4 OR bChg5 OR bChg6 OR bChg7 OR bChg8;
+  END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveKeyClear()
+VAR
+   bChg : BOOL;
+END_VAR
+
+   bChg := IS_CHANGED(bButtonClear);
+   WHILE TRUE DO
+      WAIT bChg;
+      bButtonClear := FALSE;
+      bChg := FALSE;
+      myRobot.fieldbusOut.PlcOrder.svByte :=  0;
+   END_WHILE;   
+   
+END_ROUTINE
+
+
+ROUTINE ObserveKeyFixingOn()
+VAR
+  bChg : BOOL;
+END_VAR
+  
+  bChg := IS_CHANGED(bReqFixingOn);
+  
+  WHILE TRUE DO
+    WAIT bChg AND NOT bInterlock;
+
+    bReqFixingOn := FALSE;
+    bChg := FALSE;
+
+    SwitchYesNoButtonsVisibility(TRUE, eButtonsFixing); 
+    
+    WAIT bButtonYesChanged OR bButtonNoChanged;
+    IF bButtonYesChanged THEN
+      myRobot.fieldbusOut.PlcOrder.svByte :=  240;
+      WAIT myRobot.fieldbusIn.PlcOrder.svByte = 240;
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonYes := FALSE;
+      bButtonYesChanged := FALSE;
+    ELSE
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonNo := FALSE;
+      bButtonNoChanged := FALSE;
+    END_IF;
+      
+    SwitchYesNoButtonsVisibility(FALSE, eButtonsFixing);
+    
+ END_WHILE;
+ 
+END_ROUTINE
+
+
+ROUTINE ObserveKeyFixingOff()
+VAR
+  bChg : BOOL;
+END_VAR
+  
+  bChg := IS_CHANGED(bReqFixingOff);
+  
+  WHILE TRUE DO
+    WAIT bChg AND NOT bInterlock;
+
+    bReqFixingOff := FALSE;
+    bChg := FALSE;
+
+    SwitchYesNoButtonsVisibility(TRUE, eButtonsFixing); 
+    
+    WAIT bButtonYesChanged OR bButtonNoChanged;
+    IF bButtonYesChanged THEN
+      myRobot.fieldbusOut.PlcOrder.svByte :=  241;
+      WAIT myRobot.fieldbusIn.PlcOrder.svByte = 241;
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonYes := FALSE;
+      bButtonYesChanged := FALSE;
+    ELSE
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonNo := FALSE;
+      bButtonNoChanged := FALSE;
+    END_IF;
+      
+    SwitchYesNoButtonsVisibility(FALSE, eButtonsFixing);
+  END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveKeyVaccumOn()
+VAR
+  bChg : BOOL;
+END_VAR
+  
+  bChg := IS_CHANGED(bReqVacuumOn);
+
+  WHILE TRUE DO
+    WAIT bChg AND NOT bInterlock;
+    bReqVacuumOn := FALSE;
+    bChg := FALSE;
+    
+    SwitchYesNoButtonsVisibility(TRUE, eButtonsVacuum);
+    
+    WAIT bButtonYesChanged OR bButtonNoChanged;
+    IF bButtonYesChanged THEN
+      myRobot.fieldbusOut.PlcOrder.svByte :=  242;
+      WAIT myRobot.fieldbusIn.PlcOrder.svByte = 242;
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonYes := FALSE;
+      bButtonYesChanged := FALSE;
+    ELSE
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonNo := FALSE;
+      bButtonNoChanged := FALSE;
+    END_IF;  
+
+    SwitchYesNoButtonsVisibility(FALSE, eButtonsVacuum);
+    
+  END_WHILE;
+  
+END_ROUTINE
+
+
+ROUTINE ObserveKeyVacuumOff()
+VAR
+  bChg : BOOL;
+END_VAR  
+
+  bChg := IS_CHANGED(bReqVacuumOff);
+  WHILE TRUE DO
+    WAIT bChg AND NOT bInterlock;
+    bReqVacuumOff := FALSE;
+    bChg := FALSE;
+    
+    SwitchYesNoButtonsVisibility(TRUE, eButtonsVacuum);
+
+    WAIT bButtonYesChanged OR bButtonNoChanged;
+    IF bButtonYesChanged THEN
+      myRobot.fieldbusOut.PlcOrder.svByte :=  243;
+      WAIT myRobot.fieldbusIn.PlcOrder.svByte = 243;
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonYes := FALSE;
+      bButtonYesChanged := FALSE;
+    ELSE
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonNo := FALSE;
+      bButtonNoChanged := FALSE;
+    END_IF; 
+    
+    SwitchYesNoButtonsVisibility(FALSE, eButtonsVacuum);
+    
+  END_WHILE;
+  
+END_ROUTINE
+
+ROUTINE ObserveKeyStartBlowOff()
+VAR
+  bChg : BOOL;
+END_VAR
+
+  bChg := IS_CHANGED(bReqStartBlowOff);
+
+  WHILE TRUE DO
+    WAIT bChg AND NOT bInterlock;
+    bReqStartBlowOff := FALSE;
+    bChg := FALSE;
+    
+    SwitchYesNoButtonsVisibility(TRUE, eButtonsBlowOff);
+    
+    WAIT bButtonYesChanged OR bButtonNoChanged;
+    IF bButtonYesChanged THEN
+      myRobot.fieldbusOut.PlcOrder.svByte :=  244;
+      WAIT myRobot.fieldbusIn.PlcOrder.svByte = 244;
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonYes := FALSE;
+      bButtonYesChanged := FALSE;
+    ELSE
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonNo := FALSE;
+      bButtonNoChanged := FALSE;
+    END_IF;  
+
+    SwitchYesNoButtonsVisibility(FALSE, eButtonsBlowOff);
+    
+  END_WHILE;
+
+END_ROUTINE
+
+ROUTINE ObserveKeyStopBlowOff()
+VAR
+  bChg : BOOL;
+END_VAR 
+ 
+  bChg := IS_CHANGED(bReqStopBlowOff);
+  
+  WHILE TRUE DO
+    WAIT bChg AND NOT bInterlock;
+    bReqStopBlowOff := FALSE;
+    bChg := FALSE;
+    
+    SwitchYesNoButtonsVisibility(TRUE, eButtonsBlowOff);
+    
+    WAIT bButtonYesChanged OR bButtonNoChanged;
+    IF bButtonYesChanged THEN
+      myRobot.fieldbusOut.PlcOrder.svByte :=  245;
+      WAIT myRobot.fieldbusIn.PlcOrder.svByte = 245;
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonYes := FALSE;
+      bButtonYesChanged := FALSE;
+    ELSE
+      myRobot.fieldbusOut.PlcOrder.svByte := 0;
+      bButtonNo := FALSE;
+      bButtonNoChanged := FALSE;
+    END_IF;  
+
+    SwitchYesNoButtonsVisibility(FALSE, eButtonsBlowOff);
+    
+  END_WHILE;
+  
+END_ROUTINE
+
+ROUTINE EnableButtons(enable: BOOL)
+  bFixingOnEnabled := enable;
+  bFixingOffEnabled := enable;
+  bVacuumOnEnabled := enable;
+  bVacuumOffEnabled := enable;
+  bStartBlowOffEnabled := enable;
+  bStopBlowOffEnabled := enable;
+END_ROUTINE
+
+
+ROUTINE SwitchYesNoButtonsVisibility(visible: BOOL; buttonType : GluingButtonType)
+  CASE buttonType OF
+    eButtonsFixing:
+      bFixingYesNoVisible  := visible;
+    eButtonsVacuum:
+      bVacuumYesNoVisible  := visible;
+    eButtonsBlowOff:
+      bBlowOffYesNoVisible := visible;
+  END_CASE;
+  
+  bYesNoVisible := visible;
+  bInterlock := visible;
+  IF visible THEN
+    EnableButtons(FALSE);
+  END_IF;
+  bRefresh := TRUE;
+  
+END_ROUTINE

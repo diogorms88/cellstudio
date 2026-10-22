@@ -1,0 +1,144 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Winter                                                      *
+*    E-Mail:      Tobias.Winter@durr.com                                      *
+*                                                                             *
+*    Modul:       LinearChanger.xml                                           *
+*    Description: Showing and operating linear change version 2               *
+*    Changes:     -                                                           *
+*************************************************************************** -->
+
+<VIEW>
+
+   <MASKDEF key="TeachView.mask.LinearChanger2" textfile="userTx" permissiondef="userMenuPermission">  
+      <!-- mastering duerr -->
+       <GROUP key="LinearChanger.label.group2"  
+             columns="40" rows="12" col="1" row="1" rspan="12" halign="stretch"  >
+ 	      
+ 	 <!--Status -->
+	 <LABEL key="LinearChanger.label.lab_4" col="2" row="2" />
+	 <TEXTFIELD var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_zStatusInfo" vartype="SV" col="6" row="2" cspan="12" rspan="2" halign="stretch"  valign="stretch" />	    
+	 
+	 <!--Torque -->
+	 <!--
+           <LABEL key="LinearChanger.label.lab_5" col="2" row="6"  />
+           <NUMFIELD var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_rActTorque" vartype="SV" enabled="false" col="10" row="6" cspan="8" rspan="2" valign="stretch" />
+         -->
+         
+          <!--Position mm -->
+	  <LABEL key="LinearChanger.label.lab_2" col="20" row="2" />	  
+	  <NUMFIELD var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_rPosition" vartype="SV" enabled="false" col="30" row="2" cspan="10"  rspan="2" halign="stretch"  valign="stretch" />
+	  
+	  <!--Position Nr -->
+	  <LABEL key="LinearChanger.label.lab_3" col="20" row="6"/>	  
+	  <NUMFIELD var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_iValvePosition" vartype="SV" enabled="false" col="30" row="6" cspan="10" rspan="2" halign="stretch"  valign="stretch" />
+	  
+          <CHECKBOX vartype="SV" col="2" row="10" halign="left" enabled="true" var="PCU1.SV_PCU2HMI.mTeachviewControl" />
+          <LABEL key="Write access - EcoScreen will be locked!" col="5" row="10" halign="left" /> 
+
+	 </GROUP> 
+         
+         <GROUP key="LinearChanger.label.group3" columns="40" rows="16" col="1" row="13" rspan="16" halign="stretch"
+                visiblevar="SCU.SV_ScuControlPanel.mVisible_Timeprog" visiblevartype="SV">
+           
+
+                      
+
+          
+           <CHECKBOX vartype="SV" col="2" row="2" halign="left" enabled="false" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mMasterModeOk" />
+   	   <LABEL key="LinearChanger.label.ModeOk" col="5" row="2" halign="left" />        
+   	             
+   	   <CHECKBOX vartype="SV" col="2" row="6" halign="left" enabled="false" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mMasterPneumaticOk" />
+   	   <LABEL key="LinearChanger.label.PneumaticOn" col="5" row="6" halign="left" />        
+   	  
+           <CHECKBOX vartype="SV" col="20" row="2" halign="left" enabled="false" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mMasterErrorOk" />
+   	   <LABEL key="LinearChanger.label.ErrorOk" col="23" row="2" halign="left" />
+
+   	   <CHECKBOX vartype="SV" col="20" row="6" halign="left" enabled="false" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mMasterChannelOk" />
+   	   <LABEL key="LinearChanger.label.ChannelOk" col="23" row="6" halign="left" />
+           
+           <!--
+           <CHECKBOX vartype="SV" col="20" row="10" halign="left" enabled="false" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mMasterChannelPurgedOk" />
+   	   <LABEL key="LinearChanger.label.ChannelPurgedOk" col="23" row="10" halign="left" />
+           -->
+
+
+         	 
+                 
+        </GROUP> 
+
+          <!-- following group: activation only allowed in function test
+                                -> after testing it has to be deactivated -> by commenting it out here in textfile -->
+<!--          
+          <GROUP key="LinearChanger2.group.ContTest" columns="40" rows="10" col="1" row="29" rspan="10" halign="stretch"  >
+          
+            	  <CHECKBOX key="LinearChanger2.checkbox.Start" vartype="SV" col="2" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtEnable" />
+		  <LABEL key="start" col="5" row="1"/>	
+		  
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve1" vartype="SV" col="12" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[1]" />     
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve2" vartype="SV" col="14" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[2]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve3" vartype="SV" col="16" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[3]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve4" vartype="SV" col="18" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[4]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve5" vartype="SV" col="20" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[5]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve6" vartype="SV" col="22" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[6]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve7" vartype="SV" col="24" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[7]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve8" vartype="SV" col="26" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[8]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve9" vartype="SV" col="28" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[9]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve10" vartype="SV" col="30" row="1" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[10]" />
+	
+	 	  <CHECKBOX key="LinearChanger2.checkbox.Valve11" vartype="SV" col="12" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[11]" />     
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve12" vartype="SV" col="14" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[12]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve13" vartype="SV" col="16" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[13]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve14" vartype="SV" col="18" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[14]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve15" vartype="SV" col="20" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[15]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve16" vartype="SV" col="22" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[16]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve17" vartype="SV" col="24" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[17]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve18" vartype="SV" col="26" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[18]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve19" vartype="SV" col="28" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[19]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve20" vartype="SV" col="30" row="3" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[20]" />
+	
+	          <CHECKBOX key="LinearChanger2.checkbox.Valve21" vartype="SV" col="12" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[21]" />     
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve22" vartype="SV" col="14" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[22]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve23" vartype="SV" col="16" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[23]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve24" vartype="SV" col="18" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[24]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve25" vartype="SV" col="20" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[25]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve26" vartype="SV" col="22" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[26]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve27" vartype="SV" col="24" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[27]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve28" vartype="SV" col="26" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[28]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve29" vartype="SV" col="28" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[29]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve30" vartype="SV" col="30" row="5" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[30]" />
+	    
+	          <CHECKBOX key="LinearChanger2.checkbox.Valve31" vartype="SV" col="12" row="7" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[31]" />     
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve32" vartype="SV" col="14" row="7" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[32]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve33" vartype="SV" col="16" row="7" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[33]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve34" vartype="SV" col="18" row="7" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[34]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve35" vartype="SV" col="20" row="7" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[35]" />
+		  <CHECKBOX key="LinearChanger2.checkbox.Valve36" vartype="SV" col="22" row="7" halign="left" enable="true" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_CtValve[36]" />	 
+                 
+          </GROUP> 
+  -->
+   </MASKDEF>
+   
+   <MENUDEF key="TeachView.mask.LinearChanger2" textdef="userTx"  imagefile="KvtMenuIcon" permissiondef="userMenuPermission">  
+	<MENU>
+		<MENUITEM key="LinearChanger.button.auto" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_mActiveAuto" vartype="SV" 
+                          enablevar="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mEnableAuto" enablevartype="SV" visiblevar="SCU.SV_ScuControlPanel.mVisible_Timeprog" visiblevartype="SV"/>
+		<MENUITEM key="LinearChanger.button.hand" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_mActiveManual" vartype="SV" enablevar="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mEnableManual" enablevartype="SV"/>
+		<MENUITEM type="empty"/>
+		<MENUITEM type="empty"/>
+		<MENUITEM key="LinearChanger.button.stop" var="PCU1.SV_PCU2PHG.tLinearUnit[1].sIn.i_mActiveStop" vartype="SV" enablevar="PCU1.SV_PCU2PHG.tLinearUnit[1].sOut.o_mEnableStop" enablevartype="SV"/>
+		<MENUITEM type="empty"/>
+	</MENU>
+   </MENUDEF>
+   
+</VIEW>

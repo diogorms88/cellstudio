@@ -1,0 +1,249 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 21.11.2016  | KLCH   | First release
+//  v2_01.01.00  | 28.09.2017  | KLCH   | AddOn: all required parameters
+
+Imports Common CommonTempControl
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 EcoTempAxis1 EcoTempAxis3 TempHeatZone1 TempHeatZone2 TempHeatZone3 TempHeatZone4 TempHeatZone5 TempHeatZone6 TempHeatZone7 TempHeatZone8 TempHeatZone9 NumberOfMainNeedles
+
+Call CommonTempCtrl_MatHeater
+Call Main_TempHeatZone9
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_TempHeatZone9
+	SelectNode RPC1.R11
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			Call AddDeviceToMaterial1_TempHeatZone9
+		Case EcoDose_SM_PCL
+			Call AddDeviceToMaterial1_Multi_TempHeatZone9
+		Case EcoDose_SM_SM
+			Call AddDeviceToMaterial1_Multi_TempHeatZone9
+		CaseElse
+			Message Wrong process type (Main_TempHeatZone9)!!
+	EndSelect
+	SelectCase TempHeatZone9
+		Case 1
+			SelectCase OptionShotMeter
+				Case SM_600ccm
+				CaseElse
+					Message Parameterization is only valid for ShotMeter 600ccm !! (Main_TempHeatZone9)
+			EndSelect
+	EndSelect
+Return
+
+SubRoutine AddDeviceToMaterial1_TempHeatZone9
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3
+		Delete
+	Endif
+	SelectCase TempHeatZone9
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+			Call Common_AddDevice_AMH1_3
+			
+			// Cfg parameter
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCase Option14 // Variant of bus system
+				Case SercosIII
+					SelectCfg AMH1_3.ControlMode
+					Value 1
+					SelectCfg AMH1_3.DeviceTemperature.ControlParam.P03_DevAlarm
+					Value 100
+					SelectCfg AMH1_3.DeviceTemperature.ControlParam.P06_Tv_Heating
+					Value 20
+					SelectCfg AMH1_3.DeviceTemperature.ControlParam.P22_Offset_Act
+					Value 999
+					SelectCfg AMH1_3.DeviceTemperature.ControlParam.TemperatureMax
+					Value 43
+					SelectCfg AMH1_3.DeviceTemperature.ControlParam.TemperatureMin
+					Value 30
+					SelectCfg AMH1_3.DeviceTemperature.ControlParam.Zone
+					Value 8
+					SelectCfg AMH1_3.SetTemperature
+					Value 32
+				Case Profibus
+					SelectCfg AMH1_3.CtrlLevel
+					Value 1
+					SelectCfg AMH1_3.03_DevAlarm
+					Value 100
+					SelectCfg AMH1_3.06_Tv_Control
+					Value 20
+					SelectCfg AMH1_3.22_Offset_Act
+					Value 99
+					SelectCfg AMH1_3.CtrlTypeSetbackTemp
+					OptionalUsed 1
+					Value 1
+					SelectCfg AMH1_3.MediumTempCtrl.ReactionLevelCtrl
+					Value 1
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3
+						SelectTab [CfgParameter]
+						SelectCfg AMH1_3.NameSignalForFlow
+						OptionalUsed 1
+						Value "BMV2F.ActFlowFiltered"
+					Else
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3
+						SelectTab [CfgParameter]
+						SelectCfg AMH1_3.NameSignalForFlow
+						OptionalUsed 1
+						Value "BShotMeter1.ActQuantity"
+					Endif
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3
+					SelectCfg AMH1_3.SetbackTemp
+					OptionalUsed 1
+					Value 30
+					SelectCfg AMH1_3.SetTemp
+					Value 32
+					SelectCfg AMH1_3.SetTempMaterial
+					OptionalUsed 0
+					Value 30
+					SelectCfg AMH1_3.SetTempMax
+					Value 43
+					SelectCfg AMH1_3.SetTempMaxAfterHys
+					Value 42
+					SelectCfg AMH1_3.SetTempMin
+					Value 30
+					SelectCfg AMH1_3.SetTempMinAfterHys
+					Value 31
+					SelectCfg AMH1_3.TemperatureSensorName
+					Value "BAP1T"
+					SelectCfg AMH1_3.TimeSetbackTemp
+					OptionalUsed 1
+					Value 0d0h30m0s0ms
+					SelectCfg AMH1_3.Zone
+					Value 8
+					// Trigger configuration
+					SelectNode RPC1.R11.PCU1
+					SelectTab [BrushTrigger]
+					SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+					SelectCase NumberOfMainNeedles
+						Case 1
+							SetTriggerGun1 AMH1_3.SetNewTemp 1
+						Case 2
+							SetTriggerGun1 AMH1_3.SetNewTemp 1
+							SetTriggerGun2 AMH1_3.SetNewTemp 1
+						Case 3
+							SetTriggerGun1 AMH1_3.SetNewTemp 1
+							SetTriggerGun2 AMH1_3.SetNewTemp 1
+							SetTriggerGun3 AMH1_3.SetNewTemp 1
+						CaseElse
+							Message Wrong number of MainNeedles (TempHeatZone9)!!
+					EndSelect
+				CaseElse
+					Message Wrong bus master (AMH1_3)!! Only Profibus and Sercos III supported
+			EndSelect
+			Call CommonTempCtrl_SetConfigMaterial1_AMatManager1
+	EndSelect
+Return
+
+SubRoutine AddDeviceToMaterial1_Multi_TempHeatZone9
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3_1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3_1
+		Delete
+	Endif
+	SelectCase TempHeatZone9
+		Case 1
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+			Call Common_AddDevice_AMH1_3_1
+			
+			// Cfg parameter
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3_1
+			// Select tab cfg parameter
+			SelectTab [CfgParameter]
+			SelectCase Option14 // Variant of bus system
+				Case SercosIII
+					SelectCfg AMH1_3_1.ControlMode
+					Value 1
+					SelectCfg AMH1_3_1.DeviceTemperature.ControlParam.P03_DevAlarm
+					Value 100
+					SelectCfg AMH1_3_1.DeviceTemperature.ControlParam.P06_Tv_Heating
+					Value 20
+					SelectCfg AMH1_3_1.DeviceTemperature.ControlParam.P22_Offset_Act
+					Value 999
+					SelectCfg AMH1_3_1.DeviceTemperature.ControlParam.TemperatureMax
+					Value 49
+					SelectCfg AMH1_3_1.DeviceTemperature.ControlParam.TemperatureMin
+					Value 30
+					SelectCfg AMH1_3_1.DeviceTemperature.ControlParam.Zone
+					Value 1
+					SelectCfg AMH1_3_1.SetTemperature
+					Value 41
+				Case Profibus
+					SelectCfg AMH1_3_1.CtrlLevel
+					Value 1
+					SelectCfg AMH1_3_1.03_DevAlarm
+					Value 100
+					SelectCfg AMH1_3_1.06_Tv_Control
+					Value 20
+					SelectCfg AMH1_3_1.22_Offset_Act
+					Value 99
+					SelectCfg AMH1_3_1.CtrlTypeSetbackTemp
+					OptionalUsed 1
+					Value 1
+					SelectCfg AMH1_3_1.MediumTempCtrl.ReactionLevelCtrl
+					Value 1
+					IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.BMV2F_1
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3_1
+						SelectTab [CfgParameter]
+						SelectCfg AMH1_3_1.NameSignalForFlow
+						OptionalUsed 1
+						Value "BMV2F_1.ActFlowFiltered"
+					Else
+						SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3_1
+						SelectTab [CfgParameter]
+						SelectCfg AMH1_3_1.NameSignalForFlow
+						OptionalUsed 1
+						Value "BShotMeter1.ActQuantity"
+					Endif
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMH1_3_1
+					SelectCfg AMH1_3_1.SetbackTemp
+					OptionalUsed 1
+					Value 30
+					SelectCfg AMH1_3_1.SetTemp
+					Value 41
+					SelectCfg AMH1_3_1.SetTempMaterial
+					OptionalUsed 0
+					Value 30
+					SelectCfg AMH1_3_1.SetTempMax
+					Value 49
+					SelectCfg AMH1_3_1.SetTempMaxAfterHys
+					Value 42
+					SelectCfg AMH1_3_1.SetTempMin
+					Value 30
+					SelectCfg AMH1_3_1.SetTempMinAfterHys
+					Value 31
+					SelectCfg AMH1_3_1.TemperatureSensorName
+					Value "BAP1T"
+					SelectCfg AMH1_3_1.TimeSetbackTemp
+					OptionalUsed 1
+					Value 0d0h30m0s0ms
+					SelectCfg AMH1_3_1.Zone
+					Value 1
+					// Trigger configuration
+					SelectNode RPC1.R11.PCU1
+					SelectTab [BrushTrigger]
+					SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+					SelectCase NumberOfMainNeedles
+						Case 2
+							SetTriggerGun1 AMH1_3_1.SetNewTemp 1
+							SetTriggerGun2 AMH1_3_1.SetNewTemp 0
+						Case 3
+							SetTriggerGun1 AMH1_3_1.SetNewTemp 1
+							SetTriggerGun2 AMH1_3_1.SetNewTemp 1
+							SetTriggerGun3 AMH1_3_1.SetNewTemp 0
+						CaseElse
+							Message Wrong number of MainNeedles (TempHeatZone9)!!
+					EndSelect
+				CaseElse
+					Message Wrong bus master (AMH1_3_1)!! Only Profibus and Sercos III supported
+			EndSelect
+			Call CommonTempCtrl_SetConfigMaterial1_AMatManager1
+	EndSelect
+Return

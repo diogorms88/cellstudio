@@ -1,0 +1,1839 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Schöll                                                       *
+*   E-Mail:      Bjoern.Schoell@durr.com                                      *
+*                                                                             *
+*   Modul:       RcuHandler.ttp                                               *
+*   Description: handler variables and routines                               *
+*-----------------------------------------------------------------------------*
+*   xx.yy.zz sbj: 
+*   26.07.06 BIT: Deleted all Eventroutines and changes for configurable names
+*)
+
+(******************************************************************************
+***  Types    *****************************************************************
+******************************************************************************)
+TYPE GLOBAL
+   TPartVecBool : ARRAY [cgiMaxNumberOfParts] OF BOOL; // parts-vector BOOL
+   TPartVecSINT : ARRAY [cgiMaxNumberOfParts] OF SINT; // parts-vector SINT
+   TPosVec : STRUCT                                        // positions-vector BOOL
+      pos : ARRAY [cgiNumberOfHandlerPartPos] OF BOOL;
+   END_STRUCT;
+   TPartVecTPosVec : STRUCT                                // parts-positions-matrix BOOL
+      part : ARRAY [cgiMaxNumberOfParts] OF TPosVec;
+   END_STRUCT;
+   tModulData : STRUCT
+      iMoveNumber : INT;
+      sName       : STRING;
+   END_STRUCT;
+   MAINMODE : (TeachMode, AutoMode);
+   tHighTensionState : (eWaitInitDone, eUsed, eNotUsed, eSwitchedOn, eSwitchedOff);
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+   tool              : TRcuHandlerTool;      // unit for handler equipment
+   partsIni          : TPartVecSINT;         // initial handler part positions
+   partsEnd          : TPartVecSINT;         // final handler part positions
+   partMap           : TPartVecSINT;         // at present used to label handled parts
+   progNumber        : INT := 0;             // program number
+   bJobRunning       : BOOL;                 
+   isHandler         : BOOL := FALSE;        // reset of output bytes to plc depends on it
+   isOrderer         : BOOL := FALSE;
+   partPosPerBody    : BOOL := FALSE;        // PLC handles part positions per body
+   partPosPerHandler : BOOL := TRUE;         // PLC handles part positions per handler
+   iNumberOfParts    : SINT;                 // number of handled parts + 1, possible between 
+   bStop1            : BOOL;
+   resetBeforMove    : BOOL;
+   myRobot           : MAPTO TRcuRobot;
+   yModuleNames      : ARRAY [cgiMaxNumberOfParts, cgiNumberOfHandlerPartPos, cgiMaxNumberOfParts, cgiNumberOfHandlerPartPos] OF tModulData;
+   iLoggerNumber     : INT;
+   sLogText          : STRING;
+   mainHandle        : DINT;
+   mainProg          : STRING;
+   progLevel         : DINT;
+   hasAdditionalPart : BOOL;
+   additionalPartNr  : DINT;
+   replacingPartNr   : DINT;
+   addPartHandlerNr  : ARRAY[4] OF BOOL;
+   state             : TPartVecTPosVec;                // actual positions of parts and handler
+   actualPart        : TPartVecBool;                   // labeling the actual part for event routines
+   order             : TPartVecTPosVec;                // actual internal order (not necessarily PLC-order)
+   bModuleStarted    : BOOL;
+   toolCleaner       : TRcuToolCleaner;               //cleaning device for handling tool
+END_VAR
+
+VAR PRIVATE
+   handlerReady       : BOOL;                           // “bit” for controlling routine "ReceiveOrder"
+   noProg             : BOOL := FALSE;                  // if there´s no program defined for the ordered movement
+   bDummy             : BOOL;
+   subSelectLevel     : DINT;
+   currMainMode       : MAINMODE;
+   handlerExecHandle  : DINT;
+   handlerActProg     : STRING;
+   progNameEcoTalk    : STRING;
+   lineNrEcoTalk      : DINT;
+   hdlEcoTalk         : DINT;
+   observeProgLineNr  : BOOL;
+   yActPosCode        : ARRAY [cgiMaxNumOfParts] OF POSITION;
+   bRelSwitchOnHt     : BOOL;
+   bHtObservationRun  : BOOL;
+   iLineHtObservation : DINT;
+END_VAR
+
+
+// cyclical execution of the PLC-order (in possibly several steps)
+ROUTINE ReceiveOrder(handlerIniPart : THandlerIniPart; handlerEndPart : THandlerEndPart; startInPartPos : BOOL)
+   
+   VAR
+      i                : SINT;
+      j                : SINT;
+      k                : INT;
+      orderCounter     : SINT;
+      actPart          : SINT;
+      actPos           : SINT;
+      targPart         : SINT;
+      targPos          : SINT;
+      bChgInHandlerReq : BOOL;
+      bChgFinish       : BOOL;
+   END_VAR
+   
+   GetUserProgInfo(progNameEcoTalk, lineNrEcoTalk, hdlEcoTalk);
+   observeProgLineNr := TRUE;
+   
+   bChgInHandlerReq := FALSE;
+   bChgFinish       := FALSE;
+   bModuleStarted   := FALSE;
+   // initialisation of handlerTargPosPLC and RcuHandler.bStop
+   bChgInHandlerReq := IS_CHANGED(myRobot.fieldbusIn.tHandlerReqPos);
+   bChgFinish       := IS_CHANGED(myRobot.fieldbusIn.HandlerStop.svBool);
+   
+   // checking handlerIniPart and handlerEndPart
+   IF (handlerIniPart > 0) THEN
+      IF (partMap[handlerIniPart] = 0) THEN
+         RcuSetMessageOnce(TRcuHandler_ErrHandlerIniPosNDef, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder", "Start");
+         myRobot.DebugPrint(eTraceRcuHandler, "Handler state is not started - 1");
+         //RcuSetMessageOnce(TRcuHandler_InfHandlerNotStarted, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+         sLogText := "Init-Position of Handler (" + STR(handlerIniPart) + ") not defined";
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         RETURN;
+      END_IF;
+   END_IF;
+   IF (handlerEndPart > 0) THEN
+      IF (partMap[handlerEndPart] = 0) THEN
+         RcuSetMessageOnce(TRcuHandler_ErrHandlerIniPosNDef, myRobot.kinListInx, 2, 0, "TRcuHandler.ReceiveOrder", "End");
+         myRobot.DebugPrint(eTraceRcuHandler, "Handler state is not started - 2");
+         //RcuSetMessageOnce(TRcuHandler_InfHandlerNotStarted, myRobot.kinListInx, 2, 0, "TRcuHandler.ReceiveOrder");
+         sLogText := "End-Position of Handler (" + STR(handlerEndPart) + ") not defined";
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         RETURN;
+      END_IF;
+   END_IF;
+   
+   // checking partsIni and partsEnd
+   FOR i:=1 TO iNumberOfParts-1 DO
+      IF (partMap[i] <> 0) THEN
+         // for each part there are possible positions 1,2,3,4
+         IF ((partsIni[i]<1) OR (partsIni[i]>4)) THEN
+            RcuSetMessageOnce(TRcuHandler_ErrIniPrtPsNDef, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder", STR(i), "Start");
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler state is not started - 3");
+            //RcuSetMessageOnce(TRcuHandler_InfHandlerNotStarted, myRobot.kinListInx, 3, 0, "TRcuHandler.ReceiveOrder");
+            sLogText := "Init-Position for Part (" + STR(partsIni[i]) + ") not valid";
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            RETURN;
+         END_IF;
+      END_IF;
+   END_FOR;
+   FOR i:=1 TO iNumberOfParts-1 DO
+      IF (partMap[i] <> 0) THEN
+         // for each part there are possible positions 1,2,3,4
+         IF ((partsEnd[i]<1) OR (partsEnd[i]>4)) THEN
+            RcuSetMessageOnce(TRcuHandler_ErrIniPrtPsNDef, myRobot.kinListInx, 2, 0, "TRcuHandler.ReceiveOrder", STR(i), "End");
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler state is not started - 4");
+            //RcuSetMessageOnce(TRcuHandler_InfHandlerNotStarted, myRobot.kinListInx, 4, 0, "TRcuHandler.ReceiveOrder");
+            sLogText := "End-Position for Part (" + STR(partsEnd[i]) + ") not valid";
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            RETURN;
+         END_IF;
+      END_IF;
+   END_FOR;
+   
+   //robot has process with high tension --> shutdown high tension before job is executed
+   //needed only in mode auto and ordering robot is selected otherwise job is not executed
+   IF myRobot.bHasProcess AND (myRobot.RcuInterfaceToProcess.svHtExists <> eNotUsed) AND (myRobot.mainModeMgr.mode = ciAuto) THEN
+      IF NOT myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+         RcuSetMessageOnce(TRcuHandler_ErrHandlingButHT, myRobot.kinListInx, 4, 0, "TRcuHandler.ReceiveOrder", STR(lineNrEcoTalk));
+         myRobot.ErrorReaction(TRUE);
+         RETURN;
+      ELSE
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveOrder wait until high tension is off");
+         WAIT myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff;
+         IF NOT bHtObservationRun THEN
+            iLineHtObservation := lineNrEcoTalk;
+            bHtObservationRun  := TRUE;
+         END_IF;
+      END_IF;
+   END_IF;   
+   
+   // initialisation of state and actualPart on the basis of
+   // handlerIniPart, handlerEndPart and partsIni
+   IF myRobot.homing.bHomingAfterRestartPossible THEN
+      state := myRobot.homing.oldRetainData.state;
+      actualPart := myRobot.homing.oldRetainData.actualPart;
+      order := myRobot.homing.oldRetainData.order;
+      IF NOT myRobot.homing.bNoHandlerModule THEN
+         UpdateHandler();
+         myRobot.homing.bNoHandlerModule := FALSE;
+      END_IF;
+      myRobot.DebugPrint(eTraceHoming, " Handler state and actualPart restored from retain data");
+   ELSE
+   FOR j:=1 TO cgiNumberOfHandlerPartPos-1 DO
+      state.part[0].pos[j]:=FALSE;
+   END_FOR;
+   FOR j:=0 TO iNumberOfParts-1 DO
+      IF (handlerIniPart=j) THEN
+         IF NOT startInPartPos THEN
+            state.part[j].pos[0]:=TRUE;
+         END_IF;
+         actualPart[j]:=TRUE; // current part is part j
+      ELSE
+         state.part[j].pos[0]:=FALSE;
+         actualPart[j]:=FALSE;
+      END_IF;
+   END_FOR;
+   FOR i:=1 TO iNumberOfParts-1 DO
+      FOR j:=1 TO cgiNumberOfHandlerPartPos-1 DO
+         IF (partsIni[i]=j) THEN
+            state.part[i].pos[j]:=TRUE;
+         ELSE
+            state.part[i].pos[j]:=FALSE;
+         END_IF;
+      END_FOR;
+   END_FOR;
+   END_IF;
+   
+   myRobot.DebugPrint(eTraceRcuHandler, "Handler state is started - ReceiveOrder started");
+   //RcuResetMessage(TRcuHandler_InfHandlerStarted, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveOrder started");
+   
+   // position report to PLC
+   UpdateHandlerActPos();
+   
+   // initialisation of order
+   FOR i:=0 TO iNumberOfParts-1 DO
+      FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+         order.part[i].pos[j]:=FALSE;
+      END_FOR;
+   END_FOR;
+   
+   // initialisation of the control-variables
+   handlerReady := FALSE;
+   noProg := FALSE;
+   // signal that handlerjob is running
+   bJobRunning := TRUE;
+   myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+   // initialisation of orderCounter, targPart and targPos
+   orderCounter := 0;
+   FOR i:=1 TO iNumberOfParts-1 DO
+      FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+         IF (myRobot.fieldbusIn.tHandlerReqPos.part[i].pos[j]=TRUE) THEN
+            orderCounter:=orderCounter+1;
+            targPart:=i;
+            targPos:=j;
+            sLogText := "Order for Part" + STR(targPart) + "Position" + STR(targPos);
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         END_IF;
+      END_FOR;
+   END_FOR;
+   
+   // if nothing is set, wait for the first setting
+   IF (NOT myRobot.fieldbusIn.HandlerStop.svBool) AND (orderCounter=0) THEN
+   
+      // wait until inputs from PLC have changed
+      myRobot.DebugPrint(eTraceRcuHandler, "Handler is waiting for order - 1");
+      //RcuResetMessage(TRcuHandler_InfWaitForOrder, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting for orders");
+      WAIT bChgInHandlerReq OR bChgFinish;  
+      bChgInHandlerReq := FALSE;
+      bChgFinish       := FALSE;
+      
+      // update of orderCounter, targPart and targPos
+      orderCounter := 0;
+      FOR i:=1 TO iNumberOfParts-1 DO
+         FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+            IF (myRobot.fieldbusIn.tHandlerReqPos.part[i].pos[j]=TRUE) THEN
+               orderCounter:=orderCounter+1;
+               targPart:=i;
+               targPos:=j;
+               sLogText := "Order for Part" + STR(targPart) + "Position" + STR(targPos);
+               myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            END_IF;
+         END_FOR;
+      END_FOR;
+   END_IF;
+   
+   // "infinite" loop until RcuHandler.bStop is set
+   WHILE TRUE DO
+      // error handling
+      WHILE ((myRobot.fieldbusIn.HandlerStop.svBool AND (orderCounter>0)) OR (orderCounter>1) OR 
+             ((NOT myRobot.fieldbusIn.HandlerStop.svBool) AND (orderCounter=0))) DO
+         IF (orderCounter=0) THEN
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler no orders");
+            //RcuResetMessage(TRcuHandler_InfNoOrder, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "No order");
+         ELSE
+            RcuResetMessage(TRcuHandler_WarOrderNotClear, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "More than one order at same time");
+         END_IF;
+         
+         // wait until inputs from PLC have changed
+         myRobot.DebugPrint(eTraceRcuHandler, "Handler is waiting for order - 2");
+         //RcuResetMessage(TRcuHandler_InfWaitForOrder, myRobot.kinListInx, 2, 0, "TRcuHandler.ReceiveOrder");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting for orders");
+         WAIT bChgInHandlerReq OR bChgFinish;     
+         bChgInHandlerReq := FALSE;
+         bChgFinish       := FALSE;
+         
+         // update of orderCounter, targPart and targPos
+         orderCounter := 0;
+         FOR i:=1 TO iNumberOfParts-1 DO
+            FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+               IF (myRobot.fieldbusIn.tHandlerReqPos.part[i].pos[j]=TRUE) THEN
+                  orderCounter:=orderCounter+1;
+                  targPart:=i;
+                  targPos:=j;
+                  sLogText := "Order for Part" + STR(targPart) + "Position" + STR(targPos);
+                  myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+               END_IF;
+            END_FOR;
+         END_FOR;
+      END_WHILE;
+      
+      // acquisition of actPart and actPos
+      FOR i:=0 TO iNumberOfParts-1 DO
+         IF (actualPart[i]=TRUE) THEN
+            actPart:=i;
+            IF (state.part[i].pos[0]=TRUE) THEN
+               actPos:=0;
+            ELSE
+               FOR j:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                  IF (state.part[i].pos[j]=TRUE) THEN
+                     actPos:=j;
+                  END_IF;
+               END_FOR;
+            END_IF;
+         END_IF;
+      END_FOR;
+      
+      // RcuHandler.bStop was set (unique)
+      IF myRobot.fieldbusIn.HandlerStop.svBool THEN
+         myRobot.DebugPrint(eTraceRcuHandler, "Handler order: leave handler state");
+         //RcuResetMessage(TRcuHandler_InfHandlerOrderLeave, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Finish received");
+         // move to position 0 (WaitPos) of part "handlerEndPart"
+         IF (state.part[handlerEndPart].pos[0]=FALSE) THEN
+            order.part[handlerEndPart].pos[0]:=TRUE;
+            resetBeforMove := TRUE;
+            // position report to PLC
+            UpdateHandlerActPos();
+            resetBeforMove := FALSE;
+            sLogText := "Moving to Wait-Position Part " + STR(handlerEndPart);
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            WAIT handlerReady;
+            RDESELECT(myRobot.robotName);
+            WAIT myRobot.selectingFlow.flowId = 0;
+            handlerReady := FALSE;
+            WAIT handlerReady;
+            RSELECT(myRobot.robotName);
+            handlerReady := FALSE;
+            WAIT handlerReady;
+            // handlerReady := FALSE; Cuautitlan
+            IF noProg THEN
+               noProg := FALSE;
+               //stop observing inputs
+               bChgInHandlerReq := IS_CHANGED(bDummy);
+               bChgFinish       := IS_CHANGED(bDummy);
+               bChgInHandlerReq := FALSE;
+               bChgFinish       := FALSE;
+               // reset main program settings of module names and ini-positions
+               ResetSettings();
+               myRobot.DebugPrint(eTraceRcuHandler, "Handler state is left - 1");
+               //RcuResetMessage(TRcuHandler_InfHandlerLeave, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Leaving ReceiveOrder - because of unkown Prog");
+               bJobRunning := FALSE;
+               myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+               // leaving ReceiveOrder
+               handlerReady := FALSE; // Cuautitlan
+               RETURN;
+            END_IF;
+            // update of current positions
+            UpdateHandler();
+            handlerReady := FALSE;// Cuautitlan
+            // position report to PLC
+            UpdateHandlerActPos();
+         END_IF;
+         //stop observing inputs
+         bChgInHandlerReq := IS_CHANGED(bDummy);
+         bChgFinish       := IS_CHANGED(bDummy);
+         bChgInHandlerReq := FALSE;
+         bChgFinish       := FALSE;
+         // reset main program settings of module names and ini-positions
+         LeaveHandlerState(); // sbj, 2011/02/10
+         myRobot.DebugPrint(eTraceRcuHandler, "Handler state is left - 2");
+         //RcuResetMessage(TRcuHandler_InfHandlerLeave, myRobot.kinListInx, 2, 0, "TRcuHandler.ReceiveOrder");
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Leaving ReceiveOrder");
+         bJobRunning := FALSE;
+         myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+         IF bModuleStarted THEN
+            myRobot.bEmptyProgPath := TRUE;
+         END_IF;
+         RETURN;
+      END_IF;
+      
+      // RcuHandler.bStop was not set -> unique PLC-order
+      IF NOT myRobot.fieldbusIn.HandlerStop.svBool THEN
+         // targPart is configured for handler 
+         IF (partMap[targPart] <> 0) THEN
+            // printing the PLC-order
+            myRobot.DebugPrint(eTraceRcuHandler, "Handler order: part" + STR(targPart) + " position" + STR(targPos));
+            //RcuResetMessage(TRcuHandler_InfHandlerOrder, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder", STR(targPart), STR(targPos));
+            sLogText := "Order for Part" + STR(targPart) + "Position" + STR(targPos);
+            myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+            // handler is already at the right position
+            IF ((actPart=targPart) AND (actPos=targPos)) THEN
+               myRobot.DebugPrint(eTraceRcuHandler, "Handler no orders");
+               //RcuResetMessage(TRcuHandler_InfTargPosEquActPos, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder");
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "Handler target position" + STR(targPos) + 
+                                                            " already corresponds to actual position" + STR(actPos));
+            ELSE
+               // moving to position "targPos" of part "targPart"
+               order.part[targPart].pos[targPos]:=TRUE;
+               resetBeforMove := TRUE;
+               // position report to PLC
+               UpdateHandlerActPos();
+               resetBeforMove := FALSE;
+               tool.iPartToHandle := targPart;
+               sLogText := "Moving to Part" + STR(targPart) + "Position" + STR(targPos);
+               myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+               WAIT handlerReady;
+               RDESELECT(myRobot.robotName);
+               WAIT myRobot.selectingFlow.flowId = 0;
+               handlerReady := FALSE;
+               WAIT handlerReady;
+               RSELECT(myRobot.robotName);
+               handlerReady := FALSE;
+               WAIT handlerReady;
+               handlerReady := FALSE;
+               IF noProg THEN
+                  noProg := FALSE;
+                  //stop observing inputs
+                  bChgInHandlerReq := IS_CHANGED(bDummy);
+                  bChgFinish       := IS_CHANGED(bDummy);
+                  bChgInHandlerReq := FALSE;
+                  bChgFinish       := FALSE;
+                  // reset main program settings of module names and ini-positions
+                  ResetSettings();
+                  myRobot.DebugPrint(eTraceRcuHandler, "Handler state is left - 3");
+                  //RcuResetMessage(TRcuHandler_InfHandlerLeave, myRobot.kinListInx, 3, 0, "TRcuHandler.ReceiveOrder");
+                  myRobot.logger.SetLoggerStep(iLoggerNumber, "Leaving ReceiveOrder - because of unkown Prog");
+                  bJobRunning := FALSE;
+                  myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+                  // leaving ReceiveOrder
+                  RETURN;
+               END_IF;
+               // update of current positions
+               UpdateHandler();
+               // position report to PLC
+               UpdateHandlerActPos();
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(TRcuHandler_ErrOrdForWrngPart, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceiveOrder", STR(targPart));
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "Order for unknown part " + STR(targPart));
+         END_IF;
+         
+         //RcuResetMessage(TRcuHandler_InfWaitForOrder, myRobot.kinListInx, 3, 0, "TRcuHandler.ReceiveOrder");
+         myRobot.DebugPrint(eTraceRcuHandler, "Handler is waiting for order - 3");
+         WAIT bChgInHandlerReq OR bChgFinish;
+         bChgInHandlerReq := FALSE;
+         bChgFinish       := FALSE;
+         // update of orderCounter, targPart and targPos
+         orderCounter := 0;
+         FOR i:=1 TO iNumberOfParts-1 DO
+            FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+               IF myRobot.fieldbusIn.tHandlerReqPos.part[i].pos[j]=TRUE THEN
+                  orderCounter:=orderCounter+1;
+                  targPart:=i;
+                  targPos:=j;
+               END_IF;
+            END_FOR;
+         END_FOR;
+      END_IF;
+   END_WHILE;    
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// receives orders for given part from PLC called by EcoTalk
+//------------------------------------------------------------------------
+ROUTINE ReceivePartOrder(rob1 : ROBOT; rob2 : ROBOT; part : PART; pos : POSITION; iLine : DINT) : BOOL
+ VAR
+  rob1Req  : BOOL;
+  rob2Req  : BOOL;  
+  reqPos   : BYTE;
+  sLogText : STRING;
+  ret      : BOOL;
+ END_VAR
+
+  rob1Req := (rob1<>0);
+  rob2Req := (rob2<>0);
+  reqPos  := (part*16) + pos;
+  bRelSwitchOnHt := FALSE;
+  sLogText := "ReceivePartOrder started - rob1=" + STR(rob1) + " rob2=" + STR(rob2) + " part=" + STR(part) + " pos=" + STR(pos);
+  myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+  //prepare infomation for ecoscreen
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot1 := rob1;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot2 := rob2;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPart   := part;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPos    := pos;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.mShow   := TRUE;
+  
+  IF (rob1Req AND rob2Req) THEN
+     //robot has process with high tension --> shutdown high tension before job is executed
+     //needed only in mode auto and one of the two ordering robots is selected otherwise job is not executed
+     IF myRobot.bHasProcess AND (myRobot.RcuInterfaceToProcess.svHtExists <> eNotUsed) AND (myRobot.mainModeMgr.mode = ciAuto) AND
+        (myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool OR myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool) THEN
+        IF NOT myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+           RcuSetMessageOnce(TRcuHandler_ErrHandlingButHT, myRobot.kinListInx, 1, 0, "TRcuHandler.ReceivePartOrder", STR(iLine));
+           myRobot.ErrorReaction(TRUE);
+           RETURN FALSE;
+        ELSE
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceivePartOrder wait until high tension is off");
+           WAIT myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff;
+           IF NOT bHtObservationRun THEN
+              iLineHtObservation := iLine;
+              bHtObservationRun  := TRUE;
+           END_IF;
+        END_IF;
+     END_IF;     
+     WAIT ((NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool) OR (myRobot.fieldbusIn.tInHandling.yReqPartPos[rob1-1].svByte = reqPos)) AND
+          ((NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool) OR (myRobot.fieldbusIn.tInHandling.yReqPartPos[rob2-1].svByte = reqPos));
+     IF NOT (myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool OR myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool) THEN
+        sLogText := "ReceivePartOrder ret=FALSE - rob1=deselected  rob2=deselected";
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := FALSE;
+     ELSIF (NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool) THEN   
+        sLogText := "ReceivePartOrder ret=TRUE - rob1=deselected, rob2=order " + STR(reqPos);
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := TRUE;
+     ELSIF (NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool) THEN
+        sLogText := "ReceivePartOrder ret=TRUE - rob1=order " + STR(reqPos) + ", rob2=deselected";
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := TRUE;
+     ELSE
+        sLogText := "ReceivePartOrder ret=TRUE - rob1&rob2=order " + STR(reqPos);
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := TRUE;
+     END_IF;   
+     
+  ELSIF (rob1Req AND (NOT rob2Req)) THEN
+     //robot has process with high tension --> shutdown high tension before job is executed
+     //needed only in mode auto and ordering robot is selected otherwise job is not executed
+     IF myRobot.bHasProcess AND (myRobot.RcuInterfaceToProcess.svHtExists <> eNotUsed) AND (myRobot.mainModeMgr.mode = ciAuto) AND
+        myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool THEN
+        IF NOT myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+           RcuSetMessageOnce(TRcuHandler_ErrHandlingButHT, myRobot.kinListInx, 2, 0, "TRcuHandler.ReceivePartOrder", STR(iLine));
+           myRobot.ErrorReaction(TRUE);
+           RETURN FALSE;
+        ELSE
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceivePartOrder wait until high tension is off");
+           WAIT myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff;
+           IF NOT bHtObservationRun THEN
+              iLineHtObservation := iLine;
+              bHtObservationRun  := TRUE;
+           END_IF;
+        END_IF;
+     END_IF;
+     WAIT ((NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool) OR (myRobot.fieldbusIn.tInHandling.yReqPartPos[rob1-1].svByte = reqPos));
+     IF NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob1-1].svBool THEN
+        sLogText := "ReceivePartOrder ret=FALSE - rob1=deselected";
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := FALSE;
+     ELSE   
+        sLogText := "ReceivePartOrder ret=TRUE - rob1=order " + STR(reqPos);
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := TRUE;
+     END_IF;
+     
+  ELSIF ((NOT rob1Req) AND rob2Req) THEN
+     //robot has process with high tension --> shutdown high tension before job is executed
+     //needed only in mode auto and ordering robot is selected otherwise job is not executed
+     IF myRobot.bHasProcess AND (myRobot.RcuInterfaceToProcess.svHtExists <> eNotUsed) AND (myRobot.mainModeMgr.mode = ciAuto) AND
+        myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool THEN
+        IF NOT myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+           RcuSetMessageOnce(TRcuHandler_ErrHandlingButHT, myRobot.kinListInx, 3, 0, "TRcuHandler.ReceivePartOrder", STR(iLine));
+           myRobot.ErrorReaction(TRUE);
+           RETURN FALSE;
+        ELSE
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceivePartOrder wait until high tension is off");
+           WAIT myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff;
+           IF NOT bHtObservationRun THEN
+              iLineHtObservation := iLine;
+              bHtObservationRun  := TRUE;
+           END_IF;
+        END_IF;
+     END_IF;
+     WAIT ((NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool) OR (myRobot.fieldbusIn.tInHandling.yReqPartPos[rob2-1].svByte = reqPos));
+     IF NOT myRobot.fieldbusIn.tInHandling.yOrdererOnline[rob2-1].svBool THEN
+        sLogText := "ReceivePartOrder ret=FALSE - rob2=deselected";
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := FALSE;
+     ELSE
+        sLogText := "ReceivePartOrder ret=TRUE - rob2=order " + STR(reqPos);
+        myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+        ret := TRUE; 
+     END_IF;
+     
+  END_IF;
+  //prepare infomation for ecoscreen
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot1 := 0;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot2 := 0;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPart   := 0;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPos    := 0;
+  myRobot.ecoscreen.HandlerOutputs.sReqOrder.mShow   := FALSE;  
+  bRelSwitchOnHt := (pos = 8) AND ret;
+  RETURN ret;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// set the output for a part position to PLC called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE SetPosCodeToPLC(part : PART; pos : POSITION)
+ VAR
+   sLogText  : STRING;
+   rNibble   : REAL;
+   iBytePart : SINT;
+   byMask    : BYTE;
+   byPosCode : BYTE;
+ END_VAR
+   
+  WAIT MAIN_RUN;   
+  //first reset position output to PLC for this part
+  myRobot.fieldbusOut.tOutHandling.bPartPos.svByte := 0;
+  tool.iPartToHandle := PART(part);
+  //pos=0 is order "delete" for PLC
+  IF (pos=0) THEN
+     byPosCode := part*16;
+     sLogText := "SET_POSCODE - Delete for part=" + STR(part) + "  " + STR(byPosCode);
+  ELSE
+     byPosCode := (part*16) + pos;
+     sLogText := "SET_POSCODE - part=" + STR(part) + " pos=" + STR(pos) + "  " + STR(byPosCode);
+  END_IF;
+  
+  //if command is called with new part position without deleting the old --> error
+  IF (pos <> 0) AND (yActPosCode[part-1] <> POSITION(0)) AND (POSITION(pos) <> yActPosCode[part-1]) THEN
+     RcuSetMessageOnce(TRcuHandler_ErrPosCodeTwice, myRobot.kinListInx, 1, 0, "TRcuHandler.SetPosCodeToPLC");
+  END_IF; 
+  yActPosCode[part-1] := pos;
+  
+  myRobot.fieldbusOut.tOutHandling.bPartPos.svByte := byPosCode;
+  myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+  
+  iBytePart := (part -1) / 2;           //(Part-EcoTalk 1..n) - 1 --> fieldbus 0..n, (one byte is used for 2 part) / 2 --> byte-nr fieldbus
+  rNibble := REAL(part -1) / 2.0;       //Same in REAL to get rest of rounding
+  rNibble := rNibble - REAL(iBytePart); //If rest is 0.0 --> lower nibble, 0.5 --> higher nibble
+  
+  IF (rNibble = 0.0) THEN
+     byMask    := 16#0F;
+     byPosCode := pos; //lower nibble
+  ELSE
+     byMask    := 16#F0;
+     byPosCode := pos*16; //higher nibble
+  END_IF;
+  
+  WAIT (byPosCode = (myRobot.fieldbusIn.tInHandling.yPartPos[iBytePart].svByte AND byMask)); 
+  
+  sLogText := "SET_POSCODE - PLC has set part=" + STR(part) + " pos=" + STR(pos);
+  myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+  //reset position output to PLC for this part
+  myRobot.fieldbusOut.tOutHandling.bPartPos.svByte := 0;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// receives position of given part from PLC called by EcoTalk
+//------------------------------------------------------------------------
+ROUTINE ReceivePartPos(handler : HANDLER; part : PART; pos : POSITION) : BOOL
+ VAR
+  rNibble   : REAL;
+  iBytePart : SINT;
+  byPosCode : BYTE;
+  byMask    : BYTE;
+ END_VAR
+ 
+  iBytePart := (part -1) / 2;           //(Part-EcoTalk 1..n) - 1 --> fieldbus 0..n, (one byte is used for 2 part) / 2 --> byte-nr fieldbus
+  rNibble := REAL(part -1) / 2.0;       //Same in REAL to get rest of rounding
+  rNibble := rNibble - REAL(iBytePart); //If rest is 0.0 --> lower nibble, 0.5 --> higher nibble
+
+  IF (rNibble = 0.0) THEN
+     byMask    := 16#0F;
+     byPosCode := pos; //lower nibble
+  ELSE
+     byMask    := 16#F0;
+     byPosCode := pos*16; //higher nibble
+  END_IF;
+  
+  sLogText := "ReceivePartPos started handler=" + STR(handler) + " part=" + STR(part) + " pos=" + STR(pos);
+  myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+  //prepare infomation for ecoscreen
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iRobot1 := handler;        
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iPart   := part;
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iPos    := pos;
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.mShow   := TRUE;
+  
+  WAIT (byPosCode = (myRobot.fieldbusIn.tInHandling.yPartPos[iBytePart].svByte AND byMask)) OR
+       (NOT myRobot.fieldbusIn.tInHandling.yHandlerOnline[handler-1].svBool);
+     
+  //prepare infomation for ecoscreen
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iRobot1 := 0;        
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iPart   := 0;
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iPos    := 0;
+  myRobot.ecoscreen.HandlerOutputs.sReqPartPos.mShow   := FALSE;   
+     
+  IF (NOT myRobot.fieldbusIn.tInHandling.yHandlerOnline[handler-1].svBool) THEN
+     sLogText := "ReceivePartPos handler=" + STR(handler) + " is not selected - Mainrun";
+     myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+     RETURN FALSE;
+  ELSE
+     sLogText := "ReceivePartPos ok handler=" + STR(handler) + " part=" + STR(part) + " pos=" + STR(pos);
+     myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+     RETURN TRUE;     
+  END_IF;
+ 
+END_ROUTINE
+
+ROUTINE ObserveProgLineNr() PRIVATE
+   VAR
+      lineNr : DINT;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT observeProgLineNr;
+      lineNr := lineNrEcoTalk;
+      
+      WHILE ((lineNr = lineNrEcoTalk) AND bJobRunning) DO
+         Sleep(50);
+         GetUserProgLine(hdlEcoTalk, TRUE, progNameEcoTalk, lineNrEcoTalk);
+      END_WHILE;
+      
+      IF bJobRunning THEN
+         bJobRunning := FALSE;
+         myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+         ResetSettings();
+      END_IF;
+      
+      observeProgLineNr := FALSE;
+      progNameEcoTalk := "";
+      lineNrEcoTalk := 0;
+      hdlEcoTalk := 0;
+   END_WHILE;
+
+END_ROUTINE
+
+
+// update of order, state and actualPart after executing the order
+ROUTINE UpdateHandler() PRIVATE
+   
+   VAR
+      i : SINT;
+      j : SINT;
+      newPart : SINT;
+      newPos : SINT;
+      oldPart : SINT;
+      oldPos : SINT;
+      oldPartPos : SINT;
+   END_VAR
+   
+   // acquisition of newPart, newPos, oldPart, oldPos and oldPartPos
+   FOR i:=0 TO iNumberOfParts-1 DO
+      IF (actualPart[i]=TRUE) THEN
+         oldPart:=i;
+         IF (state.part[i].pos[0]=TRUE) THEN
+            oldPos:=0;
+            FOR j:=1 TO cgiNumberOfHandlerPartPos-1 DO
+               IF (state.part[i].pos[j]=TRUE) THEN
+                  oldPartPos:=j;
+               END_IF;
+            END_FOR;
+         ELSE
+            FOR j:=1 TO cgiNumberOfHandlerPartPos-1 DO
+               IF (state.part[i].pos[j]=TRUE) THEN
+                  oldPos:=j;
+               END_IF;
+            END_FOR;
+         END_IF;
+      END_IF;
+      FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+         IF (order.part[i].pos[j]=TRUE) THEN
+            newPart:=i;
+            newPos:=j;
+         END_IF;
+      END_FOR;
+   END_FOR;
+   
+   // reset of the executed (internal) order
+   FOR i:=0 TO iNumberOfParts-1 DO
+      FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+         order.part[i].pos[j]:=FALSE;
+      END_FOR;
+   END_FOR;
+   
+   // update of state and actualPart
+   // no change of current part
+   IF (oldPart=newPart) THEN
+      IF ((oldPos<>0) AND (newPos<>0)) THEN
+         state.part[oldPart].pos[oldPos]:=FALSE;
+         state.part[newPart].pos[newPos]:=TRUE;
+      ELSIF (newPos=0) THEN
+         state.part[oldPart].pos[oldPos]:=FALSE;
+         state.part[oldPart].pos[partsEnd[oldPart]]:=TRUE;
+         state.part[newPart].pos[newPos]:=TRUE;
+      ELSE
+         state.part[oldPart].pos[oldPos]:=FALSE;
+         state.part[newPart].pos[oldPartPos]:=FALSE;
+         state.part[newPart].pos[newPos]:=TRUE;
+      END_IF;
+   // change of current part
+   ELSE
+      actualPart[oldPart]:=FALSE;
+      actualPart[newPart]:=TRUE;
+      IF ((oldPos=0) AND (newPos=0)) THEN
+         state.part[oldPart].pos[oldPos]:=FALSE;
+         state.part[newPart].pos[newPos]:=TRUE;
+      ELSIF ((oldPos=0) AND (newPos>0)) THEN
+         state.part[oldPart].pos[oldPos]:=FALSE;
+         FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+            state.part[newPart].pos[j]:=FALSE;
+         END_FOR;
+         state.part[newPart].pos[newPos]:=TRUE;
+      ELSIF ((oldPos>0) AND (newPos=0)) THEN
+         state.part[oldPart].pos[oldPos]:=FALSE;
+         state.part[oldPart].pos[partsEnd[oldPart]]:=TRUE;
+         state.part[newPart].pos[newPos]:=TRUE;
+      ELSE
+         //19.02.2011 BIT 
+         //do not delete old part position, because part is still in this position.
+         //it is wrong to set partsEnd usually "close" when part is "open".
+         //state.part[oldPart].pos[oldPos]:=FALSE;
+         //state.part[oldPart].pos[partsEnd[oldPart]]:=TRUE;
+         FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+            state.part[newPart].pos[j]:=FALSE;
+         END_FOR;
+         state.part[newPart].pos[newPos]:=TRUE;
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+
+
+// position report to PLC
+ROUTINE UpdateHandlerActPos() PRIVATE
+   VAR
+      iPart : SINT;
+      iPos  : SINT;
+   END_VAR
+   
+   // mapping "state" onto "outputs to PLC"
+   IF bStop1 THEN
+      // reset Handler-relevant PLC-Output-Bytes
+      FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+         FOR iPos:=0 TO cgiNumberOfHandlerPartPos-1 DO
+            myRobot.fieldbusOut.tHandlerSignalPos.part[iPart].pos[iPos].svBool := FALSE;
+         END_FOR;
+      END_FOR;
+   ELSIF resetBeforMove THEN
+      FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+         IF (actualPart[iPart]=TRUE) THEN
+            // reset PLC-Output-Bytes for actual part
+            FOR iPos:=0 TO cgiNumberOfHandlerPartPos-1 DO
+               myRobot.fieldbusOut.tHandlerSignalPos.part[iPart].pos[iPos].svBool := FALSE;
+            END_FOR;
+         END_IF;
+      END_FOR;
+   ELSE
+      // copy "state" onto "outputs to PLC"
+      FOR iPart:=1 TO iNumberOfParts-1 DO
+         FOR iPos:=0 TO cgiNumberOfHandlerPartPos-1 DO
+            myRobot.fieldbusOut.tHandlerSignalPos.part[iPart].pos[iPos].svBool := state.part[iPart].pos[iPos];
+         END_FOR;
+      END_FOR;
+   END_IF;
+   
+END_ROUTINE
+
+
+// set order for handler to PLC
+ROUTINE SetOrderToPLC(handler : HANDLER; part : PART; pos : POSITION; OPTIONAL bWaitMainRun : BOOL)
+   VAR
+      iPart     : SINT;
+      iPos      : SINT;
+      byPartPos : BYTE;
+      i         : SINT;
+      mFound    : BOOL;
+   END_VAR
+   
+   IF IS_USED(bWaitMainRun) THEN
+      IF bWaitMainRun THEN
+         WAIT MAIN_RUN;        //BIT 09.08.07 Wait only if it's called from EcoTalk
+      END_IF;              
+   END_IF; 
+   
+   //partPosPerHandler
+   IF partPosPerHandler THEN
+      // Reset order / outputs to PLC
+      myRobot.fieldbusOut.yRobotToHandler[handler].bFinish.svBool := FALSE;
+      FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+         FOR iPos:=0 TO cgiNumberOfHandlerPartPos-1 DO
+            myRobot.fieldbusOut.yRobotToHandler[handler].part[iPart].pos[iPos].svBool := FALSE;
+         END_FOR;
+      END_FOR;
+      
+      // leave handlerstate
+      IF pos = -1 THEN
+         myRobot.fieldbusOut.yRobotToHandler[handler].bFinish.svBool := TRUE;
+         IF IS_USED(bWaitMainRun) AND bWaitMainRun THEN
+            sLogText := "Order Finish for Handler " + STR(handler) + " from EcoTalk";
+         ELSE   
+            sLogText := "Order Finish for Handler " + STR(handler) + " from TeachControl";
+         END_IF;  
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      ELSIF pos >= 0 THEN
+         // move toward wait-/ part-position
+         myRobot.fieldbusOut.yRobotToHandler[handler].part[part].pos[pos].svBool := TRUE;
+         IF IS_USED(bWaitMainRun) AND bWaitMainRun THEN
+            sLogText := "Order for Handler " + STR(handler) + " Part " + STR(part) + " Pos " + STR(pos) + " from EcoTalk";
+         ELSE   
+            sLogText := "Order for Handler " + STR(handler) + " Part " + STR(part) + " Pos " + STR(pos) + " from TeachControl";
+         END_IF;   
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      //reset all orders to PLC   
+      ELSIF pos = -2 THEN
+         IF IS_USED(bWaitMainRun) AND bWaitMainRun THEN
+            sLogText := "Order Delete - Reset all outputs to PLC" + " from EcoTalk";
+         ELSE   
+            sLogText := "Order Delete - Reset all outputs to PLC" + " from TeachControl";
+         END_IF;   
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      END_IF;
+      
+   //partPosPerBody
+   ELSE
+     //delete orders for this handler
+     myRobot.fieldbusOut.tOutHandling.yReqPartPos[handler-1].svByte := 0;
+     //part is high nibble and position low nibble
+     byPartPos := (part*16) + pos;
+     myRobot.fieldbusOut.tOutHandling.yReqPartPos[handler-1].svByte := byPartPos;
+     //orders for this handler is already in array?
+     FOR i:=0 TO 2 DO
+         IF (myRobot.ecoscreen.HandlerOutputs.yOrders[i].iRobot1 = handler) THEN
+            myRobot.ecoscreen.HandlerOutputs.yOrders[i].mShow := (part <> 0);
+            myRobot.ecoscreen.HandlerOutputs.yOrders[i].iPart := part;
+            myRobot.ecoscreen.HandlerOutputs.yOrders[i].iPos  := pos;
+            IF (part = 0) THEN
+               myRobot.ecoscreen.HandlerOutputs.yOrders[i].iRobot1 := 0;
+            END_IF;
+            mFound := TRUE;
+         END_IF;
+     END_FOR;
+     //enter new order only if its not delete command
+     IF (NOT mFound) AND (part <> 0) THEN
+        FOR i:=0 TO 2 DO
+            IF NOT myRobot.ecoscreen.HandlerOutputs.yOrders[i].mShow THEN
+               myRobot.ecoscreen.HandlerOutputs.yOrders[i].mShow   := TRUE;
+               myRobot.ecoscreen.HandlerOutputs.yOrders[i].iRobot1 := handler;
+               myRobot.ecoscreen.HandlerOutputs.yOrders[i].iPart   := part;
+               myRobot.ecoscreen.HandlerOutputs.yOrders[i].iPos    := pos;
+               mFound := TRUE;
+               i := 2;
+            END_IF;
+        END_FOR;
+     END_IF;
+     //array already full --> then use first element
+     IF (NOT mFound) AND (part <> 0) THEN
+        myRobot.ecoscreen.HandlerOutputs.yOrders[0].mShow  := TRUE;
+        myRobot.ecoscreen.HandlerOutputs.yOrders[0].iRobot1 := handler;
+        myRobot.ecoscreen.HandlerOutputs.yOrders[0].iPart   := part;
+        myRobot.ecoscreen.HandlerOutputs.yOrders[0].iPos    := pos;
+     END_IF;
+     
+     IF IS_USED(bWaitMainRun) AND bWaitMainRun THEN
+        IF (pos=0) THEN    
+           sLogText := "SET_ORDER(delete) to handler=" + STR(handler) + " part=" + STR(part) + " from EcoTalk " + STR(byPartPos);
+        ELSE   
+           sLogText := "SET_ORDER to handler=" + STR(handler) + " part=" + STR(part) + " pos=" + STR(pos) + " from EcoTalk " + STR(byPartPos);
+        END_IF;   
+     ELSE   
+        IF (part=0) AND (pos=0) THEN
+           sLogText := "SetOrderToPLC outputs to handler=" + STR(handler) + " reset by TeachControl " + STR(byPartPos); 
+        ELSE
+           sLogText := "SetOrderToPLC to handler=" + STR(handler) + " part=" + STR(part) + " pos=" + STR(pos) + " by TeachControl " + STR(byPartPos); 
+        END_IF;
+     END_IF;   
+     myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   END_IF;
+   
+END_ROUTINE
+
+
+// activation of the event routines
+ROUTINE StartEventRoutines() PRIVATE
+   VAR
+      iSourcePart    : SINT;
+      iSourcePos     : SINT;
+      iDestPart      : SINT;
+      iDestPos       : SINT;
+      iCountZeroMove : INT :=  0;
+      iCountPartMove : INT := 20; 
+   END_VAR
+   
+   REPEAT
+      REPEAT
+         REPEAT
+            REPEAT
+               // movement from a position to itself is meaningless
+               IF NOT ((iSourcePart = iDestPart) AND (iSourcePos = iDestPos)) THEN
+                  // movements to or from position (0,x) with x>0 are meaningless
+                  IF (NOT ((iSourcePart = 0) AND (iSourcePos <> 0))) AND (NOT ((iDestPart = 0) AND (iDestPos <> 0))) THEN
+                     // fill in the identification number of the movement
+                     IF ((iSourcePos = 0) AND (iDestPos = 0)) THEN
+                        iCountZeroMove := iCountZeroMove + 1;
+                        yModuleNames[iSourcePart] [iSourcePos] [iDestPart] [iDestPos].iMoveNumber := iCountZeroMove;
+                     ELSE
+                        iCountPartMove := iCountPartMove + 1;
+                        yModuleNames[iSourcePart] [iSourcePos] [iDestPart] [iDestPos].iMoveNumber := iCountPartMove;
+                        tool.ySensor[0].SetMoveNrAutoLearn(iSourcePart, iSourcePos, iDestPart, iDestPos, iCountPartMove);
+                     END_IF;
+                     // start routines for movements between different positions
+                     START Move(iSourcePart, iSourcePos, iDestPart, iDestPos);
+                     myRobot.WaitMcMicroCycles(1);
+                  END_IF;
+               END_IF;
+               iDestPos := iDestPos + 1;
+            UNTIL (iDestPos >= cgiNumberOfHandlerPartPos);
+            REPEAT
+               iDestPart := iDestPart + 1;
+            UNTIL (iDestPart >= iNumberOfParts) OR (partMap[iDestPart] = 1);
+            iDestPos := 0;
+         UNTIL (iDestPart >= iNumberOfParts);
+         iSourcePos := iSourcePos + 1;
+         iDestPart := 0;
+      UNTIL (iSourcePos >= cgiNumberOfHandlerPartPos);
+      REPEAT
+         iSourcePart := iSourcePart + 1;
+      UNTIL (iSourcePart >= iNumberOfParts) OR (partMap[iSourcePart] = 1);
+      iSourcePos := 0;
+   UNTIL (iSourcePart >= iNumberOfParts);
+   
+END_ROUTINE
+
+
+ROUTINE ResetSettings()
+    
+   VAR
+      i : SINT;
+      j : SINT;
+      iSourcePart : SINT;
+      iSourcePos  : SINT;
+      iDestPart   : SINT;
+      iDestPos    : SINT;
+   END_VAR
+   
+   REPEAT
+      REPEAT
+         REPEAT
+            REPEAT
+               // movement from a position to itself is meaningless
+               IF NOT ((iSourcePart = iDestPart) AND (iSourcePos = iDestPos)) THEN
+                  // movements within part 0 are meaningless
+                  IF NOT ((iSourcePart = 0) AND (iDestPart = 0)) THEN
+                     // delete the program names set by TV
+                     yModuleNames[iSourcePart] [iSourcePos] [iDestPart] [iDestPos].sName := "";
+                  END_IF;
+               END_IF;
+               iDestPos := iDestPos + 1;
+            UNTIL (iDestPos >= cgiNumberOfHandlerPartPos);
+            iDestPart := iDestPart + 1;
+            iDestPos := 0;
+         UNTIL (iDestPart >= iNumberOfParts);
+         iSourcePos := iSourcePos + 1;
+         iDestPart := 0;
+      UNTIL (iSourcePos >= cgiNumberOfHandlerPartPos);
+      iSourcePart := iSourcePart + 1;
+      iSourcePos := 0;
+   UNTIL (iSourcePart >= iNumberOfParts);
+   
+   FOR i:=1 TO iNumberOfParts-1 DO
+      partsIni[i] := 4; // default is closed
+   END_FOR;
+   
+   FOR i:=1 TO iNumberOfParts-1 DO
+      partsEnd[i] := 4; // default is closed
+   END_FOR;
+   
+   // reset pos codes and orders to plc
+   bStop1 := TRUE;
+   UpdateHandlerActPos();
+   bStop1 := FALSE;
+   myRobot.DebugPrint(eTraceRcuHandler, "Handler has reset it's Pos-codes");
+   
+   (* ???
+   IF isOrderer THEN
+      SetOrderToPLC(HANDLER(0), PART(0), POSITION(-2), FALSE);
+      SetOrderToPLC(HANDLER(1), PART(0), POSITION(-2), FALSE);
+      SetOrderToPLC(HANDLER(2), PART(0), POSITION(-2), FALSE);
+      SetOrderToPLC(HANDLER(3), PART(0), POSITION(-2), FALSE);
+   END_IF;
+   *)
+   
+   // reset of internal orders and states of the parts/robotpositions
+   FOR i:=0 TO iNumberOfParts-1 DO
+      FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+         order.part[i].pos[j]:=FALSE;
+         //bit 08.03.2010 reset internal states
+         state.part[i].pos[j]:=FALSE;
+      END_FOR;
+   END_FOR;
+   
+   handlerReady := FALSE;
+END_ROUTINE
+
+
+ROUTINE LeaveHandlerState()
+   VAR
+      i : SINT;
+      j : SINT;
+      iSourcePart : SINT;
+      iSourcePos  : SINT;
+      iDestPart   : SINT;
+      iDestPos    : SINT;
+   END_VAR
+   
+   REPEAT
+      REPEAT
+         REPEAT
+            REPEAT
+               // movement from a position to itself is meaningless
+               IF NOT ((iSourcePart = iDestPart) AND (iSourcePos = iDestPos)) THEN
+                  // movements within part 0 are meaningless
+                  IF NOT ((iSourcePart = 0) AND (iDestPart = 0)) THEN
+                     // delete the program names set by TV
+                     yModuleNames[iSourcePart] [iSourcePos] [iDestPart] [iDestPos].sName := "";
+                  END_IF;
+               END_IF;
+               iDestPos := iDestPos + 1;
+            UNTIL (iDestPos >= cgiNumberOfHandlerPartPos);
+            iDestPart := iDestPart + 1;
+            iDestPos := 0;
+         UNTIL (iDestPart >= iNumberOfParts);
+         iSourcePos := iSourcePos + 1;
+         iDestPart := 0;
+      UNTIL (iSourcePos >= cgiNumberOfHandlerPartPos);
+      iSourcePart := iSourcePart + 1;
+      iSourcePos := 0;
+   UNTIL (iSourcePart >= iNumberOfParts);
+   
+   FOR i:=1 TO iNumberOfParts-1 DO
+      partsIni[i] := 4; // default is closed
+   END_FOR;
+   
+   FOR i:=1 TO iNumberOfParts-1 DO
+      partsEnd[i] := 4; // default is closed
+   END_FOR;
+   
+   // reset of internal orders and states of the parts/robotpositions
+   FOR i:=0 TO iNumberOfParts-1 DO
+      FOR j:=0 TO cgiNumberOfHandlerPartPos-1 DO
+         order.part[i].pos[j]:=FALSE;
+         //bit 08.03.2010 reset internal states
+         state.part[i].pos[j]:=FALSE;
+      END_FOR;
+   END_FOR;
+   
+   handlerReady := FALSE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------------------------------------
+//  Store handle and name of EcoTalk main program
+//------------------------------------------------------------------------------------------------------
+ROUTINE SetProgHandleAndName(handle : DINT; name : STRING) 
+  mainHandle := handle;
+  mainProg   := name;
+  myRobot.logger.SetLoggerStep(iLoggerNumber, "EcoTalk-MainProg-Handle=" + STR(handle) + " - Name=" + name);
+END_ROUTINE
+
+(*******************************************************************************
+* event routines
+*)
+
+ROUTINE Move(iSourcePart : SINT; iSourcePos : SINT; iDestPart : SINT; iDestPos : SINT)
+   VAR
+      name         : STRING;
+      mySourcePart : SINT;
+      mySourcePos  : SINT;
+      myDestPart   : SINT;
+      myDestPos    : SINT;
+      sErrorText   : STRING;
+      flowState    : TFlowState;
+   END_VAR
+   
+   mySourcePart := iSourcePart;
+   mySourcePos  := iSourcePos;
+   myDestPart   := iDestPart;
+   myDestPos    := iDestPos;
+   
+   WHILE TRUE DO
+      IF (mySourcePos <> 0) THEN
+         // if handler is in wait position, don´t move
+         WAIT (actualPart[mySourcePart] AND state.part[mySourcePart].pos[mySourcePos] AND
+               order.part[myDestPart].pos[myDestPos] AND NOT state.part[mySourcePart].pos[0]);
+      ELSE
+         WAIT (actualPart[mySourcePart] AND state.part[mySourcePart].pos[mySourcePos] AND
+               order.part[myDestPart].pos[myDestPos]);
+      END_IF;
+      
+      IF (yModuleNames[mySourcePart] [mySourcePos] [myDestPart] [myDestPos].sName <> "") THEN
+         name := myRobot.robotName;
+         handlerActProg := yModuleNames[mySourcePart] [mySourcePos] [myDestPart] [myDestPos].sName;
+         IF (currMainMode = AutoMode) THEN
+            myRobot.autoControl.handlerActProg := handlerActProg;
+         END_IF;
+         myRobot.DebugPrint(eTraceRcuHandler, "changed handlerActProg to " + handlerActProg);
+         IF (currMainMode = AutoMode) THEN
+            WAIT (myRobot.autoControl.state = 1) OR (NOT order.part[myDestPart].pos[myDestPos]); // handshake with RcuAutoControl
+            myRobot.autoControl.state := 0;
+         END_IF;
+         subSelectLevel := myRobot.iSubSelectLevels;
+         myRobot.iSubSelectLevels := 0;
+         progLevel := -1;
+         handlerReady := TRUE;
+         WAIT (NOT handlerReady) OR (NOT order.part[myDestPart].pos[myDestPos]);
+         IF (currMainMode = AutoMode) THEN
+            WAIT (myRobot.autoControl.state = 2) OR (NOT order.part[myDestPart].pos[myDestPos]); // handshake with RcuAutoControl
+            myRobot.autoControl.state := 0; 
+         END_IF;
+         progNumber := yModuleNames[mySourcePart] [mySourcePos] [myDestPart] [myDestPos].iMoveNumber;
+         progLevel := subSelectLevel + 1;
+         
+         IF order.part[myDestPart].pos[myDestPos] THEN
+            handlerExecHandle := StartProg(handlerActProg); // starting handler program
+            bModuleStarted := TRUE;
+            IF (currMainMode = AutoMode) THEN
+               myRobot.autoControl.handlerExecHandle := handlerExecHandle;
+            END_IF;
+            IF handlerExecHandle <> -1 THEN
+               myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move wait till prog " + handlerActProg + " is running");
+               WAIT myRobot.selectingFlow.flowId = handlerExecHandle;
+               myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move wait for deselect of handler program");
+               WHILE myRobot.selectingFlow.flowId <> 0 DO // wait for deselect of handler program
+                  myRobot.WaitMcMicroCycles(5);
+                  myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move - Wait for continuation and extern control");
+                  WAIT myRobot.selectingFlow.running OR ((NOT order.part[myDestPart].pos[myDestPos]) AND myRobot.mainModeMgr.externControl);
+                  WAIT (myRobot.selectingFlow.flowId = 0) OR NOT myRobot.selectingFlow.running;
+                  IF (myRobot.selectingFlow.flowId <> 0) AND NOT myRobot.selectingFlow.running THEN
+                     InterruptProg(mainHandle);
+                     myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move - InterruptProg(mainHandle) - Progname=" + mainProg);
+                  END_IF;
+               END_WHILE;
+               flowState := GetFlowState(handlerExecHandle);
+               myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move called GetFlowState 1- flowState=" + STR(flowState));
+               WHILE flowState <> eFlowInvalid DO
+                 myRobot.WaitMcMicroCycles(5);
+                 flowState := GetFlowState(handlerExecHandle);
+               END_WHILE;
+               myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move called GetFlowState 2- flowState=" + STR(flowState));
+               progNumber := 0;
+               handlerActProg := mainProg;
+               IF (currMainMode = AutoMode) THEN
+                  myRobot.autoControl.handlerActProg := handlerActProg;
+               END_IF;
+               myRobot.DebugPrint(eTraceRcuHandler, "changed handlerActProg to " + mainProg);
+               IF (currMainMode = AutoMode) THEN
+                  WAIT (myRobot.autoControl.state = 2) OR (NOT order.part[myDestPart].pos[myDestPos]);
+                  myRobot.autoControl.state := 0;
+               END_IF;
+               handlerReady := TRUE;
+               IF (currMainMode = TeachMode) THEN
+                  ContinueProg(mainHandle);
+               END_IF;
+               WAIT (NOT handlerReady) OR (NOT order.part[myDestPart].pos[myDestPos]);
+               myRobot.iSubSelectLevels := subSelectLevel;
+               progLevel := subSelectLevel;
+               handlerExecHandle := mainHandle;
+               IF (currMainMode = AutoMode) THEN
+                  myRobot.autoControl.handlerExecHandle := handlerExecHandle;
+               END_IF;
+               // continue with "ReceiveOrder"
+               handlerReady := TRUE;
+               WAIT (NOT handlerReady) OR (NOT order.part[myDestPart].pos[myDestPos]);
+            ELSE
+               progNumber := 0;
+               handlerActProg := mainProg;
+               IF (currMainMode = AutoMode) THEN
+                  myRobot.autoControl.handlerActProg := handlerActProg;
+               END_IF;
+               myRobot.DebugPrint(eTraceRcuHandler, "changed handlerActProg to " + mainProg);
+               handlerReady := TRUE;
+               WAIT NOT handlerReady;
+               handlerExecHandle := mainHandle;
+               IF (currMainMode = AutoMode) THEN
+                  myRobot.autoControl.handlerExecHandle := handlerExecHandle;
+               END_IF;
+               sErrorText := STR(mySourcePart) + " " + STR(mySourcePos) + " " + STR(myDestPart) + " " + STR(myDestPos);
+               WHILE order.part[myDestPart].pos[myDestPos] DO
+                  RcuSetMessageOnce(TRcuHandler_ErrNoPrgForOrder, myRobot.kinListInx, 1, 0, "TRcuHandler.Move", sErrorText);
+                  WAIT NOT myRobot.svMotionAllowed;
+                  WAIT myRobot.svMotionAllowed;
+               END_WHILE;
+               noProg := TRUE;
+            END_IF;
+         ELSE
+            myRobot.DebugPrint(eTraceRcuHandler, "ROUTINE Move - Program Stop Before Start Of Handler Program");
+         END_IF;
+      ELSE
+         sErrorText := STR(mySourcePart) + " " + STR(mySourcePos) + " " + STR(myDestPart) + " " + STR(myDestPos);
+         WHILE order.part[myDestPart].pos[myDestPos] DO
+            RcuSetMessageOnce(TRcuHandler_ErrNoPrgForOrder, myRobot.kinListInx, 2, 0, "TRcuHandler.Move", sErrorText);
+            WAIT NOT myRobot.svMotionAllowed;
+            WAIT myRobot.svMotionAllowed;
+         END_WHILE;
+         noProg := TRUE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveProgState() PRIVATE
+    
+   VAR
+      bAllInputsLow    : BOOL;
+      iPart           : DINT;
+      iPos            : DINT;
+      flowState        : TFlowState;
+      bFixposWasActive : BOOL;
+   END_VAR
+   
+   WAIT gbEquipmentReady;
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+      RcuSetMessageOnce(TRcuHandler_ErrFieldbus, myRobot.kinListInx, 1, 0, "TRcuHandler.ObserveProgState");
+      RETURN;
+   END_IF;
+   
+   WHILE TRUE DO
+      WAIT (mainHandle <> 0);
+      flowState := GetFlowState(mainHandle);
+      //store if flow is from fixpos program, because if fixpos is finished and BCU is already
+      //starting new paint prog information is overwritten BIT 15.06.2011
+      bFixposWasActive := myRobot.RcuInterfaceToBCU.bFixposActive;
+      WHILE (flowState <> eFlowInvalid) OR myRobot.homing.bHomingRun DO
+         myRobot.WaitMcMicroCycles(2);
+         flowState := GetFlowState(mainHandle);
+      END_WHILE;
+      SetProgHandleAndName(0, "");
+      IF NOT (myRobot.mainModeMgr.externControl AND bFixposWasActive) THEN
+         IF isHandler THEN
+            ResetSettings();
+            bJobRunning := FALSE;
+            myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+         END_IF;
+
+         IF isOrderer THEN
+            bAllInputsLow  := FALSE;
+            // set "finish" to all handlers and wait while they are moving then delete orders
+            iPos  := -1; //-1 means "finish"
+            iPart := 0;
+            SetOrderToPLC(HANDLER(0), PART(iPart), POSITION(iPos), FALSE);
+            SetOrderToPLC(HANDLER(1), PART(iPart), POSITION(iPos), FALSE);
+            SetOrderToPLC(HANDLER(2), PART(iPart), POSITION(iPos), FALSE);
+            SetOrderToPLC(HANDLER(3), PART(iPart), POSITION(iPos), FALSE);
+            // wait while handlers are moving then delete order
+            WHILE (NOT bAllInputsLow) DO
+               bAllInputsLow := (NOT myRobot.fieldbusIn.yInRobotFromHandler[0].bStateActive.svBool) AND
+                                (NOT myRobot.fieldbusIn.yInRobotFromHandler[1].bStateActive.svBool) AND
+                                (NOT myRobot.fieldbusIn.yInRobotFromHandler[2].bStateActive.svBool) AND
+                                (NOT myRobot.fieldbusIn.yInRobotFromHandler[3].bStateActive.svBool);
+               myRobot.WaitMcMicroCycles(5);
+            END_WHILE;
+            // delete orders to all handlers
+            iPos := -2; //-2 means "delete"
+            iPart := 0;
+            SetOrderToPLC(HANDLER(0), PART(iPart), POSITION(iPos), FALSE);
+            SetOrderToPLC(HANDLER(1), PART(iPart), POSITION(iPos), FALSE);
+            SetOrderToPLC(HANDLER(2), PART(iPart), POSITION(iPos), FALSE);
+            SetOrderToPLC(HANDLER(3), PART(iPart), POSITION(iPos), FALSE);
+         END_IF; 
+      END_IF;   
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveMainMode() PRIVATE
+   VAR
+      chgMainMode : BOOL;
+   END_VAR
+   
+   chgMainMode := IS_CHANGED(myRobot.mainModeMgr.mode);
+   WHILE TRUE DO
+      WAIT chgMainMode;
+      chgMainMode := FALSE;
+      IF (myRobot.mainModeMgr.mode = ciAuto) THEN
+         currMainMode := AutoMode;
+      ELSIF ((myRobot.mainModeMgr.mode = ciT1) OR (myRobot.mainModeMgr.mode = ciT2)) THEN
+         currMainMode := TeachMode;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+//---------------------------------------------------------------------------------------------------------------
+//keep orders for this handler alive in background until requested position is reached, then reset order
+//---------------------------------------------------------------------------------------------------------------
+ROUTINE KeepOrdersAlive(handler : SINT) PRIVATE
+ VAR
+  iHandler    : SINT;
+  iPart       : SINT;
+  iPos        : SINT;
+  rNibble     : REAL;
+  iBytePart   : SINT;
+  byPosCode   : BYTE;
+  byMask      : BYTE;
+  bFeedbackOK : BOOL;
+ END_VAR
+ 
+  iHandler := handler;
+  WHILE TRUE DO
+ 
+    bFeedbackOK := UPDATE(FALSE);
+    WAIT ((myRobot.fieldbusOut.tOutHandling.yReqPartPos[iHandler].svByte OR 16#F0) <> 16#F0);
+    iPart := SHR(myRobot.fieldbusOut.tOutHandling.yReqPartPos[iHandler].svByte, 4);
+    iPart := iPart - 1;
+    iPos := myRobot.fieldbusOut.tOutHandling.yReqPartPos[iHandler].svByte AND 16#0F;
+    iBytePart := iPart / 2;               //(Part-EcoTalk 1..n) - 1 --> fieldbus 0..n, (one byte is used for 2 part) / 2 --> byte-nr fieldbus
+    rNibble := REAL(iPart) / 2.0;         //Same in REAL to get rest of rounding
+    rNibble := rNibble - REAL(iBytePart); //If rest is 0.0 --> lower nibble, 0.5 --> higher nibble
+    IF (rNibble = 0.0) THEN
+       byMask    := 16#0F;
+       byPosCode := iPos; //lower nibble
+    ELSE
+       byMask    := 16#F0;
+       byPosCode := iPos*16; //higher nibble
+    END_IF;
+    myRobot.logger.SetLoggerStep(iLoggerNumber, "KeepOrdersAlive - HANDLER " + STR(iHandler+1) + " PART " + STR(iPart+1) + " Pos " + STR(iPos) + " is set - waiting until position is reached");
+    bFeedbackOK := UPDATE((byPosCode = (myRobot.fieldbusIn.tInHandling.yPartPos[iBytePart].svByte AND byMask)) OR //part is in requested position
+         (NOT myRobot.fieldbusIn.tInHandling.yHandlerOnline[iHandler].svBool)                 OR   //handler is deselected on HMI
+                          ((myRobot.fieldbusOut.tOutHandling.yReqPartPos[iHandler].svByte OR 16#F0) = 16#F0));    //order to handler deleted (TeachIn or RESERVE)
+    WAIT bFeedbackOK;
+    
+    IF NOT myRobot.fieldbusIn.tInHandling.yHandlerOnline[iHandler].svBool THEN
+       myRobot.fieldbusOut.tOutHandling.yReqPartPos[iHandler].svByte := 16#00;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "KeepOrdersAlive - HANDLER " + STR(iHandler+1) + " is deselected - reset requested part pos");
+    ELSIF (byPosCode = (myRobot.fieldbusIn.tInHandling.yPartPos[iBytePart].svByte AND byMask)) THEN
+       myRobot.fieldbusOut.tOutHandling.yReqPartPos[iHandler].svByte := 16#00;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "KeepOrdersAlive - HANDLER " + STR(iHandler+1) + " PART " + STR(iPart+1) + " Pos " + STR(iPos) + " received - reset requested part pos");
+    ELSE
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "KeepOrdersAlive - HANDLER " + STR(iHandler+1) + " order no longer pending - finished waiting");
+    END_IF;
+       
+  END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Start automatic or abort of programm --> reset orders and poscodes
+//------------------------------------------------------------------------
+ROUTINE InitStates()
+ VAR
+  iPart : DINT;
+  iPos  : DINT;
+  i     : SINT;
+ END_VAR
+ 
+   IF partPosPerHandler THEN
+      IF isHandler THEN
+         ResetSettings();
+         bJobRunning := FALSE;
+         myRobot.fieldbusOut.bHandlerStateActive.svBool := bJobRunning;
+      END_IF;
+      IF isOrderer THEN
+         iPart := 0; 
+         iPos := -2; //-2 means "delete"
+         SetOrderToPLC(HANDLER(0), PART(iPart), POSITION(iPos), FALSE);
+         SetOrderToPLC(HANDLER(1), PART(iPart), POSITION(iPos), FALSE);
+         SetOrderToPLC(HANDLER(2), PART(iPart), POSITION(iPos), FALSE);
+         SetOrderToPLC(HANDLER(3), PART(iPart), POSITION(iPos), FALSE);
+      END_IF;
+   END_IF;   
+   tool.ResetStates(TRUE);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "InitStates by StartAutomatic, AbortProg or Deselection");
+END_ROUTINE
+
+ROUTINE StartAutomatic()
+   tool.ResetStates(TRUE);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "ResetStates by StartAutomatic");
+END_ROUTINE
+
+ROUTINE EndAutomatic()
+   tool.ResetStates(FALSE);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "ResetStates by EndAutomatic");
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------------------
+// Feedback of all handlerjobs in the station
+//-----------------------------------------------------------------------------------------
+ROUTINE JobNotRunningFromPLC(iRobNr : SINT)
+   VAR
+      tmp : SINT;
+   END_VAR
+   
+   WAIT MAIN_RUN; 
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting for handler state left - H"+STR(iRobNr+1));
+   WAIT NOT myRobot.fieldbusIn.yInRobotFromHandler[iRobNr].bStateActive.svBool;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "handler state is left - H"+STR(iRobNr+1));
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------------------
+// Feedback of all handlerjobs in the station
+//-----------------------------------------------------------------------------------------
+ROUTINE JobRunningFromPLC(iRobNr : SINT)
+   VAR
+      tmp : SINT;
+   END_VAR
+   
+   WAIT MAIN_RUN; 
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting for entering handler state - H"+STR(iRobNr+1));
+   WAIT myRobot.fieldbusIn.yInRobotFromHandler[iRobNr].bStateActive.svBool;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "handler state is entered - H"+STR(iRobNr+1));
+END_ROUTINE
+
+//-----------------------------------------------------------------------------------------
+// Get feedback from IEC about the state of high tension
+//-----------------------------------------------------------------------------------------
+ROUTINE GetHighTensionState() : tHighTensionState
+
+   IF myRobot.bHasProcess AND isHandler THEN
+      IF IS_MAPPED(myRobot.RcuInterfaceToProcess.svHtExists) AND (myRobot.RcuInterfaceToProcess.svHtExists > eWaitInitDone) THEN
+         IF (myRobot.RcuInterfaceToProcess.svHtExists = eNotUsed) THEN
+            RETURN eNotUsed;     //we have no high tension
+         ELSIF (myRobot.RcuInterfaceToProcess.svHtExists = eUsed) AND NOT myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff THEN
+            RETURN eSwitchedOn;  //high tension isn't shutdown jet
+         ELSE
+            RETURN eSwitchedOff; //high tension is shutdown
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(TRcuHandler_ErrHtInitNotDone, myRobot.kinListInx, 1, 0, "TRcuHandler.GetHighTensionState");
+         RETURN eWaitInitDone;   //information from IEC still not present
+      END_IF;
+   ELSE
+      RETURN eSwitchedOff;       //when we have no process or no handler - don't care about high tension
+   END_IF; 
+END_ROUTINE
+
+//-----------------------------------------------------------------------------------------
+// Called from EcoTalk "SET_PROCESS_STATE" - to shut down high tension before handling
+//-----------------------------------------------------------------------------------------
+ROUTINE SwitchHighTension(on : BOOL; iLine : DINT) : BOOL
+
+  IF NOT (myRobot.bHasProcess AND isHandler) THEN
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension ignored because robot has no process or is not handler"); 
+     RETURN TRUE;
+  ELSE
+     IF (GetHighTensionState() = eWaitInitDone) THEN
+        RETURN FALSE;
+     ELSIF (GetHighTensionState() = eNotUsed) THEN
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension ignored because robot has no high tension"); 
+        RETURN TRUE;
+     ELSE      
+        IF on THEN
+           IF partPosPerBody AND NOT bRelSwitchOnHt THEN
+              RcuSetMessageOnce(TRcuHandler_ErrHtRelNotAllowed, myRobot.kinListInx, 1, 0, "TRcuHandler.SwitchHighTension", STR(iLine));
+              RETURN FALSE;
+           ELSIF (NOT partPosPerBody) AND bJobRunning THEN
+              RcuSetMessageOnce(TRcuHandler_ErrHtRelNotAllowed2, myRobot.kinListInx, 1, 0, "TRcuHandler.SwitchHighTension", STR(iLine));
+              RETURN FALSE;
+           ELSE
+              IF (GetHighTensionState() = eSwitchedOff) OR myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+                 myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff := FALSE;
+                 myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension On set to process control");
+                 RETURN TRUE;
+              ELSIF (GetHighTensionState() = eSwitchedOn) OR NOT myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+                 myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension On but HT already on or request pending");
+                 RETURN TRUE;
+              END_IF;
+              bRelSwitchOnHt := FALSE;
+           END_IF;
+        ELSE         
+           IF (GetHighTensionState() = eSwitchedOn) OR NOT myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+              myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff := TRUE;
+              myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension Off set to process control");
+              RETURN TRUE;
+           ELSIF (GetHighTensionState() = eSwitchedOff) OR myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff THEN
+              myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension Off but HT already off or request pending");
+              RETURN TRUE;
+           END_IF;    
+        END_IF;        
+     END_IF; 
+     RETURN FALSE;
+  END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// When teacher forgets to switch on high tension after handling it's 
+// released automatically when robot is in HOME and program not running
+//------------------------------------------------------------------------
+ROUTINE ReleaseHtInHome() PRIVATE
+ VAR
+  chgHome : BOOL;
+  chgFlow : BOOL;
+ END_VAR
+ 
+  WAIT gbEquipmentReady;
+  IF myRobot.bHasProcess THEN
+     chgHome := IS_CHANGED(myRobot.fixpos.RcuInHome);
+     chgFlow := IS_CHANGED(myRobot.selectingFlow.running);
+     WHILE TRUE DO 
+       WAIT chgHome OR chgFlow;
+       chgHome := FALSE;
+       chgFlow := FALSE;
+       IF myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff AND myRobot.fixpos.RcuInHome AND NOT myRobot.selectingFlow.running THEN
+          myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff := FALSE;
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "Request SwitchHighTension off reset, because robot is in HOME");
+       END_IF;
+     END_WHILE;
+  END_IF;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------------------
+// As long as handler executes RECEIVE_ORDER the high tension must be off
+//-----------------------------------------------------------------------------------------
+ROUTINE ObserveHighTension() PRIVATE
+ VAR
+  chg        : BOOL;
+  bCondition : BOOL;
+ END_VAR
+ 
+  WAIT gbEquipmentReady;
+  IF myRobot.bHasProcess THEN
+     chg  := IS_CHANGED(myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff);
+     WHILE TRUE DO
+        WAIT bHtObservationRun;
+        IF partPosPerBody THEN
+           bCondition := UPDATE(myRobot.RcuInterfaceToProcess.svEcoTalkReqHtOff);
+        ELSE
+           bCondition := UPDATE(bJobRunning);
+           WAIT bCondition;
+        END_IF;
+        chg := FALSE;
+        WHILE bCondition AND bHtObservationRun DO
+           WAIT chg OR NOT bCondition;
+           IF bCondition AND NOT myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff THEN
+              PRINT("ObserveHighTension: bCondition=" + STR(bCondition) + "  svEcoTalkHtIsOff=" + STR(myRobot.RcuInterfaceToProcess.svEcoTalkHtIsOff) + " Line=" + STR(iLineHtObservation));
+              RcuSetMessageOnce(TRcuHandler_ErrHandlingButHT, myRobot.kinListInx, 5, 0, "TRcuHandler.ReceiveOrder", STR(iLineHtObservation));
+              WAIT NOT myRobot.svMotionAllowed;
+              WAIT myRobot.svMotionAllowed;
+           ELSE
+              chg := FALSE;
+           END_IF;
+        END_WHILE;
+        bHtObservationRun := FALSE;
+     END_WHILE;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------
+//   systemroutine
+//------------------------------------------------------------------------------
+ROUTINE RESERVE() 
+ VAR
+  i : DINT;
+ END_VAR
+  
+  IF IS_MAPPED(myRobot) AND partPosPerBody AND NOT (myRobot.RcuInterfaceToBCU.bFixposActive OR myRobot.bReleaseBlockedByHandler) THEN  
+     IF isOrderer THEN  
+        FOR i:=1 TO cgiMaxNumOfHandlers DO
+            SetOrderToPLC(HANDLER(i), PART(0), POSITION(0)); //reset all outputs for this handler
+        END_FOR;
+        myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iRobot1 := 0;        
+        myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iPart   := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqPartPos.iPos    := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqPartPos.mShow   := FALSE;
+     END_IF;
+     IF isHandler THEN  
+        myRobot.fieldbusOut.tOutHandling.bPartPos.svByte := 0;
+        FOR i:=0 TO (cgiMaxNumOfParts-1) DO
+            yActPosCode[i] := POSITION(0);
+        END_FOR;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot1 := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot2 := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPart   := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPos    := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.mShow   := FALSE;
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+ROUTINE RELEASE() 
+ VAR
+  i : DINT;
+ END_VAR
+ 
+  IF IS_MAPPED(myRobot) AND partPosPerBody AND NOT (myRobot.RcuInterfaceToBCU.bFixposActive OR myRobot.bReleaseBlockedByHandler) THEN
+     IF isHandler THEN  
+        myRobot.fieldbusOut.tOutHandling.bPartPos.svByte := 0;
+        FOR i:=0 TO (cgiMaxNumOfParts-1) DO
+            yActPosCode[i] := POSITION(0);
+        END_FOR;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot1 := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iRobot2 := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPart   := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.iPos    := 0;
+        myRobot.ecoscreen.HandlerOutputs.sReqOrder.mShow   := FALSE;
+        bRelSwitchOnHt    := FALSE;
+        bHtObservationRun := FALSE;
+     END_IF;
+  END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Initialization
+//------------------------------------------------------------------------
+ROUTINE init(locRobot : TRcuRobot)  
+   
+   VAR
+      handle : DINT;
+      i      : SINT;
+      part   : DINT;
+      info   : DINT;
+      config : BYTE := 0;
+      str    : STRING;
+      name   : STRING;
+      value  : DINT;
+   END_VAR
+   
+   myRobot := MAP(locRobot);
+   iNumberOfParts := 0 + 1;
+   //activate logger and check if has additional part
+   IF (isHandler OR isOrderer OR tool.bEnabled) THEN
+      iLoggerNumber  := myRobot.logger.ActivateLogger("TRcuHandler", myRobot);
+      IF (iLoggerNumber = 0) THEN
+         PRINT("LOG Kein Token fuer Handler-Logger erhalten");
+      END_IF;
+   END_IF;
+   //PLC handles part positions per handler
+   IF partPosPerHandler THEN
+      IF (isHandler OR isOrderer) THEN
+         name := "Handler";
+         IF CatalogGetHandleRelative(myRobot.rcCatHdl, name, handle) THEN
+            IF CatalogReadInt(handle, "hasAdditionalPart", value, TRUE) AND (value=1) THEN
+               hasAdditionalPart := TRUE;
+            END_IF;
+            CatalogReadInt(handle, "additionalPartNr", additionalPartNr, TRUE);
+            CatalogReadInt(handle, "replacingPartNr", replacingPartNr, TRUE);
+            IF CatalogReadInt(handle, "addPartHandler1", value, TRUE) AND (value=1) THEN
+               addPartHandlerNr[0] := TRUE;
+            END_IF;
+            IF CatalogReadInt(handle, "addPartHandler2", value, TRUE) AND (value=1) THEN
+               addPartHandlerNr[1] := TRUE;
+            END_IF;
+            IF CatalogReadInt(handle, "addPartHandler3", value, TRUE) AND (value=1) THEN
+               addPartHandlerNr[2] := TRUE;
+            END_IF;
+            IF CatalogReadInt(handle, "addPartHandler4", value, TRUE) AND (value=1) THEN
+               addPartHandlerNr[3] := TRUE;
+            END_IF;
+         END_IF;
+         START ObserveProgState();
+         START ObserveMainMode();
+      END_IF;
+      IF isHandler THEN
+         iNumberOfParts := cgiMaxNumberOfParts;
+         name := "Handler";
+         CatalogGetHandleRelative(myRobot.rcCatHdl, name, handle);
+         FOR i:=1 TO iNumberOfParts-1 DO
+            IF (i=1) THEN
+               IF CatalogReadInt(handle, "Part1", part, TRUE) AND (part=1) THEN
+                  partMap[1] := 1;
+                  myRobot.logger.SetLoggerStep(iLoggerNumber, "Handling activated for Part 1");
+               ELSE
+                  partMap[1] := 0;
+               END_IF;
+            ELSIF (i=2) THEN
+               IF CatalogReadInt(handle, "Part2", part, TRUE) AND (part=1) THEN
+                  partMap[2] := 1;
+                  myRobot.logger.SetLoggerStep(iLoggerNumber, "Handling activated for Part 2");
+               ELSE
+                  partMap[2] := 0;
+               END_IF;
+            ELSIF (i=3) THEN
+               IF CatalogReadInt(handle, "Part3", part, TRUE) AND (part=1) THEN
+                  partMap[3] := 1;
+                  myRobot.logger.SetLoggerStep(iLoggerNumber, "Handling activated for Part 3");
+               ELSE
+                  partMap[3] := 0;
+               END_IF;
+            ELSIF (i=4) THEN
+               IF CatalogReadInt(handle, "Part4", part, TRUE) AND (part=1) THEN
+                  partMap[4] := 1;
+                  myRobot.logger.SetLoggerStep(iLoggerNumber, "Handling activated for Part 4");
+               ELSE
+                  partMap[4] := 0;
+               END_IF;
+            END_IF;
+         END_FOR;
+         FOR i:=1 TO iNumberOfParts-1 DO
+            partsIni[i] := 4; // default is closed
+            partsEnd[i] := 4; // default is closed
+         END_FOR;
+         // activation of the event routines
+         START StartEventRoutines();
+         config := 1;
+         START ObserveProgLineNr();
+         START ReleaseHtInHome();
+         START ObserveHighTension();
+      END_IF;
+      IF isOrderer THEN
+         config := config OR 2;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Robot is enabled for ordering Part-Positions");
+      END_IF;
+   //PLC handles part positions per body
+   ELSE
+      myRobot.ecoscreen.HandlerInterface(myRobot);
+      myRobot.ecoscreen.HandlerOutputs.bIsHandler := isHandler;
+      myRobot.ecoscreen.HandlerOutputs.bIsOrderer := isOrderer;
+      IF isHandler THEN
+         START ReleaseHtInHome();
+         START ObserveHighTension();
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Robot is enabled for handling");
+      END_IF; 
+      IF isOrderer THEN
+         FOR i:=0 TO cgiMaxNumOfHandlers-1 DO
+             START KeepOrdersAlive(i); //keep orders for this handler alive until requested position is reached
+         END_FOR;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Robot is enabled for ordering");
+      END_IF;
+   END_IF;   
+   tool.init(myRobot);
+   START toolCleaner.Init(myRobot);
+   
+END_ROUTINE

@@ -1,0 +1,1202 @@
+TYPE GLOBAL
+    TInOutBool :STRUCT
+      svBool : MAPTO BOOL;
+    END_STRUCT;
+    
+    TInOutByte :STRUCT
+      svByte : MAPTO BYTE;
+    END_STRUCT;
+    
+    TInOutWord :STRUCT
+      svWord : MAPTO INT;
+    END_STRUCT;
+    
+    TInOutDword :STRUCT
+      svDword : MAPTO DINT;
+    END_STRUCT;
+
+    // handling part positions-vector BOOL
+    THwPos : STRUCT      
+        pos : ARRAY [cgiNumberOfHandlerPartPos] OF TInOutBool;
+    END_STRUCT;
+    TPos : STRUCT 
+        pos : ARRAY [cgiNumberOfHandlerPartPos] OF BOOL;
+    END_STRUCT;
+    // handling parts-positions-matrix BOOL
+    THwPartTPos : STRUCT 
+        part : ARRAY [cgiMaxNumberOfParts] OF THwPos;
+    END_STRUCT;
+    TPartTPos : STRUCT
+        part : ARRAY [cgiMaxNumberOfParts] OF TPos;
+    END_STRUCT;
+    //--------------------------------------------------------------------------
+    // In case that PLC handles part position per handler
+    // handling - inputs of ordering robot
+    THwRobotIn : STRUCT
+       bOnline  : TInOutBool;
+       part     : ARRAY [cgiMaxNumberOfParts] OF THwPos;
+    END_STRUCT;
+    TRobotIn : STRUCT
+       bOnline      : BOOL;
+       bStateActive : TInOutBool;
+       part         : ARRAY [cgiMaxNumberOfParts] OF TPos;
+    END_STRUCT;
+    // handling - outputs of ordering robot
+    TRobotOut : STRUCT
+       bFinish  : TInOutBool;
+       part     : ARRAY [cgiMaxNumberOfParts] OF THwPos;
+    END_STRUCT;
+    //--------------------------------------------------------------------------
+    // In case that PLC handles part position per body
+    //inputs of robot with signal of the current part positions and handler selection
+    TInHandling : STRUCT
+       yHandlerOnline : ARRAY [cgiMaxNumOfHandlers] OF TInOutBool;
+       yPartPos       : ARRAY [cgiMaxNumOfPartsInputs] OF TInOutByte;
+       yOrdererOnline : ARRAY [cgiMaxNumOfOrderer] OF TInOutBool;
+       yReqPartPos    : ARRAY [cgiMaxNumOfOrderer] OF TInOutByte;
+    END_STRUCT;
+    TOutHandling : STRUCT
+      bPartPos       : TInOutByte;
+      yReqPartPos    : ARRAY [cgiMaxNumOfHandlers] OF TInOutByte;
+    END_STRUCT;
+    
+    
+   tsFieldbusInputs : STRUCT
+      //mainmodes
+      ModeAutoExtern        : TInOutBool;
+      ModeT1                : TInOutBool;
+      ModeT2                : TInOutBool;
+      ModeSleep             : TInOutBool;
+      Deadman               : TInOutBool;
+      ModeHand              : TInOutBool;
+      //motion control
+      ErrorQuit             : TInOutBool;
+      GhostMode             : TInOutBool;
+      GhostNoMotion         : TInOutBool;
+      ReleaseRobot          : TInOutBool;
+      PowerOn               : TInOutBool;
+      MovementRelease       : TInOutBool;
+      StartHoming           : TInOutBool;
+      StartPreHoming        : TInOutBool;
+      //collision                      
+      yHwCollisionBits      : ARRAY [16] OF TInOutBool;
+      yCollisionBits        : ARRAY [16] OF BOOL;
+      //custom bits                      
+      yHwCustomBits         : ARRAY [16] OF TInOutBool;
+      yCustomBits           : ARRAY [16] OF BOOL;
+      //vision                      
+      StrobeVisionData      : TInOutBool;
+      VisionDataInvalid     : TInOutBool;
+      GoDirectHome          : TInOutBool;
+      DoRemeasure           : TInOutBool;
+      Continue              : TInOutBool;
+      AckSyncVision         : TInOutBool;
+      GhostNoVision         : TInOutBool; 
+      EStopVision           : TInOutBool;
+      VisionDisplaceX       : TInOutWord;  
+      VisionDisplaceY       : TInOutWord;
+      VisionDisplaceZ       : TInOutWord;
+      VisionDisplaceA       : TInOutWord;
+      VisionDisplaceB       : TInOutWord;
+      VisionDisplaceC       : TInOutWord;
+
+      MeasureRelative       : TInOutBool;
+      AckStartMeasure       : TInOutBool;
+      GoNextCamPos          : TInOutBool;
+      //handler
+      IgnorePartControl     : TInOutBool;
+      //In case that PLC handles part position per handler
+      HandlerStop           : TInOutBool;
+      tHwHandlerReqPos      : THwPartTPos;
+      tHandlerReqPos        : TPartTPos;
+      yHwInRobotFromHandler : ARRAY [4] OF THwRobotIn;
+      yInRobotFromHandler   : ARRAY [4] OF TRobotIn;
+      //In case that PLC handles part position per body
+      tInHandling           : TInHandling;
+      //timedata
+      AckTimeData           : TInOutBool;
+      ConvRunning           : TInOutBool;
+      // gluing
+      PlcOrder             : TInOutByte;
+      PlcState             : TInOutByte;
+      Fixing               : TInOutBool;
+      Vacuum               : TInOutBool;
+      BlowOff              : TInOutBool;
+      GlassDetect          : TInOutBool;
+      // exchange of masking device
+      MDDeskRelease        : TInOutBool;
+      MDGripperOpen        : TInOutBool;
+      // BCC In
+      Spot1Empty           : TInOutBool;
+      Spot2Empty           : TInOutBool;
+      Spot3Empty           : TInOutBool;
+      Spot4Empty           : TInOutBool;
+      CouplingTool1Done    : TInOutBool;
+      CouplingTool2Done    : TInOutBool;
+      CouplingTool3Done    : TInOutBool;
+      CouplingTool4Done    : TInOutBool;
+      Tool1Lifted          : TInOutBool;
+      Tool2Lifted          : TInOutBool;
+      Tool3Lifted          : TInOutBool;
+      Tool4Lifted          : TInOutBool;
+      Tool1Lowered         : TInOutBool;
+      Tool2Lowered         : TInOutBool;
+      Tool3Lowered         : TInOutBool;
+      Tool4Lowered         : TInOutBool;
+      ApplicationDone      : TInOutBool;
+      NozzleSensor         : TInOutBool;
+      HoleNumber           : TInOutWord;
+      //SSK
+      PlacePlugOK          : TInOutBool;
+      CheckPlugOK          : TInOutBool;
+      FillingMagazineDone  : TInOutBool;
+      EmptyMagazine        : TInOutBool;
+      CouplingToolDone_PI  : TInOutBool;
+      UncouplingToolDone_PI: TInOutBool;
+      SpotEmpty_PI         : TInOutBool;
+      GetPlugDone          : TInOutBool; 
+      PlugCheckOk          : TInOutBool;
+      MagazinDischarged    : TInOutBool;
+      
+      PlcJogAxis           : TInOutByte;
+      PlcJogKeyPlus        : TInOutBool;
+      PlcJogKeyMinus       : TInOutBool;
+      PlcJogMode           : TInOutByte;
+      
+      CleanRequest         : TInOutBool;
+      BodyIsFixed          : TInOutBool;
+      AbortWaitingBody     : TInOutBool;
+   END_STRUCT;
+   
+   tsFieldbusOutputs : STRUCT
+      //fixpos
+      PosUnselect           : TInOutBool;
+      PosBypass             : TInOutBool;
+      PosHome               : TInOutBool;
+      //mainmodes
+      ModeAutoExtern        : TInOutBool;
+      ModeT1                : TInOutBool;
+      ModeT2                : TInOutBool;
+      ModeSleep             : TInOutBool;
+      //motion control      
+      ProgramActive         : TInOutBool;
+      TPConnected           : TInOutBool;
+      JogConv               : TInOutBool;
+      PowerOn               : TInOutBool;
+      MovementRelease       : TInOutBool;
+      HomingActive          : TInOutBool;
+      HomingFinished        : TInOutBool;
+      //collision           
+      yCollisionBits        : ARRAY [16] OF TInOutBool;
+      //custom bits
+      yCustomBits           : ARRAY [16] OF TInOutBool;
+      //MotionState
+      MotionErr             : TInOutBool;
+      MotionWarn            : TInOutBool;
+      MotionOn              : TInOutBool;
+      MotionOff             : TInOutBool;
+      //vision              
+      BadVisionData         : TInOutBool;
+      AckVisionData         : TInOutBool;
+      ReqVisionData         : TInOutBool;
+      byOrderValuesNr       : TInOutByte;
+      MeasureRelative       : TInOutBool;
+      StartMeasure          : TInOutBool;
+      RobInCamPos           : TInOutBool;
+      RobInLastCamPos       : TInOutBool;
+      VisionError           : TInOutBool;
+      ReqSyncVision         : TInOutBool; 
+      byPathNr              : TInOutByte;
+      bLightOn              : TInOutBool;
+      bOpenCover            : TInOutBool;
+      bWarnToolRange        : TInOutBool;
+
+      //handler
+      bHandlerStateActive   : TInOutBool;
+      //In case that PLC handles part position per handler
+      tHandlerSignalPos     : THwPartTPos;
+      yRobotToHandler       : ARRAY [4] OF TRobotOut;
+      //In case that PLC handles part position per body
+      tOutHandling       : TOutHandling;
+      //brakecheck
+      CheckRequired         : TInOutBool;
+      BrakeCheckRuns        : TInOutBool;
+      //timedata
+      TimeDataValid         : TInOutBool;
+      ProgramNo             : TInOutWord;
+      TimeData              : TInOutWord;
+      // gluing
+      PlcOrder              : TInOutByte;
+      PLCTrigger1           : TInOutBool;   
+      PLCTrigger2           : TInOutBool;
+      PLCTrigger3           : TInOutBool;
+      PLCTrigger4           : TInOutBool;
+      // exchange of masking device
+      MDDeskOrder           : TInOutBool;
+      MDGripperOrder        : TInOutBool;
+      // BCC Out
+      UncoupleTool1         : TInOutBool;
+      UncoupleTool2         : TInOutBool;
+      UncoupleTool3         : TInOutBool;
+      UncoupleTool4         : TInOutBool;
+      CoupleTool1           : TInOutBool;
+      CoupleTool2           : TInOutBool;
+      CoupleTool3           : TInOutBool;
+      CoupleTool4           : TInOutBool;
+      LiftTool1             : TInOutBool;
+      LiftTool2             : TInOutBool;
+      LiftTool3             : TInOutBool;
+      LiftTool4             : TInOutBool;
+      LowerTool1            : TInOutBool;
+      LowerTool2            : TInOutBool;
+      LowerTool3            : TInOutBool;
+      LowerTool4            : TInOutBool;
+      ApplicationStart      : TInOutBool;
+      CollisionType         : TInOutBool;
+      HoleNumber            : TInOutWord;
+      //SSK
+      PlacePlug           : TInOutBool;
+      CheckPlug           : TInOutBool;
+      FillMagazine        : TInOutBool;
+      CoupleTool_PI       : TInOutBool;
+      UncoupleTool_PI     : TInOutBool;
+      GetPlug             : TInOutBool; 
+      DiscargePlugMagazin : TInOutBool;
+      // mastering of save encoders
+      MasterSafeEncoders : TInOutBool;
+      //DVD gluing
+      yHwMainNeedles        : ARRAY [cgiNrNeedlesMultigun] OF TInOutBool;
+      wTcpSpeed             :TInOutWord;
+      wOverride             :TInOutWord;
+      //stop&go conveyor
+      WaitingBodyFixed      : TInOutBool;
+      A7ToPlc               : TInOutWord;
+      //InterfaceToProcess
+      AtomizerNotInCleaner  : TInOutBool;
+   END_STRUCT;
+END_TYPE
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to PLC
+//----------------------------------------------------------------------------------------
+ROUTINE MapFieldbusSlave(CONST iRobot : DINT) GLOBAL
+ VAR
+  sNameSvVar         : STRING;
+  i                  : INT;
+  iHandler           : SINT;
+  iOrderer           : SINT;
+  iPart              : SINT;
+  iPos               : SINT;
+ END_VAR
+ 
+   bMappingOk := TRUE;
+   
+(*****************************************************************************************
+***********   Inputs   *******************************************************************
+******************************************************************************************)
+
+    //-- InModeAutoExtern ---------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ModeAutoExtern, cHW_SLI_mModeAutoEx, bMappingOk);
+    //-- InModeT1 ----------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ModeT1, cHW_SLI_mModeT1, bMappingOk);
+    //-- InModeT2 ---------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ModeT2, cHW_SLI_mModeT2, bMappingOk);
+    //-- InModeSleep ------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ModeSleep, cHW_SLI_mModeSleep, bMappingOk);
+    //-- InDeadman ------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Deadman, cHW_SLI_mDeadman, bMappingOk);
+    //-- InModeHand ---------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ModeHand, cHW_SLI_mModeHand, bMappingOk);
+    //-- InErrorQuit -------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ErrorQuit, cHW_SLI_mErrorQuit, bMappingOk);
+    //-- InGhostMode -------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GhostMode, cHW_SLI_mGhostMode, bMappingOk);  
+    //-- InGhostNoMotion ---------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GhostNoMotion, cHW_SLI_mGhostNoMotion, bMappingOk);  
+    //-- InReleaseRobot ------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ReleaseRobot, cHW_SLI_mReleaseRobot, bMappingOk);
+    //-- InPowerOn -----------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.PowerOn, cHW_SLI_mPowerOn, bMappingOk);
+    //-- InMovementRelease ---------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.MovementRelease, cHW_SLI_mMovementRelease, bMappingOk);
+    //-- InStartHoming --------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.StartHoming, cHW_SLI_mStartHoming, bMappingOk);
+    //-- InStartPreHoming --------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.StartPreHoming, cHW_SLI_mStartPreHoming, bMappingOk);
+    //-- InCollisionBits --------------------------------------------------------------------
+    FOR i := 0 TO 15 DO
+        sNameSvVar := cHW_SLI_mCollisionBit + STR(i);
+        MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwCollisionBits[i], sNameSvVar, bMappingOk);
+        UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwCollisionBits[i], 
+                               PaintRobot[iRobot].fieldbusIn.yCollisionBits[i]);
+    END_FOR;
+    //-- InCustomBits --------------------------------------------------------------------
+    IF PaintRobot[iRobot].autoControl.bEnableCustomBits THEN
+       FOR i := 1 TO 16 DO
+           sNameSvVar := cHW_SLI_mCustomTeachCommando + STR(i);
+           MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwCustomBits[i-1], sNameSvVar, bMappingOk);
+           UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwCustomBits[i-1], 
+                                  PaintRobot[iRobot].fieldbusIn.yCustomBits[i-1]);
+       END_FOR;
+    END_IF;
+    //------------------   STANDARD and EXTENDED vision systems  -------------------------------------------------------
+    //-- InStrobeVisionData --------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.StrobeVisionData, cHW_SLI_mStrobeVisionData, bMappingOk);
+    //-- InVisionDataInvalid -------------------------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDataInvalid, cHW_SLI_mVisionDataInvalid, bMappingOk);
+    //-- InGoHome from RECEIVE(Vision, Data) ----------------------------------------------------
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GoDirectHome, cHW_SLI_mGoDirectHome, bMappingOk);
+    //-- InVisionDisplaceX --------------------------------------------------------------------
+    MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDisplaceX, cHW_SLI_wVisionDisplaceX, bMappingOk);
+    //-- InVisionDisplaceY --------------------------------------------------------------------
+    MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDisplaceY, cHW_SLI_wVisionDisplaceY, bMappingOk);
+    //-- InVisionDisplaceZ --------------------------------------------------------------------
+    MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDisplaceZ, cHW_SLI_wVisionDisplaceZ, bMappingOk);
+    //-- InVisionDisplaceA --------------------------------------------------------------------
+    MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDisplaceA, cHW_SLI_wVisionDisplaceA, bMappingOk);
+    //-- InVisionDisplaceB --------------------------------------------------------------------
+    MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDisplaceB, cHW_SLI_wVisionDisplaceB, bMappingOk);
+    //-- InVisionDisplaceC --------------------------------------------------------------------
+    MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.VisionDisplaceC, cHW_SLI_wVisionDisplaceC, bMappingOk);
+    //------------------   Only EXTENDED vision systems  -------------------------------------------------------
+    IF PaintRobot[iRobot].vision.bUseExtendedInterface THEN
+       //-- InDoRemeasure from RECEIVE(Vision, Data) ----------------------------------------------------
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.DoRemeasure, cHW_SLI_mDoRemeasure, bMappingOk);
+       //-- ContinueVision from RECEIVE(Vision, Data) ----------------------------------------------------
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Continue, cHW_SLI_mContinueVision, bMappingOk);  
+       //-- AckSyncVision from RECEIVE(Vision, Data) ----------------------------------------------------
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.AckSyncVision, cHW_SLI_mAckSyncVision, bMappingOk);
+       //-- Ghost without vision system is running  ----------------------------------------------------
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GhostNoVision, cHW_SLI_mGhostNoVision, bMappingOk); 
+    END_IF;
+    IF PaintRobot[iRobot].vision.bUseExtendedInterface OR (giFieldBusSlaveType = 2) OR // MB Duesseldorf  
+       PaintRobot[iRobot].vision.tVisionAbsolute.bMultiTrigger OR PaintRobot[iRobot].vision.tVisionRelative.bMultiTrigger THEN  
+        MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.AckStartMeasure, cHW_SLI_mAckStartMeasure, bMappingOk);   
+        MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GoNextCamPos, cHW_SLI_mGoNextCamPos, bMappingOk);  
+        IF (giFieldBusSlaveType = 2) THEN
+            MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.MeasureRelative, cHW_SLI_mAckMeasureRelative, bMappingOk);
+        END_IF; 
+    END_IF;
+    
+    //-- Vision system sends EStop signal used for door angle observation ---------------------
+    IF PaintRobot[iRobot].vision.bUseEStopVisionSystem THEN
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.EStopVision, cHW_SLI_mEStopVision, bMappingOk);
+    END_IF;
+    
+    //handler - PLC handles part positions per handler
+    IF NOT PaintRobot[iRobot].handler.partPosPerBody THEN
+       IF (PaintRobot[iRobot].handler.isHandler OR PaintRobot[iRobot].handler.isOrderer) THEN
+          //-- InIgnorePartControl --------------------------------------------------------------------
+          MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.IgnorePartControl, cHW_SLI_mIgnorePartControl, bMappingOk);
+          //-- InHandlerStop -----------------------------------------------------------------------
+          MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.HandlerStop, cHW_SLI_mHandlerFinish, bMappingOk);
+          //-- InRequestPartXPosY ------------------------------------------------------------------
+          FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+             //waitpos
+             sNameSvVar := cHW_SLI_mRequestPartXwait + STR(iPart) + "Wait";
+             MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.tHwHandlerReqPos.part[iPart].pos[0], sNameSvVar, bMappingOk);
+             UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.tHwHandlerReqPos.part[iPart].pos[0], 
+                                    PaintRobot[iRobot].fieldbusIn.tHandlerReqPos.part[iPart].pos[0]);
+             //partpos
+             FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                sNameSvVar := cHW_SLI_mRequestPartXposY + STR(iPart) + "Pos" + STR(iPos);
+                MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.tHwHandlerReqPos.part[iPart].pos[iPos], sNameSvVar, bMappingOk); 
+                UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.tHwHandlerReqPos.part[iPart].pos[iPos], 
+                                       PaintRobot[iRobot].fieldbusIn.tHandlerReqPos.part[iPart].pos[iPos]);
+             END_FOR;
+          END_FOR;
+          //-- InRobotFromHandlerX
+          FOR iHandler:=0 TO 3 DO
+             CASE iHandler OF
+                //handler active
+                0: MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[0].bOnline, cHW_SLI_mSignalH1Active, bMappingOk);
+                   UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[0].bOnline, 
+                                          PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[0].bOnline);  
+                   //handler is execting RECEIVE_ORDER = bJobRunning from handler
+                   MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[0].bStateActive, cHW_SLI_mSignalH1StateActive, bMappingOk);                      
+                   
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar := cHW_SLI_mSignalH1PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[0].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[0].part[iPart].pos[0], 
+                                             PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[0].part[iPart].pos[0]);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLI_mSignalH1PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[0].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                         UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[0].part[iPart].pos[iPos], 
+                                                PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[0].part[iPart].pos[iPos]);
+                      END_FOR;
+                   END_FOR;
+                   //handler active
+                1: MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[1].bOnline, cHW_SLI_mSignalH2Active, bMappingOk);
+                   UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[1].bOnline, 
+                                          PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[1].bOnline);
+                                          
+                   //handler is execting RECEIVE_ORDER = bJobRunning from handler
+                   MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[1].bStateActive, cHW_SLI_mSignalH2StateActive, bMappingOk);                      
+                   
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar := cHW_SLI_mSignalH2PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[1].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[1].part[iPart].pos[0], 
+                                             PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[1].part[iPart].pos[0]);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLI_mSignalH2PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[1].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                         UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[1].part[iPart].pos[iPos], 
+                                                PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[1].part[iPart].pos[iPos]);
+                      END_FOR;
+                   END_FOR;
+                   //handler active
+                2: MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[2].bOnline, cHW_SLI_mSignalH3Active, bMappingOk);
+                   UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[2].bOnline, 
+                                          PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[2].bOnline);
+                                          
+                   //handler is execting RECEIVE_ORDER = bJobRunning from handler
+                   MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[2].bStateActive, cHW_SLI_mSignalH3StateActive, bMappingOk);              
+                                          
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar := cHW_SLI_mSignalH3PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[2].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[2].part[iPart].pos[0], 
+                                             PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[2].part[iPart].pos[0]);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLI_mSignalH3PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[2].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                         UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[2].part[iPart].pos[iPos], 
+                                                PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[2].part[iPart].pos[iPos]);
+                      END_FOR;
+                   END_FOR;
+                   //handler active
+                3: MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[3].bOnline, cHW_SLI_mSignalH4Active, bMappingOk);
+                   UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[3].bOnline, 
+                                          PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[3].bOnline);
+                                          
+                   //handler is execting RECEIVE_ORDER = bJobRunning from handler
+                   MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[3].bStateActive, cHW_SLI_mSignalH4StateActive, bMappingOk);                      
+                   
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar := cHW_SLI_mSignalH4PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[3].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[3].part[iPart].pos[0], 
+                                             PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[3].part[iPart].pos[0]);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLI_mSignalH4PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[3].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                         UpdateMapvarToLocalvar(PaintRobot[iRobot].fieldbusIn.yHwInRobotFromHandler[3].part[iPart].pos[iPos], 
+                                                PaintRobot[iRobot].fieldbusIn.yInRobotFromHandler[3].part[iPart].pos[iPos]);
+                      END_FOR;
+                   END_FOR;  
+             END_CASE;
+          END_FOR;
+       END_IF;
+    //handler - PLC handles part positions per body
+    ELSE
+       IF PaintRobot[iRobot].handler.isOrderer THEN
+          //inputs of robot with signal if handler is selected by HMI
+          FOR iHandler:=0 TO cgiMaxNumOfHandlers-1 DO
+              sNameSvVar := cHW_SLI_mSignalHandlerXActive + STR(iHandler+1);
+              MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.tInHandling.yHandlerOnline[iHandler], sNameSvVar, bMappingOk);
+          END_FOR;
+       END_IF;  
+       IF PaintRobot[iRobot].handler.isOrderer OR PaintRobot[iRobot].handler.isHandler THEN   
+          //inputs of robot with signal of the current part positions 
+          FOR iPart:=1 TO cgiMaxNumOfPartsInputs DO
+              sNameSvVar  := cHW_SLI_bSignalPartPos + STR(iPart*2-1) + STR(iPart*2);
+              MapAndCheckByteIn(iRobot, PaintRobot[iRobot].fieldbusIn.tInHandling.yPartPos[iPart-1], sNameSvVar, bMappingOk);
+          END_FOR;
+       END_IF;
+       IF PaintRobot[iRobot].handler.isHandler THEN
+          //inputs of robot with signal if handler is selected by HMI and requested part positions
+          FOR iOrderer:=0 TO cgiMaxNumOfOrderer-1 DO
+              sNameSvVar := cHW_SLI_mSignalOrdererXActive + STR(iOrderer+1);
+              MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.tInHandling.yOrdererOnline[iOrderer], sNameSvVar, bMappingOk);
+              sNameSvVar := cHW_SLI_bRequestPartPos + STR(iOrderer+1);
+              MapAndCheckByteIn(iRobot, PaintRobot[iRobot].fieldbusIn.tInHandling.yReqPartPos[iOrderer], sNameSvVar, bMappingOk); 
+          END_FOR;
+       END_IF;
+       //-- InIgnorePartControl --------------------------------------------------------------------
+       IF (PaintRobot[iRobot].handler.isHandler OR PaintRobot[iRobot].handler.isOrderer) THEN
+          MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.IgnorePartControl, cHW_SLI_mIgnorePartControl, bMappingOk);
+       END_IF;
+    END_IF;
+    
+    //-- InAckTimeData   -----------------------------------------------------------------  
+    IF giFieldBusSlaveType = 1 THEN // REHAU
+        MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.AckTimeData, cHW_SLI_mAckTimeData, bMappingOk);   
+        MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ConvRunning, cHW_SLI_mConvRunning, bMappingOk);   
+    END_IF;
+    
+   IF PaintRobot[iRobot].bEnablePlcOrderByte THEN
+      MapAndCheckByteIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlcOrder, cHW_SLI_bPlcOrder, bMappingOk);
+      MapAndCheckByteIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlcState, cHW_SLI_bPlcState, bMappingOk);
+   END_IF;
+   
+   // gluing
+   IF PaintRobot[iRobot].gluingRobot THEN
+      IF PaintRobot[iRobot].gluing.bGripperFixingAvailable THEN
+         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Fixing, cHW_SLI_mGripperFixing, bMappingOk);
+      END_IF;  
+      IF PaintRobot[iRobot].gluing.bGripperVaccumAvailable THEN
+         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Vacuum, cHW_SLI_mGripperVacuum, bMappingOk);
+      END_IF;  
+      IF PaintRobot[iRobot].gluing.bGripperBlowOffAvailable THEN
+         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.BlowOff, cHW_SLI_mGripperBlowOff, bMappingOk); 
+      END_IF;        
+      IF PaintRobot[iRobot].gluing.bGlassDetectAvailable THEN
+         MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GlassDetect, cHW_SLI_mGripperGlassDetect, bMappingOk); 
+      END_IF;  
+    END_IF;
+    IF PaintRobot[iRobot].chgMaskingDevice THEN
+       // exchange of masking device
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.MDDeskRelease, cHW_SLI_mMDDeskRelease, bMappingOk);
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.MDGripperOpen, cHW_SLI_mMDGripperOpen, bMappingOk);
+    END_IF;
+    // BCC
+    IF PaintRobot[iRobot].bBccActive THEN       
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Spot1Empty, cHW_SLI_Spot1Empty, bMappingOk);                  
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Spot2Empty, cHW_SLI_Spot2Empty, bMappingOk);                  
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Spot3Empty, cHW_SLI_Spot3Empty, bMappingOk);                  
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Spot4Empty, cHW_SLI_Spot4Empty, bMappingOk);                  
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CouplingTool1Done, cHW_SLI_CouplingTool1Done, bMappingOk);    
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CouplingTool2Done, cHW_SLI_CouplingTool2Done, bMappingOk);    
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CouplingTool3Done, cHW_SLI_CouplingTool3Done, bMappingOk);    
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CouplingTool4Done, cHW_SLI_CouplingTool4Done, bMappingOk);    
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool1Lifted, cHW_SLI_Tool1Lifted, bMappingOk);                
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool2Lifted, cHW_SLI_Tool2Lifted, bMappingOk);                
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool3Lifted, cHW_SLI_Tool3Lifted, bMappingOk);                
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool4Lifted, cHW_SLI_Tool4Lifted, bMappingOk);                
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool1Lowered, cHW_SLI_Tool1Lowered, bMappingOk);              
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool2Lowered, cHW_SLI_Tool2Lowered, bMappingOk);              
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool3Lowered, cHW_SLI_Tool3Lowered, bMappingOk);              
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.Tool4Lowered, cHW_SLI_Tool4Lowered, bMappingOk);              
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.ApplicationDone, cHW_SLI_ApplicationDone, bMappingOk);        
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.NozzleSensor, cHW_SLI_NozzleSensor, bMappingOk);              
+      MapAndCheckWordIn(iRobot, PaintRobot[iRobot].fieldbusIn.HoleNumber, cHW_SLI_HoleNumber, bMappingOk);
+    END_IF;
+    IF PaintRobot[iRobot].bActivatePlacePlug THEN   
+      //SSK
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlacePlugOK, cHW_SLI_PlacePlugOK, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CheckPlugOK, cHW_SLI_CheckPlugOK, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.FillingMagazineDone, cHW_SLI_FillingMagazineDone, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.EmptyMagazine, cHW_SLI_EmptyMagazine, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CouplingToolDone_PI, cHW_SLI_CouplingToolDone_PI, bMappingOk); 
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.UncouplingToolDone_PI, cHW_SLI_UncouplingToolDone_PI, bMappingOk); 
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.SpotEmpty_PI, cHW_SLI_SpotEmpty_PI, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.GetPlugDone, cHW_SLI_GetPlugDone_PI, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlugCheckOk, cHW_SLI_PlugCheckOk, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.MagazinDischarged, cHW_SLI_MagazinDischarged, bMappingOk);
+    END_IF;
+    IF bEnablePannelJogging THEN
+      MapAndCheckByteIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlcJogAxis, cHW_SLI_AxisNumber, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlcJogKeyPlus, cHW_SLI_KeyPlus, bMappingOk);
+      MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlcJogKeyMinus, cHW_SLI_KeyMinus, bMappingOk);
+      MapAndCheckByteIn(iRobot, PaintRobot[iRobot].fieldbusIn.PlcJogMode, cHW_SLI_JogMode, bMappingOk);
+    END_IF;
+
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.CleanRequest, cHW_SLI_CleanRequest, bMappingOk, TRUE); // optional
+    //stop&go conveyor
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.BodyIsFixed,      cHW_SLI_mBodyIsFixed,      bMappingOk);
+    MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusIn.AbortWaitingBody, cHW_SLI_mAbortWaitingBody, bMappingOk);
+    
+(*****************************************************************************************
+***********   Outputs   ******************************************************************
+******************************************************************************************)   
+    
+    //-- OutPosUnselect -----------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PosUnselect, cHW_SLO_mPosUnselect, bMappingOk);
+    //-- OutPosBypass ------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PosBypass, cHW_SLO_mPosBypass, bMappingOk);
+    //-- OutPosHome -------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PosHome, cHW_SLO_mPosHome, bMappingOk);
+    //-- OutModeAutoExtern --------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ModeAutoExtern, cHW_SLO_mModeAutoEx, bMappingOk);
+    //-- OutModeT1 -----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ModeT1, cHW_SLO_mModeT1, bMappingOk);
+    //-- OutModeT2 ------------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ModeT2, cHW_SLO_mModeT2, bMappingOk);
+    //-- OutModeSleep ----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ModeSleep, cHW_SLO_mModeSleep, bMappingOk);   
+    //-- OutProgramActive --------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ProgramActive, cHW_SLO_mProgramActive, bMappingOk);
+    //-- OutTPConnected ---------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.TPConnected, cHW_SLO_mTPConnected, bMappingOk);
+    //-- OutJogConv ------------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.JogConv, cHW_SLO_mJogConv, bMappingOk);
+    //-- OutPowerOn -----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PowerOn, cHW_SLO_mPowerOn, bMappingOk);
+    IF gbEthercat THEN
+       //-- OutMovementRelease -----------------------------------------------------------------------
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MovementRelease, cHW_SLO_mMovementRelease, bMappingOk);
+    END_IF;
+    
+    IF PaintRobot[iRobot].homing.bEnableHoming THEN
+       //-- OutHomingActive -----------------------------------------------------------------------
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.HomingActive, cHW_SLO_mHomingActive, bMappingOk);
+       //-- OutHomingFinished -----------------------------------------------------------------------
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.HomingFinished, cHW_SLO_mHomingFinished, bMappingOk);
+    END_IF;
+    //-- OutCollisionBits --------------------------------------------------------------------
+    FOR i := 0 TO 15 DO
+       sNameSvVar  := cHW_SLO_mCollisionBit + STR(i);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yCollisionBits[i], sNameSvVar, bMappingOk);
+    END_FOR;
+    //-- InCustomBits --------------------------------------------------------------------
+    IF PaintRobot[iRobot].autoControl.bEnableCustomBits THEN
+       FOR i := 1 TO 16 DO
+           sNameSvVar := cHW_SLO_mCustomTeachCommando + STR(i);
+           MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yCustomBits[i-1], sNameSvVar, bMappingOk);
+       END_FOR;
+    END_IF;
+    //-- OutMotionState --------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MotionErr,  cHW_SLO_mMotion_ERR,  bMappingOk);
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MotionWarn, cHW_SLO_mMotion_WARN, bMappingOk); 
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MotionOn,   cHW_SLO_mMotion_ON,   bMappingOk);
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MotionOff,  cHW_SLO_mMotion_OFF,  bMappingOk);
+    
+    //------------------   STANDARD and EXTENDED vision systems  -------------------------------------------------------
+        //-- OutBadVisionData -----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.BadVisionData, cHW_SLO_mBadVisionData, bMappingOk);
+    //-- OutAckVisionData -----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.AckVisionData, cHW_SLO_mAckVisionData, bMappingOk);
+    //-- Request for new VisionData -----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ReqVisionData, cHW_SLO_mReqVisionData, bMappingOk);
+    
+    //------------------   Only EXTENDED vision systems  -------------------------------------------------------
+    //-- Order different displacemant values by EcoTalk - MultiObjectVision -------------------------------
+    IF PaintRobot[iRobot].vision.bUseExtendedInterface OR PaintRobot[iRobot].vision.tVisionAbsolute.bMultiObject OR PaintRobot[iRobot].vision.tVisionRelative.bMultiObject THEN
+       MapAndCheckByteOut(iRobot, PaintRobot[iRobot].fieldbusOut.byOrderValuesNr, cHW_SLO_byOrderValuesNr, bMappingOk);
+    END_IF;
+    
+    IF PaintRobot[iRobot].vision.bUseExtendedInterface OR (giFieldBusSlaveType = 2) OR // MB Duesseldorf
+       PaintRobot[iRobot].vision.tVisionAbsolute.bMultiTrigger OR PaintRobot[iRobot].vision.tVisionRelative.bMultiTrigger THEN 
+        MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MeasureRelative, cHW_SLO_mMeasureRelative, bMappingOk);
+        MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.StartMeasure, cHW_SLO_mStartMeasure, bMappingOk);
+        MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.RobInCamPos, cHW_SLO_mRobInCamPos, bMappingOk);
+        MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.RobInLastCamPos, cHW_SLO_mRobInLastCamPos, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.VisionError, cHW_SLO_mVisionError, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ReqSyncVision, cHW_SLO_mReqSyncVision, bMappingOk);
+        MapAndCheckByteOut(iRobot, PaintRobot[iRobot].fieldbusOut.byPathNr, cHW_SLO_bPathNr, bMappingOk);
+    END_IF;
+    
+    IF PaintRobot[iRobot].vision.VisionTool.bEnabled THEN
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.bLightOn, cHW_SLO_mLightOn, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.bOpenCover, cHW_SLO_mOpenCover, bMappingOk);
+    END_IF;
+    
+    IF PaintRobot[iRobot].vision.VisionBK.bTBoxEnabled OR PaintRobot[iRobot].ToolMeasure.bConfigured THEN
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.bWarnToolRange, cHW_SLO_mWarnToolRange, bMappingOk);
+    END_IF;
+    
+    //handler - PLC handles part positions per handler
+    IF NOT PaintRobot[iRobot].handler.partPosPerBody THEN
+       IF (PaintRobot[iRobot].handler.isHandler OR PaintRobot[iRobot].handler.isOrderer) THEN
+          //RECEIVE_ORDER is execting by handler = bJobRunning from handler
+          MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.bHandlerStateActive, cHW_SLO_mHandlerstateActive, bMappingOk);
+          //-- OutHandlerSignalPos --------------------------------------------------------------------
+          FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+             //waitpos
+             sNameSvVar  := cHW_SLO_mSignalPartXwait + STR(iPart) + "Wait";
+             MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.tHandlerSignalPos.part[iPart].pos[0], sNameSvVar, bMappingOk);
+             //partpos
+             FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                sNameSvVar  := cHW_SLO_mSignalPartXposY + STR(iPart) + "Pos" + STR(iPos);
+                MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.tHandlerSignalPos.part[iPart].pos[iPos], sNameSvVar, bMappingOk); 
+             END_FOR;
+          END_FOR;    
+          //-- OutRobotToHandler ----------------------------------------------------------------------
+          FOR iHandler:=0 TO 3 DO
+             CASE iHandler OF
+                //handler finish
+                0: MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[0].bFinish, cHW_SLO_mRequestH1Finish, bMappingOk);
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar  := cHW_SLO_mRequestH1PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[0].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLO_mRequestH1PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[0].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                      END_FOR;
+                   END_FOR;  
+                   //handler finish
+                1: MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[1].bFinish, cHW_SLO_mRequestH2Finish, bMappingOk);
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar  := cHW_SLO_mRequestH2PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[1].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLO_mRequestH2PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[1].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                      END_FOR;
+                   END_FOR;
+                   //handler finish
+                2: MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[2].bFinish, cHW_SLO_mRequestH3Finish, bMappingOk);
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar  := cHW_SLO_mRequestH3PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[2].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLO_mRequestH3PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[2].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                      END_FOR;
+                   END_FOR;
+                   //handler finish
+                3: MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[3].bFinish, cHW_SLO_mRequestH4Finish, bMappingOk);
+                   FOR iPart:=1 TO cgiMaxNumberOfParts-1 DO
+                      //waitpos
+                      sNameSvVar  := cHW_SLO_mRequestH4PartXwait + STR(iPart) + "Wait";
+                      MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[3].part[iPart].pos[0], sNameSvVar, bMappingOk);
+                      //partpos
+                      FOR iPos:=1 TO cgiNumberOfHandlerPartPos-1 DO
+                         sNameSvVar  := cHW_SLO_mRequestH4PartXposY + STR(iPart) + "Pos" + STR(iPos);
+                         MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yRobotToHandler[3].part[iPart].pos[iPos], sNameSvVar, bMappingOk);
+                      END_FOR;
+                   END_FOR;
+             END_CASE;
+          END_FOR;
+       END_IF;
+    //handler - PLC handles part positions per body
+    ELSE
+       IF PaintRobot[iRobot].handler.isHandler THEN 
+          //-- Outputs part position from handler --------------------------------------------------------------------  
+         MapAndCheckByteOut(iRobot, PaintRobot[iRobot].fieldbusOut.tOutHandling.bPartPos, cHW_SLO_bSignalPartPos, bMappingOk); 
+       END_IF;
+       IF PaintRobot[iRobot].handler.isOrderer THEN
+          //-- Outputs part position request -------------------------------------------------------------------------
+          FOR iHandler:=0 TO cgiMaxNumOfHandlers-1 DO        
+              sNameSvVar  := cHW_SLO_bRequestPartPos + STR(iHandler+1);
+              MapAndCheckByteOut(iRobot, PaintRobot[iRobot].fieldbusOut.tOutHandling.yReqPartPos[iHandler], sNameSvVar, bMappingOk);
+          END_FOR;    
+       END_IF;
+    END_IF;
+    
+    //-- OutCheckRequired -----------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CheckRequired, cHW_SLO_mOutCheckRequired, bMappingOk);
+    //-- BrakeCheckRuns -------------------------------------------------------------------------
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.BrakeCheckRuns, cHW_SLO_mOutCheckRuns, bMappingOk);
+    
+    //-- TimeData       -------------------------------------------------------------------------
+    IF giFieldBusSlaveType = 1 THEN // REHAU
+        MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.TimeDataValid, cHW_SLO_mTimeDataValid, bMappingOk);
+        MapAndCheckWordOut(iRobot, PaintRobot[iRobot].fieldbusOut.ProgramNo, cHW_SLO_wProgramNo, bMappingOk);
+        MapAndCheckWordOut(iRobot, PaintRobot[iRobot].fieldbusOut.TimeData, cHW_SLO_wTimeData, bMappingOk);
+    END_IF;
+
+   IF PaintRobot[iRobot].bEnablePlcOrderByte THEN
+      MapAndCheckByteOut(iRobot, PaintRobot[iRobot].fieldbusOut.PlcOrder, cHW_SLO_bPlcOrder, bMappingOk);
+   END_IF;
+   
+   IF PaintRobot[iRobot].bEnableA7ToPlc THEN
+      MapAndCheckWordOut(iRobot, PaintRobot[iRobot].fieldbusOut.A7ToPlc, cHW_SLO_wA7ToPlc, bMappingOk);
+   END_IF;
+
+    // gluing
+    IF PaintRobot[iRobot].gluingRobot THEN
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PLCTrigger1, cHW_SLO_PLCTrigger1, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PLCTrigger2, cHW_SLO_PLCTrigger2, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PLCTrigger3, cHW_SLO_PLCTrigger3, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PLCTrigger4, cHW_SLO_PLCTrigger4, bMappingOk);
+    END_IF;
+    
+    IF PaintRobot[iRobot].chgMaskingDevice THEN
+       // exchange of masking device
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusOut.MDDeskOrder, cHW_SLO_mMDDeskOrder, bMappingOk);
+       MapAndCheckBoolIn(iRobot, PaintRobot[iRobot].fieldbusOut.MDGripperOrder, cHW_SLO_mMDGripperOrder, bMappingOk);
+    END_IF;
+    
+    // BCC 
+    IF PaintRobot[iRobot].bBccActive THEN         
+       PRINT ("BCC active");
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.UncoupleTool1, cHW_SLO_UncoupleTool1, bMappingOk);                  
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.UncoupleTool2, cHW_SLO_UncoupleTool2, bMappingOk);                  
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.UncoupleTool3, cHW_SLO_UncoupleTool3, bMappingOk);                  
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.UncoupleTool4, cHW_SLO_UncoupleTool4, bMappingOk);                  
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CoupleTool1, cHW_SLO_CoupleTool1, bMappingOk);    
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CoupleTool2, cHW_SLO_CoupleTool2, bMappingOk);    
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CoupleTool3, cHW_SLO_CoupleTool3, bMappingOk);    
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CoupleTool4, cHW_SLO_CoupleTool4, bMappingOk);    
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LiftTool1, cHW_SLO_LiftTool1, bMappingOk);                
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LiftTool2, cHW_SLO_LiftTool2, bMappingOk);                
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LiftTool3, cHW_SLO_LiftTool3, bMappingOk);                
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LiftTool4, cHW_SLO_LiftTool4, bMappingOk);                
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LowerTool1, cHW_SLO_LowerTool1, bMappingOk);              
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LowerTool2, cHW_SLO_LowerTool2, bMappingOk);              
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LowerTool3, cHW_SLO_LowerTool3, bMappingOk);              
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.LowerTool4, cHW_SLO_LowerTool4, bMappingOk);              
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.ApplicationStart, cHW_SLO_ApplicationStart, bMappingOk);        
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CollisionType, cHW_SLO_CollisionType, bMappingOk);              
+       MapAndCheckWordOut(iRobot, PaintRobot[iRobot].fieldbusOut.HoleNumber, cHW_SLO_HoleNumber, bMappingOk); 
+    ELSE 
+       PRINT ("BCC inactive");
+    END_IF;
+    
+    //SSK
+    IF PaintRobot[iRobot].bActivatePlacePlug THEN
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.PlacePlug, cHW_SLO_PlacePlug, bMappingOk); 
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CheckPlug, cHW_SLO_CheckPlug, bMappingOk); 
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.FillMagazine, cHW_SLO_FillMagazine, bMappingOk); 
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.CoupleTool_PI, cHW_SLO_CoupleTool_PI, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.UncoupleTool_PI, cHW_SLO_UncoupleTool_PI, bMappingOk); 
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.GetPlug, cHW_SLO_GetPlug_PI, bMappingOk);
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.DiscargePlugMagazin, cHW_SLO_DiscargePlugMagazin, bMappingOk);
+    ELSE 
+       PRINT ("SSK inactive");
+    END_IF;
+    
+    // mastering of save encoders
+    IF PaintRobot[iRobot].masterProg.hasSafeEncoderMastering THEN
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.MasterSafeEncoders, cHW_SLO_mMasterSafeEncoders, bMappingOk);
+    END_IF;
+    
+    // DVD gluning
+    IF PaintRobot[iRobot].bEnableDvdGluing THEN
+       FOR i:=0 TO PaintRobot[iRobot].nrNeedlesMultiGun-1 DO
+           sNameSvVar  := cHW_SLO_mMainNeedle + STR(i+1);
+           MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.yHwMainNeedles[i], sNameSvVar, bMappingOk);
+       END_FOR;
+       MapAndCheckWordOut(iRobot, PaintRobot[iRobot].fieldbusOut.wTcpSpeed, cHW_SLO_wTcpSpeed, bMappingOk);
+       MapAndCheckWordOut(iRobot, PaintRobot[iRobot].fieldbusOut.wOverride, cHW_SLO_wOverride, bMappingOk);
+    END_IF;
+    //stop&go conveyor
+    MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.WaitingBodyFixed,    cHW_SLO_mWaitingBodyFixed,    bMappingOk);
+    //InterfaceToProcess
+    IF PaintRobot[iRobot].bHasProcess THEN
+       MapAndCheckBoolOut(iRobot, PaintRobot[iRobot].fieldbusOut.AtomizerNotInCleaner, cHW_SLO_mAtomizerNotInCleaner, bMappingOk);
+    END_IF;
+    
+    IF NOT bMappingOk THEN
+       gbBootupError := TRUE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, PaintRobot[iRobot].kinListInx, 1, 0, "IO_FieldbusSlave.MapFieldbusSlave");
+    END_IF;   
+    PaintRobot[iRobot].bFieldbusSlaveReady := bMappingOk;
+   
+END_ROUTINE
+
+(*******************************************************************************
+* private members
+*)
+VAR PRIVATE
+  bMappingOk    : BOOL;
+END_VAR
+
+//----------------------------------------------------------------------------------------
+// Map a single bool Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckBoolIn(CONST iRobot : DINT; bInput : TInOutBool; sSvVarName : STRING; bMappingOk : BOOL; OPTIONAL bOptional : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+  bOpt      : BOOL := FALSE;
+ END_VAR
+
+    IF IS_USED(bOptional) THEN
+       bOpt := bOptional;
+    END_IF;
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bInput.svBool := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bInput.svBool) THEN
+       sMappName       := "system." + sSvVarName;
+       bInput.svBool := MAPX(sMappName);
+       IF NOT IS_MAPPED(bInput.svBool) THEN
+          sMappName       := "BCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+          bInput.svBool := MAPX(sMappName);
+          IF NOT IS_MAPPED(bInput.svBool) THEN
+             IF NOT bOpt THEN
+                bMappingOk := FALSE;
+                sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system./" + "BCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+                RcuSetMessageOnce(RcuFieldbusSlave_ErrMapInputBit, PaintRobot[iRobot].kinListInx, 1, 0, "IO_FieldbusSlave.MapAndCheckBoolIn", sMappName);
+             END_IF;
+          ELSE
+             sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+             SwoAddBoolVariable(bInput.svBool, sSwoName);
+          END_IF;
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+          SwoAddBoolVariable(bInput.svBool, sSwoName);
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+       SwoAddBoolVariable(bInput.svBool, sSwoName);
+    END_IF;
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a byte Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckByteIn(CONST iRobot : DINT; bInput : TInOutByte; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bInput.svByte := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bInput.svByte) THEN
+       sMappName       := "system." + sSvVarName;
+       bInput.svByte := MAPX(sMappName);
+       IF NOT IS_MAPPED(bInput.svByte) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapInByte, PaintRobot[iRobot].kinListInx, 1, 0, "IO_FieldbusSlave.MapAndCheckByteIn", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+          SwoAddByteVariable(bInput.svByte, sSwoName);          
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+       SwoAddByteVariable(bInput.svByte, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a word Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckWordIn(CONST iRobot : DINT; bInput : TInOutWord; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bInput.svWord := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bInput.svWord) THEN
+       sMappName       := "system." + sSvVarName;
+       bInput.svWord := MAPX(sMappName);
+       IF NOT IS_MAPPED(bInput.svWord) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapInWord, PaintRobot[iRobot].kinListInx, 1, 0, "IO_FieldbusSlave.MapAndCheckWordIn", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+          SwoAddIntVariable(bInput.svWord, sSwoName);
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+       SwoAddIntVariable(bInput.svWord, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a doubleword Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckDwordIn(CONST iRobot : DINT; bInput : TInOutDword; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bInput.svDword := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bInput.svDword) THEN
+       sMappName       := "system." + sSvVarName;
+       bInput.svDword := MAPX(sMappName);
+       IF NOT IS_MAPPED(bInput.svDword) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapInWord, PaintRobot[iRobot].kinListInx, 2, 0, "RcuFieldbusSlave.MapAndCheckDwordIn", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+          SwoAddDIntVariable(bInput.svDword, sSwoName);
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.In." + sSvVarName;
+       SwoAddDIntVariable(bInput.svDword, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a single bool Output and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckBoolOut(CONST iRobot : DINT; bOutput : TInOutBool; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bOutput.svBool := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bOutput.svBool) THEN
+       sMappName       := "system." + sSvVarName;
+       bOutput.svBool := MAPX(sMappName);
+       IF NOT IS_MAPPED(bOutput.svBool) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutBit, PaintRobot[iRobot].kinListInx, 1, 0, "IO_FieldbusSlave.MapAndCheckBoolOut", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+          SwoAddBoolVariable(bOutput.svBool, sSwoName);   
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+       SwoAddBoolVariable(bOutput.svBool, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a byte Output and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckByteOut(CONST iRobot : DINT; bOutput : TInOutByte; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bOutput.svByte := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bOutput.svByte) THEN
+       sMappName       := "system." + sSvVarName;
+       bOutput.svByte := MAPX(sMappName);
+       IF NOT IS_MAPPED(bOutput.svByte) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutByte, PaintRobot[iRobot].kinListInx, 1, 0, "IO_FieldbusSlave.MapAndCheckByteOut", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+          SwoAddByteVariable(bOutput.svByte, sSwoName);
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+       SwoAddByteVariable(bOutput.svByte, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a word Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckWordOut(CONST iRobot : DINT; bOutput : TInOutWord; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bOutput.svWord := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bOutput.svWord) THEN
+       sMappName       := "system." + sSvVarName;
+       bOutput.svWord := MAPX(sMappName);
+       IF NOT IS_MAPPED(bOutput.svWord) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutWord, PaintRobot[iRobot].kinListInx, 1, 0, "RcuFieldbusSlave.MapAndCheckWordOut", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+          SwoAddIntVariable(bOutput.svWord, sSwoName);
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+       SwoAddIntVariable(bOutput.svWord, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Map a Dword Input and check if mapping was successful
+//----------------------------------------------------------------------------------------
+ROUTINE MapAndCheckDwordOut(CONST iRobot : DINT; bOutput : TInOutDword; sSvVarName : STRING; bMappingOk : BOOL) GLOBAL
+ VAR
+  sMappName : STRING;
+  sSwoName  : STRING;
+ END_VAR
+
+    sMappName       := "RCU" + STR(gyiNrRcu[iRobot]) + "." + sSvVarName;
+    bOutput.svDword := MAPX(sMappName);    
+    IF NOT IS_MAPPED(bOutput.svDword) THEN
+       sMappName       := "system." + sSvVarName;
+       bOutput.svDword := MAPX(sMappName);
+       IF NOT IS_MAPPED(bOutput.svDword) THEN
+          bMappingOk := FALSE;
+          sMappName := "RCU" + STR(gyiNrRcu[iRobot]) + "./system." + sSvVarName;
+          RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutWord, PaintRobot[iRobot].kinListInx, 2, 0, "TRcuVivaVision.MapAndCheckWordOut", sMappName);
+       ELSE
+          sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+          SwoAddDIntVariable(bOutput.svDword, sSwoName);
+       END_IF;
+    ELSE
+       sSwoName := PaintRobot[iRobot].kinematic.mName + ".PLC.Out." + sSvVarName;
+       SwoAddDIntVariable(bOutput.svDword, sSwoName);
+    END_IF;  
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------------------
+// Bytes drehen
+//----------------------------------------------------------------------------------------
+ROUTINE TurnByte(i : INT) : INT GLOBAL
+VAR
+   hByte : DINT;
+   lByte : DINT;
+   w     : WORD;
+   wordIn : DINT;
+   d      : DINT;
+   
+END_VAR
+
+    w := i;
+    wordIn := w;
+    hByte := wordIn/256;
+    lByte := wordIn - 256*hByte;
+    d := lByte*256 + hByte;
+    w := d;
+    RETURN w;
+   
+END_ROUTINE
+
+ROUTINE Turn4Bytes(i : DINT) : DINT GLOBAL
+VAR
+   Byte1  : LINT;
+   Byte2  : LINT;
+   Byte3  : LINT;
+   Byte4  : LINT;
+   w      : DWORD;
+   wordIn : LINT;
+   wordIn2 : LINT;
+   d      : DINT;
+   i2     : INT := 256;
+   i3     : DINT := 65536;   
+   i4     : DINT := 16777216;   
+END_VAR
+
+    w := i;
+    wordIn := w;
+    wordIn2 := w;
+    Byte1 := wordIn/i4;
+    wordIn := wordIn - (Byte1*i4);
+    Byte2 := wordIn/i3;
+    wordIn := wordIn - (Byte2*i3);
+    Byte3 := wordIn/i2;
+    wordIn := wordIn - (Byte3*i2);
+    Byte4 := wordIn2 - ((i4*Byte1) + (i3*Byte2) + (i2*Byte3));
+    d := i4*Byte4 + i3*Byte3 + i2*Byte2 + Byte1;
+    // w:=d;
+    // RETURN w;
+   RETURN d;
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------------------
+// Update the mapped Input to local variable
+//----------------------------------------------------------------------------------------
+ROUTINE UpdateMapvarToLocalvar(bMapvar : TInOutBool; bLocalvar : BOOL) PRIVATE
+  
+   IF IS_MAPPED(bMapvar.svBool) THEN
+      bLocalvar := UPDATE(bMapvar.svBool);
+   END_IF;
+   
+END_ROUTINE

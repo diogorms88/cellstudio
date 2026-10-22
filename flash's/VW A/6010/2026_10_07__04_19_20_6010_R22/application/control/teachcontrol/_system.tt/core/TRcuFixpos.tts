@@ -1,0 +1,2139 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuFixpos.tts                                               *
+*   Description: Checking fixpositions                                        *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+* 20.01.06 BMA: Actual Fixposnumber to Systemvariable
+* 11.05.06 BIT: Changes for the ProcessBuilder
+* 05.10.06 BIT: "CartPosInUserRefSys" added to get the Bypass, Unsel in refsys world
+* 03.11.06 BMA: Semaphore for the coordinate system for actCartVals
+* 29.03.07 BIT: "CartPosInUserRefSys" deleted, MCU-AreaObservation included
+*)
+(******************************************************************************
+***  Constants ****************************************************************
+******************************************************************************)
+CONSTANT GLOBAL
+   cMaxFixpos       : SINT := 64;
+END_CONSTANT
+
+(******************************************************************************
+***  Types ********************************************************************
+******************************************************************************)
+TYPE
+  TRcuAddOption : (eNoAddOption, eInBox, eAboveBox, ePurge);
+  
+  tFixpos : STRUCT
+    bPosIsValid    : BOOL;
+    bExtFixposCheck: BOOL;
+    iProgNumber    : DINT;
+    sPointName     : STRING;  // strtolower
+    sPointNameOrg  : STRING;  // 
+    FixPoint       : MAPTO POINT;     // mapping to point
+    FixPointVal    : POINT;           // values of mapped point 
+    Option         : TRcuFixposOption;
+    AddOption      : TRcuAddOption;
+  END_STRUCT;
+END_TYPE
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  yRcuFixpositions      : ARRAY [cMaxFixpos] OF tFixpos;
+  RcuFixposNumber       : INT;
+  ExtFixposNumber       : INT;
+  NextFixposNumber      : INT;
+  yRcuInFixpositions    : ARRAY [cMaxFixpos] OF BOOL;
+  RcuInUnselect         : BOOL;
+  RcuInBypass           : BOOL;
+  RcuInHome             : BOOL;
+  RcuInBrakeCheckPos    : BOOL;
+  RcuInScpSyncPos       : BOOL;
+  RcuInScpRefPos        : BOOL;
+  maxFixpos             : INT;
+  bExtFixpos            : BOOL;
+  sMappName             : STRING;
+  //degrade
+  bMultiHome            : BOOL;             //flag that more than one Home is possible
+  yDegradeHome          : ARRAY [17] OF tDegradeData;
+  bMultiInBox           : BOOL;             //flag that more than one InBox is possible
+  yDegradeInBox         : ARRAY [17] OF tDegradeData;
+  bMultiAboveBox        : BOOL;             //flag that more than one AboveBox is possible
+  yDegradeAboveBox      : ARRAY [17] OF tDegradeData;
+  bMultiPurge           : BOOL;             //flag that more than one Purge is possible
+  yDegradePurge         : ARRAY [17] OF tDegradeData;
+  iDegradeRob           : INT;              //Index of degrade robot
+END_VAR
+
+(******************************************************************************
+***  Read the Cofiguration       **********************************************
+******************************************************************************)
+ROUTINE InitFixposData(inRobot : TRcuRobot)
+   VAR
+     dirHdl     : DINT;    //handle for config
+     paramHdl   : DINT;    //handle for config
+     iTemp      : DINT;    //temp value config
+     bCfgError  : BOOL;
+     i          : DINT;
+     s          : STRING;
+     sTemp      : STRING;
+   END_VAR
+   
+   instId := RcuGetInstanceId(); //instance identification number (for errors)
+   
+   IF NOT CatalogGetHandleRelative(inRobot.rcCatHdl, "Fixpos", dirHdl) THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 1, instId, "TRcuFixpos.InitFixposData", "Fixpos", "RobotControl.cfg");
+      RETURN;
+   END_IF;
+   
+   NrOfMainJoints := MAP(inRobot.kinematic.mNrOfMainJoints);
+   NrOfAuxJoints  := MAP(inRobot.kinematic.mNrOfAuxJoints);
+   IF NOT (IS_MAPPED(NrOfMainJoints) AND IS_MAPPED(NrOfAuxJoints)) THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrJointsData, inRobot.kinListInx, 1, instId, "TRcuFixpos.InitFixposData", inRobot.robotName);
+      bCfgError := TRUE;
+   END_IF;
+   
+   IF bCfgError THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrAdress, inRobot.kinListInx, 1, instId, "TRcuFixpos.InitFixposData");
+      RETURN;
+   END_IF;
+   
+   IF NOT CatalogReadRealRange(dirHdl, "ToleranceMainAxes", rToleranceRotAxes , 0.0, 3.0, FALSE) THEN
+      rToleranceRotAxes := 1.0;
+   END_IF;
+   //rSqrToleranceMainAxes := rToleranceMainAxes * rToleranceMainAxes;
+   
+   IF NOT CatalogReadRealRange(dirHdl, "ToleranceAuxAxes", rToleranceLinAxes , 0.0, 5.0, FALSE) THEN
+      rToleranceLinAxes := 2.0;
+   END_IF;
+   //rSqrToleranceAuxAxes := rToleranceAuxAxes * rToleranceAuxAxes;
+   
+   FOR i:=0 TO (NrOfMainJoints + NrOfAuxJoints - 1) DO
+      IF inRobot.drive[i].type = eMcuJointRot THEN
+         rToleranceAxes[i] := rToleranceRotAxes;
+      ELSIF (inRobot.drive[i].type = eMcuJointLin) THEN
+         rToleranceAxes[i] := rToleranceLinAxes;
+      END_IF;
+   END_FOR;
+   
+   IF CatalogReadIntRange(dirHdl, "MovingUnderAboveBody", iTemp, 0, 1, FALSE) THEN 
+      IF iTemp = 1 THEN
+        bMovingUnderAboveBody := TRUE;
+      ELSE
+        bMovingUnderAboveBody := FALSE;
+      END_IF;
+   END_IF; 
+   
+   IF CatalogReadIntRange(dirHdl, "OneRobotPerSide", iTemp, 0, 1, FALSE) THEN 
+      IF iTemp = 1 THEN
+        bOneRobotPerSide := TRUE;
+      ELSE
+        bOneRobotPerSide := FALSE;
+      END_IF;
+   END_IF; 
+   
+   IF CatalogReadIntRange(dirHdl, "MovingCrosswise", iTemp, 0, 1, FALSE) THEN 
+      IF iTemp = 1 THEN
+        bMovingCrosswise := TRUE;
+      ELSE
+        bMovingCrosswise := FALSE;
+      END_IF;
+   END_IF;
+   
+   IF CatalogGetHandleRelative(dirHdl, "Bypass", paramHdl) THEN
+      IF CatalogReadIntRange(paramHdl, "X_sign", iTemp, 0, 1, TRUE) THEN
+         bypassCfgData[0].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "X_size", iTemp, 0, 50000, TRUE) THEN
+          bypassCfgData[0].rSize := iTemp;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Y_sign", iTemp, 0, 1, TRUE) THEN
+         bypassCfgData[1].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Y_size", iTemp, 0, 50000, TRUE) THEN
+          bypassCfgData[1].rSize := iTemp;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Z_sign", iTemp, 0, 1, TRUE) THEN
+         bypassCfgData[2].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Z_size", iTemp, 0, 50000, TRUE) THEN
+          bypassCfgData[2].rSize := iTemp;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "A7_sign", iTemp, 0, 1, TRUE) THEN
+         bypassCfgData[3].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "A7_size", iTemp, 0, 50000, TRUE) THEN
+          bypassCfgData[3].rSize := iTemp;
+      END_IF;
+      //Swingarm      
+      IF CatalogReadIntRange(paramHdl, "A8_sign", iTemp, 0, 1, TRUE) THEN
+         bypassCfgData[4].sign := TRcuSign(iTemp);
+      ELSE
+         bypassCfgData[4].sign := ePos; //usually used, axis 8 refpos 90° to rail
+         IF (inRobot.nrOfAuxDrives > 1) THEN
+            RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 5, instId, "TRcuFixpos.InitFixposData", "A8_sign", "[RC.KINEMATIC:x.Fixpos.Bypass]");
+         END_IF;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "A9_sign", iTemp, 0, 1, TRUE) THEN
+         bypassCfgData[5].sign := TRcuSign(iTemp);
+      ELSE
+         bypassCfgData[5].sign := ePos;
+         IF (inRobot.nrOfAuxDrives > 2) OR ((inRobot.nrOfAuxDrives > 1) AND (inRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot)) THEN
+            RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 6, instId, "TRcuFixpos.InitFixposData", "A9_sign", "[RC.KINEMATIC:x.Fixpos.Bypass]");
+         END_IF;
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 2, instId, "TRcuFixpos.InitFixposData", "Bypass", "RobotControl.cfg");
+   END_IF;
+   
+   IF CatalogGetHandleRelative(dirHdl, "Unselect", paramHdl) THEN
+      IF CatalogReadIntRange(paramHdl, "X_sign", iTemp, 0, 1, TRUE) THEN
+         unselectCfgData[0].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "X_size", iTemp, 0, 50000, TRUE) THEN
+          unselectCfgData[0].rSize := iTemp;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Y_sign", iTemp, 0, 1, TRUE) THEN
+         unselectCfgData[1].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Y_size", iTemp, 0, 50000, TRUE) THEN
+          unselectCfgData[1].rSize := iTemp;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Z_sign", iTemp, 0, 1, TRUE) THEN
+         unselectCfgData[2].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "Z_size", iTemp, 0, 50000, TRUE) THEN
+          unselectCfgData[2].rSize := iTemp;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "A7_sign", iTemp, 0, 1, TRUE) THEN
+         unselectCfgData[3].sign := TRcuSign(iTemp);
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "A7_size", iTemp, 0, 50000, TRUE) THEN
+          unselectCfgData[3].rSize := iTemp;
+      END_IF;
+      //Swingarm
+      IF CatalogReadIntRange(paramHdl, "A8_sign", iTemp, 0, 1, TRUE) THEN
+         unselectCfgData[4].sign := TRcuSign(iTemp);
+      ELSE
+         unselectCfgData[4].sign := ePos; //usually used, axis 8 refpos 90° to rail         
+         IF (inRobot.nrOfAuxDrives > 1) THEN
+            RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 7, instId, "TRcuFixpos.InitFixposData", "A8_sign", "[RC.KINEMATIC:x.Fixpos.Unselect]");
+         END_IF;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "A9_sign", iTemp, 0, 1, TRUE) THEN
+         unselectCfgData[5].sign := TRcuSign(iTemp);
+      ELSE
+         unselectCfgData[5].sign := ePos;
+         IF (inRobot.nrOfAuxDrives > 2) OR ((inRobot.nrOfAuxDrives > 1) AND (inRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot)) THEN
+            RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 8, instId, "TRcuFixpos.InitFixposData", "A9_sign", "[RC.KINEMATIC:x.Fixpos.Unselect]");
+         END_IF;
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 3, instId, "TRcuFixpos.InitFixposData", "Unselect", "RobotControl.cfg");
+   END_IF;
+   
+   IF inRobot.rcCatHdl = 0 THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrRcHandle, inRobot.kinListInx, 1, instId, "TRcuFixpos.InitFixposData", INSTANCE_NAME());
+      RETURN;
+   ELSE   
+      IF NOT CatalogReadIntRange(inRobot.rcCatHdl, "robotTyp", iTemp, 0, 3, FALSE) THEN
+        RcuSetMessageOnce(TRcuFixpos_ErrReadingCfg, inRobot.kinListInx, 4, instId, "TRcuFixpos.InitFixposData", "robotTyp", "RobotControl.cfg");
+        RETURN;
+      ELSE
+         CASE iTemp OF
+           1: RcuRobotTyp := eRcuPaintRobot;
+           2: RcuRobotTyp := eRcuHoodOpener;
+           3: RcuRobotTyp := eRcuDoorOpener;
+         END_CASE;
+      END_IF;
+   END_IF;
+   
+   IF CatalogGetHandleRelative(dirHdl, "Degrade", paramHdl) THEN
+      IF CatalogReadIntRange(paramHdl, "nrOfDegradeRobots", iTemp, 0, 16, TRUE) THEN
+         iNrOfDegradeRob := iTemp;
+      ELSE
+         iNrOfDegradeRob := 0;
+      END_IF;
+      IF CatalogReadIntRange(paramHdl, "multipleHome", iTemp, 0, 1, TRUE) THEN
+         bMultiHome := (iTemp = 1);
+      ELSE
+         bMultiHome := FALSE;
+      END_IF;
+      IF bMultiHome THEN
+         FOR i := 1 TO iNrOfDegradeRob DO
+            s := "homeDegradeRob" + STR(i);
+            IF CatalogReadString(paramHdl, s, sTemp, FALSE) THEN
+               yDegradeHome[i].pointName := sTemp;
+            END_IF;
+         END_FOR;
+         IF CatalogReadString(paramHdl, "homeDefault", sTemp, FALSE) THEN
+            yDegradeHome[0].pointName := sTemp;
+         END_IF;
+      END_IF;
+
+      IF CatalogReadIntRange(paramHdl, "multipleInBox", iTemp, 0, 1, TRUE) THEN
+         bMultiInBox := (iTemp = 1);
+      ELSE
+         bMultiInBox := FALSE;
+      END_IF;
+      IF bMultiInBox THEN
+         FOR i := 1 TO iNrOfDegradeRob DO
+            s := "inBoxDegradeRob" + STR(i);
+            IF CatalogReadString(paramHdl, s, sTemp, FALSE) THEN
+               yDegradeInBox[i].pointName := sTemp;
+            END_IF;
+         END_FOR;
+         IF CatalogReadString(paramHdl, "inBoxDefault", sTemp, FALSE) THEN
+            yDegradeInBox[0].pointName := sTemp;
+         END_IF;
+      END_IF;
+
+      IF CatalogReadIntRange(paramHdl, "multipleAboveBox", iTemp, 0, 1, TRUE) THEN
+         bMultiAboveBox := (iTemp = 1);
+      ELSE
+         bMultiAboveBox := FALSE;
+      END_IF;
+      IF bMultiAboveBox THEN
+         FOR i := 1 TO iNrOfDegradeRob DO
+            s := "aboveBoxDegradeRob" + STR(i);
+            IF CatalogReadString(paramHdl, s, sTemp, FALSE) THEN
+               yDegradeAboveBox[i].pointName := sTemp;
+            END_IF;
+         END_FOR;
+         IF CatalogReadString(paramHdl, "aboveBoxDefault", sTemp, FALSE) THEN
+            yDegradeAboveBox[0].pointName := sTemp;
+         END_IF;
+      END_IF;
+
+      IF CatalogReadIntRange(paramHdl, "multiplePurge", iTemp, 0, 1, TRUE) THEN
+         bMultiPurge := (iTemp = 1);
+      ELSE
+         bMultiPurge := FALSE;
+      END_IF;
+      IF bMultiPurge THEN
+         FOR i := 1 TO iNrOfDegradeRob DO
+            s := "purgeDegradeRob" + STR(i);
+            IF CatalogReadString(paramHdl, s, sTemp, FALSE) THEN
+               yDegradePurge[i].pointName := sTemp;
+            END_IF;
+         END_FOR;
+         IF CatalogReadString(paramHdl, "purgeDefault", sTemp, FALSE) THEN
+            yDegradePurge[0].pointName := sTemp;
+         END_IF;
+      END_IF;
+   ELSE
+      bMultiHome     := FALSE;
+      bMultiInBox    := FALSE;
+      bMultiAboveBox := FALSE;
+      bMultiPurge    := FALSE;
+   END_IF;
+   
+   WAIT gbBootupFinished;
+   
+   myRobot := MAP(inRobot);  
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrMappingKin, -1, 1, instId, "TRcuFixpos.InitFixposData");
+     RETURN;
+   END_IF;
+   START FixposCheck();
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Return Coordinates of the fixpoint if this Program-Number is a number of a Fixposition
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetFixposPoint(ProgNr : INT; P : POINT) : BOOL
+ VAR
+   i : INT;
+ END_VAR
+
+   FOR i := 0 TO maxFixpos-1 DO
+      IF yRcuFixpositions[i].bPosIsValid THEN
+         IF yRcuFixpositions[i].iProgNumber = ProgNr THEN
+            P := yRcuFixpositions[i].FixPointVal;
+            RETURN TRUE;
+         END_IF;
+      END_IF;   
+   END_FOR;
+   RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Check if this Program-Number is a number of a Fixposition
+//------------------------------------------------------------------------------------------------------
+ROUTINE IsFixposProg(ProgNr : INT) : BOOL
+ VAR
+   i : INT;
+ END_VAR
+
+   FOR i := 0 TO maxFixpos-1 DO
+      IF yRcuFixpositions[i].bPosIsValid THEN
+         IF yRcuFixpositions[i].iProgNumber = ProgNr THEN
+            RETURN TRUE;
+         END_IF;
+      END_IF;   
+   END_FOR;
+   RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Check if this Program-Number is an extended Fixposition
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckExtFixposProg(ProgNr : INT)
+ VAR
+   i : INT;
+ END_VAR
+
+   bExtFixpos := FALSE;
+   FOR i := 0 TO maxFixpos-1 DO
+      IF yRcuFixpositions[i].bPosIsValid THEN
+         IF yRcuFixpositions[i].iProgNumber = ProgNr THEN
+            IF yRcuFixpositions[i].bExtFixposCheck THEN
+               bExtFixpos := TRUE;
+            END_IF;
+            RETURN;
+         END_IF;
+      END_IF;
+   END_FOR;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Check if this Point-Name is a Fixposition and return the number
+//------------------------------------------------------------------------------------------------------
+ROUTINE IsFixposition(PosName : STRING; fixposNr : INT) : BOOL
+ VAR
+   i : INT;
+ END_VAR
+
+   FOR i := 0 TO maxFixpos-1 DO
+      IF yRcuFixpositions[i].bPosIsValid THEN
+         IF yRcuFixpositions[i].sPointNameOrg = PosName THEN
+            fixposNr := yRcuFixpositions[i].iProgNumber;
+            RETURN TRUE;
+         END_IF;
+      END_IF;
+   END_FOR;
+   RETURN FALSE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Check if extended Fixposition is reached
+//------------------------------------------------------------------------------------------------------
+ROUTINE ExtFixposReached(PosName : STRING)
+ VAR
+   i : INT;
+ END_VAR
+
+   FOR i := 0 TO maxFixpos-1 DO
+      IF yRcuFixpositions[i].bPosIsValid THEN
+         IF yRcuFixpositions[i].sPointNameOrg = PosName THEN
+            ExtFixposNumber := yRcuFixpositions[i].iProgNumber;
+            myRobot.DebugPrint(eTraceAreaJob, "ExtFixposReached : " + PosName);
+            myRobot.WaitMcMicroCycles(5);
+            ExtFixposNumber := 0;
+         END_IF;
+      END_IF;
+   END_FOR;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Look ahead for the next Fixposition in Teach-Program
+//------------------------------------------------------------------------------------------------------
+ROUTINE SearchNextFixpos()
+ VAR
+   stackHdl : DINT;
+   nextStackHdl : DINT;
+   info : TUserProgStackInfo;
+   stmtKind : TStmtKind; 
+   text : STRING;
+   param : STRING;
+   fixposNr : INT;
+   bFound : BOOL;
+   ok     : BOOL;
+ END_VAR
+   
+   IF StoreUserProgCallStack(stackHdl) = eStoreOK THEN
+      ok := TRUE;
+      bFound := FALSE;
+      WHILE ok AND NOT bFound DO
+         ok := GetNextStatement(stackHdl, nextStackHdl);
+         GetStatementInfo(nextStackHdl, stmtKind, text, param);
+         IF stmtKind = eStmtCall THEN
+            IF ((text = "PTP") OR (text = "LIN")) THEN
+               IF IsFixposition(param, fixposNr) THEN
+                  NextFixposNumber := fixposNr;
+                  myRobot.DebugPrint(eTraceAreaJob, "NextFixposNumber = " + STR(fixposNr) + " name = " + param);
+                  bFound := TRUE;
+               END_IF;
+            END_IF;
+         END_IF;
+         stackHdl := nextStackHdl;
+      END_WHILE;
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Get drive position of HOME
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetDrivePosOfHome(mainDrives : TMcuVector; auxDrives  : TMcuVector) : BOOL
+ VAR
+  j             : DINT;
+  k             : DINT;
+  bTimeOut      : BOOL;
+  pos           : TMcuPosition;
+  tmpMainDrives : TMcuVector;
+  tmpAuxDrives  : TMcuVector;
+  tmpMainJoints : TMcuVector;
+  tmpAuxJoints  : TMcuVector;
+ END_VAR
+    
+   IF NOT myRobot.fixPosReady THEN
+      myRobot.DebugPrint(eTraceAreaJob, "GetDrivePosOfHome - fixpositions not ready");
+      RETURN FALSE;
+   END_IF;
+   
+   IF bMultiHome THEN
+      j := yDegradeHome[iDegradeRob].indexRcuInFix;
+      IF (yRcuFixpositions[j].Option = eHomeWithoutAux) OR (yRcuFixpositions[j].Option = eHomeWithAux) THEN
+         IF NOT yRcuFixpositions[j].bPosIsValid THEN  
+            myRobot.DebugPrint(eTraceAreaJob, "GetDrivePosOfHome - home position not valid ");
+            RETURN FALSE;
+         ELSE
+            yRcuFixpositions[j].FixPoint.GetMcuPos(pos, myRobot);
+            FOR k:=0 TO myRobot.nrOfMainJoints-1 DO
+               tmpMainJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k];
+            END_FOR;
+            tmpMainJoints.mValidLen := myRobot.nrOfMainJoints;
+            tmpMainDrives.mValidLen := myRobot.nrOfMainDrives;
+            FOR k:=0 TO myRobot.nrOfAuxJoints-1 DO
+               tmpAuxJoints.mValues[k] := pos.mAuxJoints.mValues[k];
+            END_FOR;
+            tmpAuxJoints.mValidLen := myRobot.nrOfAuxJoints;
+            tmpAuxDrives.mValidLen := myRobot.nrOfAuxDrives;
+            McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, myRobot.kinematicMcuId);
+            mainDrives := tmpMainDrives;
+            auxDrives  := tmpAuxDrives;
+            RETURN TRUE;
+         END_IF;
+      END_IF;
+      
+   ELSE
+      FOR j:=0 TO maxFixpos-1 DO
+         IF (yRcuFixpositions[j].Option = eHomeWithoutAux) OR (yRcuFixpositions[j].Option = eHomeWithAux) THEN
+            IF NOT yRcuFixpositions[j].bPosIsValid THEN  
+               myRobot.DebugPrint(eTraceAreaJob, "GetDrivePosOfHome - home position not valid ");
+               RETURN FALSE;
+            ELSE
+               yRcuFixpositions[j].FixPoint.GetMcuPos(pos, myRobot);
+               FOR k:=0 TO myRobot.nrOfMainJoints-1 DO
+                  tmpMainJoints.mValues[k] := pos.mPosJoints.mJoints.mValues[k];
+               END_FOR;
+               tmpMainJoints.mValidLen := myRobot.nrOfMainJoints;
+               tmpMainDrives.mValidLen := myRobot.nrOfMainDrives;
+               FOR k:=0 TO myRobot.nrOfAuxJoints-1 DO
+                  tmpAuxJoints.mValues[k] := pos.mAuxJoints.mValues[k];
+               END_FOR;
+               tmpAuxJoints.mValidLen := myRobot.nrOfAuxJoints;
+               tmpAuxDrives.mValidLen := myRobot.nrOfAuxDrives;
+               McuJointsToDrives(tmpMainDrives, tmpAuxDrives, tmpMainJoints, tmpAuxJoints, myRobot.kinematicMcuId);
+               mainDrives := tmpMainDrives;
+               auxDrives  := tmpAuxDrives;
+               RETURN TRUE;
+            END_IF;
+         END_IF;
+      END_FOR;
+   END_IF; 
+   myRobot.DebugPrint(eTraceAreaJob, "GetDrivePosOfHome - home position not found ");
+   RETURN FALSE;
+END_ROUTINE
+
+(*******************************************************************************
+* private members
+*)
+CONSTANT PRIVATE
+   cNoProgNumber    : SINT :=  0;
+   cAreaSizeX       : REAL := 25000.0;
+   cAreaSizeY       : REAL :=  5000.0;
+   cAreaSizeZ       : REAL := 10000.0;
+END_CONSTANT
+
+TYPE PRIVATE 
+  tAxisData : STRUCT
+    yMainAxesPos : ARRAY [7] OF REAL;
+    yAuxAxesPos  : ARRAY [3] OF REAL;
+  END_STRUCT; 
+  
+  tSingleCoord : STRUCT
+    type  : TRcuCoordType; 
+    sign  : TRcuSign;
+    rSize : REAL;
+  END_STRUCT; 
+  
+  TRcuSign           : (eNeg, ePos);
+  TRcuRobotType      : (eRcuPaintRobot, eRcuHoodOpener, eRcuDoorOpener);
+  TRcuCoordType      : (eDefaultAllowed, eCfgNeeded);
+  tDegradeData : STRUCT
+     pointName : STRING;
+     indexRcuInFix : INT;
+  END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+  instId                : DINT;               // instance identification number
+  //config data                               
+  rToleranceRotAxes     : REAL;               // tolerance for the rot axes
+  rToleranceLinAxes     : REAL;               // tolerance for the lin axes
+  rToleranceAxes        : ARRAY [9] OF REAL;  // array of tolerances for the axes
+  rSqrToleranceMainAxes : REAL;               // square tolerance axis 1-6
+  rSqrToleranceAuxAxes  : REAL;               // square tolerance axis 7
+  bMovingUnderAboveBody : BOOL;               // check bypass also in Z direction ex. sealing NVU
+  bMovingCrosswise      : BOOL;               // joint 7 crosswise to conveyor
+  bOneRobotPerSide      : BOOL;               //check only the Y-coord for unselect-position (only 1 robot on rail)
+  RcuRobotTyp           : TRcuRobotType;      // type of the Robot - paint, door, hood
+                                            
+  //teached data for bypass                 
+  bBypassFound          : BOOL;               //data for bypass already read
+  bBypassDataValid      : BOOL;               //data of bypass is correct
+  DataBypassPoint       : tAxisData;          //data of bypass
+  bBypassReady          : BOOL;               //teached bypass is ready to use
+  bypassCfgData         : ARRAY [6] OF tSingleCoord;
+  byPassArea            : TRcuAreaJob;        //MCU observes if robot has reached bypass area
+  rBypassA7MinPos       : REAL;
+                                            
+  //teached data for unselect               
+  bUnselFound           : BOOL;               //data for unselect already read
+  bUnselDataValid       : BOOL;               //data of unselect is correct
+  DataUnselPoint        : tAxisData;          //data of unselect
+  bUnselReady           : BOOL;               //unselect is ready to use
+  unselectCfgData       : ARRAY [6] OF tSingleCoord;
+  unSelectArea          : TRcuAreaJob;        //MCU observes if robot has reached unselect area
+  rUnselectA7MinPos     : REAL;
+  
+  //working data
+  bErrorAxis            : BOOL;             //flag that one errormessage is set
+  bHomeFound            : BOOL;             //data for home already read
+  bBrakeCheckFound      : BOOL;             //data for brakecheck already read
+  bScpSyncFound         : BOOL;             //data for SCP already read
+  bScpRefPosFound       : BOOL;             //data for SCP already read
+  NrOfMainJoints        : MAPTO DINT;       //number of robot axis
+  NrOfAuxJoints         : MAPTO DINT;       //number of aux axis
+  myRobot               : MAPTO TRcuRobot;
+  bDataReadBypUnsel     : BOOL;
+  RcuInFixpos           : BOOL;
+  bBypassOrUnselChg     : BOOL;             //points are changed
+  
+  //degrade
+  iNrOfDegradeRob       : INT;              //number of degrade robots as defined in enumeration
+                                            //DEGRADEROB (EcotalkVariables.ttp)
+END_VAR
+
+//------------------------------------------------------------------------------------------------------
+// Start observations for fixposition and MCU-areas
+//------------------------------------------------------------------------------------------------------
+ROUTINE FixposCheck() PRIVATE
+ VAR
+   timeout      : BOOL;
+ END_VAR
+    
+   // wait until fix positions are ready, main.ttp from project _globalvars.tid 
+   // has to map the points from _globalvars.ttp
+   WAIT gbBootupFinished;
+   SysTimerSet(20000, timeout);
+   WAIT myRobot.fixPosReady OR timeout;
+   IF timeout THEN
+      timeout := FALSE;
+      RcuSetMessageOnce(TRcuFixpos_ErrNotReady, myRobot.kinListInx, 1, instId, "TRcuFixpos.FixposCheck", "_globalvars.tid");
+      WAIT myRobot.fixPosReady;
+   END_IF; 
+   
+   IF bMultiHome OR bMultiInBox OR bMultiAboveBox OR bMultiPurge THEN
+      START ObserveDegradeBCU();
+   END_IF;
+   
+   //Check if robot is in a fixpositon
+   START ObserveRobotInFixpos();
+   
+   //Check if robot is in bypass-area or unselect-area
+   START CheckMCUareas();
+   
+END_ROUTINE
+
+(*******************************************************************************************************
+                       Fixpos
+********************************************************************************************************)
+
+                        
+//------------------------------------------------------------------------------------------------------
+// Observe if degrade mode from PLC has changed
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveDegradeBCU() PRIVATE
+ VAR
+  i              : INT;
+  chgDegradeBCU  : BOOL;
+  tmp            : INT;
+  iTmpDegradeBCU : INT;
+  iTmpDegradeRob : INT;
+ END_VAR
+   
+   chgDegradeBCU  := IS_CHANGED(myRobot.RcuInterfaceToBCU.iDegrade);
+   WHILE TRUE DO 
+     iTmpDegradeBCU := myRobot.RcuInterfaceToBCU.iDegrade;
+     iTmpDegradeRob := 0;
+     FOR i := 1 TO iNrOfDegradeRob DO
+        tmp := SHR(iTmpDegradeBCU, (i-1));
+        IF ((tmp AND 16#00000001) = 1) THEN
+           iTmpDegradeRob := i;
+        END_IF;
+     END_FOR;
+     iDegradeRob := iTmpDegradeRob;
+     chgDegradeBCU  := FALSE;
+     WAIT chgDegradeBCU;
+   END_WHILE;  
+
+END_ROUTINE
+
+               
+//------------------------------------------------------------------------------------------------------
+// Observe if robot is in any fixposition at the moment
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveRobotInFixpos() PRIVATE
+ VAR
+  i              : INT;
+  chgFixposReady : BOOL;
+  chgInFixpos    : BOOL;
+  chgDrivesSim   : BOOL;
+  chgDegradeRob  : BOOL;
+  fixposProgNr   : INT;
+  bFound         : BOOL;
+ END_VAR
+   
+   myRobot.fieldbusOut.PosUnselect.svBool := FALSE;
+   myRobot.fieldbusOut.PosBypass.svBool   := FALSE;
+   myRobot.fieldbusOut.PosHome.svBool     := FALSE;
+   
+   WAIT myRobot.fixPosReady;                   // _globalvars.tid is ready
+   CheckPointsFromGlobal();                    // check data from _globalvars.tid/main.ttp
+   UpdateFixpos();
+   
+   START ObserveFixPosReady();
+  
+   chgFixposReady := IS_CHANGED(myRobot.fixPosReady);
+   chgInFixpos    := IS_CHANGED(yRcuInFixpositions);
+   chgDrivesSim   := IS_CHANGED(myRobot.allDrivesSimulated);
+   chgDegradeRob  := IS_CHANGED(iDegradeRob);
+   WHILE TRUE DO 
+     
+     //simulation of drivevalues has changed ex. GhostNoMotion, so restart updatefunction
+     IF chgDrivesSim THEN
+        UpdateFixpos();
+     END_IF;
+     
+     //Degrade roboter has changed
+     IF chgDegradeRob THEN
+        RcuFixposNumber                    := cNoProgNumber;
+        UpdateFixpos();
+     END_IF;
+     
+     //Set the number of the first Fixpos in array to BCU / PLC
+     fixposProgNr := cNoProgNumber;
+     i := 0;
+     REPEAT 
+       IF yRcuInFixpositions[i] THEN
+          bFound := TRUE;
+          IF bMultiHome THEN
+             IF (yRcuFixpositions[i].Option = eHomeWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithAux) THEN
+                IF i = yDegradeHome[iDegradeRob].indexRcuInFix THEN
+                   fixposProgNr := yRcuFixpositions[i].iProgNumber;
+                ELSE
+                   bFound := FALSE;
+                END_IF;
+             END_IF;
+          END_IF;
+          IF bMultiInBox AND bFound THEN
+             IF (yRcuFixpositions[i].AddOption = eInBox) THEN
+                IF i = yDegradeInBox[iDegradeRob].indexRcuInFix THEN
+                   fixposProgNr := yRcuFixpositions[i].iProgNumber;
+                ELSE
+                   bFound := FALSE;
+                END_IF;
+             END_IF;
+          END_IF;
+          IF bMultiAboveBox AND bFound THEN
+             IF (yRcuFixpositions[i].AddOption = eAboveBox) THEN
+                IF i = yDegradeAboveBox[iDegradeRob].indexRcuInFix THEN
+                   fixposProgNr := yRcuFixpositions[i].iProgNumber;
+                ELSE
+                   bFound := FALSE;
+                END_IF;
+             END_IF;
+          END_IF;
+          IF bMultiPurge AND bFound THEN
+             IF (yRcuFixpositions[i].AddOption = ePurge) THEN
+                IF i = yDegradePurge[iDegradeRob].indexRcuInFix THEN
+                   fixposProgNr := yRcuFixpositions[i].iProgNumber;
+                ELSE
+                   bFound := FALSE;
+                END_IF;
+             END_IF;
+          END_IF;
+          IF bFound THEN
+             fixposProgNr := yRcuFixpositions[i].iProgNumber;            
+          END_IF;
+       END_IF;
+       i := i + 1;
+     UNTIL (i >= (maxFixpos)) OR (fixposProgNr <> cNoProgNumber);
+     RcuFixposNumber := fixposProgNr;
+     
+     chgFixposReady := FALSE;
+     chgInFixpos    := FALSE;
+     chgDrivesSim   := FALSE;
+     chgDegradeRob  := FALSE;
+     WAIT chgFixposReady OR chgInFixpos OR chgDrivesSim OR chgDegradeRob;
+   END_WHILE;  
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Observe if _global is loaded
+//------------------------------------------------------------------------------------------------------
+ROUTINE ObserveFixPosReady() PRIVATE
+VAR
+   chgFixposReady : BOOL;
+END_VAR
+   
+   chgFixposReady := IS_CHANGED(myRobot.fixPosReady);
+   WHILE TRUE DO 
+     // _globalvars present?
+     IF NOT myRobot.fixPosReady THEN
+        myRobot.DebugPrint(eTraceAreaJob, "unload of _globalvars.tid");
+        STOP CheckPointsFromGlobal;
+        WAIT myRobot.fixPosReady;             // _globalvars.tid is ready 
+        myRobot.DebugPrint(eTraceAreaJob, "reloaded fixpositions from _globalvars.tid");
+        CheckPointsFromGlobal();              // check data from _globalvars.tid/main.ttp
+        UpdateFixpos();
+     ELSIF bBypassOrUnselChg THEN
+        myRobot.DebugPrint(eTraceAreaJob, "Bypass or Unselect points are changed");
+        STOP CheckPointsFromGlobal;
+        myRobot.fixPosReady := FALSE;
+        myRobot.WaitMcMainCycles(1);
+        myRobot.fixPosReady := TRUE;
+        CheckPointsFromGlobal();              // check data from _globalvars.tid/main.ttp
+        UpdateFixpos();
+        bBypassOrUnselChg := FALSE;
+     END_IF;
+     
+     chgFixposReady := FALSE;
+     WAIT chgFixposReady OR bBypassOrUnselChg;
+   END_WHILE;  
+
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// start update function for each fixposition 
+//------------------------------------------------------------------------------------------------------
+ROUTINE UpdateFixpos() PRIVATE
+ VAR
+   i            : DINT;
+   j            : DINT;
+   updateActive : BOOL;
+ END_VAR
+ 
+   WAIT myRobot.fixPosReady;
+   FOR i := 0 TO maxFixpos - 1 DO
+      IF yRcuFixpositions[i].bPosIsValid THEN
+         yRcuFixpositions[i].AddOption := eNoAddOption;
+         IF NOT myRobot.allDrivesSimulated THEN
+            yRcuInFixpositions[i] := UPDATE(TRUE);
+            yRcuInFixpositions[i] := UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[0] - yRcuFixpositions[i].FixPointVal.A) < rToleranceAxes[0]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[0] - yRcuFixpositions[i].FixPointVal.A) > -rToleranceAxes[0]));
+            IF (1 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] :=  UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[1] - yRcuFixpositions[i].FixPointVal.B) < rToleranceAxes[1]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[1] - yRcuFixpositions[i].FixPointVal.B) > -rToleranceAxes[1]));
+            END_IF;
+            IF (2 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] :=  UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[2] - yRcuFixpositions[i].FixPointVal.C) < rToleranceAxes[2]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[2] - yRcuFixpositions[i].FixPointVal.C) > -rToleranceAxes[2]));
+            END_IF;
+            IF (3 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] :=  UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[3] - yRcuFixpositions[i].FixPointVal.D) < rToleranceAxes[3]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[3] - yRcuFixpositions[i].FixPointVal.D) > -rToleranceAxes[3]));
+            END_IF;
+            IF (4 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] :=  UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[4] - yRcuFixpositions[i].FixPointVal.E) < rToleranceAxes[4]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[4] - yRcuFixpositions[i].FixPointVal.E) > -rToleranceAxes[4]));
+            END_IF;
+            IF (5 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] :=  UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[5] - yRcuFixpositions[i].FixPointVal.F) < rToleranceAxes[5]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[5] - yRcuFixpositions[i].FixPointVal.F) > -rToleranceAxes[5]));
+            END_IF;
+            IF (6 < NrOfMainJoints) THEN // RP043
+               yRcuInFixpositions[i] :=  UPDATE(THIS AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[6] - yRcuFixpositions[i].FixPointVal.Aux1) < rToleranceAxes[6]) AND
+                      ((myRobot.readBackVals.mJoints.mMainJoints.mValues[6] - yRcuFixpositions[i].FixPointVal.Aux1) > -rToleranceAxes[6]));
+            END_IF;
+            
+            IF (NrOfMainJoints > 6) THEN // RP143
+               IF NOT((yRcuFixpositions[i].Option = eWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux)) THEN
+                  IF (0 < NrOfAuxJoints) THEN
+                     yRcuInFixpositions[i] := UPDATE(THIS AND
+                           ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - yRcuFixpositions[i].FixPointVal.Aux2) < rToleranceAxes[NrOfMainJoints]) AND
+                           ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - yRcuFixpositions[i].FixPointVal.Aux2) > -rToleranceAxes[NrOfMainJoints]));
+                  END_IF;
+               END_IF;   
+               //SwingArm ?????
+               //fehlt
+               // 
+            ELSE
+               IF NOT((yRcuFixpositions[i].Option = eWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux)) THEN
+                  IF (0 < NrOfAuxJoints) THEN
+                     yRcuInFixpositions[i] := UPDATE(THIS AND
+                           ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - yRcuFixpositions[i].FixPointVal.Aux1) < rToleranceAxes[NrOfMainJoints]) AND
+                           ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - yRcuFixpositions[i].FixPointVal.Aux1) > -rToleranceAxes[NrOfMainJoints]));
+                  END_IF;
+               END_IF;    
+               //SwingArm
+               IF (1 < NrOfAuxJoints) THEN
+                  yRcuInFixpositions[i] := UPDATE(THIS AND
+                        ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - yRcuFixpositions[i].FixPointVal.Aux2) < rToleranceAxes[NrOfMainJoints+1]) AND
+                        ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - yRcuFixpositions[i].FixPointVal.Aux2) > -rToleranceAxes[NrOfMainJoints+1]));
+               END_IF;
+               IF NOT((yRcuFixpositions[i].Option = eWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux)) THEN   
+                  IF (2 < NrOfAuxJoints) THEN
+                     yRcuInFixpositions[i] := UPDATE(THIS AND
+                           ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[2] - yRcuFixpositions[i].FixPointVal.Aux3) < rToleranceAxes[NrOfMainJoints+2]) AND
+                           ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[2] - yRcuFixpositions[i].FixPointVal.Aux3) > -rToleranceAxes[NrOfMainJoints+2]));
+                  END_IF;
+               END_IF;
+            END_IF;
+        
+         ELSE
+            yRcuInFixpositions[i] := UPDATE(TRUE);
+            yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[0] - yRcuFixpositions[i].FixPointVal.A) < rToleranceAxes[0]) AND
+                  ((myRobot.actJoints.mPos[0] - yRcuFixpositions[i].FixPointVal.A) > -rToleranceAxes[0]));
+            IF (1 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[1] - yRcuFixpositions[i].FixPointVal.B) < rToleranceAxes[1]) AND
+                  ((myRobot.actJoints.mPos[1] - yRcuFixpositions[i].FixPointVal.B) > -rToleranceAxes[1]));
+            END_IF;
+            IF (2 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[2] - yRcuFixpositions[i].FixPointVal.C) < rToleranceAxes[2]) AND
+                  ((myRobot.actJoints.mPos[2] - yRcuFixpositions[i].FixPointVal.C) > -rToleranceAxes[2]));
+            END_IF;
+            IF (3 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[3] - yRcuFixpositions[i].FixPointVal.D) < rToleranceAxes[3]) AND
+                  ((myRobot.actJoints.mPos[3] - yRcuFixpositions[i].FixPointVal.D) > -rToleranceAxes[3]));
+            END_IF;
+            IF (4 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[4] - yRcuFixpositions[i].FixPointVal.E) < rToleranceAxes[4]) AND
+                  ((myRobot.actJoints.mPos[4] - yRcuFixpositions[i].FixPointVal.E) > -rToleranceAxes[4]));
+            END_IF;
+            IF (5 < NrOfMainJoints) THEN
+               yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[5] - yRcuFixpositions[i].FixPointVal.F) < rToleranceAxes[5]) AND
+                  ((myRobot.actJoints.mPos[5] - yRcuFixpositions[i].FixPointVal.F) > -rToleranceAxes[5]));
+            END_IF;
+            IF (6 < NrOfMainJoints) THEN //RP043
+               yRcuInFixpositions[i] := UPDATE(THIS AND
+                  ((myRobot.actJoints.mPos[6] - yRcuFixpositions[i].FixPointVal.Aux1) < rToleranceAxes[6]) AND
+                  ((myRobot.actJoints.mPos[6] - yRcuFixpositions[i].FixPointVal.Aux1) > -rToleranceAxes[6]));
+            END_IF;
+            
+            IF (NrOfMainJoints > 6) THEN //RP143
+               IF NOT((yRcuFixpositions[i].Option = eWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux)) THEN
+                  IF (0 < NrOfAuxJoints) THEN
+                     yRcuInFixpositions[i] := UPDATE(THIS AND
+                           ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 0] - yRcuFixpositions[i].FixPointVal.Aux2) < rToleranceAxes[NrOfMainJoints]) AND
+                           ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 0] - yRcuFixpositions[i].FixPointVal.Aux2) > -rToleranceAxes[NrOfMainJoints]));
+                  END_IF;
+               END_IF;   
+               //SwingArm
+               //fehlt
+               //
+            ELSE
+               IF NOT((yRcuFixpositions[i].Option = eWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux)) THEN
+                  IF (0 < NrOfAuxJoints) THEN
+                     yRcuInFixpositions[i] := UPDATE(THIS AND
+                           ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 0] - yRcuFixpositions[i].FixPointVal.Aux1) < rToleranceAxes[NrOfMainJoints]) AND
+                           ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 0] - yRcuFixpositions[i].FixPointVal.Aux1) > -rToleranceAxes[NrOfMainJoints]));
+                  END_IF;
+               END_IF;   
+               //SwingArm
+               IF (1 < NrOfAuxJoints) THEN
+                  yRcuInFixpositions[i] := UPDATE(THIS AND
+                        ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 1] - yRcuFixpositions[i].FixPointVal.Aux2) < rToleranceAxes[NrOfMainJoints+1]) AND
+                        ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 1] - yRcuFixpositions[i].FixPointVal.Aux2) > -rToleranceAxes[NrOfMainJoints+1]));
+               END_IF;
+               IF NOT((yRcuFixpositions[i].Option = eWithoutAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux)) THEN   
+                  IF (2 < NrOfAuxJoints) THEN
+                     yRcuInFixpositions[i] := UPDATE(THIS AND
+                           ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 2] - yRcuFixpositions[i].FixPointVal.Aux3) < rToleranceAxes[NrOfMainJoints+2]) AND
+                           ((myRobot.actJoints.mPos[myRobot.nrOfMainJoints + 2] - yRcuFixpositions[i].FixPointVal.Aux3) > -rToleranceAxes[NrOfMainJoints+2]));
+                  END_IF;
+              END_IF;
+            END_IF;
+           
+         END_IF;  //myRobot.allDrivesSimulated
+         
+         //Update Homepos-signal for BCU/PLC
+         IF bMultiHome THEN
+            RcuInHome                          := UPDATE(yRcuInFixpositions[yDegradeHome[iDegradeRob].indexRcuInFix]);
+            myRobot.fieldbusOut.PosHome.svBool := UPDATE(yRcuInFixpositions[yDegradeHome[iDegradeRob].indexRcuInFix]);
+         ELSE
+            IF (yRcuFixpositions[i].Option = eHomeWithAux) OR (yRcuFixpositions[i].Option = eHomeWithoutAux) THEN
+               RcuInHome                           := UPDATE(yRcuInFixpositions[i]);
+               myRobot.fieldbusOut.PosHome.svBool  := UPDATE(yRcuInFixpositions[i]);
+            END_IF;
+         END_IF;
+         //Update Brakecheckpos for BCU
+         IF (yRcuFixpositions[i].Option = eBrakeCheck) THEN
+            RcuInBrakeCheckPos := UPDATE(yRcuInFixpositions[i]);
+         END_IF;
+         //Update SyncPos for SCP
+         IF (yRcuFixpositions[i].Option = eSyncPos) THEN
+            RcuInScpSyncPos := UPDATE(yRcuInFixpositions[i]);
+         END_IF;
+         //Update RefPos for SCP
+         IF (yRcuFixpositions[i].Option = eRefScp) THEN
+            RcuInScpRefPos := UPDATE(yRcuInFixpositions[i]);
+         END_IF;
+         //Update robot is in any fixposition
+         IF NOT updateActive THEN
+            RcuInFixpos  := UPDATE(FALSE);
+            updateActive := TRUE;
+         END_IF;  
+         RcuInFixpos := UPDATE(THIS OR yRcuInFixpositions[i]);
+         
+      END_IF; //yRcuFixpositions[i].bPosIsValid
+   END_FOR;
+   
+   IF bMultiInBox THEN
+      FOR i := 0 TO 16 DO
+         yRcuFixpositions[yDegradeInBox[i].indexRcuInFix].AddOption := eInBox;
+      END_FOR;
+   END_IF;
+   IF bMultiAboveBox THEN
+      FOR i := 0 TO 16 DO
+         yRcuFixpositions[yDegradeAboveBox[i].indexRcuInFix].AddOption := eAboveBox;
+      END_FOR;
+   END_IF;
+   IF bMultiPurge THEN
+      FOR i := 0 TO 16 DO
+         yRcuFixpositions[yDegradePurge[i].indexRcuInFix].AddOption := ePurge;
+      END_FOR;
+   END_IF;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// check data from teached points which are read from _globalvars.tid
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckPointsFromGlobal() PRIVATE
+ VAR
+    I                 : INT;
+    sReadName         : STRING;
+    bBypassErrorSet   : BOOL;
+    bUnselectErrorSet : BOOL;
+    bErrorPoint       : BOOL;
+    iMaxProg          : INT;
+    iFirstBypass      : INT;
+    iFirstUnselect    : INT;
+    iFirstHome        : INT;
+    i                 : INT;
+    j                 : INT;
+    s1                : STRING;
+    s2                : STRING;
+ END_VAR 
+ 
+ bUnselFound      := FALSE;
+ bUnselReady      := FALSE; 
+ bBypassFound     := FALSE;
+ bBypassReady     := FALSE;
+ bHomeFound       := FALSE;
+ bBrakeCheckFound := FALSE;
+ bScpSyncFound    := FALSE;
+ bScpRefPosFound  := FALSE;
+ bErrorAxis       := FALSE;
+ FOR I := 0 TO (maxFixpos - 1) DO
+   IF IS_MAPPED(yRcuFixpositions[I].FixPoint) THEN
+      yRcuFixpositions[I].FixPointVal := yRcuFixpositions[I].FixPoint; // copy
+      sReadName := yRcuFixpositions[I].FixPoint.GetName();
+      yRcuFixpositions[I].sPointNameOrg := sReadName;
+      yRcuFixpositions[I].sPointName  := StrToLower(sReadName);
+      //Bypass/Unselect assigned twice?
+      IF (yRcuFixpositions[I].Option <> eBypass) AND
+         (yRcuFixpositions[I].Option <> eUnselect) THEN
+         //Prog-Nr valid? not for bypass/unselect
+         START ObserveFixPoint(I);
+         IF (yRcuFixpositions[I].iProgNumber > 0) THEN 
+              //Home assigned twice?
+              IF (yRcuFixpositions[I].Option = eHomeWithoutAux) OR
+                    (yRcuFixpositions[I].Option = eHomeWithAux) THEN   
+                 IF bHomeFound AND NOT bMultiHome THEN
+                    yRcuFixpositions[I].Option := eNoOption;
+                    yRcuFixpositions[I].bPosIsValid := FALSE;
+                    yRcuFixpositions[iFirstHome].Option := eNoOption;
+                    yRcuFixpositions[iFirstHome].bPosIsValid := FALSE;
+                    RcuSetMessageOnce(TRcuFixpos_ErrBypassUnselTwice, myRobot.kinListInx, 1, instId, "TRcuFixpos.CheckPointsFromGlobal", "Home");
+                 ELSIF bHomeFound THEN
+                    yRcuFixpositions[I].bPosIsValid := TRUE;
+                 ELSE
+                    yRcuFixpositions[I].bPosIsValid := TRUE;
+                    bHomeFound := TRUE;
+                    iFirstHome := I;
+                 END_IF;
+              //BrakeCheck assigned twice?
+              ELSIF yRcuFixpositions[I].Option = eBrakeCheck THEN
+                 IF bBrakeCheckFound THEN
+                    yRcuFixpositions[I].Option := eNoOption;
+                    yRcuFixpositions[I].bPosIsValid := FALSE;
+                 ELSE
+                    yRcuFixpositions[I].bPosIsValid := TRUE;
+                    bBrakeCheckFound := TRUE;
+                 END_IF;
+              //SyncPos SCP assigned twice?
+              ELSIF yRcuFixpositions[I].Option = eSyncPos THEN    
+                 IF bScpSyncFound THEN
+                    yRcuFixpositions[I].Option := eNoOption;
+                    yRcuFixpositions[I].bPosIsValid := FALSE;
+                 ELSE
+                    yRcuFixpositions[I].bPosIsValid := TRUE;
+                    bScpSyncFound := TRUE;
+                 END_IF;
+              //RefPos SCP assigned twice?
+              ELSIF yRcuFixpositions[I].Option = eRefScp THEN   
+                 IF bScpRefPosFound THEN
+                    yRcuFixpositions[I].Option := eNoOption;
+                    yRcuFixpositions[I].bPosIsValid := FALSE;
+                 ELSE
+                    yRcuFixpositions[I].bPosIsValid := TRUE;
+                    bScpRefPosFound := TRUE;
+                 END_IF;
+              ELSE   //all o.k. so far
+                 yRcuFixpositions[I].bPosIsValid := TRUE;
+              END_IF;           
+            
+         ELSIF NOT bErrorPoint THEN
+           bErrorPoint                     := TRUE;
+           yRcuFixpositions[I].bPosIsValid := FALSE;
+           RcuSetMessageOnce(TRcuFixpos_ErrProgNr, myRobot.kinListInx, 1, instId, "TRcuFixpos.CheckPointsFromGlobal", 
+           STR(yRcuFixpositions[I].iProgNumber), yRcuFixpositions[I].sPointName);
+         ELSE
+           yRcuFixpositions[I].bPosIsValid := FALSE;
+         END_IF; //iProgNumber > 0
+         
+      ELSIF (yRcuFixpositions[I].Option = eUnselect) THEN
+         yRcuFixpositions[I].bPosIsValid := FALSE;
+         IF bUnselFound THEN
+            yRcuFixpositions[I].Option := eNoOption;
+            yRcuFixpositions[iFirstUnselect].Option := eNoOption;
+            bUnselReady  := FALSE;
+            RcuSetMessageOnce(TRcuFixpos_ErrBypassUnselTwice, myRobot.kinListInx, 2, instId, "TRcuFixpos.CheckPointsFromGlobal", "Unselect");
+         ELSE
+            bUnselFound    := TRUE;
+            bUnselReady    := TRUE;
+            iFirstUnselect := I;
+            START ObserveFixPointArea(I);
+         END_IF;
+      ELSIF (yRcuFixpositions[I].Option = eBypass) THEN    
+         yRcuFixpositions[I].bPosIsValid := FALSE;
+         IF bBypassFound THEN
+            yRcuFixpositions[I].Option := eNoOption;
+            yRcuFixpositions[iFirstBypass].Option := eNoOption;
+            bBypassReady  := FALSE;
+            RcuSetMessageOnce(TRcuFixpos_ErrBypassUnselTwice, myRobot.kinListInx, 3, instId, "TRcuFixpos.CheckPointsFromGlobal", "Bypass");
+         ELSE
+            bBypassFound := TRUE;
+            bBypassReady := TRUE;
+            iFirstBypass := I;
+            START ObserveFixPointArea(I);
+         END_IF;    
+      END_IF;  
+               
+   ELSIF NOT bErrorPoint THEN
+      bErrorPoint                     := TRUE;
+      yRcuFixpositions[I].bPosIsValid := FALSE;
+      RcuSetMessageOnce(TRcuFixpos_ErrNAllPointsGlobal, myRobot.kinListInx, 1, instId, "TRcuFixpos.CheckPointsFromGlobal");
+   ELSE
+      yRcuFixpositions[I].bPosIsValid := FALSE;
+   END_IF; //IS_MAPPED
+      
+ END_FOR;
+ //Check coord-system
+ FOR I := 0 TO (maxFixpos - 1) DO
+   IF IS_MAPPED(yRcuFixpositions[I].FixPoint) THEN
+      IF (yRcuFixpositions[I].Option = eUnselect) THEN  
+         IF (yRcuFixpositions[I].FixPointVal.Coord = Invalid) THEN 
+             RcuSetMessageOnce(TRcuFixpos_ErrPointNotTeach, myRobot.kinListInx, 1, instId, "TRcuFixpos.CheckPointsFromGlobal", yRcuFixpositions[I].sPointName);
+             yRcuFixpositions[I].Option      := eNoOption;
+             bUnselReady                     := FALSE;
+             yRcuFixpositions[I].bPosIsValid := FALSE;
+         ELSIF (yRcuFixpositions[I].FixPointVal.Coord <> World) THEN
+             RcuSetMessageOnce(TRcuFixpos_ErrPntHToBeToughtIn, myRobot.kinListInx, 1, instId, "TRcuFixpos.CheckPointsFromGlobal",
+             yRcuFixpositions[I].sPointName, "World");
+             yRcuFixpositions[I].Option      := eNoOption;
+             bUnselReady                     := FALSE;
+             yRcuFixpositions[I].bPosIsValid := FALSE;
+         ELSE    
+             bUnselDataValid := GetFixposData(I, DataUnselPoint);             
+         END_IF;    
+         
+      ELSIF (yRcuFixpositions[I].Option = eBypass) THEN
+         IF (yRcuFixpositions[I].FixPointVal.Coord = Invalid) THEN 
+             RcuSetMessageOnce(TRcuFixpos_ErrPointNotTeach, myRobot.kinListInx, 2, instId, "TRcuFixpos.CheckPointsFromGlobal", yRcuFixpositions[I].sPointName);
+             yRcuFixpositions[I].Option      := eNoOption;
+             bBypassReady                    := FALSE;
+             yRcuFixpositions[I].bPosIsValid := FALSE;
+         ELSIF (yRcuFixpositions[I].FixPointVal.Coord <> World) THEN 
+             RcuSetMessageOnce(TRcuFixpos_ErrPntHToBeToughtIn, myRobot.kinListInx, 2, instId, "TRcuFixpos.CheckPointsFromGlobal",
+             yRcuFixpositions[I].sPointName, "World");
+             yRcuFixpositions[I].Option      := eNoOption;
+             bBypassReady                    := FALSE;
+             yRcuFixpositions[I].bPosIsValid := FALSE;
+         ELSE    
+             bBypassDataValid := GetFixposData(I, DataBypassPoint);             
+         END_IF;
+      
+      ELSE
+         IF yRcuFixpositions[I].bPosIsValid THEN
+             IF (yRcuFixpositions[I].FixPointVal.Coord = Invalid) THEN
+                RcuSetMessageOnce(TRcuFixpos_ErrPointNotTeach, myRobot.kinListInx, 3, instId, "TRcuFixpos.CheckPointsFromGlobal", yRcuFixpositions[I].sPointName);
+                yRcuFixpositions[I].bPosIsValid := FALSE;         
+             ELSIF ((yRcuFixpositions[I].FixPointVal.Coord <> Axis) AND NOT bErrorAxis) THEN
+                 bErrorAxis := TRUE;
+                 yRcuFixpositions[I].bPosIsValid := FALSE;
+                 RcuSetMessageOnce(TRcuFixpos_ErrPntHToBeToughtIn, myRobot.kinListInx, 3, instId, "TRcuFixpos.CheckPointsFromGlobal",
+                 yRcuFixpositions[I].sPointName, "Axis");
+             ELSIF (yRcuFixpositions[I].FixPointVal.Coord <> Axis) THEN
+                 yRcuFixpositions[I].bPosIsValid := FALSE;
+             ELSE    
+                    yRcuFixpositions[I].bPosIsValid := TRUE;
+             END_IF;                         
+         END_IF; 
+      END_IF;
+   END_IF; //IS_MAPPED
+ END_FOR;
+ 
+ IF (NOT bUnselFound OR NOT bUnselDataValid) THEN
+    RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 1, instId, "TRcuFixpos.CheckPointsFromGlobal", "Unselect");
+    bUnselReady := FALSE;
+ ELSIF (NOT bBypassFound OR NOT bBypassDataValid) THEN
+    RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 2, instId, "TRcuFixpos.CheckPointsFromGlobal", "Bypass");
+    bBypassReady := FALSE;
+ END_IF;
+ IF NOT bHomeFound THEN
+    RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 3, instId, "TRcuFixpos.CheckPointsFromGlobal", "Home");
+ END_IF;
+ IF NOT bBrakeCheckFound AND myRobot.bUseATEXbrakeCheck THEN
+    RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 4, instId, "TRcuFixpos.CheckPointsFromGlobal", "BrakeCheck");
+ END_IF;
+ IF (NOT bScpSyncFound) AND myRobot.interfaceToSCP.bSafeRobotic AND ((gsOsName = "Linux") OR (gsOsName = "LinuxSim")) THEN
+    RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 5, instId, "TRcuFixpos.CheckPointsFromGlobal", "SYNCSCP");
+ END_IF;
+ IF (NOT bScpRefPosFound) AND myRobot.interfaceToSCP.bSafeRobotic AND ((gsOsName = "Linux") OR (gsOsName = "LinuxSim")) THEN
+    RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 6, instId, "TRcuFixpos.CheckPointsFromGlobal", "REFSCP");
+ END_IF;
+ bDataReadBypUnsel := TRUE;
+ 
+ IF bMultiHome THEN
+    FOR i := 0 TO iNrOfDegradeRob DO
+       FOR j := 0 TO (maxFixpos - 1) DO
+          s1 := StrToLower(yDegradeHome[i].pointName);
+          s2 := yRcuFixpositions[j].sPointName;
+          IF s1 = s2 THEN
+             yDegradeHome[i].indexRcuInFix := j;
+          END_IF;
+       END_FOR;
+    END_FOR;
+ END_IF;
+ 
+ IF bMultiInBox THEN
+    FOR i := 0 TO iNrOfDegradeRob DO
+       FOR j := 0 TO (maxFixpos - 1) DO
+          s1 := StrToLower(yDegradeInBox[i].pointName);
+          s2 := yRcuFixpositions[j].sPointName;
+          IF s1 = s2 THEN
+             yDegradeInBox[i].indexRcuInFix := j;
+          END_IF;
+       END_FOR;
+    END_FOR;
+ END_IF;
+ 
+ IF bMultiAboveBox THEN
+    FOR i := 0 TO iNrOfDegradeRob DO
+       FOR j := 0 TO (maxFixpos - 1) DO
+          s1 := StrToLower(yDegradeAboveBox[i].pointName);
+          s2 := yRcuFixpositions[j].sPointName;
+          IF s1 = s2 THEN
+             yDegradeAboveBox[i].indexRcuInFix := j;
+          END_IF;
+       END_FOR;
+    END_FOR;
+ END_IF;
+ 
+ IF bMultiPurge THEN
+    FOR i := 0 TO iNrOfDegradeRob DO
+       FOR j := 0 TO (maxFixpos - 1) DO
+          s1 := StrToLower(yDegradePurge[i].pointName);
+          s2 := yRcuFixpositions[j].sPointName;
+          IF s1 = s2 THEN
+             yDegradePurge[i].indexRcuInFix := j;
+          END_IF;
+       END_FOR;
+    END_FOR;
+ END_IF;
+ 
+END_ROUTINE
+
+ROUTINE ObserveFixPoint(Index : INT) PRIVATE
+VAR
+   bChg1 : BOOL;
+   bChg2 : BOOL;
+   bChg3 : BOOL;
+   bChg4 : BOOL;
+   bChg5 : BOOL;
+   bChg6 : BOOL;
+   bChg7 : BOOL;
+   bChg8 : BOOL;
+   bChg9 : BOOL;
+   bChg10 : BOOL;
+   i      : INT;
+END_VAR
+
+   i := Index;
+   bChg1 := IS_CHANGED(yRcuFixpositions[i].FixPoint.A);
+   bChg2 := IS_CHANGED(yRcuFixpositions[i].FixPoint.B);
+   bChg3 := IS_CHANGED(yRcuFixpositions[i].FixPoint.C);
+   bChg4 := IS_CHANGED(yRcuFixpositions[i].FixPoint.D);
+   bChg5 := IS_CHANGED(yRcuFixpositions[i].FixPoint.E);
+   bChg6 := IS_CHANGED(yRcuFixpositions[i].FixPoint.F);
+   bChg7 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Aux1);
+   bChg8 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Aux2);
+   bChg9 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Aux3);
+   bChg10 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Coord);
+   WHILE IS_MAPPED (yRcuFixpositions[i].FixPoint) DO
+      WAIT bChg1 OR bChg2 OR bChg3 OR bChg4 OR bChg5 OR bChg6 OR bChg7 OR bChg8 OR bChg9 OR bChg10
+           OR NOT myRobot.fixPosReady;
+      IF IS_MAPPED (yRcuFixpositions[i].FixPoint) THEN
+         yRcuFixpositions[i].FixPointVal := yRcuFixpositions[i].FixPoint;
+      END_IF;
+      bChg1 := FALSE;
+      bChg2 := FALSE;
+      bChg3 := FALSE;
+      bChg4 := FALSE;
+      bChg5 := FALSE;
+      bChg6 := FALSE;
+      bChg7 := FALSE;
+      bChg8 := FALSE;
+      bChg9 := FALSE;
+      bChg10 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveFixPointArea(Index : INT) PRIVATE
+VAR
+   bChg1 : BOOL;
+   bChg2 : BOOL;
+   bChg3 : BOOL;
+   bChg4 : BOOL;
+   bChg5 : BOOL;
+   bChg6 : BOOL;
+   bChg7 : BOOL;
+   bChg8 : BOOL;
+   bChg9 : BOOL;
+   bChg10 : BOOL;
+   i      : INT;
+END_VAR
+
+   i := Index;
+   bChg1 := IS_CHANGED(yRcuFixpositions[i].FixPoint.A);
+   bChg2 := IS_CHANGED(yRcuFixpositions[i].FixPoint.B);
+   bChg3 := IS_CHANGED(yRcuFixpositions[i].FixPoint.C);
+   bChg4 := IS_CHANGED(yRcuFixpositions[i].FixPoint.D);
+   bChg5 := IS_CHANGED(yRcuFixpositions[i].FixPoint.E);
+   bChg6 := IS_CHANGED(yRcuFixpositions[i].FixPoint.F);
+   bChg7 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Aux1);
+   bChg8 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Aux2);
+   bChg9 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Aux3);
+   bChg10 := IS_CHANGED(yRcuFixpositions[i].FixPoint.Coord);
+   WHILE IS_MAPPED (yRcuFixpositions[i].FixPoint) DO
+      WAIT bChg1 OR bChg2 OR bChg3 OR bChg4 OR bChg5 OR bChg6 OR bChg7 OR bChg8 OR bChg9 OR bChg10
+           OR NOT myRobot.fixPosReady;
+      IF IS_MAPPED (yRcuFixpositions[i].FixPoint) THEN
+         yRcuFixpositions[i].FixPointVal := yRcuFixpositions[i].FixPoint;
+         bBypassOrUnselChg := TRUE;
+      END_IF;
+      bChg1 := FALSE;
+      bChg2 := FALSE;
+      bChg3 := FALSE;
+      bChg4 := FALSE;
+      bChg5 := FALSE;
+      bChg6 := FALSE;
+      bChg7 := FALSE;
+      bChg8 := FALSE;
+      bChg9 := FALSE;
+      bChg10 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Get values for one fixposition
+//------------------------------------------------------------------------------------------------------
+ROUTINE GetFixposData(VAR_IN Index : SINT; Data : tAxisData) : BOOL PRIVATE
+   
+  IF IS_MAPPED(yRcuFixpositions[Index].FixPoint) THEN   
+     Data.yMainAxesPos[0] := yRcuFixpositions[Index].FixPointVal.A;
+     Data.yMainAxesPos[1] := yRcuFixpositions[Index].FixPointVal.B;
+     Data.yMainAxesPos[2] := yRcuFixpositions[Index].FixPointVal.C;
+     Data.yMainAxesPos[3] := yRcuFixpositions[Index].FixPointVal.D;
+     Data.yMainAxesPos[4] := yRcuFixpositions[Index].FixPointVal.E;
+     Data.yMainAxesPos[5] := yRcuFixpositions[Index].FixPointVal.F;
+     
+     Data.yAuxAxesPos[0]  := yRcuFixpositions[Index].FixPointVal.Aux1;
+     Data.yAuxAxesPos[1]  := yRcuFixpositions[Index].FixPointVal.Aux2;
+     Data.yAuxAxesPos[2]  := yRcuFixpositions[Index].FixPointVal.Aux3;
+     RETURN TRUE;
+  ELSE
+     Data.yMainAxesPos[0] := 0;
+     Data.yMainAxesPos[1] := 0;
+     Data.yMainAxesPos[2] := 0;
+     Data.yMainAxesPos[3] := 0;
+     Data.yMainAxesPos[4] := 0;
+     Data.yMainAxesPos[5] := 0;
+                            
+     Data.yAuxAxesPos[0]  := 0;
+     Data.yAuxAxesPos[1]  := 0;
+     Data.yAuxAxesPos[2]  := 0;
+     RcuSetMessageOnce(TRcuFixpos_ErrAxPosFPosXNValid, myRobot.kinListInx, 5, instId, "TRcuFixpos.GetFixposData", yRcuFixpositions[Index].sPointName);
+     RETURN FALSE;
+  END_IF;
+  
+END_ROUTINE
+
+
+(*******************************************************************************************************
+                       MCU-Areas
+********************************************************************************************************)
+
+//------------------------------------------------------------------------------------------------------
+//  Check if robot is in bypass-area or unselect-area  
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckMCUareas() PRIVATE
+   VAR
+      bChgInBypass    : BOOL;
+      bChgInUnselect  : BOOL;
+      bInBypass       : BOOL;
+      bInUnselect     : BOOL;
+      bFixPosReadyOld : BOOL;
+      chgFixposReady  : BOOL;
+END_VAR
+   
+    chgFixposReady := IS_CHANGED(myRobot.fixPosReady);
+    
+    WAIT myRobot.fixPosReady AND bDataReadBypUnsel;        // _globalvars.tid is ready
+    //if nrOfVectors = 0 MCU is not able to observe working areas, bypass & unselect won't work
+    IF (myRobot.gripper.mNrOfVectors = 0) AND (myRobot.guards.mNrOfGuardPoints = 0) THEN
+       myRobot.fieldbusOut.PosBypass.svBool   := FALSE;
+       myRobot.fieldbusOut.PosUnselect.svBool := FALSE;
+       myRobot.areasChecked := TRUE;  //otherwise RobotAdjustAction() waits endless without error message
+       RcuSetMessageOnce(TRcuFixpos_ErrNrGripperZero, myRobot.kinListInx, 1, instId, "TRcuFixpos.CreateMCUareas", STR(myRobot.gripper.mNrOfVectors));
+       RETURN;
+    END_IF;
+    CreateMCUareas();
+    //robot has no aux-joint so cyclic-update isn't necessary
+    IF myRobot.nrOfAuxDrives = 0 THEN
+        bChgInBypass   := IS_CHANGED(byPassArea.inDefinedArea);
+        bChgInUnselect := IS_CHANGED(unSelectArea.inDefinedArea);
+    END_IF;
+    bFixPosReadyOld := myRobot.fixPosReady;
+    
+    WHILE TRUE DO
+       
+       IF NOT myRobot.fixPosReady THEN  //User has reloaded the _globalvars.tid
+          bDataReadBypUnsel := FALSE;
+       ELSIF myRobot.fixPosReady AND NOT bFixPosReadyOld THEN  // _globalvars.tid is ready
+          WAIT bDataReadBypUnsel;
+          byPassArea.DeleteAreaJob();
+          unSelectArea.DeleteAreaJob();
+          CreateMCUareas(); 
+          myRobot.WaitMcMainCycles(2); 
+       END_IF;
+       bFixPosReadyOld := myRobot.fixPosReady;
+       
+       IF bBypassReady THEN
+          //robot moves under the car ex. sealing NVU
+          IF (RcuRobotTyp = eRcuPaintRobot) AND bMovingUnderAboveBody THEN
+            bInBypass := NOT byPassArea.inDefinedArea;  //NoGo area
+          ELSE
+            bInBypass := byPassArea.inDefinedArea;      //working area
+          END_IF;
+          IF rBypassA7MinPos <> 0.0 THEN
+             IF bypassCfgData[3].sign = eNeg THEN
+                bInBypass := bInBypass AND 
+                             ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] > rBypassA7MinPos) AND
+                              (myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] < DataBypassPoint.yAuxAxesPos[0]));
+             ELSIF bypassCfgData[3].sign = ePos THEN
+                bInBypass := bInBypass AND 
+                             ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] < rBypassA7MinPos) AND
+                              (myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] > DataBypassPoint.yAuxAxesPos[0]));
+             END_IF;    
+          END_IF;
+          //---------------------  SwingArm
+          IF (bypassCfgData[4].type = eCfgNeeded) THEN
+             IF bypassCfgData[4].sign = eNeg THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - DataBypassPoint.yAuxAxesPos[0]) <= 0.0);
+                ELSE
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataBypassPoint.yAuxAxesPos[1]) <= 0.0);
+                END_IF;
+             ELSIF bypassCfgData[4].sign = ePos THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - DataBypassPoint.yAuxAxesPos[0]) >= 0.0);
+                ELSE
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataBypassPoint.yAuxAxesPos[1]) >= 0.0);
+                END_IF;
+             END_IF;
+          END_IF;
+          IF (bypassCfgData[5].type = eCfgNeeded) THEN
+             IF bypassCfgData[5].sign = eNeg THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataBypassPoint.yAuxAxesPos[1]) <= 0.0);
+                ELSE
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[2] - DataBypassPoint.yAuxAxesPos[2]) <= 0.0);
+                END_IF;
+             ELSIF bypassCfgData[5].sign = ePos THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataBypassPoint.yAuxAxesPos[1]) >= 0.0);
+                ELSE
+                   bInBypass := bInBypass AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[2] - DataBypassPoint.yAuxAxesPos[2]) >= 0.0);
+                END_IF;
+             END_IF;
+          END_IF;
+          bInBypass := bInBypass AND myRobot.handler.tool.bInBypass;
+          //set output to PLC
+          IF (bInBypass AND NOT RcuInBypass) THEN
+             RcuInBypass   := TRUE;
+             myRobot.fieldbusOut.PosBypass.svBool := TRUE;
+          ELSIF(NOT bInBypass AND RcuInBypass) THEN
+             RcuInBypass   := FALSE;
+             myRobot.fieldbusOut.PosBypass.svBool := FALSE;
+          END_IF;            
+       ELSE
+          RcuInBypass   := FALSE;
+          myRobot.fieldbusOut.PosBypass.svBool := FALSE;  
+       END_IF;
+       
+       IF bUnselReady THEN
+          bInUnselect := unSelectArea.inDefinedArea;      //working area
+          IF rUnselectA7MinPos <> 0.0 THEN
+             IF unselectCfgData[3].sign = eNeg THEN
+                bInUnselect := bInUnselect AND 
+                             ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] > rUnselectA7MinPos) AND
+                              (myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] < DataUnselPoint.yAuxAxesPos[0]));
+             ELSIF unselectCfgData[3].sign = ePos THEN
+                bInUnselect := bInUnselect AND 
+                             ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] < rUnselectA7MinPos) AND
+                              (myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] > DataUnselPoint.yAuxAxesPos[0]));
+             END_IF;
+          END_IF;
+          //---------------------  SwingArm
+          IF (unselectCfgData[4].type = eCfgNeeded) THEN
+             IF unselectCfgData[4].sign = eNeg THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - DataUnselPoint.yAuxAxesPos[0]) <= 0.0);
+                ELSE
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataUnselPoint.yAuxAxesPos[1]) <= 0.0);
+                END_IF;
+             ELSIF unselectCfgData[4].sign = ePos THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[0] - DataUnselPoint.yAuxAxesPos[0]) >= 0.0);
+                ELSE
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataUnselPoint.yAuxAxesPos[1]) >= 0.0);
+                END_IF;
+             END_IF;
+          END_IF;
+          IF (unselectCfgData[5].type = eCfgNeeded) THEN
+             IF unselectCfgData[5].sign = eNeg THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataUnselPoint.yAuxAxesPos[1]) <= 0.0);
+                ELSE
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[2] - DataUnselPoint.yAuxAxesPos[2]) <= 0.0);
+                END_IF;
+             ELSIF unselectCfgData[5].sign = ePos THEN
+                IF myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[1] - DataUnselPoint.yAuxAxesPos[1]) >= 0.0);
+                ELSE
+                   bInUnselect := bInUnselect AND
+                      ((myRobot.readBackVals.mJoints.mAuxJoints.mValues[2] - DataUnselPoint.yAuxAxesPos[2]) >= 0.0);
+                END_IF;
+             END_IF;
+          END_IF;
+          //set output to PLC
+          IF (bInUnselect AND NOT RcuInUnselect) THEN
+             RcuInUnselect := TRUE;
+             myRobot.fieldbusOut.PosUnselect.svBool := TRUE;
+          ELSIF(NOT bInUnselect AND RcuInUnselect) THEN   
+             RcuInUnselect := FALSE;
+             myRobot.fieldbusOut.PosUnselect.svBool := FALSE;
+          END_IF;   
+       ELSE
+          RcuInUnselect := FALSE;
+          myRobot.fieldbusOut.PosUnselect.svBool := FALSE;
+       END_IF;
+       //robot has no aux-joint so cyclic-update isn't necessary
+       IF myRobot.nrOfAuxDrives = 0 THEN 
+          bChgInBypass   := FALSE;
+          bChgInUnselect := FALSE;
+          WAIT bChgInBypass OR bChgInUnselect OR chgFixposReady;
+          chgFixposReady := FALSE;
+       ELSE   
+          myRobot.WaitMcMicroCycles(3);
+       END_IF;   
+    END_WHILE;     
+       
+END_ROUTINE
+
+
+
+//------------------------------------------------------------------------------------------------------
+//  check online if robot is in specified area
+//------------------------------------------------------------------------------------------------------
+ROUTINE CheckPosition() PRIVATE
+  
+   IF bBypassDataValid THEN
+      IF AssignBypassArea() THEN
+         byPassArea.ActivateAreaJob(myRobot);
+      ELSE
+         bBypassReady := FALSE;
+      END_IF;
+   ELSE
+     bBypassReady := FALSE;
+     RcuSetMessageOnce(TRcuFixpos_ErrAreaNotPos, myRobot.kinListInx, 1, instId, "TRcuFixpos.CreateMCUareas", "Bypass");
+   END_IF;
+   
+   IF bUnselDataValid THEN
+      IF AssignUnselectArea() THEN
+         unSelectArea.ActivateAreaJob(myRobot);
+      ELSE
+         bUnselReady := FALSE;
+      END_IF;
+   ELSE
+     bUnselReady := FALSE;
+     RcuSetMessageOnce(TRcuFixpos_ErrAreaNotPos, myRobot.kinListInx, 2, instId, "TRcuFixpos.CreateMCUareas", "Unselect");
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//  check offline if robot is in specified area when actExecData not ready else online
+//------------------------------------------------------------------------------------------------------
+ROUTINE CreateMCUareas() PRIVATE
+
+   CheckPosition();
+   myRobot.areasChecked := TRUE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Assign the bypass-area in MCU
+//------------------------------------------------------------------------------------------------------
+ROUTINE AssignBypassArea() : BOOL PRIVATE
+
+   CASE RcuRobotTyp OF
+     eRcuDoorOpener: 
+        //---------------------  X - Coord 
+        bypassCfgData[0].type := eDefaultAllowed;
+        //---------------------  Y - Coord 
+        bypassCfgData[1].type := eCfgNeeded;
+        //---------------------  Z - Coord
+        bypassCfgData[2].type := eCfgNeeded;
+        //---------------------  Aux-joint
+        bypassCfgData[3].type := eDefaultAllowed;  
+
+     eRcuHoodOpener:
+        //---------------------  X - Coord 
+        bypassCfgData[0].type := eCfgNeeded;
+        //---------------------  Y - Coord 
+        bypassCfgData[1].type := eDefaultAllowed;
+        //---------------------  Z - Coord
+        bypassCfgData[2].type := eCfgNeeded;
+        //---------------------  Aux-joint
+        bypassCfgData[3].type := eDefaultAllowed;  
+          
+     eRcuPaintRobot:
+        //---------------------  X - Coord 
+        bypassCfgData[0].type := eDefaultAllowed;
+        //---------------------  Y - Coord 
+        IF bMovingUnderAboveBody THEN
+           bypassCfgData[1].type := eDefaultAllowed;
+        ELSE
+           bypassCfgData[1].type := eCfgNeeded;
+        END_IF;
+        //---------------------  Z - Coord 
+        IF bMovingUnderAboveBody THEN
+           bypassCfgData[2].type := eCfgNeeded;
+        ELSE
+           bypassCfgData[2].type := eDefaultAllowed;
+        END_IF;
+        //---------------------  Aux-joint
+        IF bMovingCrosswise AND NOT bMovingUnderAboveBody THEN
+           bypassCfgData[3].type := eCfgNeeded;  
+        ELSE  
+           bypassCfgData[3].type := eDefaultAllowed;
+        END_IF;  
+        //---------------------  SwingArm
+        IF (myRobot.nrOfAuxDrives > 1) THEN
+           bypassCfgData[4].type := eCfgNeeded;
+        ELSE
+           bypassCfgData[4].type := eDefaultAllowed;
+        END_IF;
+        IF (myRobot.nrOfAuxDrives > 2)
+           OR ((myRobot.nrOfAuxDrives > 1) AND (myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot))
+        THEN
+           bypassCfgData[5].type := eCfgNeeded;
+        ELSE
+           bypassCfgData[5].type := eDefaultAllowed;
+        END_IF;
+   END_CASE;
+   
+   //---------------------  X - Coord
+   IF bypassCfgData[0].rSize = 0.0 THEN
+      IF bypassCfgData[0].type = eDefaultAllowed THEN                   //default size=50m, base=25m                       
+         // Size of the box                                               
+         byPassArea.areaData.mSize.mValues[0] := cAreaSizeX * 2;  
+         //origin of the box                                               
+         byPassArea.areaData.mBasePos.mPos.mValues[0] := cAreaSizeX  * (-1);
+      ELSE                                                              //no default-value allowed
+         RcuSetMessageOnce(TRcuFixpos_ErrAreaConfig, myRobot.kinListInx, 1, instId, "TRcuFixpos.AssignBypassArea", "X", "Bypass");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      // Size of the box                                                //cfg-values
+      byPassArea.areaData.mSize.mValues[0] := bypassCfgData[0].rSize;
+      IF bMovingUnderAboveBody THEN
+         //origin of the box                                               //teached point from _globalvars
+         IF bypassCfgData[0].sign = ePos THEN                          
+            byPassArea.areaData.mBasePos.mPos.mValues[0] := DataBypassPoint.yMainAxesPos[0] - bypassCfgData[0].rSize;
+         ELSIF bypassCfgData[0].sign = eNeg THEN                                   
+            byPassArea.areaData.mBasePos.mPos.mValues[0] := DataBypassPoint.yMainAxesPos[0];
+         END_IF;
+      ELSE
+         IF bypassCfgData[0].sign = eNeg THEN                          
+            byPassArea.areaData.mBasePos.mPos.mValues[0] := DataBypassPoint.yMainAxesPos[0] - bypassCfgData[0].rSize;
+         ELSIF bypassCfgData[0].sign = ePos THEN                                   
+            byPassArea.areaData.mBasePos.mPos.mValues[0] := DataBypassPoint.yMainAxesPos[0];
+         END_IF;
+      END_IF;
+   END_IF;
+   //---------------------  Y - Coord
+   IF bypassCfgData[1].rSize = 0.0 THEN                         
+      IF bypassCfgData[1].type = eDefaultAllowed THEN                   //default size=10m, base=5m
+         // Size of the box                                                  
+         byPassArea.areaData.mSize.mValues[1] := cAreaSizeY * 2;  
+         //origin of the box                                                 
+         byPassArea.areaData.mBasePos.mPos.mValues[1] := cAreaSizeY * (-1);
+      ELSE                                                              //no default-value allowed
+         RcuSetMessageOnce(TRcuFixpos_ErrAreaConfig, myRobot.kinListInx, 2, instId, "TRcuFixpos.AssignBypassArea", "Y", "Bypass");
+         RETURN FALSE;    
+      END_IF;
+   ELSE   
+      // Size of the box                                                //cfg-values
+      byPassArea.areaData.mSize.mValues[1] := bypassCfgData[1].rSize;
+      IF bMovingUnderAboveBody THEN
+         //origin of the box                                             //teached point from _globalvars
+          IF bypassCfgData[1].sign = ePos THEN
+             byPassArea.areaData.mBasePos.mPos.mValues[1] := DataBypassPoint.yMainAxesPos[1] - bypassCfgData[1].rSize;
+          ELSIF bypassCfgData[1].sign = eNeg THEN
+            byPassArea.areaData.mBasePos.mPos.mValues[1] := DataBypassPoint.yMainAxesPos[1];
+         END_IF;
+      ELSE
+          IF bypassCfgData[1].sign = eNeg THEN
+             byPassArea.areaData.mBasePos.mPos.mValues[1] := DataBypassPoint.yMainAxesPos[1] - bypassCfgData[1].rSize;
+          ELSIF bypassCfgData[1].sign = ePos THEN
+            byPassArea.areaData.mBasePos.mPos.mValues[1] := DataBypassPoint.yMainAxesPos[1];
+         END_IF;
+      END_IF;   
+   END_IF;
+   //---------------------  Z - Coord 
+   IF bypassCfgData[2].rSize = 0.0 THEN
+      IF bypassCfgData[2].type = eDefaultAllowed THEN                   //default size=10m, base=5m
+         // Size of the box
+         byPassArea.areaData.mSize.mValues[2] := cAreaSizeZ;
+         //origin of the box
+         byPassArea.areaData.mBasePos.mPos.mValues[2] := (cAreaSizeZ / 2) * (-1);
+      ELSE                                                              //no default-value allowed
+         RcuSetMessageOnce(TRcuFixpos_ErrAreaConfig, myRobot.kinListInx, 3, instId, "TRcuFixpos.AssignBypassArea", "Z", "Bypass");
+         RETURN FALSE;
+      END_IF;
+   ELSE   
+      // Size of the box                                                //cfg-values
+      byPassArea.areaData.mSize.mValues[2] := bypassCfgData[2].rSize;
+      IF bMovingUnderAboveBody THEN
+         //origin of the box                                            //teached point from _globalvars
+         IF bypassCfgData[2].sign = ePos THEN 
+            byPassArea.areaData.mBasePos.mPos.mValues[2] := DataBypassPoint.yMainAxesPos[2] - bypassCfgData[2].rSize;
+         ELSIF bypassCfgData[2].sign = eNeg THEN
+            byPassArea.areaData.mBasePos.mPos.mValues[2] := DataBypassPoint.yMainAxesPos[2];
+         END_IF;
+      ELSE
+         IF bypassCfgData[2].sign = eNeg THEN
+             byPassArea.areaData.mBasePos.mPos.mValues[2] := DataBypassPoint.yMainAxesPos[2] - bypassCfgData[2].rSize;
+         ELSIF bypassCfgData[2].sign = ePos THEN
+             byPassArea.areaData.mBasePos.mPos.mValues[2] := DataBypassPoint.yMainAxesPos[2];
+         END_IF; 
+      END_IF;
+   END_IF;
+   //---------------------  Aux-joint
+   IF myRobot.nrOfAuxDrives > 0 THEN
+      IF bypassCfgData[3].rSize = 0.0 THEN
+         rBypassA7MinPos   := 0.0;
+         IF bypassCfgData[3].type <> eDefaultAllowed THEN                //default allowed so don't check aux-joint if not configured
+            RcuSetMessageOnce(TRcuFixpos_ErrAuxConfig, myRobot.kinListInx, 1, instId, "TRcuFixpos.AssignBypassArea", "Bypass");
+            RETURN FALSE;
+         END_IF;
+      ELSE 
+         IF bypassCfgData[3].sign = eNeg THEN
+            rBypassA7MinPos := DataBypassPoint.yAuxAxesPos[0] - bypassCfgData[3].rSize;
+         ELSIF bypassCfgData[3].sign = ePos THEN
+            rBypassA7MinPos := DataBypassPoint.yAuxAxesPos[0] + bypassCfgData[3].rSize;
+         END_IF;  
+      END_IF;
+   END_IF;
+   //--------------------- area config
+   IF bMovingUnderAboveBody THEN
+      byPassArea.areaData.mAreaTyp           := eMcuAreaSignalTypeNogo;
+   ELSE
+      byPassArea.areaData.mAreaTyp           := eMcuAreaSignalTypeWork;
+   END_IF;
+   byPassArea.areaData.mAreaShape         := eMcuAreaBox;  // area shape is a box
+   byPassArea.areaData.mDBObjTyp          := eMcuPermanent;
+   byPassArea.areaData.mRefSysID          := McuGetWorldTrsfID();
+   byPassArea.areaData.mName              := "Bypass-Area";
+   byPassArea.areaData.mBasePos.mFrameTyp := eMcuFrameKardan;
+   byPassArea.areaData.mKinematicID       := myRobot.kinematicMcuId;
+   //MCU should create the area
+   IF NOT McuCreateArea(byPassArea.areaID, byPassArea.areaData) THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrMcuCreArea, myRobot.kinListInx, 1, instId, "TRcuFixpos.AssignBypassArea", "Bypass1");
+      RETURN FALSE;
+   ELSE  
+      IF NOT McuActivateArea(byPassArea.areaID) THEN
+         RcuSetMessageOnce(TRcuFixpos_ErrMcuCreArea, myRobot.kinListInx, 3, instId, "TRcuFixpos.AssignBypassArea", "Bypass3");
+         RETURN FALSE;
+      END_IF;
+      myRobot.DebugPrint(eTraceAreaJob, "");
+      myRobot.DebugPrint(eTraceAreaJob, "*********************************************************************");
+      myRobot.DebugPrint(eTraceAreaJob, "McuCreateBypassArea successful  AreaType " + STR(byPassArea.areaData.mAreaTyp));
+      myRobot.DebugPrint(eTraceAreaJob, "BypassAreaBase X=" + STR(byPassArea.areaData.mBasePos.mPos.mValues[0]) +
+                                              " Y=" + STR(byPassArea.areaData.mBasePos.mPos.mValues[1]) +
+                                              " Z=" + STR(byPassArea.areaData.mBasePos.mPos.mValues[2]));
+      myRobot.DebugPrint(eTraceAreaJob, "BypassAreaSize X=" + STR(byPassArea.areaData.mSize.mValues[0]) +
+                                              " Y=" + STR(byPassArea.areaData.mSize.mValues[1]) +
+                                              " Z=" + STR(byPassArea.areaData.mSize.mValues[2]));                                                
+      IF rBypassA7MinPos <> 0.0 THEN
+         IF bypassCfgData[3].sign = eNeg THEN
+            myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase  A7=" + STR(rBypassA7MinPos) + " AuxJointSize A7=" + STR(bypassCfgData[3].rSize));
+         ELSE
+            myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase  A7=" + STR(DataBypassPoint.yAuxAxesPos[0]) + " AuxJointSize A7=" + STR(bypassCfgData[3].rSize));
+         END_IF;                                                                               
+      END_IF;                                                                               
+      
+      IF bypassCfgData[4].type = eCfgNeeded THEN
+         IF bypassCfgData[4].sign = ePos THEN
+            IF DataBypassPoint.yAuxAxesPos[1] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A8=" + STR(DataBypassPoint.yAuxAxesPos[1]) + " AuxJointSize A8=positve direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A8=" + STR(DataBypassPoint.yAuxAxesPos[1]) + " AuxJointSize A8=negative direction");
+            END_IF;   
+         ELSE
+            IF DataBypassPoint.yAuxAxesPos[1] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A8=" + STR(DataBypassPoint.yAuxAxesPos[1]) + " AuxJointSize A8=negative direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A8=" + STR(DataBypassPoint.yAuxAxesPos[1]) + " AuxJointSize A8=positve direction");
+            END_IF;
+         END_IF;
+      END_IF;
+      IF bypassCfgData[5].type = eCfgNeeded THEN
+         IF bypassCfgData[5].sign = ePos THEN
+            IF DataBypassPoint.yAuxAxesPos[2] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A9=" + STR(DataBypassPoint.yAuxAxesPos[2]) + " AuxJointSize A9=positve direction");
+            ELSE
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A9=" + STR(DataBypassPoint.yAuxAxesPos[2]) + " AuxJointSize A9=negative direction");
+            END_IF;   
+         ELSE
+            IF DataBypassPoint.yAuxAxesPos[2] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A9=" + STR(DataBypassPoint.yAuxAxesPos[2]) + " AuxJointSize A9=negative direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase   A9=" + STR(DataBypassPoint.yAuxAxesPos[2]) + " AuxJointSize A9=positve direction");
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      myRobot.DebugPrint(eTraceAreaJob, "*********************************************************************");       
+      myRobot.DebugPrint(eTraceAreaJob, "");      
+   END_IF;
+   RETURN TRUE;
+   
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+// Create the unselect-area in MCU
+//------------------------------------------------------------------------------------------------------
+ROUTINE AssignUnselectArea() : BOOL PRIVATE
+
+   CASE RcuRobotTyp OF
+     eRcuDoorOpener:
+        //---------------------  X - Coord 
+        IF bOneRobotPerSide THEN
+           unselectCfgData[0].type := eDefaultAllowed;
+        ELSE
+           unselectCfgData[0].type := eCfgNeeded;
+        END_IF;
+        //---------------------  Y - Coord
+        unselectCfgData[1].type := eCfgNeeded;
+        //---------------------  Z - Coord
+        unselectCfgData[2].type := eCfgNeeded;
+        //---------------------  Aux-joint
+        IF bOneRobotPerSide THEN
+           unselectCfgData[3].type := eDefaultAllowed;
+        ELSE
+           unselectCfgData[3].type := eCfgNeeded;
+        END_IF;
+     eRcuHoodOpener:
+        //---------------------  X - Coord 
+        unselectCfgData[0].type := eCfgNeeded;
+        //---------------------  Y - Coord
+        unselectCfgData[1].type := eDefaultAllowed;
+        //---------------------  Z - Coord
+        unselectCfgData[2].type := eCfgNeeded;
+        //---------------------  Aux-joint
+        IF bOneRobotPerSide THEN
+           unselectCfgData[3].type := eDefaultAllowed;
+        ELSE
+           unselectCfgData[3].type := eCfgNeeded;
+        END_IF;
+        
+     eRcuPaintRobot:
+        //---------------------  X - Coord 
+        IF bMovingCrosswise OR NOT bOneRobotPerSide THEN
+           unselectCfgData[0].type := eCfgNeeded;
+        ELSE 
+           unselectCfgData[0].type := eDefaultAllowed;
+        END_IF;
+        //---------------------  Y - Coord
+        IF NOT bMovingCrosswise OR NOT bOneRobotPerSide THEN
+           unselectCfgData[1].type := eCfgNeeded;
+        ELSE 
+           unselectCfgData[1].type := eDefaultAllowed;
+        END_IF;
+        //---------------------  Z - Coord
+        unselectCfgData[2].type := eDefaultAllowed;
+        //---------------------  Aux-joint
+        IF bOneRobotPerSide THEN
+           unselectCfgData[3].type := eDefaultAllowed;
+        ELSE
+           unselectCfgData[3].type := eCfgNeeded;
+        END_IF;
+        //---------------------  SwingArm
+        IF (myRobot.nrOfAuxDrives > 1) THEN  
+           unselectCfgData[4].type := eCfgNeeded;
+        ELSE
+           unselectCfgData[4].type := eDefaultAllowed;
+        END_IF;
+        IF (myRobot.nrOfAuxDrives > 2)
+           OR ((myRobot.nrOfAuxDrives > 1) AND (myRobot.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot))
+        THEN  
+           unselectCfgData[5].type := eCfgNeeded;
+        ELSE
+           unselectCfgData[5].type := eDefaultAllowed;
+        END_IF;
+   END_CASE; 
+   
+   //---------------------  X - Coord
+   IF unselectCfgData[0].rSize = 0.0 THEN
+      IF unselectCfgData[0].type = eDefaultAllowed THEN               //default size=50m, base=25m
+         // Size of the box
+         unSelectArea.areaData.mSize.mValues[0] := cAreaSizeX * 2;
+         //origin of the box                                                
+         unSelectArea.areaData.mBasePos.mPos.mValues[0] := cAreaSizeX * (-1);
+      ELSE
+         RcuSetMessageOnce(TRcuFixpos_ErrAreaConfig, myRobot.kinListInx, 4, instId, "TRcuFixpos.AssignUnselectArea", "X", "Unselect");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      // Size of the box
+      unSelectArea.areaData.mSize.mValues[0] := unselectCfgData[0].rSize;
+      //origin of the box                                            //teached point from _globalvars
+      IF unselectCfgData[0].sign = eNeg THEN                          
+         unSelectArea.areaData.mBasePos.mPos.mValues[0] := DataUnselPoint.yMainAxesPos[0] - unselectCfgData[0].rSize;
+      ELSIF unselectCfgData[0].sign = ePos THEN                                   
+          unSelectArea.areaData.mBasePos.mPos.mValues[0] := DataUnselPoint.yMainAxesPos[0];
+      END_IF;
+   END_IF;
+   //---------------------  Y - Coord
+   IF unselectCfgData[1].rSize = 0.0 THEN
+      IF unselectCfgData[1].type = eDefaultAllowed THEN               //default size=10m, base=5m
+         // Size of the box                                                  
+        unSelectArea.areaData.mSize.mValues[1] := cAreaSizeY * 2;  
+         //origin of the box                                                 
+        unSelectArea.areaData.mBasePos.mPos.mValues[1] := cAreaSizeY * (-1);
+      ELSE                                                              //no default-value allowed
+         RcuSetMessageOnce(TRcuFixpos_ErrAreaConfig, myRobot.kinListInx, 5, instId, "TRcuFixpos.AssignUnselectArea", "Y", "Unselect");
+         RETURN FALSE;      
+      END_IF;
+   ELSE   
+      // Size of the box
+      unSelectArea.areaData.mSize.mValues[1] := unselectCfgData[1].rSize;
+      //origin of the box                                            //teached point from _globalvars
+      IF unselectCfgData[1].sign = eNeg THEN
+         unSelectArea.areaData.mBasePos.mPos.mValues[1] := DataUnselPoint.yMainAxesPos[1] - unselectCfgData[1].rSize;
+      ELSIF unselectCfgData[1].sign = ePos THEN
+          unSelectArea.areaData.mBasePos.mPos.mValues[1] := DataUnselPoint.yMainAxesPos[1];
+      END_IF;
+   END_IF;
+   //---------------------  Z - Coord 
+   IF unselectCfgData[2].rSize = 0.0 THEN
+      IF unselectCfgData[2].type = eDefaultAllowed THEN               //default size=10m, base=5m
+         // Size of the box
+         unSelectArea.areaData.mSize.mValues[2] := cAreaSizeZ;
+         //origin of the box
+         unSelectArea.areaData.mBasePos.mPos.mValues[2] := (cAreaSizeZ / 2) * (-1);
+      ELSE                                                            //no default-value allowed
+         RcuSetMessageOnce(TRcuFixpos_ErrAreaConfig, myRobot.kinListInx, 6, instId, "TRcuFixpos.AssignUnselectArea", "Z", "Unselect");
+         RETURN FALSE;      
+      END_IF;
+   ELSE
+      // Size of the box
+      unSelectArea.areaData.mSize.mValues[2] := unselectCfgData[2].rSize;
+      //origin of the box                                            //teached point from _globalvars
+      IF unselectCfgData[2].sign = eNeg THEN
+          unSelectArea.areaData.mBasePos.mPos.mValues[2] := DataUnselPoint.yMainAxesPos[2] - unselectCfgData[2].rSize;
+      ELSIF unselectCfgData[2].sign = ePos THEN
+          unSelectArea.areaData.mBasePos.mPos.mValues[2] := DataUnselPoint.yMainAxesPos[2];
+      END_IF;
+   END_IF;
+   //---------------------  Aux-joint
+   IF myRobot.nrOfAuxDrives > 0 THEN
+      IF unselectCfgData[3].rSize = 0.0 THEN
+         rUnselectA7MinPos := 0.0;
+         IF unselectCfgData[3].type <> eDefaultAllowed THEN                //default allowed so don't check aux-joint if not configured
+            RcuSetMessageOnce(TRcuFixpos_ErrAuxConfig, myRobot.kinListInx, 2, instId, "TRcuFixpos.AssignUnselectArea", "Unselect");
+            RETURN FALSE;
+         END_IF;
+      ELSE 
+         IF unselectCfgData[3].sign = eNeg THEN
+            rUnselectA7MinPos := DataUnselPoint.yAuxAxesPos[0] - unselectCfgData[3].rSize;
+         ELSIF unselectCfgData[3].sign = ePos THEN
+            rUnselectA7MinPos := DataUnselPoint.yAuxAxesPos[0] + unselectCfgData[3].rSize;
+         END_IF;
+      END_IF;
+   END_IF;
+   //--------------------- area config
+   unSelectArea.areaData.mAreaTyp           := eMcuAreaSignalTypeWork;
+   unSelectArea.areaData.mAreaShape         := eMcuAreaBox;  // area shape is a box
+   unSelectArea.areaData.mDBObjTyp          := eMcuPermanent;
+   unSelectArea.areaData.mRefSysID          := McuGetWorldTrsfID();
+   unSelectArea.areaData.mName              := "Unselect-Area";
+   unSelectArea.areaData.mBasePos.mFrameTyp := eMcuFrameKardan;
+   unSelectArea.areaData.mKinematicID       := myRobot.kinematicMcuId;
+   //MCU should create the area
+   IF NOT McuCreateArea(unSelectArea.areaID, unSelectArea.areaData) THEN
+      RcuSetMessageOnce(TRcuFixpos_ErrMcuCreArea, myRobot.kinListInx, 1, instId, "TRcuFixpos.AssignUnselectArea", "Unselect1");
+      RETURN FALSE;
+   ELSE  
+      IF NOT McuActivateArea(unSelectArea.areaID) THEN
+         RcuSetMessageOnce(TRcuFixpos_ErrMcuCreArea, myRobot.kinListInx, 3, instId, "TRcuFixpos.AssignUnselectArea", "Unselect3");
+         RETURN FALSE;
+      END_IF;
+      
+      myRobot.DebugPrint(eTraceAreaJob, "");
+      myRobot.DebugPrint(eTraceAreaJob, "*********************************************************************");
+      myRobot.DebugPrint(eTraceAreaJob, "McuCreateUnselectArea successful  AreaType " + STR(unSelectArea.areaData.mAreaTyp));
+      myRobot.DebugPrint(eTraceAreaJob, "UnselectAreaBase X=" + STR(unSelectArea.areaData.mBasePos.mPos.mValues[0]) +
+                                                " Y=" + STR(unSelectArea.areaData.mBasePos.mPos.mValues[1]) +
+                                                " Z=" + STR(unSelectArea.areaData.mBasePos.mPos.mValues[2]));
+      myRobot.DebugPrint(eTraceAreaJob, "UnselectAreaSize X=" + STR(unSelectArea.areaData.mSize.mValues[0]) +
+                                                " Y=" + STR(unSelectArea.areaData.mSize.mValues[1]) +
+                                                " Z=" + STR(unSelectArea.areaData.mSize.mValues[2]));                                                
+      IF rUnselectA7MinPos <> 0.0 THEN
+         IF unselectCfgData[3].sign = eNeg THEN
+            myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase    A7=" + STR(rUnselectA7MinPos) + " AuxJointSize A7=" + STR(unselectCfgData[3].rSize));
+         ELSE
+            myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase    A7=" + STR(DataUnselPoint.yAuxAxesPos[0]) + " AuxJointSize A7=" + STR(unselectCfgData[3].rSize));
+         END_IF;                                         
+      END_IF;                                         
+      
+      IF unselectCfgData[4].type = eCfgNeeded THEN
+         IF unselectCfgData[4].sign = ePos THEN
+            IF DataUnselPoint.yAuxAxesPos[1] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A8=" + STR(DataUnselPoint.yAuxAxesPos[1]) + " AuxJointSize A8=positve direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A8=" + STR(DataUnselPoint.yAuxAxesPos[1]) + " AuxJointSize A8=negative direction");
+            END_IF;   
+         ELSE
+            IF DataUnselPoint.yAuxAxesPos[1] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A8=" + STR(DataUnselPoint.yAuxAxesPos[1]) + " AuxJointSize A8=negative direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A8=" + STR(DataUnselPoint.yAuxAxesPos[1]) + " AuxJointSize A8=positve direction");
+            END_IF;
+         END_IF;
+      END_IF;
+      IF unselectCfgData[5].type = eCfgNeeded THEN
+         IF unselectCfgData[5].sign = ePos THEN
+            IF DataUnselPoint.yAuxAxesPos[2] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A9=" + STR(DataUnselPoint.yAuxAxesPos[2]) + " AuxJointSize A9=positve direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A9=" + STR(DataUnselPoint.yAuxAxesPos[2]) + " AuxJointSize A9=negative direction");
+            END_IF;   
+         ELSE
+            IF DataUnselPoint.yAuxAxesPos[2] >= 0.0 THEN
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A9=" + STR(DataUnselPoint.yAuxAxesPos[2]) + " AuxJointSize A9=negative direction");
+            ELSE   
+               myRobot.DebugPrint(eTraceAreaJob, "AuxJointBase     A9=" + STR(DataUnselPoint.yAuxAxesPos[2]) + " AuxJointSize A9=positve direction");
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      myRobot.DebugPrint(eTraceAreaJob, "*********************************************************************");       
+      myRobot.DebugPrint(eTraceAreaJob, "");               
+      
+   END_IF;
+   RETURN TRUE;
+   
+END_ROUTINE

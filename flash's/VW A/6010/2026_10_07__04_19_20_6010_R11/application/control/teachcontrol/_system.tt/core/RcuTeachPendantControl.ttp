@@ -1,0 +1,2305 @@
+(*------------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*-------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : RcuTeachPendantControl.ttp
+*  First Author : khn
+*  Date         : 15.11.2001
+*-------------------------------------------------------------------------------
+*  Description:
+*
+*  This modul serves to connect a handterminal to the focused kinematic.
+*  Different keys can be configured and are observed, this can include start-
+*  and stop-keys, jog-keys, override-keys and toggle-keys to switch between
+*  different jog-coordinate-systems, display-coordinate-systems and display-
+*  derivation-settings.
+*-------------------------------------------------------------------------------
+*  19.08.04 nmr: Added configuration for DriveOn- and DriveOff-keys
+*                Added option to use common override vor jogging and automatic
+*                Added LED to signal when kinematic is ready
+*  20.08.04 nmr: Changing the override while TeachPendant is locked is allowed
+*  19.09.04 nmr: Added LED to signal when process is ready
+*  19.01.05 nmr: new flag keyToggleTriggerFunc: key for switching between 
+*                normal trigger functionality and move towards the trigger,
+*                mapped on the teach pendant key which is linked with 
+*                "TriggerFuncSwitch"
+*  16.02.05 nmr: enhancement for GoldenRepos (flags for keys which are 
+*                configurable: keyMoveForeward, keyMoveBackward, keyGoldenRepos)
+
+*  29.03.05 nmr: User-Icons for displaying the trigger mode added 
+*  01.09.05 nmr: bugfix - displayed override was in some cases not correct
+*  21.09.05 nmr: Deactivating triggers (e.g. treating triggers like normal
+*                positions) only possible in step-mode
+*  23.05.06 BMA: keyDrivesOn and keyDrivesOff deleted. KeyConvJog added
+*)
+
+
+(*******************************************************************************
+*  globals
+*)
+
+TYPE GLOBAL
+   // enumeration of time-difference modes
+   TRcuDisplayTimeDiff : (eDisplayPos, eDisplayVel, eDisplayAcDe, eDisplayJerk);
+END_TYPE
+
+
+(*******************************************************************************
+*  members
+*)
+
+VAR
+   ready           : BOOL; // the connection to a kinematic is operable
+
+   displayDerivation   : TRcuDisplayTimeDiff; // derivation display mode
+   jogInhibitCondition : BOOL;                // no jogging allowed
+
+   // is true when the jog override is connected to the override keys, false
+   // when the automatic overide is connected to the override keys (I/O!)
+   jogOverrideFocused : BOOL;
+
+   jogIncremental : BOOL; // decides between incremental and continuous jogging
+
+   // jogkey connections
+   jogKeys      : TRcJogKeys;   // key-pressed state for jog-keys
+   jogKeysAxis  : TRcJogKeys;   // key-pressed state for axis-jog-keys
+   jogKeysWorld : TRcJogKeys;   // key-pressed state for cart-jog-keys
+   key2nd            : MAPTO BOOL; // 2nd key pressed
+   nrOfJogDimensions : DINT;    // number of hardkeys for jogging 
+
+   // various key connections
+   keyToggleJogCoord     : MAPTO BOOL; // jog-coordinate-switch key pressed
+   keyToggleDisplayCoord : MAPTO BOOL; // display-coordinate-switch key pressed
+   keyToggleDerivation   : MAPTO BOOL; // timediff-switch key pressed
+   keyORPlus             : MAPTO BOOL; // overide increase key pressed
+   keyORMinus            : MAPTO BOOL; // overide decrease key pressed
+   keyORFocusSwitch      : MAPTO BOOL; // overide-switch key pressed
+   keyProgStart          : MAPTO BOOL; // program start key pressed
+   keyProgStop           : MAPTO BOOL; // program stop key pressed
+   keyConvJog            : MAPTO BOOL; // conveyor jogging
+   
+   keyMoveBackward       : MAPTO BOOL; // activate backward movement
+   keyMoveForeward       : MAPTO BOOL; // activate foreward movement
+   keyGoldenRepos        : MAPTO BOOL; // start golden repos
+   keyToggleTriggerFunc  : MAPTO BOOL; // toggle trigger functionality
+   keyRobSwitch          : MAPTO BOOL; // switch active robot (not implemented yet)
+   (*$$$$$* motionstep *$$$$$*)
+   keyMotionStep         : MAPTO BOOL; // motionStep key pressed
+
+   ledKinematicReady : MAPTO BOOL;  // led connected to the ready flag of the mainModeMgr
+   ledProcessReady   : MAPTO BOOL;  // led connected to the process-ready flag 
+   ledDrivesOn       : MAPTO BOOL;
+   led2ndKeyOn       : MAPTO BOOL; 
+   dummyHTLed        : BOOL;
+   
+   deviceHdl : DINT; // device-handle of the TeachPendant
+   driverMode : DINT := 4;
+   showJogOvr : BOOL;
+   
+   bOperaterPanelChange : BOOL;
+END_VAR
+
+
+// initialisation function, connect to TeachPendant and start main routines
+ROUTINE Init(CONST name : STRING) : BOOL
+   VAR
+     teachPendantPath : STRING; // catalogpath of the TeachPendant
+     mode : DINT;
+     i2: DINT;
+     ExOffset : DINT;
+   END_VAR
+
+   // alllow only one running Init-routine
+   IF active THEN
+      RETURN FALSE;
+   ELSE
+      active := TRUE;
+   END_IF;
+
+   // test whether name is an endpointname
+   IF IoGetDeviceHdl(name, deviceHdl) THEN
+      // endpointname given, obtain pathname
+      CatalogGetName(deviceHdl, teachPendantPath);
+   ELSE
+      // pathname given
+      teachPendantPath := name;
+      CatalogGetHandle(teachPendantPath, deviceHdl);
+   END_IF;
+   
+   CatalogReadInt (giRcBaseHdl, "isTVB", i2, TRUE); 
+   IF i2=1 THEN
+       gbIsTVB := TRUE;
+       ExOffset := 32;
+   ELSE
+       ExOffset := 0;
+   END_IF;   
+          
+          IF SelectHandTerminal(teachPendantPath, ExOffset) THEN
+              // the general configuration must be read once
+              IF NOT ReadGeneralConfiguration() THEN
+                 active := FALSE;
+                 RETURN FALSE;
+              END_IF;
+              // start the main routine connecting this file to the focused kinematic
+              //IoDeviceGuarding(deviceHdl, FALSE);
+              IF CatalogReadInt(deviceHdl, "driverMode", mode, TRUE) THEN
+                  driverMode := mode;
+              END_IF;
+              START ObserveKinFocus();
+              RETURN TRUE;
+          ELSE
+              // no teach pendant found
+              RcuSetMessageOnce(RcuTeachPndtCtrl_WarTPIniF, -1, 1, 0, "RcuTeachPendantControl.Init", teachPendantPath);
+              active := FALSE;
+              RETURN FALSE;
+          END_IF;    
+END_ROUTINE
+
+
+(*******************************************************************************
+*  private members
+*)
+
+CONSTANT PRIVATE
+   cNoJogKeyNr : DINT := -1;     // number indicating absent key
+   cMaxIncOverride : DINT := 10; // largest incremental override value (promille)
+END_CONSTANT
+
+TYPE PRIVATE
+   TJogKeyCfg            : ARRAY [cgiRcuMaxJogDim] OF ARRAY [2] OF DINT;
+
+   TOvrConfig : STRUCT    
+      // initialoverride  Joggen [%]
+      vJogInit       : DINT;
+      // time span between pushing the key and receiving an autom. change [s]
+      autoInkrTime	: DINT; 
+      // time span for an automatic changing step [s] 
+      inkrStepTime	: DINT; 
+      // small speed-step for jogging [%]  
+      vJogStep			: DINT;
+      // large speed-step for jogging [%]
+      vJogLargeStep	: DINT;
+      // small speed-step for programoverride [%] 
+      vOvrStep       : DINT;
+      // large speed-step forprogramoverride [%]   
+      vOvrLargeStep	: DINT;
+      // delay ,after which, with an automatic change, at a larger step is switched   
+      // [steps]
+      largeStepDelay	: DINT;
+      // if MainModeMgr is external controlled ignore override-keys
+      disableKeysInAuto : BOOL;  
+   END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   active : BOOL; // Init routine activated
+
+   // kinematic connections
+   myKinematic : MAPTO TRcuRobot; // the Kinematic to which the TeachPendant is mapped to
+
+   jogKeysAxisCfg : TJogKeyCfg; // configuration of the keys for axis-jogging
+
+   // references to the jogvectors of the active kinematic
+   jogVectorMainJ   : MAPTO TMcuJointVector;
+   jogVectorAuxJ    : MAPTO TMcuJointVector;
+   jogVectorCartPos : MAPTO TMcuVector3;
+   jogVectorCartOri : MAPTO TMcuVector3;
+   jogVectorAddPos  : MAPTO ADD_POSITIONS;
+
+   // internal states and data
+   kinInJogMode        : BOOL; // kinematic is in jogging mode
+   incStepActive       : BOOL; // an incremental step is being performed
+   activeRampCnt       : DINT; // counter of active jogramps
+   jogRequestCnt       : DINT; // counter of pressed keys
+   anyRampActive       : BOOL; // activeRampCnt <> 0
+   anyJogRequest       : BOOL; // jogging is requested by keys
+   jogExceptionPending : BOOL; // a jog exception has occurred and was not yet released
+   busy                : BOOL; // either jogkeys pressed or ramps active
+   stopJogRamps        : BOOL; // stopping of all jogRamps is requested
+   nrOfRampSegments    : DINT; // number of segments inserted during the jog ramp
+   incrementRot        : REAL; // rotation increment for incremental jogging
+   incrementLin        : REAL; // linear increment for incremental jogging
+   staticFalse         : BOOL; // FALSE value, mapping target
+   
+   // configuration-settings for override-changes
+   ovrConfig           : TOvrConfig;  
+   keyIdx : DINT;
+   PlcJoggingActive : BOOL;
+   i : DINT;
+   bPannelJoggingKey2nd : BOOL;
+   iJogKeyFromPlc : DINT;
+END_VAR
+
+
+// watch changes of the focused kinematic and connect to the new kinematic
+ROUTINE ObserveKinFocus() PRIVATE
+   VAR
+      kinFocusChg : BOOL;
+      newKin : MAPTO TRcuKinematic;
+   END_VAR
+
+   kinFocusChg := IS_CHANGED(gbRcuFocusFlipFlop);
+   IF IS_MAPPED(gRcuFocusedKinematic) THEN
+      kinFocusChg := TRUE;
+   ELSE
+      ready := FALSE;
+      kinFocusChg := FALSE;
+   END_IF;
+   WHILE TRUE DO
+      WAIT kinFocusChg;
+      kinFocusChg := FALSE;
+      newKin := MAP(gRcuFocusedKinematic);
+      
+      giTvRefSysValidMask := giTvRefSysValidMask OR gyBits[newKin.RcuRefSystemObject];
+      IF IS_MAPPED(myKinematic) THEN
+         giTvRefSysValidMask := giTvRefSysValidMask AND NOT gyBits[myKinematic.RcuRefSystemObject];
+      END_IF;
+            
+      nrOfJogDimensions := PaintRobot[newKin.kinListInx].nrOfJogDimensions;
+      
+      // stop jogging
+      jogInhibitCondition := UPDATE(TRUE); // inhibit jogging
+      WAIT NOT anyRampActive; // delay
+
+      IF ready THEN
+         // cancel existing connection
+         ready := FALSE;
+         IF IS_MAPPED(myKinematic) THEN  // @? better solution?
+         IF myKinematic.motionMode = eRcuMMgrModeJog THEN
+            WAIT myKinematic.motionMode = eRcuMMgrModeStop;
+            //WaitForIntValue(myKinematic.motionMode, eRcuMMgrModeStop);
+         END_IF;
+         END_IF;
+         STOP ConnectToKinematic;
+         // reset counters
+         activeRampCnt := 0;
+         anyRampActive := FALSE;
+         jogRequestCnt := 0;
+         anyJogRequest := FALSE;
+      END_IF;
+
+      START ConnectToKinematic(newKin);
+         STOP switchJogKeyMapping;
+      IF bEnablePannelJogging THEN
+         START switchJogKeyMapping();
+      END_IF;
+      WAIT ready;
+   END_WHILE;
+END_ROUTINE
+
+
+// connect to a new kinematic
+ROUTINE ConnectToKinematic(CONST kin : TRcuKinematic) PRIVATE
+
+   // mappings
+   myKinematic      := MAP(kin);
+   jogVectorMainJ   := MAP(myKinematic.jogPath.jogVectorMainJ.mValues);
+   jogVectorAuxJ    := MAP(myKinematic.jogPath.jogVectorAuxJ.mValues);
+   jogVectorCartPos := MAP(myKinematic.jogPath.jogVectorCartPos);
+   jogVectorCartOri := MAP(myKinematic.jogPath.jogVectorCartOri);
+   jogVectorAddPos  := MAP(myKinematic.jogPath.jogVectorAddPos);
+
+   // number of ramp segments results from the desired ramp time
+   nrOfRampSegments := 2.0 / myKinematic.jogPath.jogPeriod;
+
+   // read kinematic specific data from configuration
+   ReadKinConfiguration();
+
+   // start all routines
+   START JogManagement(); // jog management
+   
+   CASE kin.movementDirection OF
+      eDirNormal : gRcData.userIcon[eIconDirection] := eIconDirectionNormal;
+      eDirBack   : gRcData.userIcon[eIconDirection] := eIconDirectionBackward;
+      eDirRepos  : gRcData.userIcon[eIconDirection] := eIconDirectionGoldenRepos;
+   END_CASE;
+   IF kin.triggersAsPathPositions THEN
+      gRcData.userIcon[eIconTrigger] := eIconTriggerAsPoint;
+   ELSE
+      gRcData.userIcon[eIconTrigger] := eIconTriggerNormal;
+   END_IF;
+   
+   ObserveKeys();   // all key observation
+   ObserveState();  // all state observation
+
+   // set update-functions
+   jogInhibitCondition := UPDATE(myKinematic.selectingFlow.running OR
+      NOT myKinematic.mainModeMgr.jogging OR jogExceptionPending);
+
+   // only in case there is no focus-switch-key and two different overrides
+   // the focus is connected with the running-flag
+   IF NOT (myKinematic.useSingleOvr OR IS_MAPPED(keyORFocusSwitch)) THEN
+      jogOverrideFocused := UPDATE(NOT myKinematic.selectingFlow.running); // for defaultbehaviour
+   END_IF;
+   busy := UPDATE(anyJogRequest OR anyRampActive);
+   showJogOvr := UPDATE(NOT(myKinematic.mainModeMgr.externControl AND ovrConfig.disableKeysInAuto));
+
+   // the connection is operable
+   ready := TRUE;
+END_ROUTINE
+
+
+// jog-management
+// listen to the 2nd-key and maintain keyIndex
+ROUTINE JogManagement() PRIVATE
+   VAR
+      chg : BOOL; // indicator for changes in the jog coordinate system
+      key2ndPressed : BOOL;
+      key2ndMapped  : BOOL;
+   END_VAR
+
+   // prepare motionmodes according to busy and anyRampActive-state
+   START PrepareMotionMode();
+   // trigger incremental steps when appropriate
+   START TriggerIncrementalStep();
+   // set override for Teachmode T1 = 40%, T2 = 10%
+   START SetTeachModeOverride();
+   
+   key2ndMapped := IS_MAPPED(key2nd);
+   chg := IS_CHANGED(myKinematic.jogPath.jogSystem);
+   chg := TRUE;
+   WHILE TRUE DO
+      // init or joginhibit present, stop jogging on all dimensions
+      IF anyRampActive THEN
+         stopJogRamps := TRUE;
+         WAIT NOT anyRampActive;
+         stopJogRamps := FALSE;
+      END_IF;
+
+      IF jogInhibitCondition AND (NOT key2ndPressed) THEN
+         WAIT (NOT jogInhibitCondition) OR (key2nd OR bPannelJoggingKey2nd);
+      ELSIF chg OR key2ndPressed THEN
+         IF chg THEN
+            keyIdx := myKinematic.TeachPendantMemories.keyIndex;
+         END_IF;
+         STOP InitJogDimensions; // cancel obsolete routines
+         // reset counters
+         activeRampCnt := 0;
+         anyRampActive := FALSE;
+         jogRequestCnt := 0;
+         anyJogRequest := FALSE;
+
+         chg := FALSE;
+         key2ndPressed := FALSE;
+         // switch to new jog coordinate system
+         START InitJogDimensions(myKinematic.jogPath.jogSystem);
+      END_IF;
+      // wait for jog inhibit or change in the coordinatesystem
+      IF key2ndMapped THEN
+         WAIT chg OR ((key2nd OR bPannelJoggingKey2nd )AND NOT myKinematic.mainModeMgr.TeachPendantLocked) OR jogInhibitCondition;
+         IF key2nd OR bPannelJoggingKey2nd THEN
+            key2ndPressed := TRUE;
+            keyIdx := keyIdx + nrOfJogDimensions;
+            WAIT NOT (key2nd OR bPannelJoggingKey2nd);
+         END_IF;
+      ELSE
+         WAIT chg OR jogInhibitCondition;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// key-observation
+ROUTINE ObserveKeys() PRIVATE
+
+   START ToggleDisplayCoordSystem; // toggle key display coordinate system
+   START ToggleDerivationSetting;  // toggle key derivation setting
+   START ToggleJogCoordSystem;     // toggle key jog coordinate system
+   START ProgramControl();         // observe start/stop keys
+   START OverrideControl();        // override-keys, incremental mode
+   START OverrideFocusControl();   // toggle override-focus
+   START WatchGoldenReposKey();
+   START WatchDirectionKeys();
+   START ObserveTriggerFuncKey(); // toggle key display coordinate system
+   (*$$$$$* motionstep *$$$$$*)
+   START ObserveMotionStepKey();  // toggle key for MotionStepFunction
+   START ObserveConveyorJogKey();
+END_ROUTINE
+
+
+// state-observation
+ROUTINE ObserveState() PRIVATE
+
+   START AllAxesRefCheck();        // switch to joints-jogging when reference lost
+   START CheckForJogException();   // inhibit jogging on jog-exception
+   START KinModeDetection();       // maintain kinInJogMode
+   START ReadyFlagObservation();
+   START DrivesOnObservation();
+   START ProcessReadyObservation();
+END_ROUTINE
+
+
+// switch to a new jog coordinate system, initialize the jogdimensions
+// maintain keyIndex
+ROUTINE InitJogDimensions(VAR_IN coordSystem : TRcJogCoordSys) PRIVATE
+   VAR
+      i : DINT;
+      jogDim : DINT;
+      nrOfDim : DINT;
+      sIdx : DINT;
+      eIdx : DINT;
+      ls : DINT;
+      le : DINT;
+      mJ : DINT;  // MainJoints
+      bJ : DINT;  // BaseJoints
+      wJ : DINT;  // WristJoints
+      aJ : DINT;  // AuxJoints
+      aP : DINT;  // additional positions
+      J  : DINT;  // Joints
+      iAux : DINT;
+      iaP  : DINT;
+   END_VAR
+
+   mJ := myKinematic.kinematic.mNrOfMainJoints;
+   bJ := myKinematic.kinematic.mNrOfBaseJoints;
+   wJ := myKinematic.kinematic.mNrOfWristJoints;
+   aJ := myKinematic.kinematic.mNrOfAuxJoints;
+   aP := NrOfRobotAdditionalPositions(myKinematic);
+   J  := myKinematic.kinematic.mNrOfJoints;
+   CASE coordSystem OF
+      eJogCoordAxes        : nrOfDim := J;
+      eJogCoordWorldMixed, eJogCoordObjectMixed : nrOfDim := 3 + wJ + aJ + aP;
+      eJogCoordWorld, eJogCoordObject, eJogCoordExtTool           : 
+      	IF (myKinematic.kinematic.mRobotTyp = eMcuDoorOpener) THEN
+            nrOfDim := 3 + aJ;
+         ELSE
+            nrOfDim := 6 + aJ + aP;
+         END_IF;
+      eJogCoordTCP         : nrOfDim := 6 + aJ + aP;
+      eJogCoordTCPMixed    : nrOfDim := 3 + wJ + aJ + aP;
+   END_CASE;
+   IF keyIdx >= nrOfDim THEN
+      keyIdx := 0;
+      myKinematic.TeachPendantMemories.keyIndex := 0;
+   ELSE
+      myKinematic.TeachPendantMemories.keyIndex := keyIdx;
+   END_IF;
+   sIdx := myKinematic.TeachPendantMemories.keyIndex;
+   eIdx := sIdx + nrOfJogDimensions - 1;
+   
+   // basejoints, cartpos
+   le := eIdx;   
+   ls := sIdx;   
+   IF coordSystem = eJogCoordAxes THEN                  // joints (base)
+      IF le > bJ - 1 THEN
+         le := bJ - 1;
+      END_IF;
+      FOR i := ls TO le DO
+         jogKeys[i - sIdx] := jogKeysAxis[i - sIdx];
+         IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+            START JogDimensionControl(jogDim, jogKeysAxis[i - sIdx][0], 
+               jogKeysAxis[i - sIdx][1], jogVectorMainJ[i], 
+               myKinematic.kinematic.mJoints[i].mDHParam.mTyp);
+         END_IF;
+         jogDim := jogDim + 1;
+      END_FOR;
+   ELSE                                                 // cart, mixed (pos)
+      IF le > 2 THEN
+         le := 2;
+      END_IF;
+      FOR i := sIdx TO le DO
+         jogKeys[i - sIdx] := jogKeysWorld[i - sIdx];
+         IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+            START JogDimensionControl(jogDim, jogKeysWorld[i - sIdx][0], 
+               jogKeysWorld[i - sIdx][1], jogVectorCartPos.mValues[i], 
+               eMcuJointLin);
+         END_IF;
+         jogDim := jogDim + 1;
+      END_FOR;
+   END_IF;
+
+   // wristjoints, cartori
+   ls := sIdx;   
+   le := eIdx;
+   IF (coordSystem = eJogCoordAxes) OR (coordSystem = eJogCoordWorldMixed) OR 
+         (coordSystem = eJogCoordObjectMixed) OR (coordSystem = eJogCoordTCPMixed) THEN
+      IF coordSystem = eJogCoordAxes THEN               // joints (wrist)
+         IF ls < bJ THEN
+            ls := bJ;
+         END_IF;
+         IF le > mJ - 1 THEN
+            le := mJ - 1;
+         END_IF;
+      ELSE                                              // mixed (joints)
+         IF ls < 3 THEN
+            ls := 3;
+         END_IF;
+         IF le > 3 + wJ - 1 THEN
+            le := 3 + wJ - 1;
+         END_IF;
+      END_IF;
+      FOR i := ls TO le DO
+         jogKeys[i - sIdx] := jogKeysAxis[i - sIdx];
+         IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+            START JogDimensionControl(jogDim, jogKeysAxis[i - sIdx][0], 
+               jogKeysAxis[i - sIdx][1], jogVectorMainJ[i], 
+               myKinematic.kinematic.mJoints[i].mDHParam.mTyp);
+         END_IF;
+         jogDim := jogDim + 1;
+      END_FOR;
+   ELSE                                                 // cart (ori)
+      IF ls < 3 THEN
+         ls := 3;
+      END_IF;
+      IF le > 5 THEN
+         le := 5;
+      END_IF;
+      FOR i := ls TO le DO
+         jogKeys[i - sIdx] := jogKeysWorld[i - sIdx];
+         //IF (jogKeys[i - sIdx][0] <> noMappedKey) AND (jogKeys[i - sIdx][1] <> noMappedKey) THEN
+         IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+            START JogDimensionControl(jogDim, jogKeysWorld[i - sIdx][0], 
+               jogKeysWorld[i - sIdx][1], jogVectorCartOri.mValues[i - 3], 
+               eMcuJointRot);
+         END_IF;
+         jogDim := jogDim + 1;
+      END_FOR;
+   END_IF;
+
+   // additional positions
+   IF aP  > 0 THEN
+      ls := sIdx;   
+      le := eIdx;
+      IF coordSystem = eJogCoordAxes THEN                  // joints
+         IF ls < mJ THEN
+            ls := mJ;
+         END_IF;
+         IF le > J - 1 THEN
+            le := J - 1;
+         END_IF;
+      ELSIF (coordSystem = eJogCoordWorldMixed) OR (coordSystem = eJogCoordObjectMixed) OR 
+            (coordSystem = eJogCoordTCPMixed) OR (myKinematic.kinematic.mRobotTyp = eMcuDoorOpener) THEN         // mixed
+         IF ls < 3 + wJ THEN
+            ls := 3 + wJ;
+         END_IF;
+         IF le > 3 + wJ + aP - 1 THEN
+            le := 3 + wJ + aP - 1;
+         END_IF;
+      ELSE                                                 // cart
+         IF ls < 6 THEN
+            ls := 6;
+         END_IF;
+
+         iaP := ls;
+         IF (le > J - 1 - aJ) AND (sIdx > 0) THEN
+            le := J - 1 - aJ;
+            iaP := mJ;
+         END_IF;
+
+         FOR i := ls TO le DO
+            jogKeys[i - sIdx] := jogKeysWorld[i - sIdx];
+            IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+               START JogDimensionControl(jogDim, jogKeysWorld[i - sIdx][0], 
+                  jogKeysWorld[i - sIdx][1], jogVectorAddPos[i - iaP],
+                  eMcuJointRot);
+            END_IF;
+            jogDim := jogDim + 1;
+         END_FOR;
+      END_IF;
+   END_IF;
+
+   // aux-joints
+   IF aJ > 0 THEN
+      ls := sIdx;   
+      le := eIdx;
+      IF coordSystem = eJogCoordAxes THEN                  // joints
+         IF ls < mJ THEN
+            ls := mJ;
+         END_IF;
+         IF le > J - 1 THEN
+            le := J - 1;
+         END_IF;
+      ELSIF (coordSystem = eJogCoordWorldMixed) OR (coordSystem = eJogCoordObjectMixed) OR 
+            (coordSystem = eJogCoordTCPMixed) OR (myKinematic.kinematic.mRobotTyp = eMcuDoorOpener) THEN         // mixed
+         IF ls < 3 + wJ THEN
+            ls := 3 + wJ;
+         END_IF;
+         IF le > 3 + wJ + aJ - 1 THEN
+            le := 3 + wJ + aJ - 1;
+         END_IF;
+      ELSE                                                 // cart
+         IF ls < 6 + aP THEN
+            ls := 6 + aP;
+         END_IF;
+
+         iAux := ls;
+         IF (le > J - 1) AND (sIdx > 0) THEN
+            le := J - 1;
+            iAux := mJ;
+         END_IF;
+
+         FOR i := ls TO le DO
+            jogKeys[i - sIdx] := jogKeysWorld[i - sIdx];
+            IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+               START JogDimensionControl(jogDim, jogKeysWorld[i - sIdx][0], 
+                  jogKeysWorld[i - sIdx][1], jogVectorAuxJ[i - iAux],
+                  myKinematic.kinematic.mJoints[i].mDHParam.mTyp);
+            END_IF;
+            jogDim := jogDim + 1;
+         END_FOR;
+      END_IF;
+   END_IF;
+   
+   // No aux-joints AND no additional positions
+   IF (aJ = 0) AND (aP  = 0) THEN
+       ls := sIdx;   
+       le := eIdx;
+       IF coordSystem = eJogCoordAxes THEN                  // joints
+          IF ls < mJ THEN
+             ls := mJ;
+          END_IF;
+          IF le > J - 1 THEN
+             le := J - 1;
+          END_IF;
+        ELSIF (coordSystem = eJogCoordWorldMixed) OR (coordSystem = eJogCoordObjectMixed) OR 
+              (coordSystem = eJogCoordTCPMixed) OR (myKinematic.kinematic.mRobotTyp = eMcuDoorOpener) THEN         // mixed
+           IF ls < 3 + wJ THEN
+              ls := 3 + wJ;
+           END_IF;
+           IF le > 3 + wJ + aJ - 1 THEN
+              le := 3 + wJ + aJ - 1;
+           END_IF;
+        END_IF;
+   END_IF;
+   
+   IF (coordSystem = eJogCoordAxes) OR (coordSystem = eJogCoordWorldMixed) OR (coordSystem = eJogCoordObjectMixed) OR 
+            (coordSystem = eJogCoordTCPMixed) OR (myKinematic.kinematic.mRobotTyp = eMcuDoorOpener) THEN
+      FOR i := ls TO le DO
+         jogKeys[i - sIdx] := jogKeysAxis[i - sIdx];
+         IF IS_MAPPED(jogKeys[i - sIdx][0]) AND IS_MAPPED(jogKeys[i - sIdx][1]) THEN         
+            START JogDimensionControl(jogDim, jogKeysAxis[i - sIdx][0], 
+               jogKeysAxis[i - sIdx][1], jogVectorAuxJ[i - mJ],
+               myKinematic.kinematic.mJoints[i].mDHParam.mTyp);
+         END_IF;
+         jogDim := jogDim + 1;
+      END_FOR;
+   END_IF;
+END_ROUTINE
+
+
+// control one jog-dimension, listen to jogkeys and generate ramps
+ROUTINE JogDimensionControl(VAR_IN nr : DINT; CONST plusKey : BOOL;
+   CONST minusKey : BOOL; outValue : REAL; VAR_IN type : TMcuJointTyp)
+   VAR
+      cmd : DINT;        // actual command resulting from the key-state
+      cancel : BOOL;     // signal for cancelling the ramp
+      active : BOOL;     // ramp is active
+      scaledDist : REAL; // scaled distance for incremental steps, must be
+                         // multiplied with override
+      cmdChg : BOOL;
+      targetVel : REAL;  // target velocity for jogramp
+   END_VAR
+
+   IF type = eMcuJointRot THEN
+      scaledDist := incrementRot * 1000.0 / cMaxIncOverride;
+   ELSE
+      scaledDist := incrementLin * 1000.0 / cMaxIncOverride;
+   END_IF;
+   cmdChg := IS_CHANGED(cmd);
+   // start key observation
+   START ObserveJogKey(plusKey, minusKey, +1, cmd);
+   START ObserveJogKey(minusKey, plusKey, -1, cmd);
+
+   WHILE TRUE DO
+      IF active THEN
+         // cancel JogRamp
+         cancel := TRUE;
+         WAIT NOT active;
+         cancel := FALSE;
+      END_IF;
+      // no starting from actual speed implemented, no deceleration implemented
+      outValue := 0.0;
+      // activate jogramp if appropriate
+      IF (cmd <> 0) AND NOT incStepActive AND NOT jogInhibitCondition AND
+         NOT stopJogRamps THEN
+         active := TRUE;
+         IF jogIncremental THEN
+            targetVel := cmd * scaledDist * iAbs(myKinematic.TeachPendantMemories.jogOverride) / 1000.0;
+         ELSE
+            targetVel := cmd * iAbs(myKinematic.TeachPendantMemories.jogOverride) / 1000.0;
+         END_IF;
+         START JogRamp(targetVel, outValue, cancel) DO active := FALSE;
+      END_IF;
+      // wait for a new command or a stopJogRamps-request
+      WAIT cmdChg OR (stopJogRamps AND active);
+      cmdChg := FALSE;
+      IF stopJogRamps THEN
+         cmd := 0; // clear command, new key press needed
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// observe one jogkey, maintain jogRequestCnt and tartgetValue
+ROUTINE ObserveJogKey(CONST key : BOOL; CONST otherKey : BOOL;
+   VAR_IN keyCmd : DINT; cmd : DINT)
+
+   WHILE TRUE DO
+      WAIT key;
+      jogRequestCnt := jogRequestCnt + 1;
+      anyJogRequest := TRUE;
+      IF NOT otherKey THEN
+         cmd := keyCmd;
+      ELSE
+         cmd := 0;
+      END_IF;
+      WAIT NOT key;
+      cmd := 0;
+      jogRequestCnt := jogRequestCnt - 1;
+      anyJogRequest := (jogRequestCnt > 0);
+   END_WHILE;
+END_ROUTINE
+
+
+// ramp outvalue to targetvalue
+ROUTINE JogRamp(VAR_IN targetValue : REAL; outValue : REAL; CONST cancel : BOOL)
+   VAR
+      segChg : BOOL; // indicator for segment change
+      i : DINT;
+      c : REAL;
+   END_VAR
+
+   activeRampCnt := activeRampCnt + 1; // increment rampcount
+   anyRampActive := TRUE;
+   WAIT kinInJogMode OR cancel;
+   IF NOT cancel THEN
+      IF jogIncremental THEN
+         outValue := targetValue; // directly set distance in incremental mode
+      ELSE
+         c := targetValue / (nrOfRampSegments * nrOfRampSegments);
+         segChg := IS_CHANGED(myKinematic.jogPath.segmentCount);
+         // quadratic ramp calculation in continuous mode
+         i := 1;
+         WHILE (i <= nrOfRampSegments) AND NOT cancel DO
+            outValue := c * (i-0.5)*(i-0.5);
+            WAIT segChg OR cancel; // value has been used
+            segChg := FALSE;
+            i := i + 1;
+         END_WHILE;
+         IF NOT cancel THEN
+            outValue := targetValue;
+         END_IF;
+      END_IF;
+      WAIT cancel;
+      IF (activeRampCnt <= 1) AND NOT jogInhibitCondition THEN // only if last jogkey is released
+                                                               // and jogging is furthermore allowed
+      McuSetTimeOverrideFactor(myKinematic.kinematicMcuId,0.1);
+         myKinematic.DebugPrint(eTraceCommon, "TimeOverrideFactor : 0.1");
+      McuStopMove(myKinematic.kinematicMcuId);
+      WAIT myKinematic.isNotMovingOnPath;
+   END_IF;
+   END_IF;
+   activeRampCnt := activeRampCnt - 1; // decrement rampcount
+   anyRampActive := (activeRampCnt > 0);
+END_ROUTINE
+
+
+// prepare motionmodes according to busy and anyRampActive-state
+ROUTINE PrepareMotionMode() PRIVATE
+   VAR
+      delayActive : BOOL; // routine for delayed stop is running
+      timeout : BOOL; // timeout for anyRampActive to become true after keypress
+   END_VAR
+
+   WHILE TRUE DO
+      WAIT NOT anyRampActive; // stop even if key pressed but no ramp active
+      IF NOT myKinematic.selectingFlow.running THEN
+         IF (myKinematic.jogPath.jogMode = eRcuJogIncremental) THEN
+            // stop at once
+            myKinematic.SetMotionMode(eRcuMMgrModeStop);
+         ELSE
+            IF NOT delayActive THEN
+               // just switch to stopmode when standing
+               START DelayedStop(delayActive);
+            END_IF;
+         END_IF;
+      END_IF;
+
+      WAIT NOT busy; // neither key nor ramp
+      WAIT busy AND NOT jogInhibitCondition; // key or ramp, no inhibit condition
+      myKinematic.SetMotionMode(eRcuMMgrModeJog);
+      SysTimerSet(1000, timeout); // give time for anyRampActive to join in
+      WAIT anyRampActive OR timeout;
+      SysTimerClear(timeout);
+      timeout := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+// wait until kinematic is stopped or busy again
+ROUTINE DelayedStop(active : BOOL) PRIVATE
+
+   active := TRUE;
+//   WAIT myKinematic.isStopped OR anyRampActive;
+   WAIT myKinematic.isNotMovingOnPath OR anyRampActive;
+   IF NOT anyRampActive THEN
+      myKinematic.SetMotionMode(eRcuMMgrModeStop);
+   END_IF;
+   active := FALSE;
+END_ROUTINE
+
+
+// trigger incremental jogging steps
+ROUTINE TriggerIncrementalStep() PRIVATE
+
+   WHILE TRUE DO
+      incStepActive := FALSE;
+      // wait for step request
+      WAIT jogIncremental AND anyRampActive AND kinInJogMode;
+      Sleep(100); // time for other Jog Dimensions to join in
+      incStepActive := TRUE;
+      myKinematic.jogPath.DoIncrementalStep(); // Vector is sent
+      // wait for no step request
+      WAIT NOT(jogIncremental AND anyRampActive AND kinInJogMode);
+   END_WHILE;
+END_ROUTINE
+
+
+// toggle display coordinate system upon key press
+ROUTINE ToggleDisplayCoordSystem AT keyToggleDisplayCoord PRIVATE
+
+   IF myKinematic.allDrivesReferenced THEN
+      CASE myKinematic.TeachPendantMemories.selectedDisplayCoord OF
+      eRcuCoordJoints:  myKinematic.TeachPendantMemories.selectedDisplayCoord := eRcuCoordCart;
+      eRcuCoordCart:    myKinematic.TeachPendantMemories.selectedDisplayCoord := eRcuCoordMixed;
+      eRcuCoordMixed:   myKinematic.TeachPendantMemories.selectedDisplayCoord := eRcuCoordJoints;
+      END_CASE;
+   END_IF;
+END_ROUTINE
+
+
+// toggle derivation setting upon key press
+ROUTINE ToggleDerivationSetting AT keyToggleDerivation PRIVATE
+
+   CASE displayDerivation OF
+   eDisplayPos:  displayDerivation := eDisplayVel;
+   eDisplayVel:  displayDerivation := eDisplayAcDe;
+   eDisplayAcDe: displayDerivation := eDisplayJerk;
+   eDisplayJerk: displayDerivation := eDisplayPos;
+   END_CASE;
+END_ROUTINE
+
+
+// toggle jog coordinate system upon key press
+ROUTINE ToggleJogCoordSystem AT keyToggleJogCoord PRIVATE
+
+   IF myKinematic.allDrivesReferenced AND NOT busy AND NOT myKinematic.mainModeMgr.TeachPendantLocked THEN
+      CASE myKinematic.jogPath.jogSystem OF
+         eJogCoordAxes:        myKinematic.jogPath.SetJogSystem(eJogCoordWorld);
+            eJogCoordWorld:       // don't switch from world to world
+                                  IF myKinematic.TeachPendantMemories.selectedObjectSystem = eRcuRefSystemWorld THEN
+                                     myKinematic.jogPath.SetJogSystem(eJogCoordTCP);
+                                  ELSE
+                                     myKinematic.jogPath.SetJogSystem(eJogCoordObject);
+                                  END_IF;
+            eJogCoordWorldMixed:  // not used any more
+                                  IF myKinematic.TeachPendantMemories.selectedObjectSystem = eRcuRefSystemWorld THEN
+                                     myKinematic.jogPath.SetJogSystem(eJogCoordTCP);
+                                  ELSE
+                                     myKinematic.jogPath.SetJogSystem(eJogCoordObject);
+                                  END_IF;
+         eJogCoordObject:      IF myKinematic.extToolActive THEN
+                                  myKinematic.jogPath.SetJogSystem(eJogCoordExtTool);
+                               ELSE
+                                  myKinematic.jogPath.SetJogSystem(eJogCoordTCP);
+                               END_IF;
+         eJogCoordObjectMixed: IF myKinematic.extToolActive THEN // not used any more
+                                  myKinematic.jogPath.SetJogSystem(eJogCoordExtTool);
+                               ELSE
+                                  myKinematic.jogPath.SetJogSystem(eJogCoordTCP);
+                               END_IF; 
+         eJogCoordTCP:         myKinematic.jogPath.SetJogSystem(eJogCoordAxes);
+         eJogCoordTCPMixed:    myKinematic.jogPath.SetJogSystem(eJogCoordAxes); // not used any more
+         eJogCoordExtTool:     myKinematic.jogPath.SetJogSystem(eJogCoordTCP);
+      END_CASE;
+   END_IF;
+END_ROUTINE
+
+
+// start or stop the program which selected the focused kinematic
+ROUTINE ProgramControl() PRIVATE
+
+   IF IS_MAPPED(keyProgStop) THEN
+      START WatchStopKey PRIO 0;
+   ELSE
+      RcuSetMessageOnce(RcuTeachPndtCtrl_ErrKyNotMap, -1, 1, 0, "RcuTeachPendantControl.ProgramControl", "Stop");
+   END_IF;
+   IF IS_MAPPED(keyProgStart) THEN
+      START WatchStartKey PRIO 0;
+   ELSE
+      RcuSetMessageOnce(RcuTeachPndtCtrl_ErrKyNotMap, -1, 2, 0, "RcuTeachPendantControl.ProgramControl", "Start");
+   END_IF;
+END_ROUTINE
+
+
+// event routine observing the start key
+ROUTINE WatchStartKey AT keyProgStart PRIVATE
+VAR
+   name : STRING;
+   i    : DINT;
+   hdl  : DINT;
+   kinName : STRING;
+   progHdl : DINT;
+   progName : STRING;
+   startHdl : DINT;
+   cnt : INT;
+   j   : INT;
+END_VAR
+
+   IF ((myKinematic.motionMode = eRcuMMgrModeStopJoints) OR
+       (myKinematic.motionMode = eRcuMMgrModeStop)) AND
+        myKinematic.mainModeMgr.automatic AND NOT busy AND
+        NOT keyProgStop AND NOT myKinematic.mainModeMgr.TeachPendantLocked THEN
+      // all conditions for continuing a program are fullfilled
+      IF gRcData.activeProgramCnt = 0 THEN
+//         DebugPrint(eTraceCommon, "Start-key pressed, no program selected");
+         kinName := "kin"+STR(gRcuFocusedKinematic.kinListInx+1);
+         cnt := 0;
+         IF GetFirstFlow(TRUE, progHdl) THEN
+            GetNameFromProgHdl(progHdl, progName);
+            progName := StrToLower(progName);
+            j := StrFind(progName, kinName);
+            IF j = 1 THEN
+               startHdl := progHdl;
+               cnt := 1;
+            END_IF;
+            WHILE GetNextFlow(progHdl) DO
+               GetNameFromProgHdl(progHdl, progName);
+               progName := StrToLower(progName);
+               IF StrFind(progName, kinName) = 1 THEN
+                  startHdl := progHdl;
+                  cnt := cnt + 1;
+               END_IF;
+            END_WHILE;
+         END_IF;
+         IF cnt = 1 THEN
+            //Sealing - Mainmode T2 with material needs this, because start-key will be pressed at any
+            //position of the path and sealing-process might not be ready at this moment
+            IF myKinematic.selectingFlow.present THEN
+              myKinematic.RcuInterfaceToProcess.WaitProcessReady(TRUE, gRcuFocusedKinematic.kinListInx);
+            END_IF;
+            ContinueProg(startHdl);
+         ELSE
+            RcuSetMessageOnce(RcuTeachPndtCtrl_ErrMoreProgs, myKinematic.kinListInx , 1, 0, "RcuTeachPendantControl.WatchStartKey");
+         END_IF;
+      ELSIF gRcData.activeProgramCnt = -1 THEN // older teachview versions don't 
+                   // set this interface variable, so all programs are continued
+         gRcuFocusedKinematic.DebugPrint(eTraceCommon, "Start-key pressed, continue all interrupted programs");
+         myKinematic.RcuInterfaceToProcess.WaitProcessReady(TRUE, gRcuFocusedKinematic.kinListInx);
+         ContinueProg(0); // 0 = all programs
+      ELSE
+         FOR i := 0 TO gRcData.activeProgramCnt - 1 DO
+            IF gRcData.activeProgram[i].kinematic <> "" THEN
+               name := gRcData.activeProgram[i].kinematic + "." +
+                  gRcData.activeProgram[i].project + "." + 
+                  gRcData.activeProgram[i].program;
+            ELSE
+               name := gRcData.activeProgram[i].project + "." + 
+                  gRcData.activeProgram[i].program;
+            END_IF;
+            IF GetProgHdlFromName(name, hdl) THEN
+               gRcuFocusedKinematic.DebugPrint(eTraceCommon, "Start-key pressed, continue program '" + name + "' (hdl: " + STR(hdl) + ")");
+               IF myKinematic.selectingFlow.present THEN
+                 myKinematic.RcuInterfaceToProcess.WaitProcessReady(TRUE, gRcuFocusedKinematic.kinListInx);
+               END_IF;
+               ContinueProg(hdl);
+            ELSE
+               gRcuFocusedKinematic.DebugPrint(eTraceCommon, "Start-key pressed, can't continue program '" + name + "', no handle");
+            END_IF;
+         END_FOR;
+      END_IF;
+   ELSIF (myKinematic.motionMode = eRcuMMgrModeAuto) AND 
+         NOT busy AND NOT keyProgStop AND NOT myKinematic.mainModeMgr.TeachPendantLocked THEN
+      // another program already running
+      IF myKinematic.selectingFlow.present THEN
+         GetNameFromProgHdl(myKinematic.selectingFlow.flowId, name);
+         myKinematic.DebugPrint(eTraceCommon, "Start-key for '" + myKinematic.robotName + "' ignored, since program '" + 
+            name + "' is already running");
+      ELSE
+         myKinematic.DebugPrint(eTraceCommon, "Start-key for '" + myKinematic.robotName + "' ignored, since a program is already running");
+      END_IF;
+   END_IF;   
+END_ROUTINE
+
+
+// event routine observing the stop key
+ROUTINE WatchStopKey AT keyProgStop PRIVATE
+
+   DebugPrint(eTraceCommon, "Stop-key pressed, interrupt all running programs");
+   InterruptProg(0); // 0 = all programs
+END_ROUTINE
+
+
+ROUTINE WatchGoldenReposKey() PRIVATE
+   
+   IF NOT IS_MAPPED(keyGoldenRepos) THEN
+	RETURN;
+   END_IF;
+
+   WHILE TRUE DO
+      WAIT NOT myKinematic.selectingFlow.running AND keyGoldenRepos;
+      IF myKinematic.bUseGoldenRepos THEN
+         myKinematic.SetMovementDirection(eDirRepos);
+      END_IF;
+      WAIT NOT keyGoldenRepos;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE WatchDirectionKeys() PRIVATE
+
+   IF NOT IS_MAPPED(keyMoveBackward) OR NOT IS_MAPPED(keyMoveForeward) THEN
+      RETURN;
+   END_IF;
+
+   WHILE TRUE DO
+      WAIT NOT myKinematic.selectingFlow.running AND (keyMoveBackward XOR keyMoveForeward);
+      IF keyMoveBackward AND (myKinematic.movementDirection = eDirNormal) THEN
+         myKinematic.HandlerBackPosSegId := 0;
+         myKinematic.SetMovementDirection(eDirBack);
+      ELSIF keyMoveForeward AND (myKinematic.movementDirection = eDirBack) THEN
+         myKinematic.SetMovementDirection(eDirNormal);
+      END_IF;
+      WAIT NOT keyMoveBackward AND NOT keyMoveForeward;
+   END_WHILE;
+END_ROUTINE
+
+
+// listen to the override-keys for this kinematic, perform checks for incremental mode
+ROUTINE OverrideControl() PRIVATE
+   VAR
+      value : REAL;    // override value in promille
+      plus  : BOOL;     // increase
+      minus : BOOL;     // decrease
+      jogFocus : BOOL; // jog override focused
+      delay : DINT;    // delay for key reptitition
+      repeat : BOOL;   // flag for key repitition
+      nrOfSteps : DINT; // nr of steps made while holding key
+      stepSize    : DINT;
+      stepSizeLarge : DINT;
+      minStepSize : DINT;
+      roundVal    : DINT;
+      bOvrChanged : BOOL;
+      bJogOvrChanged : BOOL;
+      jogOvrChgExt : BOOL;
+   END_VAR
+
+   IF NOT (IS_MAPPED(keyORPlus) AND IS_MAPPED(keyORMinus)) THEN
+      RETURN;
+   END_IF;
+   
+   minStepSize := 10; // 1 %
+
+   // initial incremental check
+   myKinematic.TeachPendantMemories.jogOverride := 
+         IncrementalCheck(myKinematic.TeachPendantMemories.jogOverride);
+   myKinematic.TeachPendantMemories.jogOverridePercent := iAbs(myKinematic.TeachPendantMemories.jogOverride) / 10.0;
+   bOvrChanged := IS_CHANGED(myKinematic.override);
+   bJogOvrChanged := IS_CHANGED(myKinematic.TeachPendantMemories.jogOverride);
+
+   WHILE TRUE DO
+      IF repeat THEN
+         delay := ovrConfig.inkrStepTime; // continuous delay
+         nrOfSteps := nrOfSteps + 1;
+      ELSE
+         SysTimerClear(repeat);
+         nrOfSteps := 1;
+         delay := ovrConfig.autoInkrTime; // first delay
+      END_IF;
+
+      // wait for key, ignore during jogging
+      WAIT ((keyORPlus XOR keyORMinus) OR bOvrChanged OR bJogOvrChanged) AND NOT busy AND 
+            (PaintRobot[myKinematic.kinListInx].masterProg.actualStatus <> eStateRunning) AND 
+            (PaintRobot[myKinematic.kinListInx].masterProg.actualStatus <> eScanning) AND
+            (NOT PaintRobot[myKinematic.kinListInx].mainModeMgr.externControl OR NOT ovrConfig.disableKeysInAuto) AND
+             NOT PlcJoggingActive ;
+      jogOvrChgExt := (NOT bOvrChanged) AND bJogOvrChanged;
+      bOvrChanged := FALSE;
+      bJogOvrChanged := FALSE;
+      plus := keyORPlus;
+      minus := keyORMinus;
+      jogFocus := (NOT myKinematic.useSingleOvr) AND jogOverrideFocused; // create copy
+      repeat := FALSE;
+      SysTimerSet(delay, repeat); // repeat time
+
+      // manipulate
+      IF jogFocus THEN
+         value := iAbs(myKinematic.TeachPendantMemories.jogOverride);
+         stepSizeLarge := ovrConfig.vJogLargeStep * 10; //  per thousand
+         stepSize      := ovrConfig.vJogStep * 10;      //  per thousand
+      ELSE
+         IF myKinematic.useSingleOvr AND jogOvrChgExt THEN
+            value := iAbs(myKinematic.TeachPendantMemories.jogOverride);
+         ELSE
+            value := myKinematic.override;
+         END_IF;
+         stepSizeLarge := ovrConfig.vOvrLargeStep * 10; //  per thousand
+         stepSize      := ovrConfig.vOvrStep * 10;      //  per thousand
+      END_IF;
+      
+      IF (nrOfSteps > ovrConfig.largeStepDelay) AND (value > stepSizeLarge) THEN
+         stepSize := stepSizeLarge;
+      ELSIF value <= stepSize THEN
+         stepSize := minStepSize;
+         END_IF;
+      
+      IF plus THEN 
+         value := value + stepSize;
+      ELSIF minus THEN
+         value := value - stepSize;
+      END_IF;
+
+      // round
+      roundVal := value + 0.5 * stepSize;
+      value := roundVal / stepSize * stepSize;
+
+      // restrict
+      IF value > 1000 THEN
+         value := 1000;
+         SysTimerClear(repeat);
+      END_IF;
+      IF value < 1 THEN
+         value := 1;
+         SysTimerClear(repeat);
+      END_IF;
+
+      // submit
+      IF jogFocus THEN
+         myKinematic.TeachPendantMemories.jogOverride := IncrementalCheck(value);
+      ELSE
+         myKinematic.SetTimeOverride(value / 1000.0);
+      END_IF;
+
+      // if there is only one override, set jog-override like automatic override
+      IF myKinematic.useSingleOvr THEN
+         myKinematic.TeachPendantMemories.jogOverride := IncrementalCheck(value);
+         jogOverrideFocused := FALSE;  // just in case someone has set the flag
+      END_IF;
+
+      myKinematic.TeachPendantMemories.jogOverridePercent := iAbs(myKinematic.TeachPendantMemories.jogOverride) / 10.0;
+      // wait for key release or key repitition
+      WAIT NOT (keyORPlus XOR keyORMinus) OR repeat;
+   END_WHILE;
+END_ROUTINE
+
+
+// listen to the override-keys for this kinematic, perform checks for incremental mode
+ROUTINE OverrideFocusControl() PRIVATE
+VAR
+   chg : BOOL;
+END_VAR
+
+   IF NOT IS_MAPPED(keyORFocusSwitch) OR myKinematic.useSingleOvr THEN
+      RETURN;
+   END_IF;
+   
+   chg := IS_CHANGED(myKinematic.selectingFlow.running);
+   WHILE TRUE DO
+      // wait for key
+      WAIT chg OR (keyORFocusSwitch AND NOT myKinematic.mainModeMgr.TeachPendantLocked);
+      IF chg AND myKinematic.selectingFlow.running THEN
+         jogOverrideFocused := FALSE;
+      ELSIF NOT chg THEN
+         jogOverrideFocused := NOT jogOverrideFocused;
+      END_IF;
+      chg := FALSE;
+      WAIT NOT keyORFocusSwitch;
+   END_WHILE;
+END_ROUTINE
+
+//Set override for Teachmode T1 = 40%, T2 = 10%
+// Sequrity requirement. Do not change this code. T2 must always start with an
+// Override of 10%
+ROUTINE SetTeachModeOverride() PRIVATE
+ VAR
+  bChgMode : BOOL;
+ END_VAR
+
+  bChgMode := IS_CHANGED(myKinematic.mainModeMgr.mode);
+  WHILE TRUE DO
+    IF myKinematic.mainModeMgr.mode = ciT1 THEN
+       myKinematic.SetTimeOverride(0.4);
+    ELSIF myKinematic.mainModeMgr.mode = ciT2 THEN
+       myKinematic.SetTimeOverride(0.1);
+    END_IF;
+    WAIT bChgMode;
+    bChgMode := FALSE;
+  END_WHILE;
+
+END_ROUTINE
+
+
+// listen to the key for toggling the trigger functionality
+ROUTINE ObserveTriggerFuncKey() PRIVATE
+VAR   
+   iDebugMode : TDebugMode;
+   iStepState : TStepState;
+END_VAR;
+
+   IF NOT IS_MAPPED(keyToggleTriggerFunc) THEN
+      RETURN;
+   END_IF;
+   
+   WHILE TRUE DO
+      // wait for key
+      WAIT keyToggleTriggerFunc AND NOT myKinematic.mainModeMgr.TeachPendantLocked;
+      IF GetDebugInfo(myKinematic.selectingFlow.flowId, iDebugMode, iStepState) THEN
+         IF iDebugMode = eDebugOff THEN
+            myKinematic.triggersAsPathPositions := FALSE;
+            gRcData.userIcon[eIconTrigger] := eIconTriggerNormal;
+            myKinematic.DebugPrint(eTraceTrigger, "Active program not in step-mode - Triggers are active");
+         ELSE
+            myKinematic.triggersAsPathPositions := NOT myKinematic.triggersAsPathPositions;
+            IF myKinematic.triggersAsPathPositions THEN
+               gRcData.userIcon[eIconTrigger] := eIconTriggerAsPoint;
+               myKinematic.DebugPrint(eTraceTrigger, "Triggers are NOT active");
+            ELSE
+               gRcData.userIcon[eIconTrigger] := eIconTriggerNormal;
+               myKinematic.DebugPrint(eTraceTrigger, "Triggers are active");
+            END_IF;
+         END_IF;
+      ELSE
+         myKinematic.DebugPrint(eTraceTrigger, "No program active - Trigger-state not changed");
+      END_IF;
+      WAIT NOT keyToggleTriggerFunc;
+   END_WHILE;
+END_ROUTINE
+
+(*$$$$$* motionstep *$$$$$*)
+// Achtung TV-step-mode kann in 7.06 und 7.07 nicht ausgelesen werden
+// listen to the key for toggling the trigger functionality
+(*
+ROUTINE ObserveMotionStepKey() PRIVATE
+VAR   
+   mode       : TMotionStep;
+   modeChg : BOOL;
+   flowHdl : DINT;
+   hdl : DINT;
+   next : DINT;
+   stepping : BOOL;
+   flowStepping : BOOL;
+   flowChg : BOOL;
+   flowModeChg : BOOL;
+   ms : BOOL;
+END_VAR;
+
+   IF NOT IS_MAPPED(keyMotionStep) THEN
+      RETURN;
+   END_IF;
+   
+   modeChg := IS_CHANGED(myKinematic.selectingFlow.isStepping);
+   flowChg := IS_CHANGED(gFlowStateChgCnt);
+   flowModeChg := IS_CHANGED(flowStepping);
+   WHILE TRUE DO
+      // wait for key
+      WAIT (keyMotionStep AND NOT myKinematic.mainModeMgr.TeachPendantLocked) 
+         OR modeChg OR flowChg OR (NOT myKinematic.selectingFlow.present AND flowModeChg);
+      ms := keyMotionStep;
+      IF NOT ms AND modeChg THEN // change via teachview
+         PRINT("softkey or application - old mode: "+STR(mode));
+         IF myKinematic.selectingFlow.present THEN
+            IF myKinematic.selectingFlow.isStepping AND (mode <> eMotionStepInterpreter) THEN
+               mode := eMotionStepInterpreter;
+               myKinematic.SetMotionStepMode(mode);
+            ELSIF NOT myKinematic.selectingFlow.isStepping AND (mode = eMotionStepInterpreter) THEN
+               mode := eMotionStepInactive;
+               myKinematic.SetMotionStepMode(mode);
+            END_IF;
+         END_IF;
+         modeChg := FALSE;
+      ELSIF NOT ms AND NOT myKinematic.selectingFlow.present AND flowModeChg THEN
+         // this case is necessary to register key-events before the flow selects the kinematic (e.g. first line of a program)
+         flowModeChg := FALSE;
+         PRINT("change - no selecting flow - old mode: "+STR(mode));
+         IF flowStepping AND (mode <> eMotionStepInterpreter) THEN
+            mode := eMotionStepInterpreter;
+            myKinematic.SetMotionStepMode(mode);
+         ELSIF NOT flowStepping AND (mode = eMotionStepInterpreter) THEN
+            mode := eMotionStepInactive;
+            myKinematic.SetMotionStepMode(mode);
+         END_IF;
+      ELSIF NOT ms AND flowChg THEN
+         flowChg := FALSE;
+         flowModeChg := FALSE;
+         // no flow present
+         // condition necessary to avoid a wrong state after unloading
+         IF NOT myKinematic.selectingFlow.present THEN
+            IF GetFirstFlow(TRUE, hdl) THEN 
+               PRINT("no selecting flow - old mode: "+STR(mode));
+               IF NOT GetNextFlow(next) THEN
+                  GetStepModeSignal(hdl, flowStepping); 
+               END_IF;
+            ELSE
+               PRINT("no flow - old mode: "+STR(mode));
+               mode := eMotionStepInactive;
+               myKinematic.SetMotionStepMode(mode);
+            END_IF;
+         END_IF;
+      ELSE // change via hardkey
+         flowModeChg := FALSE;
+         PRINT("hardkey - old mode: "+STR(mode));
+         IF myKinematic.selectingFlow.present THEN
+            flowHdl := myKinematic.selectingFlow.flowId;
+         ELSE
+            IF GetFirstFlow(TRUE, hdl) AND NOT GetNextFlow(next) THEN
+               flowHdl := hdl;
+            ELSE
+               PRINT("unable to deduce flow - step-mode not changed");
+               flowHdl := 0;
+            END_IF;
+         END_IF;
+         IF flowHdl <> 0 THEN
+            IF mode = eMotionStepMax-1 THEN
+               mode := TMotionStep(0);
+            ELSE
+               mode := TMotionStep(mode + 1);
+            END_IF;
+            // temporary workaround: real motion step is currently not working (mcu)
+            IF mode = eMotionStepSegment THEN
+               mode := TMotionStep(mode + 1);
+            END_IF;
+            // end workaround
+            myKinematic.SetMotionStepMode(mode);
+            IF mode = eMotionStepInterpreter THEN
+               SetStepMode(flowHdl, TRUE);
+            ELSE
+               SetStepMode(flowHdl, FALSE);
+            END_IF;
+         END_IF;
+         WAIT NOT keyMotionStep;
+      END_IF;
+      gRcData.userIcon[eIconMotionStep] := TMotionStep(mode);
+      PRINT("new mode: "+STR(mode));
+   END_WHILE;
+END_ROUTINE
+*)
+
+(*$$$$$* motionstep *$$$$$*)
+// Achtung TV-step-mode kann in 7.06 und 7.07 nicht ausgelesen werden
+// listen to the key for toggling the trigger functionality
+ROUTINE ObserveMotionStepKey() PRIVATE
+VAR   
+   mode       : TMotionStep;
+   modeChg : BOOL;
+   flowHdl : DINT;
+   hdl : DINT;
+   next : DINT;
+   stepping : BOOL;
+   flowStepping : BOOL;
+   flowChg : BOOL;
+   flowModeChg : BOOL;
+   ms : BOOL;
+END_VAR;
+
+   IF NOT IS_MAPPED(keyMotionStep) THEN
+      RETURN;
+   END_IF;
+   
+   modeChg := IS_CHANGED(myKinematic.selectingFlow.isStepping);
+   flowChg := IS_CHANGED(gFlowStateChgCnt);
+   flowModeChg := IS_CHANGED(flowStepping);
+   WHILE TRUE DO
+      // wait for key
+      WAIT (keyMotionStep AND NOT myKinematic.mainModeMgr.TeachPendantLocked) 
+         OR modeChg OR flowChg OR (NOT myKinematic.selectingFlow.present AND flowModeChg);
+      ms := keyMotionStep;
+      IF NOT ms AND modeChg THEN // change via teachview
+//         PRINT("softkey or application - old mode: "+STR(mode));
+         IF myKinematic.selectingFlow.present THEN
+            IF myKinematic.selectingFlow.isStepping AND (mode <> eMotionStepInterpreter) THEN
+               mode := eMotionStepInterpreter;
+               myKinematic.SetMotionStepMode(mode);
+               myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: mode = eMotionStepInterpreter");
+            ELSIF NOT myKinematic.selectingFlow.isStepping AND (mode = eMotionStepInterpreter) THEN
+               mode := eMotionStepInactive;
+               myKinematic.SetMotionStepMode(mode);
+               myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: mode = eMotionStepInactive");
+            END_IF;
+         END_IF;
+         modeChg := FALSE;
+      ELSIF NOT ms AND NOT myKinematic.selectingFlow.present AND flowModeChg THEN
+         // this case is necessary to register key-events before the flow selects the kinematic (e.g. first line of a program)
+         flowModeChg := FALSE;
+         IF flowStepping AND (mode <> eMotionStepInterpreter) THEN
+            mode := eMotionStepInterpreter;
+            myKinematic.SetMotionStepMode(mode);
+            myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: mode = eMotionStepInterpreter");
+         ELSIF NOT flowStepping AND (mode = eMotionStepInterpreter) THEN
+            mode := eMotionStepInactive;
+            myKinematic.SetMotionStepMode(mode);
+            myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: mode = eMotionStepInactive");
+         END_IF;
+      ELSIF NOT ms AND flowChg THEN
+         flowChg := FALSE;
+         flowModeChg := FALSE;
+         // no flow present
+         // condition necessary to avoid a wrong state after unloading
+         IF NOT myKinematic.selectingFlow.present THEN
+            IF GetFirstFlow(TRUE, hdl) THEN 
+//               PRINT("no selecting flow - old mode: "+STR(mode));
+               IF NOT GetNextFlow(next) THEN
+                  GetStepModeSignal(hdl, flowStepping); 
+               END_IF;
+            ELSE
+//               PRINT("no flow - old mode: "+STR(mode));
+               mode := eMotionStepInactive;
+               myKinematic.SetMotionStepMode(mode);
+            END_IF;
+         END_IF;
+      ELSE // change via hardkey
+         IF mode = eMotionStepSegment THEN
+            mode := eMotionStepInactive;
+            myKinematic.SetMotionStepMode(mode);
+            myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: mode = eMotionStepInactive");
+         ELSIF NOT myKinematic.selectingFlow.present THEN
+            myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: no selectingFlow");
+         ELSIF NOT myKinematic.selectingFlow.isStepping AND NOT myKinematic.selectingFlow.running THEN
+            mode := eMotionStepSegment;
+            myKinematic.SetMotionStepMode(mode);
+            myKinematic.DebugPrint(eTraceMotionStep, "ObserveMotionStepKey: mode = eMotionStepSegment");
+            gRcData.userIcon[eIconMotionStep] := eStepSegmentIcon;
+         END_IF;
+         WAIT NOT keyMotionStep;
+      END_IF;
+      IF mode <> eMotionStepSegment THEN
+         gRcData.userIcon[eIconMotionStep] := eStepInactiveIcon;
+      END_IF;      
+   END_WHILE;
+END_ROUTINE
+
+// listen to the key for jogging the conveyor
+ROUTINE ObserveConveyorJogKey() PRIVATE
+
+   IF NOT IS_MAPPED(keyConvJog) THEN
+      RETURN;
+   END_IF;
+   
+   WHILE TRUE DO
+      // wait for key
+      WAIT keyConvJog AND NOT myKinematic.mainModeMgr.TeachPendantLocked;
+      myKinematic.bJogConveyor := TRUE;
+      gRcData.userIcon[eIconConveyor] := eIconConveyorJogging;
+      WAIT NOT keyConvJog;
+      myKinematic.bJogConveyor := FALSE;
+      gRcData.userIcon[eIconConveyor] := eIconConveyorNormal;
+   END_WHILE;
+END_ROUTINE
+
+
+// use jogoverride (in promille) to decide between incremental and continuous,
+// switch the mode in the jog-path if necessary
+ROUTINE IncrementalCheck(VAR_IN i : DINT) : DINT PRIVATE
+   VAR
+      rqu : TRcuJogMode;
+   END_VAR
+
+   i := iAbs(i);
+   IF i <= cMaxIncOverride THEN
+      rqu := eRcuJogIncremental;
+      jogIncremental := TRUE;
+      i := -i;
+   ELSE
+      rqu := eRcuJogContinuous;
+      jogIncremental := FALSE;
+   END_IF;
+
+   IF myKinematic.jogPath.jogMode <> rqu THEN
+      myKinematic.jogPath.SetJogMode(rqu);
+   END_IF;
+   RETURN i;
+END_ROUTINE
+
+
+// observe referenced state, change coordinate systems if necessary
+ROUTINE AllAxesRefCheck() PRIVATE
+
+   WHILE TRUE DO
+      WAIT NOT myKinematic.allDrivesReferenced;
+      // Jogging
+      myKinematic.jogPath.SetJogSystem(eJogCoordAxes);
+      // Display
+      myKinematic.TeachPendantMemories.selectedDisplayCoord := eRcuCoordJoints;
+      WAIT myKinematic.allDrivesReferenced;
+   END_WHILE;
+END_ROUTINE
+
+
+// inhibit jogging on jog-exception
+ROUTINE CheckForJogException() PRIVATE
+   VAR
+      chg : BOOL; // indicator for jogexceptions
+   END_VAR
+
+   chg := IS_CHANGED(myKinematic.jogPath.exceptionFlipFlop);
+   WHILE TRUE DO
+      WAIT chg;
+      chg := FALSE;
+      IF busy THEN
+         jogExceptionPending := TRUE;
+         WAIT NOT busy;
+         jogExceptionPending := FALSE;
+         chg := FALSE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// observe motion mode of the kinematic and set kinInJogMode accordingly
+ROUTINE KinModeDetection() PRIVATE
+   VAR
+      chg : BOOL;
+   END_VAR
+
+   chg := IS_CHANGED(myKinematic.motionMode);
+   WHILE TRUE DO
+      kinInJogMode := (myKinematic.motionMode = eRcuMMgrModeJog);
+      WAIT chg;
+      chg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+// observe ready-flag from the mainModeManager and set the connected LED
+ROUTINE ReadyFlagObservation() PRIVATE
+VAR
+   chg : BOOL;
+END_VAR
+
+   IF NOT IS_MAPPED(ledKinematicReady) THEN
+      RETURN;
+   END_IF;
+   
+   chg := IS_CHANGED(myKinematic.mainModeMgr.ready);
+   WHILE TRUE DO
+      ledKinematicReady := myKinematic.mainModeMgr.ready;
+      WAIT chg;
+      chg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE DrivesOnObservation() PRIVATE
+VAR
+   chg : BOOL;
+END_VAR
+
+   IF NOT IS_MAPPED(ledDrivesOn) THEN
+      RETURN;
+   END_IF; 
+   chg := IS_CHANGED(PaintRobot[myKinematic.kinListInx].allDrivesReady);
+   WHILE TRUE DO
+      ledDrivesOn := PaintRobot[myKinematic.kinListInx].allDrivesReady;
+      WAIT chg;
+      chg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ProcessReadyObservation() PRIVATE
+ VAR
+   chg : BOOL;
+ END_VAR
+
+   IF NOT IS_MAPPED(ledProcessReady) THEN
+      RETURN;
+   END_IF; 
+   chg := IS_CHANGED(PaintRobot[myKinematic.kinListInx].RcuInterfaceToProcess.mProcessReadyLED);
+   WHILE TRUE DO
+      ledProcessReady := PaintRobot[myKinematic.kinListInx].RcuInterfaceToProcess.mProcessReadyLED;
+      WAIT chg;
+      chg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+// read all configured data for the current kinematic, i.e. jog-keys,
+// jog-increments, initial override
+ROUTINE ReadKinConfiguration() PRIVATE
+   VAR
+      dirHdl : DINT;    // handle of a subdirectory
+      keyNr : DINT;
+      plusMinusText : ARRAY [2] OF STRING;
+      i : DINT;
+      k : DINT;
+      s : STRING;
+      maxDim : DINT;
+   END_VAR
+   
+   IF gbIsTVB THEN
+       plusMinusText[0] := "Plus_ex";
+       plusMinusText[1] := "Minus_ex";
+   ELSE
+       plusMinusText[0] := "Plus";
+       plusMinusText[1] := "Minus";
+   END_IF;
+
+   maxDim := 6; // total cartesian dimensions
+
+   // KeyPattern subdirectory
+   IF NOT CatalogGetHandleRelative(myKinematic.rcCatHdl, "KeyPattern", dirHdl) THEN
+      FOR k := 0 TO (cgiRcuMaxJogDim - 1) DO    //no access to cfg file, so unmap
+          FOR i := 0 TO 1 DO                    //all keys
+              jogKeysAxis[k][i]    := MAPX("");
+              jogKeysAxisCfg[k][i] := cNoJogKeyNr;
+              jogKeysWorld[k][i]   := MAPX("");
+          END_FOR;
+      END_FOR;
+      RcuSetMessageOnce(RcuTeachPndtCtrl_ErrNoConfig, myKinematic.kinListInx , 1, 0, "RcuTeachPendantControl.ReadKinConfiguration", "KeyPattern");
+      RETURN;      
+   END_IF;
+   // configuration of keys for axes-jogging
+   FOR k := 0 TO (cgiRcuMaxJogDim - 1) DO
+      WAIT TRUE;
+      IF (k >= myKinematic.kinematic.mNrOfJoints) THEN
+         // Axis limits
+         FOR i := 0 TO 1 DO
+            //jogKeysAxis[k][i] := MAP(staticFalse);
+            jogKeysAxis[k][i] := MAPX("");
+            jogKeysAxisCfg[k][i] := cNoJogKeyNr;
+         END_FOR;
+      ELSE
+         FOR i := 0 TO 1 DO
+            s := "JogAxis" + STR(k + 1) + plusMinusText[i];
+          
+           IF gbIsTVB THEN
+               IF CatalogReadIntRange(dirHdl, s, keyNr, 0, ((cHTMaxKeys - 1) + cgiHT601ExOffset), FALSE) THEN
+                jogKeysAxis[k][i]  := MAP(HTKeyMem[keyNr-cgiHT601ExOffset]);
+                jogKeysAxisCfg[k][i] := keyNr;
+               ELSE
+                //jogKeysAxis[k][i]  := MAP(staticFalse);
+                jogKeysAxis[k][i] := MAPX("");
+                jogKeysAxisCfg[k][i] := cNoJogKeyNr;
+               END_IF;    
+           ELSE
+                IF CatalogReadIntRange(dirHdl, s, keyNr, 0, cHTMaxKeys - 1, FALSE) THEN
+                jogKeysAxis[k][i]  := MAP(HTKeyMem[keyNr]);
+                jogKeysAxisCfg[k][i] := keyNr;
+               ELSE
+                //jogKeysAxis[k][i]  := MAP(staticFalse);
+                jogKeysAxis[k][i] := MAPX("");
+                jogKeysAxisCfg[k][i] := cNoJogKeyNr;
+               END_IF; 
+           END_IF; 
+
+         END_FOR;
+      END_IF;
+   END_FOR;
+
+   FOR k := 0 TO (maxDim - 1 + myKinematic.kinematic.mNrOfAuxJoints + NrOfRobotAdditionalPositions(myKinematic)) DO
+      IF (k >= 7) THEN
+         // limits
+         FOR i := 0 TO 1 DO
+            //jogKeysAxis[k][i] := MAP(staticFalse);
+            jogKeysWorld[k][i] := MAPX("");
+         END_FOR;
+      ELSE
+         FOR i := 0 TO 1 DO
+            s := "JogCart" + STR(k + 1) + plusMinusText[i];
+
+            IF gbIsTVB THEN
+               IF CatalogReadIntRange(dirHdl, s, keyNr, 0, ((cHTMaxKeys - 1) + cgiHT601ExOffset), FALSE) THEN
+                   jogKeysWorld[k][i] := MAP(HTKeyMem[keyNr-cgiHT601ExOffset]);
+               ELSE
+                   //jogKeysWorld[k][i] := MAP(staticFalse);
+                   jogKeysWorld[k][i] := MAPX("");
+               END_IF;             
+            ELSE  
+                 IF CatalogReadIntRange(dirHdl, s, keyNr, 0, cHTMaxKeys - 1, FALSE) THEN
+                   jogKeysWorld[k][i] := MAP(HTKeyMem[keyNr]);
+               ELSE
+                   //jogKeysWorld[k][i] := MAP(staticFalse);
+                   jogKeysWorld[k][i] := MAPX("");
+               END_IF; 
+            END_IF;
+         END_FOR;
+      END_IF;
+   END_FOR;
+
+   // jog-increments subdirectory
+   CatalogGetHandleRelative(myKinematic.rcCatHdl, "JogIncrements", dirHdl);
+
+   // read configured jog increments
+   incrementRot := 1.0; // default 1 degree
+   CatalogReadReal(dirHdl, "ROT", incrementRot, FALSE);
+   incrementLin := 0.001; // default 1mm
+   CatalogReadReal(dirHdl, "LIN", incrementLin, FALSE);
+
+   ReadOverrideConfig();
+
+   // set jog-override if not already set
+   IF (myKinematic.TeachPendantMemories.jogOverride = 0.0) THEN
+      myKinematic.TeachPendantMemories.jogOverride := IncrementalCheck(ovrConfig.vJogInit * 10);
+   END_IF;
+END_ROUTINE
+
+
+// read all configured data independent of the current kinematic, i.e. start-key,
+// stop-key, override-keys, toggle-keys, error-leds
+ROUTINE ReadGeneralConfiguration() : BOOL PRIVATE
+   VAR
+      dirHdl : DINT;
+      i : DINT;
+      keyMode : DINT; // keyMode (THTKeyMode or timeout)
+   END_VAR
+
+   IF giRcBaseHdl <> 0 THEN
+   // get keymode
+      IF CatalogReadInt(giRcBaseHdl, "TeachPendantKeyMode", keyMode, TRUE) THEN
+         SelectHandTerminalKeyMode(keyMode);
+      END_IF;
+   END_IF;
+
+   // configure and start message manager
+   IF CatalogReadInt(giRcBaseHdl, "noErrorLed", i, TRUE) THEN
+      IF i >= 0 THEN
+         RcuMessageManager.stateOk := MAP(HTLedMem[i]);
+      END_IF;
+   END_IF;
+
+   // get the directory handle for RC.KeyPattern
+   IF NOT CatalogGetHandleRelative(giRcKinHdl, "KeyPattern", dirHdl) THEN
+      RcuSetMessageOnce(RcuTeachPndtCtrl_ErrNoConfig, -1, 2, 0, "RcuTeachPendantControl.ReadGeneralConfiguration", "KeyPattern");
+      RETURN FALSE;
+   END_IF;
+   
+   IF gbIsTVB = FALSE THEN
+       IF CatalogReadIntRange(dirHdl, "ProgStart", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyProgStart := MAP(HTKeyMem[i]);
+       ELSE
+          keyProgStart := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ProgStop", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyProgStop := MAP(HTKeyMem[i]);
+       ELSE
+          //keyProgStop := MAP(staticFalse);
+          keyProgStop := MAPX("");
+       END_IF;
+
+       IF CatalogReadIntRange(dirHdl, "ORPlus", i, 0, cHTMaxKeys - 1, FALSE) THEN
+          keyORPlus := MAP(HTKeyMem[i]);
+       ELSE
+          //keyORPlus := MAP(staticFalse);
+          keyORPlus := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ORMinus", i, 0, cHTMaxKeys - 1, FALSE) THEN
+          keyORMinus := MAP(HTKeyMem[i]);
+       ELSE
+          //keyORMinus := MAP(staticFalse);
+          keyORMinus := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ORFocusSwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyORFocusSwitch := MAP(HTKeyMem[i]);
+       ELSE
+          //keyORFocusSwitch := MAP(staticFalse);
+          keyORFocusSwitch := MAPX("");
+       END_IF;
+
+       IF CatalogReadIntRange(dirHdl, "CoordDisplaySwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyToggleDisplayCoord := MAP(HTKeyMem[i]);
+       ELSE
+          keyToggleDisplayCoord := MAP(staticFalse);
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "CoordJogSwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyToggleJogCoord := MAP(HTKeyMem[i]);
+       ELSE
+          keyToggleJogCoord := MAP(staticFalse);
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "TimeDiffSwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyToggleDerivation := MAP(HTKeyMem[i]);
+       ELSE
+          keyToggleDerivation := MAP(staticFalse);
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "key2nd", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          key2nd := MAP(HTKeyMem[i]);
+       ELSE
+          key2nd := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ConvJog", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyConvJog := MAP(HTKeyMem[i]);
+       ELSE
+          keyConvJog := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "TriggerFuncSwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyToggleTriggerFunc := MAP(HTKeyMem[i]);
+       ELSE
+          keyToggleTriggerFunc := MAPX("");
+       END_IF;
+      (*$$$$$* motionstep *$$$$$*)
+      IF CatalogReadIntRange(dirHdl, "MotionStepSwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+         keyMotionStep := MAP(HTKeyMem[i]);
+      ELSE
+         keyMotionStep := MAPX("");
+      END_IF;
+       IF CatalogReadIntRange(dirHdl, "GoldenRepos", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyGoldenRepos := MAP(HTKeyMem[i]);
+       ELSE
+          keyGoldenRepos := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "BackwardMovement", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyMoveBackward := MAP(HTKeyMem[i]);
+       ELSE
+          keyMoveBackward := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ForewardMovement", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyMoveForeward := MAP(HTKeyMem[i]);
+       ELSE
+          keyMoveForeward := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "RobSwitch", i, 0, cHTMaxKeys - 1, TRUE) THEN
+          keyRobSwitch := MAP(HTKeyMem[i]);
+       ELSE
+          keyRobSwitch := MAPX("");
+       END_IF;
+   ELSE 
+       IF CatalogReadIntRange(dirHdl, "ProgStart_ex", i, 0, ((cHTMaxKeys - 1) + cgiHT601ExOffset), TRUE) THEN
+          keyProgStart := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyProgStart := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ProgStop_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyProgStop := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          //keyProgStop := MAP(staticFalse);
+          keyProgStop := MAPX("");
+       END_IF;
+
+       IF CatalogReadIntRange(dirHdl, "ORPlus_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), FALSE) THEN
+          keyORPlus := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          //keyORPlus := MAP(staticFalse);
+          keyORPlus := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ORMinus_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), FALSE) THEN
+          keyORMinus := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          //keyORMinus := MAP(staticFalse);
+          keyORMinus := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ORFocusSwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyORFocusSwitch := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          //keyORFocusSwitch := MAP(staticFalse);
+          keyORFocusSwitch := MAPX("");
+       END_IF;
+
+       IF CatalogReadIntRange(dirHdl, "CoordDisplaySwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyToggleDisplayCoord := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyToggleDisplayCoord := MAP(staticFalse);
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "CoordJogSwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyToggleJogCoord := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyToggleJogCoord := MAP(staticFalse);
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "TimeDiffSwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyToggleDerivation := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyToggleDerivation := MAP(staticFalse);
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "key2nd_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          key2nd := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          key2nd := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ConvJog_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyConvJog := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyConvJog := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "TriggerFuncSwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyToggleTriggerFunc := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyToggleTriggerFunc := MAPX("");
+       END_IF;
+      (*$$$$$* motionstep *$$$$$*)
+      IF CatalogReadIntRange(dirHdl, "MotionStepSwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+         keyMotionStep := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+      ELSE
+         keyMotionStep := MAPX("");
+      END_IF;
+       IF CatalogReadIntRange(dirHdl, "GoldenRepos_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyGoldenRepos := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyGoldenRepos := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "BackwardMovement_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyMoveBackward := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyMoveBackward := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "ForewardMovement_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyMoveForeward := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyMoveForeward := MAPX("");
+       END_IF;
+       IF CatalogReadIntRange(dirHdl, "RobSwitch_ex", i, 0, (cHTMaxKeys - 1 + cgiHT601ExOffset), TRUE) THEN
+          keyRobSwitch := MAP(HTKeyMem[i-cgiHT601ExOffset]);
+       ELSE
+          keyRobSwitch := MAPX("");
+       END_IF; 
+   END_IF;
+
+   // get the directory handle for RC.LedPattern
+   IF NOT CatalogGetHandleRelative(giRcKinHdl, "LedPattern", dirHdl) THEN
+      RcuSetMessageOnce(RcuTeachPndtCtrl_ErrNoConfig, -1, 3, 0, "RcuTeachPendantControl.ReadGeneralConfiguration", "LedPattern");
+      RETURN FALSE;
+   ELSE
+       
+       IF gbIsTVB THEN       
+          IF CatalogReadIntRange(dirHdl, "KinematicReady_ex", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             ledKinematicReady := MAP(HTLedMem[i]);
+          ELSE
+             ledKinematicReady := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "DrivesOnLED_ex", i, 0, cHTMaxLeds - 1, TRUE) THEN
+            ledDrivesOn := MAP(HTLedMem[i]); 
+          ELSE
+            ledDrivesOn := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "errorLed_ex", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             RcuMessageManager.stateNotOk := MAP(HTLedMem[i]);
+          ELSE
+             RcuMessageManager.stateNotOk := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "processReadyLed_ex", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             ledProcessReady := MAP(HTLedMem[i]);
+          ELSE
+             ledProcessReady := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "secondKey_ex", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             led2ndKeyOn := MAP(HTLedMem[i]);
+          ELSE
+             led2ndKeyOn := MAPX("");
+          END_IF;
+
+       ELSE
+           IF CatalogReadIntRange(dirHdl, "KinematicReady", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             ledKinematicReady := MAP(HTLedMem[i]);
+          ELSE
+             ledKinematicReady := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "DrivesOnLED", i, 0, cHTMaxLeds - 1, TRUE) THEN
+            ledDrivesOn := MAP(HTLedMem[i]); 
+          ELSE
+            ledDrivesOn := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "errorLed", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             RcuMessageManager.stateNotOk := MAP(HTLedMem[i]);
+          ELSE
+             RcuMessageManager.stateNotOk := MAPX("");
+          END_IF;
+
+          IF CatalogReadIntRange(dirHdl, "processReadyLed", i, 0, cHTMaxLeds - 1, TRUE) THEN
+             ledProcessReady := MAP(HTLedMem[i]);
+          ELSE
+             ledProcessReady := MAPX("");
+          END_IF;
+
+          led2ndKeyOn := MAP(dummyHTLed);
+
+       END_IF;
+       
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE ReadOverrideConfig() PRIVATE
+   VAR
+      dirHdl  : DINT;
+      r       : REAL;
+      i       : DINT;
+   END_VAR
+   
+   // override configuration
+   IF giRcKinHdl = 0 THEN
+      RcuSetMessageOnce(RcuTeachPndtCtrl_WarCNoKin, -1, 1, 0, "RcuTeachPendantControl.ReadOverrideConfig");
+   END_IF;
+   
+   IF myKinematic.rcCatHdl = 0 THEN
+      RcuSetMessageOnce(RcuTeachPndtCtrl_WarCKinNC, myKinematic.kinListInx , 1, 0, "RcuTeachPendantControl.ReadOverrideConfig", myKinematic.kinematic.mName);
+   END_IF;
+   
+   // override configuration
+   IF NOT CatalogGetHandleRelative(myKinematic.rcCatHdl, "Override", dirHdl) THEN
+      CatalogGetHandleRelative(giRcKinHdl, "Override", dirHdl);
+   END_IF;
+   // set default-values
+   ovrConfig.vJogInit       := 10;
+   ovrConfig.autoInkrTime	 := 500;
+   ovrConfig.inkrStepTime	 := 200;
+   ovrConfig.vJogStep		 := 5;
+   ovrConfig.vJogLargeStep  := 10;
+   ovrConfig.vOvrStep       := 1;
+   ovrConfig.vOvrLargeStep	 := 5;
+   ovrConfig.largeStepDelay := 10;
+   ovrConfig.disableKeysInAuto := FALSE;
+   IF dirHdl = 0 THEN  // create catalog-entrys
+      CatalogAdd(myKinematic.rcCatHdl, "Override");
+      CatalogGetHandleRelative(myKinematic.rcCatHdl, "Override", dirHdl);
+      CatalogAddInt(dirHdl, "vJogInit", ovrConfig.vJogInit, TRUE);
+      r := ovrConfig.autoInkrTime / 1000.0;
+      CatalogAddReal(dirHdl, "autoInkrTime", r, TRUE);
+      r := ovrConfig.inkrStepTime / 1000.0;
+      CatalogAddReal(dirHdl, "inkrStepTime", r, TRUE);
+      CatalogAddInt(dirHdl, "vJogStep", ovrConfig.vJogStep, TRUE);
+      CatalogAddInt(dirHdl, "vJogLargeStep", ovrConfig.vJogLargeStep, TRUE);
+      CatalogAddInt(dirHdl, "vOvrStep", ovrConfig.vOvrStep, TRUE);
+      CatalogAddInt(dirHdl, "vOvrLargeStep", ovrConfig.vOvrLargeStep, TRUE);
+      CatalogAddInt(dirHdl, "largeStepDelay", ovrConfig.largeStepDelay, TRUE);
+      i := 0;
+      IF ovrConfig.disableKeysInAuto THEN
+         i := 1;
+      END_IF;
+      CatalogAddInt(dirHdl, "disableKeysInAuto", i, TRUE);
+   ELSE  // read configured values and add missing values
+      IF CatalogReadIntRange(dirHdl, "vJogInit", i, 1, 100, TRUE) THEN
+         ovrConfig.vJogInit := i;
+      ELSE
+         CatalogAddInt(dirHdl, "vJogInit", ovrConfig.vJogInit, TRUE);
+      END_IF;
+      IF CatalogReadRealRange(dirHdl, "autoInkrTime", r, 0.5, 3.0, TRUE) THEN
+          ovrConfig.autoInkrTime := r * 1000;
+      ELSE
+         r := ovrConfig.autoInkrTime / 1000.0;
+         CatalogAddReal(dirHdl, "autoInkrTime", r, TRUE);
+      END_IF;
+      IF CatalogReadRealRange(dirHdl, "inkrStepTime", r, 0.1, 1.0, TRUE) THEN
+         ovrConfig.inkrStepTime := r * 1000;
+      ELSE
+         r := ovrConfig.inkrStepTime / 1000.0;
+         CatalogAddReal(dirHdl, "inkrStepTime", r, TRUE);
+      END_IF;
+      IF CatalogReadIntRange(dirHdl, "vJogStep", i, 1, 100, TRUE) THEN
+         ovrConfig.vJogStep := i;
+      ELSE
+         CatalogAddInt(dirHdl, "vJogStep", ovrConfig.vJogStep, TRUE);
+      END_IF;
+      IF CatalogReadIntRange(dirHdl, "vJogLargeStep", i, 1, 100, TRUE) THEN
+         ovrConfig.vJogLargeStep := i;
+      ELSE
+         CatalogAddInt(dirHdl, "vJogLargeStep", ovrConfig.vJogLargeStep, TRUE);
+      END_IF;
+      IF CatalogReadIntRange(dirHdl, "vOvrStep", i, 1, 100, TRUE) THEN
+         ovrConfig.vOvrStep := i;
+      ELSE
+         CatalogAddInt(dirHdl, "vOvrStep", ovrConfig.vOvrStep, TRUE);
+      END_IF;
+      IF CatalogReadIntRange(dirHdl, "vOvrLargeStep", i, 1, 100, TRUE) THEN
+          ovrConfig.vOvrLargeStep := i;
+      ELSE
+         CatalogAddInt(dirHdl, "vOvrLargeStep", ovrConfig.vOvrLargeStep, TRUE);
+      END_IF;
+      IF CatalogReadIntRange(dirHdl, "largeStepDelay", i, 0, 100, TRUE) THEN
+         ovrConfig.largeStepDelay := i;
+      ELSE
+         CatalogAddInt(dirHdl, "largeStepDelay", ovrConfig.largeStepDelay, TRUE);
+      END_IF;
+      IF CatalogReadIntRange(dirHdl, "disableKeysInAuto", i, 0, 1, TRUE) THEN
+         ovrConfig.disableKeysInAuto := (i = 1);
+      ELSE
+         i := 0;
+         IF ovrConfig.disableKeysInAuto THEN
+            i := 1;
+         END_IF;
+         CatalogAddInt(dirHdl, "disableKeysInAuto", i, TRUE);
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+ROUTINE switchJogKeyMapping()
+   VAR
+      bOperaterPanelChange : BOOL;
+      bOperaterPanelActive : BOOL;
+      bSetMappingAfterBootUp : BOOL := TRUE;
+      dirHdl : DINT;    // handle of a subdirectory
+      keyNr : DINT;
+      plusMinusText : ARRAY [2] OF STRING;
+      i : DINT;
+      k : DINT;
+      s : STRING;
+      maxDim : DINT;
+      bLocDisableKeysInAuto : BOOL;  
+      disableExternControlBackUp : BOOL; 
+
+      isMapped : BOOL;
+      chg : BOOL;
+      iAktiveKey : INT;
+      iJogKeyFromPlc : DINT;
+      iLocalJogKeyFromPlc : DINT;
+      bJogCoordChange : BOOL;
+      iJogCoordFromPlc : DINT;
+      bChgRobot: BOOL;
+   END_VAR
+   
+   WHILE NOT isMapped DO
+      isMapped := IS_MAPPED (myKinematic.mainModeMgr.actMainModeDef);
+      Sleep (250);
+   END_WHILE;
+   
+   WAIT gbEquipmentReady;
+   bChgRobot := IS_CHANGED(gbRcuFocusFlipFlop);
+   
+   bOperaterPanelChange := IS_CHANGED(myKinematic.fieldbusIn.PlcJogAxis.svByte); 
+   IF (IS_MAPPED(myKinematic.fieldbusIn.PlcJogMode.svByte)) THEN
+      bJogCoordChange := IS_CHANGED(myKinematic.fieldbusIn.PlcJogMode.svByte);
+   END_IF;
+
+   
+   WHILE TRUE DO
+      WAIT bSetMappingAfterBootUp OR bOperaterPanelChange OR bJogCoordChange OR bChgRobot;  
+    
+      bOperaterPanelChange := IS_CHANGED(myKinematic.fieldbusIn.PlcJogAxis.svByte); 
+     	IF (IS_MAPPED(myKinematic.fieldbusIn.PlcJogMode.svByte)) THEN
+         bJogCoordChange := IS_CHANGED(myKinematic.fieldbusIn.PlcJogMode.svByte);
+      END_IF;
+      
+      iJogKeyFromPlc := DINT(myKinematic.fieldbusIn.PlcJogAxis.svByte);
+      IF (IS_MAPPED(myKinematic.fieldbusIn.PlcJogMode.svByte)) THEN
+         iJogCoordFromPlc := DINT(myKinematic.fieldbusIn.PlcJogMode.svByte);
+     	END_IF;
+      
+      iLocalJogKeyFromPlc := iJogKeyFromPlc;
+      bOperaterPanelChange   := FALSE;
+      bJogCoordChange := FALSE;
+      bSetMappingAfterBootUp := FALSE;       
+          
+      IF ((iJogKeyFromPlc <> 0) AND
+         (iJogKeyFromPlc <= (myKinematic.kinematic.mNrOfMainJoints)) OR 
+         (iJogKeyFromPlc >  (myKinematic.kinematic.mNrOfMainJoints + myKinematic.gapForPannelJogging)) AND
+         (iJogKeyFromPlc <= (myKinematic.kinematic.mNrOfJoints +  myKinematic.gapForPannelJogging)))     THEN 
+         
+         //activate
+         PlcJoggingActive := TRUE;
+    		
+         iAktiveKey := iLocalJogKeyFromPlc -1;
+         IF iLocalJogKeyFromPlc = 7  THEN
+            iAktiveKey := iAktiveKey - myKinematic.gapForPannelJogging;
+         END_IF;
+         IF iLocalJogKeyFromPlc > (cgiRcuMaxJogDim + myKinematic.gapForPannelJogging) THEN
+            iAktiveKey := iAktiveKey - cgiRcuMaxJogDim - myKinematic.gapForPannelJogging;
+         ELSIF iLocalJogKeyFromPlc > cgiRcuMaxJogDim THEN
+            iAktiveKey := iAktiveKey - myKinematic.gapForPannelJogging;
+         END_IF;
+         
+         jogInhibitCondition := TRUE;
+         WAIT NOT anyRampActive; // delay
+         jogInhibitCondition := FALSE;
+         jogRequestCnt := 0;
+         anyJogRequest := FALSE;         	
+         
+            gRcData.jogKey            := MAPX("");   
+         
+            myKinematic.override := 100;
+            gRcuFocusedRobot.TeachPendantMemories.jogOverridePercent := 10;
+            showJogOvr := FALSE;         	
+            myKinematic.mainModeMgr.TeachPendantLocked := FALSE;
+            gRcSelectedRobotData.mainModeNoAuto := FALSE;
+         FOR k := 0 TO (gNrHardkeyDim - 1) DO
+            	WAIT TRUE;
+               	   FOR i := 0 TO 1 DO
+                  	jogKeysAxis[k][i] := MAPX("");
+                  	jogKeys[k][i] := MAPX("");
+                  	jogKeysWorld[k][i] := MAPX("");
+               	   END_FOR;             
+            END_FOR;         
+         IF ((iLocalJogKeyFromPlc > (cgiRcuMaxJogDim + myKinematic.gapForPannelJogging))) AND (NOT RcuTeachPendantControl.led2ndKeyOn) THEN
+            bPannelJoggingKey2nd := TRUE;
+            Sleep (500);
+            bPannelJoggingKey2nd := FALSE;
+            Sleep (50);
+         END_IF;
+ 
+         IF ((iLocalJogKeyFromPlc <= (cgiRcuMaxJogDim + myKinematic.gapForPannelJogging))) AND (RcuTeachPendantControl.led2ndKeyOn) THEN
+               bPannelJoggingKey2nd := TRUE;
+               Sleep (500);
+               bPannelJoggingKey2nd := FALSE;
+               Sleep (50);
+            END_IF;
+         
+         Sleep(500);
+
+            IF (iJogCoordFromPlc = 2) AND (NOT (myKinematic.jogPath.jogSystem = eJogCoordWorld)) THEN
+               gRcSelectedRobotData.jogSysSelected[2] := TRUE;
+              // myKinematic.jogPath.SetJogSystem(eJogCoordWorld);
+            ELSIF (NOT(iJogCoordFromPlc = 2)) AND(NOT (myKinematic.jogPath.jogSystem = eJogCoordAxes)) THEN
+              gRcSelectedRobotData.jogSysSelected[0] := TRUE;
+               // myKinematic.jogPath.SetJogSystem(eJogCoordAxes);
+            END_IF;
+         Sleep (50);   
+         jogKeysWorld [iAktiveKey][0]  := MAP(myKinematic.fieldbusIn.PlcJogKeyPlus.svBool); 
+         jogKeysWorld [iAktiveKey][1]   := MAP(myKinematic.fieldbusIn.PlcJogKeyMinus.svBool);
+          
+         jogKeysAxis [iAktiveKey][0]  := MAP(myKinematic.fieldbusIn.PlcJogKeyPlus.svBool); 
+         jogKeysAxis[iAktiveKey][1]       := MAP(myKinematic.fieldbusIn.PlcJogKeyMinus.svBool); 
+         
+         	myKinematic.mainModeMgr.TeachPendantLocked := TRUE;
+         	STOP InitJogDimensions;
+         	Sleep (250);         
+         	START InitJogDimensions(myKinematic.jogPath.jogSystem);            
+           
+      ELSE 
+      //deactivate
+      
+         WHILE NOT IS_MAPPED (myKinematic.mainModeMgr.actMainModeDef) DO
+          Sleep (250);  
+         END_WHILE;
+
+         IF myKinematic.mainModeMgr.actMainModeDef.conditions.TeachPendantLocked = FALSE THEN
+            myKinematic.mainModeMgr.TeachPendantLocked := FALSE;
+         END_IF;
+         PlcJoggingActive := FALSE;
+         jogInhibitCondition := TRUE;
+         WAIT NOT anyRampActive; // delay
+         jogInhibitCondition := FALSE;
+         jogRequestCnt := 0;
+         anyJogRequest := FALSE;
+         
+         gRcData.jogKey            := MAP(RcuTeachPendantControl.jogKeys);
+         gRcSelectedRobotData.mainModeNoAuto   := NOT myKinematic.mainModeMgr.externControl;
+         showJogOvr := NOT(myKinematic.mainModeMgr.externControl AND ovrConfig.disableKeysInAuto);
+         
+         FOR k := 0 TO (cgiRcuMaxJogDim - 1) DO
+            WAIT TRUE;
+            IF (k >= myKinematic.kinematic.mNrOfJoints) THEN
+               FOR i := 0 TO 1 DO
+                  jogKeysAxis[k][i] := MAPX("");
+                  jogKeys[k][i] := MAPX("");
+                  jogKeysWorld[k][i] := MAPX("");
+               END_FOR;
+            ELSE
+               FOR i := 0 TO 1 DO
+                  IF gbIsTVB THEN                     
+                     jogKeysAxis [k][i]  := MAP(HTKeyMem[(jogKeysAxisCfg[k][i])-cgiHT601ExOffset]);
+                     jogKeys [k][i]  := MAP(HTKeyMem[(jogKeysAxisCfg[k][i])-cgiHT601ExOffset]);
+                     jogKeysWorld [k][i]  := MAP(HTKeyMem[(jogKeysAxisCfg[k][i])-cgiHT601ExOffset]);
+                  ELSE                     
+                     jogKeysAxis[k][i]  := MAP(HTKeyMem[jogKeysAxisCfg[k][i]]);
+                     jogKeys[k][i]  := MAP(HTKeyMem[jogKeysAxisCfg[k][i]]);
+                     jogKeysWorld[k][i]  := MAP(HTKeyMem[jogKeysAxisCfg[k][i]]);
+                  END_IF; 
+               END_FOR;
+            END_IF;
+         END_FOR; 
+         
+         STOP InitJogDimensions;
+         Sleep (100);         
+         START InitJogDimensions(myKinematic.jogPath.jogSystem);
+         
+      END_IF;
+   END_WHILE;  
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+      Init(gsRcuTeachPendantName);
+END_ROUTINE

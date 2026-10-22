@@ -1,0 +1,281 @@
+(*-----------------------------------------------------------------------------            
+*    K2-System Robot Control Unit                                             *            
+*                                                                             *            
+*    Dürr Systems GmbH APT                                                    *            
+*    Rosenstr. 39                                                             *            
+*    74321 Bietigheim-Bissingen                                               *            
+*    Germany                                                                  *            
+*                                                                             *            
+*    Copyright (C) 2014 Dürr Systems GmbH APT                                 *            
+*    All rights reserved.                                                     *            
+*                                                                             *            
+*                                                                             *            
+*    Author :     Bauder                                                      *            
+*    E-Mail:      Manfred.Bauder@durr.com                                     *            
+*                                                                             *            
+*    Modul:       FWKNetworkCompatibility                                     *            
+*    Description: Types and Variables if FW without TCP/IP Functions          *
+*                 is used  (V5.44d, V6.12)                                    *
+*-----------------------------------------------------------------------------            
+*-----------------------------------------------------------------------------            
+*)                        
+
+
+TYPE GLOBAL
+   TNetApi_ActivityType : (
+      eNetApi_Activity_Unknown,
+      eNetApi_Activity_Connect,
+      eNetApi_Activity_Disconnect,
+      eNetApi_Activity_DataReceived
+   );
+
+   TNetApi_ProtocolType : (
+      eNetApi_Protocol_Unknown,
+      eNetApi_Protocol_TcpServer,
+      eNetApi_Protocol_TcpClient,
+      eNetApi_Protocol_UDP,
+      eNetApi_Protocol_Var
+   );
+   
+   TNetApi_CloseMode : (
+      eNetApi_Close_Normal,
+      eNetApi_Close_Forced
+   );
+   
+   TNetApi_NotificationMode : (           // mode of notification, if data are avaialble on or state of socket changed
+      eNotification_No             :=  0, // do not notify at all
+      eNotification_Event          :=  1, // fire a single UOS event (no data supplied)
+      eNotification_EventWithData  :=  2, // fire a single IEC-event with information about change of socket state (data structure: TNetApi_NetworkData)
+      eNotification_MsgQueue       :=  4  // write information about change of socket state into a message queue   (data structure: TNetApi_NetworkData)
+   );
+   
+   TNetApi_NetworkData : STRUCT
+      activityType : TNetApi_ActivityType;
+      protocolType : TNetApi_ProtocolType;
+      serverHdl : DINT;       // socket handle of server
+      clientHdl : DINT;       // socket handle of client
+      byteReceived : DINT;
+      addInfo : STRING[127];  // additional info (currently not used)
+   END_STRUCT;
+
+END_TYPE
+
+   (*********************
+   *** TCP connection ***
+   *********************)
+ROUTINE KNetworkTcpClientInitAsync(
+      CONST remoteIpAddress : DWORD;   // [in]  remote IP address to open
+      CONST remotePort : WORD;         // [in]  remote port to open
+      CONST notificationMode : TNetApi_NotificationMode; // [in]  how to notify about activity on tcp connectio
+      CONST hdlNotification : DINT;    // [in]  for eNetApi_NotificationMode_No: may be zero;
+                                       //       for eNetApi_NotificationMode_Event: valid UOS event handle;
+                                       //       for eNetApi_NotificationMode_EventWithData: valid IEC event;
+                                       //       for eNetApi_NotificationMode_MsgQueue: valid UOS message queue handle
+            tcpHdl : DINT              // [out] socket handle 
+      ) : DINT GLOBAL                  // [ret] 0: OK
+                                       //       1: internal error
+                                       //       2: socket failed (function socket())
+                                       //       3: connect failed
+                                       //       8: param error (invalid notification mode or notification handle)
+
+   RETURN 3;
+END_ROUTINE
+
+
+ROUTINE KNetworkTcpClientCloseAsync (
+      CONST tcpHdl : DINT  // [in]  socket handle to close
+      ) : DINT GLOBAL                   // [ret] 0: OK
+                                        //       1: internal error
+                                        //       2: socket failed  (function shutdown())
+                                        //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkTcpClientSendAsync (
+      CONST tcpHdl : DINT;    // [in]  socket handle
+      CONST dataLen : DINT;   // [in]  length of data to send (-1: whole buffer)
+      CONST data : ANY        // [in]  data buffer
+      ) : DINT GLOBAL                  // [ret] 0: OK
+                                       //       1: internal error
+                                       //       4: send error
+                                       //       8: param error (invalid data length)
+                                       //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkTcpClientReceiveAsync (
+      CONST tcpHdl : DINT;          // [in]  socket handle
+      CONST dataBufferLen : DINT;   // [in]  max. length of data to receive (-1: whole buffer)
+            dataBuffer : ANY;       // [out] data buffer for data received (max. 2 kB)
+            bytesReceived : DINT    // [out] bytes received
+      ) : DINT GLOBAL                     // [ret] 0: OK
+                                          //       1: internal error
+                                          //       5: receive error
+                                          //       6: select failed
+                                          //       8: param error (invalid data length)
+                                          //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+
+
+   (*********************
+   *** UDP connection ***
+   *********************)
+ROUTINE KNetworkUdpInit (
+      CONST localPort : WORD;          // [in]  local port for UDP connection
+      CONST notificationMode : TNetApi_NotificationMode; // [in]  how to notify about activity on udp connection
+      CONST hdlNotification : DINT;    // [in]  for eNetApi_NotificationMode_No: may be zero;
+                                       //       for eNetApi_NotificationMode_Event: valid UOS event handle;
+                                       //       for eNetApi_NotificationMode_EventWithData: valid IEC event;
+                                       //       for eNetApi_NotificationMode_MsgQueue: valid UOS message queue handle
+            udpHdl : DINT              // [out] socket handle
+      ) : DINT GLOBAL                  // [ret] 0: OK
+                                       //       1: internal error
+                                       //       2: socket failed (function socket())
+                                       //       7: bind failed
+                                       //       8: param error (invalid notification mode or notification handle)
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkUdpClose (
+      CONST udpHdl : DINT           // [in]  socket handle to close
+      ) : DINT GLOBAL               // [ret] 0: OK
+                                    //       1: internal error
+                                    //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkUdpSendTo (
+      CONST udpHdl : DINT;       // [in]  socket handle
+      CONST destIpAddr : DWORD;  // [in]  destination IP address
+      CONST destPort : WORD;     // [in]  destination port
+      CONST dataLen : DINT;      // [in]  length of data to send (-1: whole buffer)
+      CONST data : ANY           // [in]  data buffer
+      ) : DINT GLOBAL               // [ret] 0: OK
+                                    //       1: internal error
+                                    //       4: send error
+                                    //       8: param error (invalid data length)
+                                    //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+   
+ROUTINE KNetworkUdpReceiveFrom (
+      CONST udpHdl : DINT;          // [in]  socket handle
+      CONST dataBufferLen : DINT;   // [in]  max. length of data to receive (-1: whole buffer)
+            dataBuffer : ANY;       // [out] data buffer for data received (max. 2 kB)
+            senderIpAddr : DWORD;   // [out] sender IP address; on error or if no data are available, then the sender IP addr equals (-1)
+            senderPort : WORD;      // [out] sender port
+            bytesReceived : DINT    // [out] bytes received
+      ) : DINT GLOBAL                     // [ret] 0: OK
+                                          //       1: internal error
+                                          //       5: receive error
+                                          //       6: select failed
+                                          //       8: param error (invalid data length)
+                                          //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+      
+      
+   (************************
+   *** Server connection ***
+   ************************)
+ROUTINE KNetworkTcpServerInit (
+      CONST localPort : WORD;          // [in]  local port for server connection
+      CONST maxClients : DINT;         // [in]  max number of parallel clients
+      CONST notificationMode : TNetApi_NotificationMode; // [in]  how to notify about activity on tcp connection
+      CONST hdlNotification : DINT;   // [in]  for eNetApi_NotificationMode_No: may be zero;
+                                       //       for eNetApi_NotificationMode_Event: valid UOS event handle;
+                                       //       for eNetApi_NotificationMode_EventWithData: valid IEC event;
+                                       //       for eNetApi_NotificationMode_MsgQueue: valid UOS message queue handle
+            serverHdl : DINT           // [out] socket handle
+      ) : DINT GLOBAL                  // [ret] 0: OK
+                                       //       1: internal error
+                                       //       2: socket failed (function socket())
+                                       //       3: connect failed
+                                       //       8: param error (invalid notification mode or notification handle)
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkTcpServerClose (
+      CONST serverHdl : DINT  // [in]  socket handle to close
+      ) : DINT GLOBAL                   // [ret] 0: OK
+                                        //       1: internal error
+                                        //       2: socket failed  (function shutdown())      
+                                        //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkTcpServerSendTo (
+      CONST serverHdl : DINT;    // [in]  socket handle of server
+      CONST clientHdl : DINT;    // [in]  socket handle of client
+      CONST dataLen : DINT;      // [in]  length of data to send (-1: whole buffer)
+      CONST data : ANY           // [in]  data buffer
+      ) : DINT GLOBAL                    // [ret] 0: OK
+                                          //       1: internal error
+                                          //       4: send error
+                                          //       8: param error (invalid data length)
+                                          //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+    
+ROUTINE KNetworkTcpServerReceiveFrom (
+      CONST serverHdl : DINT;       // [in]  socket handle of server
+      CONST clientHdl : DINT;       // [in]  socket handle of client
+      CONST dataBufferLen : DINT;   // [in]  max. length of data to receive (-1: whole buffer)
+            dataBuffer : ANY;       // [out] data buffer for data received (max. 2 kB)
+            bytesReceived : DINT    // [out] bytes received
+      ) : DINT GLOBAL                         // [ret] 0: OK
+                                              //       1: internal error
+                                              //       5: receive error
+                                              //       6: select failed
+                                              //       8: param error (invalid data length)
+                                              //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+      
+ROUTINE KNetworkTcpServerConnectionClose (
+      CONST serverHdl : DINT;             // [in]  socket handle of server
+      CONST clientHdl : DINT;             // [in]  socket handle of client which should be closed
+      CONST closeMode : TNetApi_CloseMode // [in]  mode to close client socket
+      ) : DINT GLOBAL                              // [ret] 0: OK
+                                                   //       1: internal error
+                                                   //       5: receive error
+                                                   //       6: select failed
+                                                   //       8: param error (invalid data length)
+                                                   //       9: invalid socket handle
+   RETURN 1;
+END_ROUTINE
+
+
+   (*************
+   *** Helper ***
+   *************)
+
+ROUTINE KNetworkPing (
+      CONST ipAddressString : STRING;  // [in] IP-Address-String
+      CONST length : DINT;             // [in] number of bytes in the ping-telegram (valid range: 0-65500)
+      CONST timeOutMs : DINT           // [in] ping-timeout in milliseconds
+      ) : DINT GLOBAL                  // [ret]  0: device present
+                                       //       -1: device not present / calling error
+   RETURN -1;
+END_ROUTINE
+
+ROUTINE KNetworkGetIpAddress (
+      CONST ipAddressString : STRING;  // [in]  IP-Address-String
+            ipAddress : DWORD          // [out] IpAddress or (-1) if address string is invalid
+      ) : DINT GLOBAL                  // [ret] 0: OK
+                                       //       1: invalid ip address string
+                                       //       8: param error
+   RETURN 1;
+END_ROUTINE
+
+ROUTINE KNetworkGetIpAddressString(
+      CONST ipAddress : DWORD;         // [in]  IpAddress
+            ipAddressString : STRING   // [out] IP-Address-String
+      ) : DINT GLOBAL                  // [ret] 0: OK
+                                       //       1: invalid IPAddress
+                                       //       8: param error: buffer too small to hold complete ip address string
+   RETURN 1;
+END_ROUTINE
+
+

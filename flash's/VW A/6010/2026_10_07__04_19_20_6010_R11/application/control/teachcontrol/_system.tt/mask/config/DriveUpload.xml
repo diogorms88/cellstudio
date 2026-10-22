@@ -1,0 +1,294 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       DriveUpload.xml                                             *
+*    Description: Saving *.par file of Ecodrive-/Indradrive C controllers     *
+*    Changes:     BIT 10.01.2017 - show this page only for Sercos2 drives     *
+*************************************************************************** -->
+
+<VIEW>
+
+   <MASKDEF key="TeachView.mask.driveUpload" textfile="userTx"  permissiondef="userMenuPermission" height="650"
+            controlvar="_system.rcuuserpage.bDriveUploadPageOpen" controlvartype="TT">  
+            
+      <GROUP key="DriveUpload.label.savepar" columns="40" rows="65" col="1" row="1" halign="stretch" valign="stretch"
+             visiblevar="_system.gRcuFocusedRobot.driveTool.bSercosIIused" visiblevartype="TT">      
+        
+        <BUTTON var="_system.gRcuFocusedRobot.driveTool.bRunAllUpload" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                key="DriveUtil.button.saveall" col="2" row="2" cspan="15" rspan="3" halign="stretch" valign="stretch"/>
+         
+        <LABEL key="DriveUpload.label.allParam" col="23" row="2" cspan="10" halign="left"/>        
+        <CHECKBOX var="_system.gRcuFocusedRobot.driveTool.bSaveAllParam" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT"
+                  key="DriveUtil.button.allParam" col="37" row="2" cspan="3" rspan="3" halign="stretch" valign="stretch"/> 
+                        
+        <GROUP key="DriveUpload.label.robdrive" columns="40" rows="29" col="1" row="6" cspan="40" rspan="34" halign="stretch" valign="stretch">    
+            <!-- Column headers -->
+            <LABEL key="DriveUpload.label.filename" col="8" row="1" cspan="1" halign="left"/>
+            <LABEL key="DriveUpload.label.state" col="17" row="1" cspan="1" halign="left"/>
+            <LABEL key="DriveUpload.label.progress" col="22" row="1" cspan="1" halign="left"/>
+            
+            <!-- Axis 1: -->
+            <LABEL key="DriveUpload.label.joint1" col="2" row="3" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[0]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[0]" vartype="TT" enabled="true" col="7" row="3" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[0]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[0]" vartype="TT" halign="left" col="18" row="3" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[0]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>           
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[0]"  vartype="TT" enabled="false" col="24" row="3" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[0]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[0]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save1" col="32" row="3" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[0]" visiblevartype="TT"/>
+            
+            <!-- Axis 2: -->
+            <LABEL key="DriveUpload.label.joint2" col="2" row="6" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[1]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[1]" vartype="TT" enabled="true" col="7" row="6" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[1]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[1]" vartype="TT" halign="left" col="18" row="6" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[1]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[1]"  vartype="TT" enabled="false" col="24" row="6" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[1]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[1]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save2" col="32" row="6" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[1]" visiblevartype="TT"/>
+            
+            
+            <!-- Axis 3: -->
+            <LABEL key="DriveUpload.label.joint3" col="2" row="9" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[2]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[2]" vartype="TT" enabled="true" col="7" row="9" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[2]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[2]" vartype="TT" halign="left" col="18" row="9" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[2]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[2]"  vartype="TT" enabled="false" col="24" row="9" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[2]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[2]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save3" col="32" row="9" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[2]" visiblevartype="TT"/>
+            
+            
+            <!-- Axis 4: -->
+            <LABEL key="DriveUpload.label.joint4" col="2" row="12" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[3]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[3]" vartype="TT" enabled="true" col="7" row="12" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[3]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[3]" vartype="TT" halign="left" col="18" row="12" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[3]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[3]"  vartype="TT" enabled="false" col="24" row="12" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[3]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[3]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save4" col="32" row="12" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[3]" visiblevartype="TT"/>
+            
+            
+            <!-- Axis 5: -->
+            <LABEL key="DriveUpload.label.joint5" col="2" row="15" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[4]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[4]" vartype="TT" enabled="true" col="7" row="15" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[4]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[4]" vartype="TT" halign="left" col="18" row="15" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[4]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[4]"  vartype="TT" enabled="false" col="24" row="15" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[4]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[4]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save5" col="32" row="15" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[4]" visiblevartype="TT"/>
+            
+            
+            <!-- Axis 6: -->
+            <LABEL key="DriveUpload.label.joint6" col="2" row="18" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[5]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[5]" vartype="TT" enabled="true" col="7" row="18" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[5]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[5]" vartype="TT" halign="left" col="18" row="18" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[5]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[5]"  vartype="TT" enabled="false" col="24" row="18" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[5]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[5]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save6" col="32" row="18" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[5]" visiblevartype="TT"/>
+            
+            
+            <!-- Axis 7: -->
+            <LABEL key="DriveUpload.label.joint7" col="2" row="21" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[6]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[6]" vartype="TT" enabled="true" col="7" row="21" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[6]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[6]" vartype="TT" halign="left" col="18" row="21" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[6]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[6]"  vartype="TT" enabled="false" col="24" row="21" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[6]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[6]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save7" col="32" row="21" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[6]" visiblevartype="TT"/>
+            
+            
+            <!-- Axis 8:  -->
+            <LABEL key="DriveUpload.label.joint8" col="2" row="24" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[7]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[7]" vartype="TT" enabled="true" col="7" row="24" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[7]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[7]" vartype="TT" halign="left" col="18" row="24" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[7]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[7]"  vartype="TT" enabled="false" col="24" row="24" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[7]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[7]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save8" col="32" row="24" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[7]" visiblevartype="TT"/>
+            
+            <!-- Axis 9:  -->
+            <LABEL key="DriveUpload.label.joint9" col="2" row="27" cspan="1" halign="left"
+                   visiblevar="_system.gRcSelectedRobotData.showDrive[8]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[8]" vartype="TT" enabled="true" col="7" row="27" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[8]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[8]" vartype="TT" halign="left" col="18" row="27" cspan="8" rspan="1"
+                       visiblevar="_system.gRcSelectedRobotData.showDrive[8]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[8]"  vartype="TT" enabled="false" col="24" row="27" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcSelectedRobotData.showDrive[8]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[8]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save9" col="32" row="27" cspan="6" rspan="2" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcSelectedRobotData.showDrive[8]" visiblevartype="TT"/>
+            
+        </GROUP>
+            
+        <GROUP key="DriveUpload.label.dosdrive" columns="40" rows="25" col="1" row="40" cspan="40" rspan="25" halign="stretch" valign="stretch">
+        
+            <!-- Dosingdrive 1:  -->
+            <LABEL key="DriveUpload.label.dos1" col="1" row="3" cspan="1" halign="left"
+                   visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[0]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[9]" vartype="TT" enabled="true" col="7" row="3" cspan="8" rspan="1" halign="stretch"
+                   visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[0]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[9]" vartype="TT" halign="left" col="18" row="3" cspan="8" rspan="1"
+                       visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[0]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[9]"  vartype="TT" enabled="false" col="24" row="3" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[0]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[9]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save10" col="32" row="3" cspan="6" rspan="3" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[0]" visiblevartype="TT"/>
+   
+            <!-- Dosingdrive 2:  -->
+            <LABEL key="DriveUpload.label.dos2" col="1" row="7" cspan="1" halign="left"
+                   visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[1]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[10]" vartype="TT" enabled="true" col="7" row="7" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[1]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[10]" vartype="TT" halign="left" col="18" row="7" cspan="8" rspan="1"
+                       visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[1]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[10]"  vartype="TT" enabled="false" col="24" row="7" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[1]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[10]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save11" col="32" row="7" cspan="6" rspan="3" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[1]" visiblevartype="TT"/>
+   
+            <!-- Dosingdrive 3:  -->
+            <LABEL key="DriveUpload.label.dos3" col="1" row="11" cspan="1" halign="left"
+                   visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[2]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[11]" vartype="TT" enabled="true" col="7" row="11" cspan="8" rspan="1" halign="stretch"
+                   visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[2]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[11]" vartype="TT" halign="left" col="18" row="11" cspan="8" rspan="1"
+                       visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[2]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[11]"  vartype="TT" enabled="false" col="24" row="11" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[2]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[11]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save12" col="32" row="11" cspan="6" rspan="3" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[2]" visiblevartype="TT"/>
+             
+            <!-- Dosingdrive 4:  -->
+            <LABEL key="DriveUpload.label.dos4" col="1" row="15" cspan="1" halign="left"
+                   visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[3]" visiblevartype="TT"/>
+            <TEXTFIELD var="_system.gRcuFocusedRobot.driveTool.yFileNames[12]" vartype="TT" enabled="true" col="7" row="15" cspan="8" rspan="1" halign="stretch"
+                       visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[3]" visiblevartype="TT"/>
+            <VARSYMBOL var="_system.gRcuFocusedRobot.driveTool.yActualState[12]" vartype="TT" halign="left" col="18" row="15" cspan="8" rspan="1"
+                       visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[3]" visiblevartype="TT">
+	         <SYMBOL value="0" file="Disc_Inactve.gif"/>
+	         <SYMBOL value="1" file="Disc_Run.gif"/>
+	         <SYMBOL value="2" file="Disc_Err.gif"/>
+	         <SYMBOL value="3" file="Disc_Ok.gif"/>
+	    </VARSYMBOL>
+            <NUMFIELD var="_system.gRcuFocusedRobot.driveTool.yProgress[12]"  vartype="TT" enabled="false" col="24" row="15" cspan="3" rspan="1" halign="stretch"
+                      visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[3]" visiblevartype="TT"/>
+            <BUTTON var="_system.gRcuFocusedRobot.driveTool.yRunUpload[12]" vartype="TT" enablevar="_system.gRcuFocusedRobot.driveTool.bButtonRelease" enablevartype="TT" 
+                    key="DriveUtil.button.save13" col="32" row="15" cspan="6" rspan="3" halign="stretch" valign="stretch"
+                    visiblevar="_system.gRcuFocusedRobot.driveTool.yShowDosingDrive[3]" visiblevartype="TT"/>
+                            
+        </GROUP>    
+      </GROUP>
+      <!-- Function not available for Indradrive CS -->
+      <GROUP key="DriveUpload.label.savepar2" columns="40" rows="65" col="1" row="1" halign="stretch" valign="stretch"
+             visiblevar="_system.gRcuFocusedRobot.driveTool.bSercosIIIused" visiblevartype="TT">
+             <LABEL key="DriveUpload.label.not_CS" col="5" row="10" cspan="30" halign="center"/>
+      </GROUP>
+   </MASKDEF>
+</VIEW>

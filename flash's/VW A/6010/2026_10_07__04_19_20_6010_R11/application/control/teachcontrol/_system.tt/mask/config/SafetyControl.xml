@@ -1,0 +1,98 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         07.01.2017                                                  *
+*    Author :     Bitzer                                                      *
+*    E-Mail:      Sven.Bitzer@durr.com                                        *
+*                                                                             *
+*    Modul:       SafetyControl.xml                                           *
+*    Description: Interface to SCP                                            *
+*    Changes:     -                                                           *
+*************************************************************************** -->
+<VIEW>
+	<MASKDEF key="TeachView.mask.safetyControl" textfile="userTx"  permissiondef="userMenuPermission" columns="572" rows="340" top="1" bottom="1" left="1" right="1">
+		<GROUP key="safetyControl.group.SCP" col="1" row="1" columns="572" rows="340" cspan="572" rspan="340" top="1" bottom="1" left="1" right="1">	
+		
+		        <!-- Reference position of SCP, needed to have the same axis values between SCP and MCU -->
+			<GROUP key="safetyControl.group.ref" col="1" row="1" columns="286" rows="340" cspan="286" rspan="340" top="1" bottom="1" left="1" right="1">	
+			
+			        <LABEL key="safetyControl.label.refpos" row="10" col="20" cspan="100" rspan="20" halign="left" valign="stretch"/> 
+			        <CHECKBOX var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mInReferencePos" vartype="TT"
+                                               col="240" row="10" enabled="false" halign="stretch" valign="stretch" cspan="25" rspan="25"/>
+			
+			        <LABEL key="safetyControl.label.reference" row="50" col="20" cspan="100" rspan="20" halign="left" valign="stretch"/> 
+			        <CHECKBOX var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mReferenceOk" vartype="TT"
+                                               col="240" row="50" enabled="false" halign="stretch" valign="stretch" cspan="25" rspan="25"/>         
+                                               
+                                <BUTTON key="safetyControl.button.setref" var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sIn.mSetReference" vartype="TT" 
+                                        enablevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mReleaseSetReference" enablevartype="TT"
+                                        col="5" row="90" cspan="130" rspan="50" halign="stretch"/>               
+                                <BUTTON key="safetyControl.button.resetref" var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sIn.mResetReference" vartype="TT" 
+                                        enablevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mReleaseResetRef" enablevartype="TT"
+                                        col="145" row="90" cspan="130" rspan="50" halign="stretch"/> 	                            
+			</GROUP>
+			
+			<!-- Brake check is now part of the safety function, on failures the test has to be executed succussful in 8 hours -->
+			<GROUP key="safetyControl.group.brakechk" col="1" row="170" columns="286" rows="170" cspan="286" rspan="170" top="1" bottom="1" left="1" right="1">	
+			
+			        <LABEL key="safetyControl.label.brakeChkTime" row="20" col="60" cspan="150" rspan="20" halign="left" valign="stretch"/>             
+			        <TEXTFIELD var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.sBrakeChkTimer" vartype="TT" enabled="false" 
+			                   col="100" row="40" cspan="50" halign="stretch" rspan="30" valign="stretch"/>
+
+			        <IMAGE file="TrafficLightRed.gif" col="20" row="55" cspan="25" rspan="80" halign="stretch" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChkErr" visiblevartype="TT"/>
+			        <LABEL key="safetyControl.label.brakeChkErr" row="90" col="60" cspan="200" rspan="20" halign="left" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChkErr" visiblevartype="TT"/>
+			               
+			        <IMAGE file="TrafficLightRedYellow.gif" col="20" row="55" cspan="25" rspan="80" halign="stretch" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChk15m" visiblevartype="TT"/>
+			        <LABEL key="safetyControl.label.brakeChk15m" row="90" col="60" cspan="200" rspan="20" halign="left" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChk15m" visiblevartype="TT"/>
+			
+			        <IMAGE file="TrafficLightYellow.gif" col="20" row="55" cspan="25" rspan="80" halign="stretch" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChk2h" visiblevartype="TT"/>
+			        <LABEL key="safetyControl.label.brakeChk2h" row="90" col="60" cspan="200" rspan="20" halign="left" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChk2h" visiblevartype="TT"/>
+			               
+			        <IMAGE file="TrafficLightGreen.gif" col="20" row="55" cspan="25" rspan="80" halign="stretch" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChkOK" visiblevartype="TT"/>
+			        <LABEL key="safetyControl.label.brakeChkOk" row="90" col="60" cspan="200" rspan="20" halign="left" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mBrakeChkOK" visiblevartype="TT"/>                            
+			</GROUP>
+			
+			<!-- Synchronisation is needed when controller is shutdown for more than 30min. It was assumed that no mechnical work is possible in less 30min. -->			
+			<GROUP key="safetyControl.group.sync" col="287" row="1" columns="286" rows="340" cspan="286" rspan="340" top="1" bottom="1" left="1" right="1">
+			
+			        <LABEL key="safetyControl.label.syncpos" row="10" col="20" cspan="100" rspan="20" halign="left" valign="stretch"/> 
+			        <CHECKBOX var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mInSyncPos" vartype="TT"
+                                               col="240" row="10" enabled="false" halign="stretch" valign="stretch" cspan="25" rspan="25"/>
+			      
+			        <LABEL key="safetyControl.label.syncIni" row="50" col="20" cspan="100" rspan="20" halign="left" valign="stretch"/> 
+			        <CHECKBOX var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mSyncIni" vartype="TT"
+                                               col="240" row="50" enabled="false" halign="stretch" valign="stretch" cspan="25" rspan="25"/>   
+                                               
+                                <LABEL key="safetyControl.label.syncState" row="90" col="20" cspan="100" rspan="20" halign="left" valign="stretch"/>                
+                                <IMAGE file="PneuUnit_NOK.gif" col="230" row="80" cspan="50" rspan="50" halign="stretch" valign="stretch"
+			               visiblevar="!_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mSyncOK" visiblevartype="TT"/>               
+                                <IMAGE file="PneuUnit_OK.gif" col="230" row="80" cspan="50" rspan="50" halign="stretch" valign="stretch"
+			               visiblevar="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.mSyncOK" visiblevartype="TT"/>               
+			</GROUP>
+			
+			<!-- State of safety controller SCP received from virual IOs -->       
+			<GROUP key="safetyControl.group.state" col="287" row="170" columns="286" rows="170" cspan="286" rspan="170" top="1" bottom="1" left="1" right="1">
+			
+			        <LABEL key="safetyControl.label.stateSCP" row="20" col="40" cspan="150" rspan="20" halign="left" valign="stretch"/>
+			        <LABEL key="safetyControl.label.state" var="_system.gRcuFocusedRobot.interfaceToSCP.sTV.sOut.siState" vartype="TT" 
+			               col="100" row="60" cspan="60" halign="center" rspan="30" valign="stretch"/>
+			</GROUP>
+		</GROUP>
+	</MASKDEF>
+</VIEW>

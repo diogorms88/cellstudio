@@ -1,0 +1,3260 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2005 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuInterfaceToProcess.ttp                                   *
+*    Description: general Interface to the process                            *
+*                                                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+*)
+
+VAR
+   lastGunOn          : DINT;
+   svDoSoftPurge      : MAPTO BOOL;
+   sModuleName        : STRING;
+   endOfBody          : BOOL;
+   rDelayDosingDrives : REAL;   // Delay of the dosing drives
+   startTriggerName   : STRING; // used for synchronisation with SET_SEAMTOLERANCE makro
+   seamTolerance      : REAL;               // written by SET_SEAMTOLERANCE makro
+   svTriggerInfo      : MAPTO TTriggerInfo; // feeding the "iec seam quantity monitoring"
+   iBrushNumberEps    : INT;
+   svMessageInfo      : MAPTO yTMessageInfos; // used to feed iec debug info handling
+   bSpeedCheck        : BOOL;
+   svTurnMaskOn       : MAPTO BOOL;
+   svBlowingAirOn     : MAPTO BOOL;
+   svCheckSumProject  : MAPTO DWORD;
+   // Delay of the robot axes. Upon others, this is the P99 of the robot axes
+   // (in case of Bosch Rexroth drives). Other delays are the cycle time of the
+   // drive bus and fine interploation.
+   delayRobotDrives         : REAL;
+   switchGunAtWaitPaintPos  : BOOL;
+   svActAppPos              : MAPTO INT;
+   svSetAppPos              : MAPTO INT;
+   svPistonChange           : MAPTO BOOL; // signal to change piston
+   svPistonDegrade          : MAPTO BOOL; // signal that piston is in degrade mode
+   svTankStop               : MAPTO BOOL; // signal to refill piston
+   svGunNumberOfActualBrush : MAPTO INT;
+   svCover                  : MAPTO BOOL;
+   svCoverIni               : MAPTO BOOL;
+   svCoupling               : MAPTO BOOL;
+   svCouplingIni            : MAPTO BOOL;
+   svMaskingDeviceInUse     : MAPTO BOOL;
+   svMaskingDeviceAtIni     : MAPTO BOOL;
+   svProcessActive          : MAPTO BOOL; // Signal that paint process is active
+   svProcessCmd             : MAPTO INT; //Command-interface to process: Command to Process
+   svProcessCmdAck          : MAPTO INT; //Command-interface to process: Feedback from Process
+   svProcessState           : MAPTO INT; //Command-interface to process: Status from Process
+   svPivotingBracketInPos   : MAPTO BOOL;
+   svMotionAbortPushOut     : MAPTO BOOL;
+   svEcoTalkReqHtOff        : MAPTO BOOL;
+   svEcoTalkHtIsOff         : MAPTO BOOL;
+   svHtExists               : MAPTO INT;
+   svHtDischargeCheck       : MAPTO BOOL;
+   svActualColGrpState      : MAPTO INT; //0=Wait init done from IEC, 1=Info on svActualColorGroup is actual, 2=Error ColGrp not assigned
+   svActualColorGroup       : MAPTO INT;  //feedback from IEC with actual color group
+   mProcessReadyLED         : BOOL;
+   svRobotToProcess         : MAPTO sRobotToProcess; //Interface PCU (Timeprog) - EcoTalk
+END_VAR
+
+//-----------------------------------------------------------------------------
+// Signals a new brush number
+//-----------------------------------------------------------------------------
+ROUTINE SignalBrush(brushData : TMcuUserData; pos : TRcuTrigger; 
+                                        posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+ VAR
+   iGunNumber       : DINT;
+   iBrushNumber     : DINT;
+   bMRTriggerSignal : BOOL;
+   iOvr             : INT;
+ END_VAR
+ 
+   IF NOT locKinematic.bEnableDvdGluing THEN
+      iGunNumber   := brushData.mDataInt[3];
+      iBrushNumber := brushData.mDataInt[4];
+      IF IS_MAPPED(svNumberOfActualBrush) THEN            
+         SysTimerSet(iCorrPrewarnTime, bMRTriggerSignal); 
+         // not needed any more - done in one sleep together with mc prewarn inaccuracy
+         //CompensateDriveDelays(locKinematic);
+         IF IS_MAPPED(svBrushTrigger) THEN
+            svBrushTrigger := pos.GetName();
+         END_IF;
+         svNumberOfActualBrush := iBrushNumber;
+         iBrushNumberEps := svNumberOfActualBrush;
+         svGunNumberOfActualBrush := iGunNumber;
+         SwoRaiseEvent(eScopeSignalBrush, "SignalBrush");
+         locKinematic.DebugPrint(eTraceProcess, "Signal BRUSH " + STR(iBrushNumber));
+         // start co-routine for signaling triggers to CalcLength
+         START WaitPrewarnTime(iGunNumber, eTriggerBrush, brushData.mDataInt[1], 
+            brushData.mDataInt[2], bMRTriggerSignal, pos, posInvalid, triggerIdx) PRIO 1;
+      END_IF;
+    ELSE
+       SysTimerSet(iCorrPrewarnTime, bMRTriggerSignal); 
+       iOvr := INT(brushData.mDataInt[4]);
+       locKinematic.fieldbusOut.wOverride.svWord := iOvr;
+       SwoRaiseEvent(eScopeSignalBrush, "SignalBrush");  
+       locKinematic.DebugPrint(eTraceProcess, "Signal Override for DVD gluing " + STR(iOvr) + "%");
+       // start co-routine for signaling triggers to CalcLength
+       START WaitPrewarnTime(1, eTriggerBrush, brushData.mDataInt[1], 
+            brushData.mDataInt[2], bMRTriggerSignal, pos, posInvalid, triggerIdx) PRIO 1;  
+    END_IF; 
+END_ROUTINE
+
+ROUTINE SetBrushDirect(Number : GUNNO; Brush : DINT)
+ VAR
+   iGunNumber       : DINT;
+   iBrushNumber     : DINT;
+   iPos             : DINT;
+   sName            : STRING;
+ END_VAR
+ 
+   iGunNumber := Number+1;
+   iBrushNumber := Brush;
+   MAINRUN();
+   IF IS_MAPPED(svNumberOfActualBrush) THEN            
+      IF (iGunNumber < 1) OR (iGunNumber > cgiMaxGuns) THEN
+         RcuSetMessageOnce(RcuInterfToProces_ErrGunNr, locKinematic.kinListInx, 4, 0, "RcuInterfaceToProcess.SetBrushDirect", STR(iGunNumber));
+         RETURN;
+      END_IF;            
+      svNumberOfActualBrush := iBrushNumber;
+      iBrushNumberEps := svNumberOfActualBrush;
+      svGunNumberOfActualBrush := iGunNumber;
+      iPos := StrFindRight(locKinematic.progNameKin, ".");
+      IF (iPos > 0) THEN
+         sName := StrDelete(locKinematic.progNameKin, iPos, 1) + ".Brush_Direct";
+      ELSE
+         sName := locKinematic.progNameKin + ".Brush_Direct";
+      END_IF;
+      IF IS_MAPPED(svBrushTrigger) THEN
+        svBrushTrigger := sName;
+      END_IF;
+      SwoRaiseEvent(eScopeSignalBrush, "BrushDirect");
+      locKinematic.DebugPrint(eTraceProcess, "BRUSH_DIRECT " + STR(iBrushNumber));
+   END_IF;
+ 
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Signals that a main needle shall be switched on/off
+//-----------------------------------------------------------------------------
+ROUTINE SignalGun(gunData : TMcuUserData; pos : TRcuTrigger;
+                                  posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+ VAR
+   onOff           : TRcuTriggerType;
+   iGunNumber       : DINT;
+   bMRTriggerSignal : BOOL;
+   triggerName      : STRING;
+   stringPos        : DINT;
+   StringLength     : DINT;
+ END_VAR
+
+   onOff := TRcuTriggerType(gunData.mDataInt[0]);
+   iGunNumber := gunData.mDataInt[3];
+   IF IS_MAPPED(svTrigger) THEN
+      SysTimerSet(iCorrPrewarnTime, bMRTriggerSignal); 
+      // not needed any more - done in one sleep together with mc prewarn inaccuracy
+      //CompensateDriveDelays(locKinematic);
+      IF (iGunNumber < 1) OR (iGunNumber > cgiMaxGuns) THEN
+         RcuSetMessageOnce(RcuInterfToProces_ErrGunNr, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.SignalGun", STR(iGunNumber));
+         RETURN;
+      END_IF;      
+      //gun on is set by golden repos --> modify triggername for pushout
+      IF (onOff = eTriggerRepos) THEN
+         triggerName := "ReposTrigger GUN ON";
+      ELSE
+         triggerName := pos.GetName();
+      END_IF;
+      
+      IF IS_MAPPED(svGunTrigger) THEN
+         svGunTrigger := triggerName;
+      END_IF;
+      
+      stringPos := StrFind(triggerName, ".") -1;
+      StringLength := StrLen(triggerName)-stringPos-1;
+      triggerName := StrRight(triggerName, StringLength);
+      
+      IF (onOff = eTriggerGunOn) OR (onOff = eTriggerRepos) THEN
+         IF svTrigger[iGunNumber] THEN
+            gTriggerError := gTriggerError+1;
+            locKinematic.DebugPrint(eTraceTrigger, "Trigger: logical error in trigger execution");
+            RcuSetMessageOnce(RcuInterfToProces_WarGunTwiceOn, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.SignalGun", STR(iGunNumber));
+         END_IF;
+         svTrigger[iGunNumber] := TRUE;
+         SwoRaiseEvent(eScopeSignalGunOn, "SignalGunOn");
+         bNeedleWasOpenThisProject := TRUE;
+         svTriggerInfo.zStopTrigger := "";
+         svTriggerInfo.rSeamTolerance := defSeamTolerance;
+         seamTolerance := defSeamTolerance;
+         svTriggerInfo.zStartTrigger := triggerName;
+      ELSIF onOff = eTriggerGunOff THEN
+         IF NOT svTrigger[iGunNumber] THEN
+            gTriggerError := gTriggerError+1;
+            locKinematic.DebugPrint(eTraceTrigger, "Trigger: logical error in trigger execution");
+            RcuSetMessageOnce(RcuInterfToProces_WarGunTwicOff, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.SignalGun", STR(iGunNumber));
+         END_IF;
+         svTrigger[iGunNumber] := FALSE;
+         SwoRaiseEvent(eScopeSignalGunOff, "SignalGunOff");
+         svTriggerInfo.zStopTrigger := triggerName;
+         svTriggerInfo.rSeamTolerance := seamTolerance;
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.SignalGun", STR(iGunNumber));
+      END_IF;
+      locKinematic.DebugPrint(eTraceProcess, "Signal GUN " + STR(iGunNumber) + " " + STR(onOff)); 
+      // start co-routine for signaling triggers to CalcLength
+      START WaitPrewarnTime(iGunNumber, onOff, gunData.mDataInt[1], 
+         gunData.mDataInt[2], bMRTriggerSignal, pos, posInvalid, triggerIdx) PRIO 1;
+   END_IF;
+END_ROUTINE
+
+ROUTINE GunDirect(Number : GUNNO; Command : GUNONOFF)
+ VAR
+   iGunNumber       : INT; // Number of the Gun (guntrigger, brushtrigger)
+   iPos             : DINT;
+   sName            : STRING;
+ END_VAR
+
+   MAINRUN();
+   iGunNumber := Number+1;
+   IF IS_MAPPED(svTrigger) THEN
+      IF (iGunNumber < 1) OR (iGunNumber > cgiMaxGuns) THEN
+         RcuSetMessageOnce(RcuInterfToProces_ErrGunNr, locKinematic.kinListInx, 3, 0, "RcuInterfaceToProcess.GunDirect", STR(iGunNumber));
+         RETURN;
+      END_IF;            
+      iPos := StrFindRight(locKinematic.progNameKin, ".");
+      IF (iPos > 0) THEN
+         sName := StrDelete(locKinematic.progNameKin, iPos, 1) + ".Gun_Direct";
+      ELSE
+         sName := locKinematic.progNameKin + ".Gun_Direct";
+      END_IF;
+      IF IS_MAPPED(svGunTrigger) THEN
+         svGunTrigger := sName;
+      END_IF;
+      IF (Command = GunOn) THEN
+         svTrigger[iGunNumber] := TRUE;
+         SwoRaiseEvent(eScopeSignalGunOn, "GunOnDirect");
+         bNeedleWasOpenThisProject := TRUE;
+      ELSIF (Command = GunOff) THEN
+         svTrigger[iGunNumber] := FALSE;
+         SwoRaiseEvent(eScopeSignalGunOff, "GunOffDirect");
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, locKinematic.kinListInx, 3, 0, "RcuInterfaceToProcess.GunDirect", STR(iGunNumber));
+      END_IF;
+      locKinematic.DebugPrint(eTraceProcess, "GUN_DIRECT " + STR(iGunNumber) + " " + STR(Command)); 
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Signals that a main needle of multigun shall be switched on/off
+//-----------------------------------------------------------------------------
+ROUTINE SignalMultiGun(gunData : TMcuUserData; pos : TRcuTrigger; posInvalid : BOOL; VAR_IN triggerIdx  : DINT)
+  VAR
+   onOff            : TRcuTriggerType;
+   iGun             : DINT;
+   bMRTriggerSignal : BOOL;
+   triggerName      : STRING;
+   stringPos        : DINT;
+   StringLength     : DINT;
+   i                : SINT;
+   mask             : DINT := 16#0001;
+ END_VAR
+         
+  onOff := TRcuTriggerType(gunData.mDataInt[0]);
+  iGun  := gunData.mDataInt[3]; 
+  IF locKinematic.bFieldbusSlaveReady THEN
+     SysTimerSet(iCorrPrewarnTime, bMRTriggerSignal);
+     //gun on is set by golden repos --> modify triggername for pushout
+     IF (onOff = eTriggerRepos) THEN
+        triggerName := "ReposTrigger GUN ON";
+     ELSE
+        triggerName := pos.GetName();
+     END_IF;
+     IF IS_MAPPED(svGunTrigger) THEN
+        svGunTrigger := triggerName;
+     END_IF;
+     stringPos    := StrFind(triggerName, ".") -1;
+     StringLength := StrLen(triggerName)-stringPos-1;
+     triggerName  := StrRight(triggerName, StringLength);
+     //set outputs to PLC
+     IF (onOff = eTriggerGunOn) OR (onOff = eTriggerRepos) THEN
+        FOR i:=0 TO locKinematic.nrNeedlesMultiGun-1 DO
+            locKinematic.fieldbusOut.yHwMainNeedles[i].svBool := ((iGun AND mask) <> 0);
+            mask := SHL(mask, 1); 
+        END_FOR;
+        bMultiGunOn := TRUE;
+        SwoRaiseEvent(eScopeSignalGunOn, "SignalMultiGunOn");
+        bNeedleWasOpenThisProject := TRUE;
+        IF IS_MAPPED(svTriggerInfo) THEN
+           svTriggerInfo.zStartTrigger := triggerName; 
+           svTriggerInfo.zStopTrigger := "";
+           svTriggerInfo.rSeamTolerance := defSeamTolerance;
+        END_IF;
+        seamTolerance := defSeamTolerance; 
+     ELSIF onOff = eTriggerGunOff THEN
+        FOR i:=0 TO locKinematic.nrNeedlesMultiGun-1 DO
+            locKinematic.fieldbusOut.yHwMainNeedles[i].svBool := FALSE;
+        END_FOR;
+        bMultiGunOn := FALSE;
+        SwoRaiseEvent(eScopeSignalGunOff, "SignalMultiGunOff");
+        IF IS_MAPPED(svTriggerInfo) THEN
+           svTriggerInfo.zStopTrigger := triggerName;
+           svTriggerInfo.rSeamTolerance := seamTolerance;
+        END_IF;
+     ELSE
+        RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, locKinematic.kinListInx, 2, 0, "RcuInterfaceToProcess.SignalMultiGun", STR(iGun));
+     END_IF;   
+     locKinematic.DebugPrint(eTraceProcess, "Signal MULTIGUN " + STR(iGun) + " " + STR(onOff)); 
+     // start co-routine for signaling triggers to CalcLength
+     START WaitPrewarnTime(1, onOff, gunData.mDataInt[1], gunData.mDataInt[2], bMRTriggerSignal, pos, posInvalid, triggerIdx) PRIO 1;                 
+  END_IF;
+END_ROUTINE
+
+ROUTINE MultiGunDirect(guns: GUNS)
+  VAR
+   iMultiGun   : DINT; // State of Guns (multiguntrigger)
+  END_VAR
+  
+   MAINRUN();
+   iMultiGun := 16#0000;
+   IF (locKinematic.nrNeedlesMultiGun > 0) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[0].svBool := (guns.N1 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[0].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit0;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 1) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[1].svBool := (guns.N2 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[1].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit1;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 2) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[2].svBool := (guns.N3 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[2].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit2;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 3) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[3].svBool := (guns.N4 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[3].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit3;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 4) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[4].svBool := (guns.N5 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[4].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit4;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 5) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[5].svBool := (guns.N6 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[5].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit5;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 6) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[6].svBool := (guns.N7 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[6].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit6;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 7) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[7].svBool := (guns.N8 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[7].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit7;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 8) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[8].svBool := (guns.N9 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[8].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit8;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 9) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[9].svBool := (guns.N10 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[9].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit9;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 10) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[10].svBool := (guns.N11 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[10].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit10;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 11) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[11].svBool := (guns.N12 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[11].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit11;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 12) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[12].svBool := (guns.N13 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[12].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit12;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 13) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[13].svBool := (guns.N14 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[13].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit13;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 14) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[14].svBool := (guns.N15 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[14].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit14;
+      END_IF;
+   END_IF;
+   IF (locKinematic.nrNeedlesMultiGun > 15) THEN
+      locKinematic.fieldbusOut.yHwMainNeedles[15].svBool := (guns.N16 = GunOn);
+      IF locKinematic.fieldbusOut.yHwMainNeedles[15].svBool THEN 
+         iMultiGun := iMultiGun OR cgiMaskBit15;
+      END_IF;
+   END_IF;
+   
+   IF (iMultiGun <> 16#0000) THEN
+      SwoRaiseEvent(eScopeSignalGunOn, "MultiGunOnDirect");
+      bNeedleWasOpenThisProject := TRUE;
+   ELSE
+      SwoRaiseEvent(eScopeSignalGunOn, "MultiGunOffDirect");
+   END_IF;
+   locKinematic.DebugPrint(eTraceProcess, "MULTIGUN_DIRECT " + STR(iMultiGun));
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Signal to set command to process  BIT 05.10.05
+//-----------------------------------------------------------------------------
+ROUTINE SignalProcessCommand(commandData : TMcuUserData; 
+                             pos : TRcuTrigger;
+                             posInvalid : BOOL;
+                             VAR_IN triggerIdx  : DINT)
+VAR
+   command          : DINT;
+   bMRTriggerSignal : BOOL;
+END_VAR
+   
+   command := commandData.mDataInt[3];
+   
+   SysTimerSet(iCorrPrewarnTime, bMRTriggerSignal); 
+   
+   // not needed any more - done in one sleep together with mc prewarn inaccuracy
+   //CompensateDriveDelays(locKinematic);
+
+   SwoRaiseEvent(eScopeSignalProcess, "SignalProcess");
+      
+   ProcessCommand(command, FALSE);
+   
+   // start co-routine for correct internal handling of triggers
+   START WaitPrewarnTime(0, eTriggerProcess, commandData.mDataInt[1], 
+      commandData.mDataInt[2], bMRTriggerSignal, pos, posInvalid, triggerIdx) PRIO 1;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Signal to set command to process  BIT 25.08.14
+//-----------------------------------------------------------------------------
+ROUTINE ProcessCommand(command : DINT; calledByEcoTalk : BOOL)
+  
+  IF calledByEcoTalk THEN
+     WAIT MAIN_RUN;
+  END_IF;
+  
+   CASE command OF
+      
+      // COMMAND(EndOfBody)
+      0 : endOfBody := TRUE;
+          IF (IS_MAPPED(svDoSoftPurge)) THEN
+            svDoSoftPurge := FALSE;
+          END_IF;  
+          IF (IS_MAPPED(svNumberOfActualBrush)) THEN
+              svNumberOfActualBrush := 0;
+          END_IF; 
+          iBrushNumberEps := 0;
+      
+      // COMMAND(DoSoftPurge)
+      1: endOfBody := FALSE;
+         IF (IS_MAPPED(svDoSoftPurge)) THEN
+            svDoSoftPurge := TRUE;
+         END_IF; 
+          
+      // COMMAND(TurningMaskOn)   
+      2: IF (IS_MAPPED(svTurnMaskOn)) THEN
+            svTurnMaskOn := TRUE;
+         END_IF; 
+             
+      // COMMAND(TurningMaskOff)   
+      3: IF (IS_MAPPED(svTurnMaskOn)) THEN
+            svTurnMaskOn := FALSE;
+         END_IF; 
+     
+      // COMMAND(BlowingAirOn)
+      4: IF (IS_MAPPED(svBlowingAirOn)) THEN
+            svBlowingAirOn := TRUE;
+         END_IF;
+      
+      // COMMAND(BlowingAirOff)
+      5: IF (IS_MAPPED(svBlowingAirOn)) THEN
+            svBlowingAirOn := FALSE;
+         END_IF;
+      
+      // Gluing trigger at PLC interface
+      20: IF (locKinematic.gluingRobot) THEN
+             locKinematic.fieldbusOut.PLCTrigger1.svBool := TRUE; 
+          END_IF;
+       
+      21: IF (locKinematic.gluingRobot) THEN
+            locKinematic.fieldbusOut.PLCTrigger1.svBool := FALSE; 
+          END_IF;
+     
+      22: IF (locKinematic.gluingRobot) THEN
+             locKinematic.fieldbusOut.PLCTrigger2.svBool := TRUE; 
+          END_IF;
+       
+      23: IF (locKinematic.gluingRobot) THEN
+            locKinematic.fieldbusOut.PLCTrigger2.svBool := FALSE; 
+          END_IF;     
+  
+      24: IF (locKinematic.gluingRobot) THEN
+             locKinematic.fieldbusOut.PLCTrigger3.svBool := TRUE; 
+          END_IF;
+       
+      25: IF (locKinematic.gluingRobot) THEN
+            locKinematic.fieldbusOut.PLCTrigger3.svBool := FALSE; 
+          END_IF;     
+      
+      26: IF (locKinematic.gluingRobot) THEN
+             locKinematic.fieldbusOut.PLCTrigger4.svBool := TRUE; 
+          END_IF;
+       
+      27: IF (locKinematic.gluingRobot) THEN
+            locKinematic.fieldbusOut.PLCTrigger4.svBool := FALSE; 
+          END_IF; 
+      
+      // BeadCheckOn
+      40: IF locKinematic.gluingRobot AND locKinematic.gluing.bSendVeloToSeamCheck THEN
+            IF IS_MAPPED(locKinematic.gluing.btSeamCheckActivate) AND locKinematic.mainModeMgr.externControl THEN
+               locKinematic.gluing.btSeamCheckActivate := 1;
+               locKinematic.DebugPrint(eTraceGluing, "SETPROCESSCOMMAND BeadCheckOn");
+            END_IF; 
+          ELSE
+            locKinematic.DebugPrint(eTraceGluing, "Macro BeadCheckOn not executed. Please check configuration");
+          END_IF; 
+      
+      // BeadCheckOff
+      41 : IF locKinematic.gluingRobot AND locKinematic.gluing.bSendVeloToSeamCheck THEN    
+             IF IS_MAPPED(locKinematic.gluing.btSeamCheckActivate) THEN
+                  locKinematic.gluing.btSeamCheckActivate := 0;
+                  locKinematic.DebugPrint(eTraceGluing, "SETPROCESSCOMMAND BeadCheckOff");
+             END_IF;
+           ELSE
+            locKinematic.DebugPrint(eTraceGluing, "Macro BeadCheckOff not executed. Please check configuration");
+           END_IF; 
+            
+   ELSE
+      RcuSetMessageOnce(RcuInterfToProces_ErrProcessCmd, locKinematic.kinListInx, 1, 0, 
+         "RcuInterfaceToProcess.SignalProcessCommand", STR(command));
+   END_CASE;
+   
+END_ROUTINE
+
+//--------------------------------------------------------------------------------------
+// Reset commands set to IEC at program start - called by TRcuKinematic.RESERVE
+//--------------------------------------------------------------------------------------
+ROUTINE ResetProcessCommand()
+
+  IF IS_MAPPED(svDoSoftPurge) THEN
+     svDoSoftPurge := FALSE;
+  END_IF;
+  IF IS_MAPPED(svTurnMaskOn) THEN
+     svTurnMaskOn := FALSE;
+  END_IF;
+  IF IS_MAPPED(svBlowingAirOn) THEN
+     svBlowingAirOn := FALSE;
+  END_IF;   
+  endOfBody                 := FALSE;
+  bWaitProcessReadySet      := FALSE;
+  bNeedleWasOpenThisProject := FALSE;
+  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "Reset commands set from EcoTalk to IEC at program start");
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Wait until Process is ready, called by EcoTalk or Teachcontrol
+//-----------------------------------------------------------------------------
+ROUTINE WaitProcessReady(Intern : BOOL; kinListInx : DINT)
+VAR
+   ready  : BOOL;
+END_VAR
+
+   IF locKinematic.bHasProcess THEN
+      IF (IS_MAPPED(svProcessReady) AND IS_MAPPED(svProcessActive) AND IS_MAPPED(svProcessContinue)) THEN
+         IF NOT Intern THEN
+            ready := FALSE;
+            START WaitMainRun(ready);
+            IF svProcessActive THEN
+               IF NOT svProcessReady THEN
+                  START ProcessReadyPrint(Intern);
+                  WAIT svProcessReady OR (NOT svProcessActive);
+               END_IF;
+            END_IF;
+         ELSE // intern
+            IF svProcessActive THEN
+               IF NOT svProcessContinue THEN
+                  START ProcessReadyPrint(Intern);
+                  WAIT svProcessContinue OR (NOT svProcessActive);
+               END_IF;
+            END_IF;
+         END_IF;
+         ready := TRUE;
+      ELSE
+         locKinematic.DebugPrint(eTraceProcess, "Kinematic " + locKinematic.robotName + "svProcessReady or svProcessActive or svProcessContinue not mapped -> malfunction of WAIT_PROCESS_READY");
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// 
+//-----------------------------------------------------------------------------
+ROUTINE TcpSpeedCheck(bOnOff : BOOL; rLimit : REAL)
+   
+   IF ((rLimit > 1.0) OR (rLimit <= 0.0)) AND (bOnOff = TRUE) THEN
+      MAINRUN();
+      RcuSetMessageOnce(RcuInterfToProces_ErrWrngParVal, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.TcpSpeedCheck", STR(rLimit));
+      locKinematic.ErrorReaction(TRUE);
+   ELSE
+      START MainRunTcpSpeedCheck(bOnOff, rLimit);
+      rLimitFactor := rLimit;
+      bSpeedCheck := bOnOff;
+   END_IF;
+END_ROUTINE
+//-----------------------------------------------------------------------------
+// 
+//-----------------------------------------------------------------------------
+ROUTINE MainRunTcpSpeedCheck(bOnOff : BOOL; rLimit : REAL)
+   VAR
+      cancel : BOOL;
+   END_VAR
+   
+   // signal for cancelling all open commands
+   cancel := IS_CHANGED(locKinematic.progPath.cancelFlipFlop);
+   
+   WAIT MAIN_RUN OR cancel;
+   IF MAIN_RUN THEN
+      rLimitFactor := rLimit;
+      bSpeedCheck := bOnOff;
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// init interface - map all the sv-variables and start routines
+//-----------------------------------------------------------------------------
+ROUTINE InitProcessInterface(myKinematic : TRcuRobot)
+ VAR
+  cnt_mapx    : INT;         // counting of system variables that are mapped
+  i           : DINT;        // value that is read from the catalog   
+  iMapSignals : DINT;        // number of signals needed to be mapped
+ END_VAR
+  
+  locKinematic := MAP(myKinematic);
+  
+  IF locKinematic.bHasProcess THEN
+      IF NOT (locKinematic.rcCatHdl = 0) THEN
+         // compensate the following errors
+         IF CatalogReadInt(locKinematic.rcCatHdl, "compensateFollowingErrors", i, TRUE) THEN 
+            compensateFollowingErrors := i <> 0;
+            locKinematic.DebugPrint(eTraceProcess, "Read value from RobotControl.cfg for compensateFollowingErrors: " + STR(compensateFollowingErrors));
+         ELSE
+            compensateFollowingErrors := FALSE;
+            locKinematic.DebugPrint(eTraceProcess, "compensateFollowingErrors was not found -> set to FALSE");
+         END_IF;
+         // delay of robot drives
+         IF CatalogReadInt(locKinematic.rcCatHdl, "delayRobotDrives", i, TRUE) THEN
+            locKinematic.DebugPrint(eTraceProcess, "Read value from RobotControl.cfg for delayRobotDrives: " + STR(i));
+            IF i < 0 THEN
+               RcuSetMessageOnce(RcuInterfToProces_ErrRobDrDlyNeg, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.InitInterface");
+               delayRobotDrives := 0.0;
+               locKinematic.DebugPrint(eTraceProcess, "delayRobotDrives was smaller than 0 -> set to 0");
+            ELSE
+               delayRobotDrives := i / 1000.0; // ms -> sec
+            END_IF;
+         ELSE
+            delayRobotDrives := 0.0;
+            locKinematic.DebugPrint(eTraceProcess, "delayRobotDrives was not found -> set to 0");
+         END_IF;
+         //switch gun off/on automatically at macro WAIT_PAINTPOSITION   
+         IF CatalogReadInt(locKinematic.rcCatHdl, "switchGunAtWaitPaintPos", i, TRUE) THEN
+            switchGunAtWaitPaintPos := i <> 0;
+         ELSE
+            switchGunAtWaitPaintPos := FALSE;
+         END_IF;
+      END_IF;
+      // read prewarn time
+      ReadProcessIni();
+   ELSE
+     // locKinematic.bHasProcess = FALSE ==> handler
+     IF (locKinematic.paintChecker.type <> eRcuPaintCheckerOff) OR locKinematic.gluingRobot THEN
+             // delay of robot drives
+        IF CatalogReadInt(locKinematic.rcCatHdl, "delayRobotDrives", i, TRUE) THEN
+           locKinematic.DebugPrint(eTraceProcess, "Read value from RobotControl.cfg for delayRobotDrives: " + STR(i));
+           IF i < 0 THEN
+              RcuSetMessageOnce(RcuInterfToProces_ErrRobDrDlyNeg, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.InitInterface");
+              delayRobotDrives := 0.0;
+              locKinematic.DebugPrint(eTraceProcess, "delayRobotDrives was smaller than 0 -> set to 0");
+           ELSE
+              delayRobotDrives := i / 1000.0; // ms -> sec
+           END_IF;
+        ELSE
+           delayRobotDrives := 0.0;
+           locKinematic.DebugPrint(eTraceProcess, "delayRobotDrives was not found -> set to 0");
+        END_IF;
+      ELSE
+        // set default values
+        grPrewarnTime := gcrDefaultPreWarnTime;
+        compensateFollowingErrors := FALSE;
+        delayRobotDrives := 0.0;
+     END_IF;
+   END_IF;
+   
+   WAIT TRUE;
+   // Map all system variables that belong to the paint interface
+   cnt_mapx := 0;
+   WAIT PaintRobot[locKinematic.kinListInx].initRobComplete;
+   
+   iMapSignals    := iMapSignals + 1;              //Signal-Nr. 1
+   svActOverride := MAPX(cSV_iActOverridePaint[locKinematic.kinListInx]);
+   IF IS_MAPPED(svActOverride) THEN
+      cnt_mapx :=  cnt_mapx + 1;            
+   ELSE
+     RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.InitInterface", cSV_iActOverridePaint[locKinematic.kinListInx]);
+     gbBootupError := TRUE;
+   END_IF;
+     
+   iMapSignals   := iMapSignals + 1;               //Signal-Nr. 2
+   svMessageInfo := MAPX(cSV_MessageInfo);
+   IF IS_MAPPED(svMessageInfo) THEN
+      cnt_mapx := cnt_mapx + 1;
+   ELSE
+      RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 2, 0, "RcuInterfaceToProcess.InitInterface", cSV_MessageInfo);
+      gbBootupError := TRUE;
+   END_IF;
+   
+   //-----------------------------------------  only if process is activated --------------------------------------------------------------------------------------------------
+   IF locKinematic.bHasProcess THEN                
+      iMapSignals := iMapSignals + 1;             //Signal-Nr. 3
+      svTrigger := MAPX(cSV_yTriggerPaint[locKinematic.kinListInx]); 
+      IF IS_MAPPED(svTrigger) THEN
+         cnt_mapx :=  cnt_mapx + 1;      
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 3, 0, "RcuInterfaceToProcess.InitInterface", cSV_yTriggerPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+               
+      iMapSignals := iMapSignals + 1;             //Signal-Nr. 4
+      svNumberOfActualBrush := MAPX(cSV_iNumberOfActualBrushPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svNumberOfActualBrush) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 4, 0, "RcuInterfaceToProcess.InitInterface", cSV_iNumberOfActualBrushPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+             
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 5
+      svMotionActive := MAPX(cSV_mMotionActivePaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svMotionActive) THEN
+         cnt_mapx :=  cnt_mapx + 1;                  
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 5, 0, "RcuInterfaceToProcess.InitInterface", cSV_mMotionActivePaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+            
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 6
+      svProcessActive := MAPX(cSV_mProcessActivePaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProcessActive) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 6, 0, "RcuInterfaceToProcess.InitInterface", cSV_mProcessActivePaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+               
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 7
+      svProcessReady := MAPX(cSV_mProcessReadyPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProcessReady) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 7, 0, "RcuInterfaceToProcess.InitInterface", cSV_mProcessReadyPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+             
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 8
+      svRobotMoving := MAPX(cSV_mRobotMovingPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svRobotMoving) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 8, 0, "RcuInterfaceToProcess.InitInterface", cSV_mRobotMovingPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+           
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 9
+      svTCPVelocity := MAPX(cSV_rTcpVelocityPaint[locKinematic.kinListInx]); 
+      IF IS_MAPPED(svTCPVelocity) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 9, 0, "RcuInterfaceToProcess.InitInterface", cSV_rTcpVelocityPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+             
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 10
+      svDoSoftPurge := MAPX(cSV_mDoSoftPurgePaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svDoSoftPurge) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 10, 0, "RcuInterfaceToProcess.InitInterface", cSV_mDoSoftPurgePaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+         
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 11
+      svProgramMainRun := MAPX(cSV_zProgramMainRunPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProgramMainRun) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 11, 0, "RcuInterfaceToProcess.InitInterface", cSV_zProgramMainRunPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+                 
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 12
+      svProgramPreRun := MAPX(cSV_zProgramPreRunPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProgramPreRun) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 12, 0, "RcuInterfaceToProcess.InitInterface", cSV_zProgramPreRunPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+                
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 13
+      svProgramPrewarn := MAPX(cSV_zProgramPrewarnPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProgramPrewarn) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 13, 0, "RcuInterfaceToProcess.InitInterface", cSV_zProgramPrewarnPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+                
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 14
+      svGunTrigger := MAPX(cSV_zGunTriggerPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svGunTrigger) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 14, 0, "RcuInterfaceToProcess.InitInterface", cSV_zGunTriggerPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+                 
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 15
+      svBrushTrigger := MAPX(cSV_zBrushTriggerPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svBrushTrigger) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 15, 0, "RcuInterfaceToProcess.InitInterface", cSV_zBrushTriggerPaint[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+              
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 16
+      svTriggerInfo := MAPX(cSV_TriggerInfo[locKinematic.kinListInx]);
+      IF IS_MAPPED(svTriggerInfo) THEN
+         cnt_mapx := cnt_mapx + 1;
+         svTriggerInfo.rSeamTolerance := defSeamTolerance;
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 16, 0, "RcuInterfaceToProcess.InitInterface", cSV_TriggerInfo[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+                 
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 17
+      svHTOff := MAPX(cSV_mHTOff[locKinematic.kinListInx]);
+      IF IS_MAPPED(svHTOff) THEN
+         cnt_mapx := cnt_mapx + 1;
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 17, 0, "RcuInterfaceToProcess.InitInterface", cSV_mHTOff[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+                  
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 18
+      svProcessContinue := MAPX(cSV_mProcessContinue[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProcessContinue) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 18, 0, "RcuInterfaceToProcess.InitInterface", cSV_mProcessContinue[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+               
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 19
+      svWaitingTrackingPos := MAPX(cSV_mWaitingTrackingPos[locKinematic.kinListInx]);
+      IF IS_MAPPED(svWaitingTrackingPos) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+        RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 19, 0, "RcuInterfaceToProcess.InitInterface", cSV_mWaitingTrackingPos[locKinematic.kinListInx]);
+        gbBootupError := TRUE;
+      END_IF;
+                  
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 20
+      svInBellCleaner := MAPX(cSV_mInBellCleaner[locKinematic.kinListInx]);
+      IF IS_MAPPED(svInBellCleaner) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 20, 0, "RcuInterfaceToProcess.InitInterface", cSV_mInBellCleaner[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+          
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 21
+      svInCapCleaner := MAPX(cSV_mInCapCleaner[locKinematic.kinListInx]);
+      IF IS_MAPPED(svInCapCleaner) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 21, 0, "RcuInterfaceToProcess.InitInterface", cSV_mInCapCleaner[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+        
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 22
+      svTurnMaskOn := MAPX(cSV_mTurnMaskOn[locKinematic.kinListInx]);
+      IF IS_MAPPED(svTurnMaskOn) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 22, 0, "RcuInterfaceToProcess.InitInterface", cSV_mTurnMaskOn[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+        
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 23
+      svBlowingAirOn := MAPX(cSV_mBlowingAirOn[locKinematic.kinListInx]);
+      IF IS_MAPPED(svBlowingAirOn) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 23, 0, "RcuInterfaceToProcess.InitInterface", cSV_mBlowingAirOn[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+    
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 24
+      svCheckSumProject := MAPX(cSV_wCheckSumProject[locKinematic.kinListInx]);
+      IF IS_MAPPED(svCheckSumProject) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 24, 0, "RcuInterfaceToProcess.InitInterface", cSV_wCheckSumProject[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 25
+      svGunNumberOfActualBrush := MAPX(cSV_iGunNumberOfActualBrushPaint[locKinematic.kinListInx]);
+      IF IS_MAPPED(svGunNumberOfActualBrush) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 25, 0, "RcuInterfaceToProcess.InitInterface", cSV_iGunNumberOfActualBrushPaint[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 26
+      svPistonChange := MAPX(cSV_mPistonChange[locKinematic.kinListInx]);
+      IF IS_MAPPED(svPistonChange) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 26, 0, "RcuInterfaceToProcess.InitInterface", cSV_mPistonChange[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 27
+      svTankStop := MAPX(cSV_mTankStop[locKinematic.kinListInx]);
+      IF IS_MAPPED(svTankStop) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 27, 0, "RcuInterfaceToProcess.InitInterface", cSV_mTankStop[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 28
+      svPistonDegrade := MAPX(cSV_mPistonDegrade[locKinematic.kinListInx]);
+      IF IS_MAPPED(svPistonDegrade) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 28, 0, "RcuInterfaceToProcess.InitInterface", cSV_mPistonDegrade[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 29
+      svMaskingDeviceInUse := MAPX(cSV_mMaskingDeviceInUse[locKinematic.kinListInx]);
+      IF IS_MAPPED(svMaskingDeviceInUse) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 29, 0, "RcuInterfaceToProcess.InitInterface", cSV_mMaskingDeviceInUse[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 30
+      svMaskingDeviceAtIni := MAPX(cSV_mMaskingDeviceAtIni[locKinematic.kinListInx]);
+      IF IS_MAPPED(svMaskingDeviceAtIni) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 30, 0, "RcuInterfaceToProcess.InitInterface", cSV_mMaskingDeviceAtIni[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 31
+      svCover := MAPX(cSV_mCover[locKinematic.kinListInx]);
+      IF IS_MAPPED(svCover) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 31, 0, "RcuInterfaceToProcess.InitInterface", cSV_mCover[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 32
+      svCoverIni := MAPX(cSV_mCoverIni[locKinematic.kinListInx]);
+      IF IS_MAPPED(svCoverIni) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 32, 0, "RcuInterfaceToProcess.InitInterface", cSV_mCoverIni[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 33
+      svCoupling := MAPX(cSV_mCoupling[locKinematic.kinListInx]);
+      IF IS_MAPPED(svCoupling) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 33, 0, "RcuInterfaceToProcess.InitInterface", cSV_mCoupling[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 34
+      svCouplingIni := MAPX(cSV_mCouplingIni[locKinematic.kinListInx]);
+      IF IS_MAPPED(svCouplingIni) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 34, 0, "RcuInterfaceToProcess.InitInterface", cSV_mCouplingIni[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 35
+      svProcessCmd := MAPX(cSV_iProcessCmd[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProcessCmd) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 35, 0, "RcuInterfaceToProcess.InitInterface", cSV_iProcessCmd[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 36
+      svProcessState := MAPX(cSV_iProcessState[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProcessState) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 36, 0, "RcuInterfaceToProcess.InitInterface", cSV_iProcessState[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 37
+      svProcessCmdAck := MAPX(cSV_iProcessCmdAck[locKinematic.kinListInx]);
+      IF IS_MAPPED(svProcessCmdAck) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 37, 0, "RcuInterfaceToProcess.InitInterface", cSV_iProcessCmdAck[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 38
+      svPivotingBracketInPos := MAPX(cSV_mPivotingBracketInPos[locKinematic.kinListInx]);
+      IF IS_MAPPED(svPivotingBracketInPos) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 38, 0, "RcuInterfaceToProcess.InitInterface", cSV_mPivotingBracketInPos[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 39
+      svMotionAbortPushOut := MAPX(cSV_mMotionAbortPushOut[locKinematic.kinListInx]);
+      IF IS_MAPPED(svMotionAbortPushOut) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 39, 0, "RcuInterfaceToProcess.InitInterface", cSV_mMotionAbortPushOut[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      //signals to shutdown high tension is only needed on robots with handling function
+      IF locKinematic.handler.isHandler THEN
+         iMapSignals := iMapSignals + 1;              //Signal-Nr. 40
+         svEcoTalkReqHtOff := MAPX(cSV_EcoTalkReqHtOff[locKinematic.kinListInx]);
+         IF IS_MAPPED(svEcoTalkReqHtOff) THEN
+            cnt_mapx := cnt_mapx + 1;            
+         ELSE
+            RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 40, 0, "RcuInterfaceToProcess.InitInterface", cSV_EcoTalkReqHtOff[locKinematic.kinListInx]);
+            gbBootupError := TRUE;
+         END_IF;
+      
+         iMapSignals := iMapSignals + 1;              //Signal-Nr. 41
+         svEcoTalkHtIsOff := MAPX(cSV_EcoTalkHtIsOff[locKinematic.kinListInx]);
+         IF IS_MAPPED(svEcoTalkHtIsOff) THEN
+            cnt_mapx := cnt_mapx + 1;            
+         ELSE
+            RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 41, 0, "RcuInterfaceToProcess.InitInterface", cSV_EcoTalkHtIsOff[locKinematic.kinListInx]);
+            gbBootupError := TRUE;
+         END_IF;
+      END_IF;
+         
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 42
+      svHtExists := MAPX(cSV_iHtExists[locKinematic.kinListInx]);
+      IF IS_MAPPED(svHtExists) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 42, 0, "RcuInterfaceToProcess.InitInterface", cSV_iHtExists[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 43
+      svHtDischargeCheck := MAPX(cSV_mHtDischargeCheck[locKinematic.kinListInx]);
+      IF IS_MAPPED(svHtDischargeCheck) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 42, 0, "RcuInterfaceToProcess.InitInterface", cSV_mHtDischargeCheck[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 44
+      svAtomState := MAPX(cSV_iAtomState[locKinematic.kinListInx]);
+      IF IS_MAPPED(svAtomState) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 44, 0, "RcuInterfaceToProcess.InitInterface", cSV_iAtomState[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 45
+      svActualColGrpState := MAPX(cSV_iActualColGrpState[locKinematic.kinListInx]);
+      IF IS_MAPPED(svActualColGrpState) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 45, 0, "RcuInterfaceToProcess.InitInterface", cSV_iActualColGrpState[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 46
+      svActualColorGroup     := MAPX(cSV_iActualColorGroup[locKinematic.kinListInx]);
+      IF IS_MAPPED(svActualColorGroup) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 46, 0, "RcuInterfaceToProcess.InitInterface", cSV_iActualColorGroup[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 47
+      svRobotToProcess := MAPX(cSV_sRobotToProcess[locKinematic.kinListInx]);
+      IF IS_MAPPED(svRobotToProcess) THEN
+         cnt_mapx :=  cnt_mapx + 1;      
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 47, 0, "RcuInterfaceToProcess.InitInterface", cSV_sRobotToProcess[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 48
+      svAtomizerInCleaner := MAPX(cSV_mAtomizerInCleaner[locKinematic.kinListInx]);
+      IF IS_MAPPED(svAtomizerInCleaner) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 48, 0, "RcuInterfaceToProcess.InitInterface", cSV_mAtomizerInCleaner[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 49
+      svReleaseProcess := MAPX(cSV_mReleaseProcess[locKinematic.kinListInx]);
+      IF IS_MAPPED(svReleaseProcess) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 49, 0, "RcuInterfaceToProcess.InitInterface", cSV_mReleaseProcess[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+         
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 50
+      svEnableHighTension := MAPX(cSV_mEnableHighTension[locKinematic.kinListInx]);
+      IF IS_MAPPED(svEnableHighTension) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 50, 0, "RcuInterfaceToProcess.InitInterface", cSV_mEnableHighTension[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 51
+      svReleaseHighTension := MAPX(cSV_mReleaseHighTension[locKinematic.kinListInx]);
+      IF IS_MAPPED(svReleaseHighTension) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 51, 0, "RcuInterfaceToProcess.InitInterface", cSV_mReleaseHighTension[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;              //Signal-Nr. 52
+      svCleaningDeviceExists := MAPX(cSV_iCleaningDeviceExists[locKinematic.kinListInx]);
+      IF IS_MAPPED(svCleaningDeviceExists) THEN
+         cnt_mapx := cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 52, 0, "RcuInterfaceToProcess.InitInterface", cSV_iCleaningDeviceExists[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+   END_IF;  //IF locKinematic.bHasProcess THEN
+   
+   //-----------------------------------------  only if gluing is activated --------------------------------------------------------------------------------------------------
+   IF locKinematic.gluingRobot AND locKinematic.bHasProcess THEN
+      iMapSignals := iMapSignals + 1;              
+      svActAppPos := MAPX(cSV_iActAppPos[locKinematic.kinListInx]);
+      IF IS_MAPPED(svActAppPos) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 38, 0, "RcuInterfaceToProcess.InitInterface", cSV_iActAppPos[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+      
+      iMapSignals := iMapSignals + 1;             
+      svSetAppPos := MAPX(cSV_iSetAppPos[locKinematic.kinListInx]); 
+      IF IS_MAPPED(svSetAppPos) THEN
+         cnt_mapx :=  cnt_mapx + 1;            
+      ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrVarNotMap, locKinematic.kinListInx, 39, 0, "RcuInterfaceToProcess.InitInterface", cSV_iSetAppPos[locKinematic.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+   END_IF; //IF locKinematic.gluingRobot THEN
+
+   
+   IF cnt_mapx = iMapSignals THEN
+      RcuSetMessageOnce(RcuInterfToProces_InfMapSIFCo, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.InitInterface");
+   END_IF;
+   
+   WAIT TRUE;
+   
+   // Start the coroutines that do the tracking of the state of the motion 
+   // program and the actual TCP velocity
+   IF IS_MAPPED(svRobotMoving) AND IS_MAPPED(svMotionActive) THEN
+      START ProgActiveWatcher();
+      svMotionActive := UPDATE(locKinematic.bMotionActive);
+      svRobotMoving := UPDATE(locKinematic.bRobotMoving);
+      locKinematic.DebugPrint(eTraceProcess, "ProgActiveWatcher started");
+   ELSIF locKinematic.bEnableDvdGluing THEN
+      START ProgActiveWatcher();
+      locKinematic.DebugPrint(eTraceProcess, "ProgActiveWatcher (DVD gluing) started");
+   ELSE
+      locKinematic.DebugPrint(eTraceProcess, "ProgActiveWatcher not started");
+   END_IF;
+   
+   IF IS_MAPPED(svTCPVelocity) THEN
+      START ActPathVelo();
+   END_IF;
+   
+   START SpeedCheck;
+   START ActPathVelo2Scope();
+   
+   IF locKinematic.gluingRobot THEN
+      IF locKinematic.gluing.bSendVeloToSeamCheck THEN 
+         START ActPathVelo2Vision();
+      END_IF;
+   END_IF;
+   
+   
+   // Start the coroutine for the calculation of the length of the path
+   // from GunOn to GunOff
+   START CalcLength() PRIO 1;
+   
+   IF IS_MAPPED(svWaitingTrackingPos) THEN
+      START ObserveWaitingTrackingPos();
+   END_IF;
+   
+   IF locKinematic.bEnableDvdGluing THEN
+      START ActPathVelo2PLC();
+   END_IF;
+   
+   IF IS_MAPPED(svAtomState) AND IS_MAPPED(svProcessReady) AND IS_MAPPED(svProcessContinue) THEN   
+      mProcessReadyLED := UPDATE((svAtomState = 2) AND (svProcessContinue OR svProcessReady OR (locKinematic.mainModeMgr.mode <> ciT2)));
+   END_IF;
+   
+   IF IS_MAPPED(svHtExists) AND IS_MAPPED(svCleaningDeviceExists) AND IS_MAPPED(svHtDischargeCheck) AND IS_MAPPED(svAtomizerInCleaner) AND IS_MAPPED(svReleaseProcess) AND IS_MAPPED(svEnableHighTension) AND IS_MAPPED(svReleaseHighTension) THEN
+      START ObserveAtomizerInCleaner();
+   END_IF;
+   
+   // Kemroskop
+   SwoAddRealVariable(rProgrammedVel, "VelControl.ProgrammedVel");
+   SwoAddRealVariable(rTcpVelAbs, "VelControl.ActualVel");
+   SwoAddRealVariable(rVelRel2Prog, "VelControl.RelativeVel");
+   SwoAddRealVariable(rActualOverride, "VelControl.ActualOverride");
+   SwoAddBoolVariable(bAnyGunOn, "VelControl.AnyGunOn");
+
+   IF locKinematic.bHasProcess THEN
+      SwoAddRealVariable(svTCPVelocity, "VelControl.TCPVelo");    
+   END_IF;   
+
+   (*
+   IF locKinematic.bHasProcess THEN 
+      SwoAddBoolVariable(svTrigger[1], "Sealing.Gun1");
+      SwoAddBoolVariable(svTrigger[2], "Sealing.Gun2");
+      SwoAddBoolVariable(svTrigger[3], "Sealing.Gun3");
+      SwoAddRealVariable(dsTrigger, "Sealing.dsTrigger");
+      SwoAddRealVariable(dtTrigger, "Sealing.dtTrigger");
+   END_IF;
+   *)
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get high tension on/off - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE GetHighTension(b : BOOL) : BOOL
+   IF NOT locKinematic.progPath.bAppendLate THEN
+      RcuSetMessageOnce(RcuInterfToProces_ErrNoAppndLate, locKinematic.kinListInx, 
+                        1, 0, "TRcuInterfaceToProcess.GetHighTension");
+      RETURN TRUE;
+   END_IF;
+   RETURN b = svHTOff;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Wait high tension on/off - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE WaitHighTension(b : BOOL)
+   WAIT (b = svHTOff);
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Wait high tension on/off - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE ReceiveHighTension(b : BOOL) : BOOL
+   IF b <> svHTOff THEN
+      IF svHTOff THEN
+         WAIT NOT svHTOff;
+      ELSE
+         WAIT svHTOff;
+      END_IF;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Get feedback if PivotingBracket of BellCleanerB is in middle pos -  EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE GetPivotingBracketPos(b : BOOL) : BOOL
+ 
+ IF (b = svPivotingBracketInPos) THEN
+    RETURN TRUE;
+ ELSE
+    MAINRUN();
+    RcuSetMessageOnce(RcuInterfToProces_ErrPivBracket, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.GetPivotingBracketPos");   
+    locKinematic.ErrorReaction(TRUE);
+    RETURN FALSE;
+ END_IF;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// close all the main needles
+//-----------------------------------------------------------------------------
+ROUTINE CloseAllNeedles(OPTIONAL bGoldenReposActive : BOOL)
+  VAR
+     i     : SINT;
+     bOpen : BOOL;
+  END_VAR
+   
+   //needles are closed by golden repos --> modify triggername for pushout
+   IF IS_USED(bGoldenReposActive) AND bGoldenReposActive THEN
+      bOpen := FALSE;
+      IF IS_MAPPED(svTrigger) THEN  
+         FOR i := 1 TO cgiMaxGuns DO 
+            IF svTrigger[i] THEN
+               bOpen := TRUE;
+            END_IF;
+         END_FOR;   
+      END_IF;
+      IF locKinematic.bEnableDvdGluing THEN
+         FOR i:=0 TO locKinematic.nrNeedlesMultiGun-1 DO
+             IF locKinematic.fieldbusOut.yHwMainNeedles[i].svBool THEN
+                bOpen := TRUE;
+             END_IF; 
+         END_FOR;
+      END_IF;
+      IF bOpen THEN
+         svGunTrigger                := "ReposTrigger GUN OFF";
+         svTriggerInfo.zStopTrigger  := "ReposTrigger GUN OFF";
+      END_IF;
+   END_IF;
+   
+   IF locKinematic.bHasProcess THEN
+      //needles are closed by homing --> modify triggername for pushout
+      IF locKinematic.homing.bHomingRun THEN
+         svGunTrigger := "HomingGunOff";
+         svTriggerInfo.zStopTrigger := "HomingGunOff";
+      END_IF;
+      //needles are closed by program abortion --> modify triggername for pushout
+      IF (NOT locKinematic.selectingFlow.present) AND locKinematic.RcuInterfaceToBCU.bAbortProg THEN
+         svGunTrigger := "ProgramEndGunOff";
+         svTriggerInfo.zStopTrigger := "ProgramEndGunOff";
+      END_IF;
+      //close needles
+      FOR i := 1 TO cgiMaxGuns DO 
+         svTrigger[i] := FALSE;
+      END_FOR;   
+   END_IF;
+
+   IF locKinematic.bEnableDvdGluing THEN
+      FOR i:=0 TO locKinematic.nrNeedlesMultiGun-1 DO
+          locKinematic.fieldbusOut.yHwMainNeedles[i].svBool := FALSE;
+      END_FOR;
+      bMultiGunOn := FALSE;
+   END_IF;
+   
+   FOR i := 1 TO cgiMaxGuns DO 
+      GunOnOff[i]  := FALSE;
+   END_FOR;   
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// close all the main needles if waiting for paint pos 
+//-----------------------------------------------------------------------------
+ROUTINE SwitchNeedlesWaitPaintPos(bOn : BOOL)
+ VAR
+   i : SINT;
+ END_VAR
+
+  //not enabled in robotcontrol.cfg / not auto --> nothing to do
+  IF (NOT switchGunAtWaitPaintPos) OR (NOT locKinematic.mainModeMgr.externControl) OR locKinematic.bEnableDvdGluing THEN
+     RETURN;
+  END_IF;
+  
+  //switch off
+  IF NOT bOn THEN
+     ClearNeedleMemory(FALSE);
+     //store gun states
+     IF IS_MAPPED(svTrigger) THEN  
+        FOR i := 1 TO cgiMaxGuns DO
+            IF svTrigger[i] THEN
+               GunOnOffBackUp[i]   := TRUE;
+               bNeedlesSwitchedOff := TRUE;
+            END_IF;
+        END_FOR;  
+     END_IF;   
+     IF bNeedlesSwitchedOff THEN
+        //set info for statistic
+        svGunTrigger                := "WaitPaintPosOff";
+        svTriggerInfo.zStopTrigger  := "WaitPaintPosOff";
+        //close needles as soon as possible
+        CloseAllNeedles();  
+        locKinematic.DebugPrint(eTraceProcess, "Main needles closed - waiting for paint position");
+     END_IF; 
+  //switch on  
+  ELSE
+     //any needle was oen before
+     IF bNeedlesSwitchedOff THEN
+        //set info for statistic
+        svGunTrigger := "WaitPaintPosOn";
+        svTriggerInfo.zStopTrigger  := "";
+        svTriggerInfo.zStartTrigger := "WaitPaintPosOn";
+        FOR i := 1 TO cgiMaxGuns DO
+            IF GunOnOffBackUp[i] THEN
+               GunOnOff[i]  := TRUE;
+               svTrigger[i] := TRUE;
+            ELSE
+               GunOnOff[i]  := FALSE;
+               svTrigger[i] := FALSE;
+            END_IF;
+            bNeedlesSwitchedOff := FALSE;
+       END_FOR;  
+       locKinematic.DebugPrint(eTraceProcess, "Main needles reopened - paint position reached"); 
+     END_IF;
+  END_IF;
+
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// if switchGunAtWaitPaintPos=TRUE check paint pos values
+//-----------------------------------------------------------------------------
+ROUTINE CheckPaintPosValue(rPaintPos : REAL)
+  //not enabled in robotcontrol.cfg / not auto --> nothing to do
+  IF (NOT switchGunAtWaitPaintPos) OR (NOT locKinematic.mainModeMgr.externControl) THEN
+     RETURN;
+  END_IF;
+  IF rPaintPos <= rLastPaintPos THEN        
+     RcuResetMessage(RcuInterfToProces_WarPaintPos, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.CheckPaintPosValue", STR(rPaintPos));
+  END_IF;
+  rLastPaintPos := rPaintPos;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------
+// clear main neddle memory for wait paint pos - called with TRUE by TRcuKinematic.RELEASE
+//------------------------------------------------------------------------------------------
+ROUTINE ClearNeedleMemory(bClearPaintPos : BOOL)
+ VAR
+   i : SINT;
+ END_VAR
+ 
+  //Stop&Go station in automatic and any main needle was opened during this body --> means robot is painting, but without calling WAIT_PROCESS_READY
+  //this leads to that BCU doesn't recognize that robot is painting and "ProcessContinue" is set permanent by mistake 
+  IF bClearPaintPos THEN
+     IF (NOT gbIsTrackingStation) AND (locKinematic.mainModeMgr.mode = ciAuto) AND (NOT locKinematic.RcuInterfaceToBCU.bFixposActive) AND
+        bNeedleWasOpenThisProject AND NOT bWaitProcessReadySet THEN
+        RcuSetMessageOnce(RcuInterfToProces_ErrProcReady , locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ClearNeedleMemory");
+     END_IF;
+     bNeedleWasOpenThisProject := FALSE;
+     bWaitProcessReadySet      := FALSE;
+  END_IF;
+  
+  //not enabled in robotcontrol.cfg --> nothing to do
+  IF (NOT switchGunAtWaitPaintPos) OR locKinematic.bEnableDvdGluing THEN
+     RETURN;
+  END_IF;
+  IF bClearPaintPos THEN
+     rLastPaintPos := locKinematic.tracking.rStartPositionBCU;
+  END_IF;
+  bNeedlesSwitchedOff := FALSE;
+  FOR i := 1 TO cgiMaxGuns DO
+      GunOnOffBackUp[i] := FALSE;
+  END_FOR;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Tell process that robot is in BellCleaner - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE SetInBellCleaner(bIn : BOOL)
+  IF IS_MAPPED(svInBellCleaner) THEN
+     svInBellCleaner := bIn;
+  END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Check if robot is in BellCleaner - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE GetInBellCleaner(bIn : BOOL) : BOOL
+  IF IS_MAPPED(svInBellCleaner) THEN
+     RETURN (svInBellCleaner = bIn);
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Tell process that robot is in CapCleaner - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE SetInCapCleaner(bIn : BOOL)
+  IF IS_MAPPED(svInCapCleaner) THEN
+     svInCapCleaner := bIn;
+  END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Check if robot is in CapCleaner - called from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE GetInCapCleaner(bIn : BOOL) : BOOL
+  IF IS_MAPPED(svInCapCleaner) THEN
+     RETURN (svInCapCleaner = bIn);
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+(*******************************************************************************
+* private members
+*)
+CONSTANT PRIVATE
+   // runtime beetween signaling of trigger and reacting on reaching trigger-position
+   cRuntimeDelay : DINT := 6; //10;  // [ms]
+   //Check if atomizer is in cleaning device 
+   cSizeValidTool  : REAL := 100.0; 
+   cDistNearBox    : REAL := 400.0;
+END_CONSTANT
+
+// Type definition must be exactly the same as in DataTypes.tu on the
+// process control side
+TYPE PRIVATE
+  // Signals that a main needle shall be opened or closed (cgiMaxGuns main needles)
+  Array_Trigger : ARRAY  [1..cgiMaxGuns] OF BOOL;  
+  
+  TTriggerInfo :
+   STRUCT
+      rSeamTolerance  : REAL := 0;
+      zStartTrigger   : STRING := "";
+      zStopTrigger    : STRING := "";
+   END_STRUCT;
+   
+   TAdditionalInfo :
+   STRUCT
+       Label      : STRING[30];
+       Info       : STRING[255];
+   END_STRUCT;
+   
+   TSuppressionInfos :
+   STRUCT
+      iFgNumber   :  INT;
+      zFgName     :  STRING;
+      zFuName     :  STRING;
+      iChannelNr  :  INT;
+   END_STRUCT;   
+   
+   TMessageInfos :
+   STRUCT
+       CompNr     : DINT;
+       MsgNr      : DINT;
+       InstanceNr : DINT;
+       MsgCount   : DINT;
+       DeviceCount: DINT;
+       Location   : STRING := "";
+       PrgName    : STRING := "";
+       LineNr     : DINT;
+       SuppressionInfos : TSuppressionInfos;
+   END_STRUCT;
+   
+   yTMessageInfos : 
+   STRUCT
+       iMsgInfoCounter : DINT;
+       yMsgInfos : ARRAY [1..20] OF TMessageInfos;   
+   END_STRUCT;
+   
+   sRobotToProcessBits :
+   STRUCT
+     bBit1  : BOOL;
+     bBit2  : BOOL;
+     bBit3  : BOOL;
+     bBit4  : BOOL;
+     bBit5  : BOOL;
+     bBit6  : BOOL;
+     bBit7  : BOOL;
+     bBit8  : BOOL;
+     bBit9  : BOOL;
+     bBit10 : BOOL;
+     bBit11 : BOOL;
+     bBit12 : BOOL;
+     bBit13 : BOOL;
+     bBit14 : BOOL;
+     bBit15 : BOOL;
+     bBit16 : BOOL;
+   END_STRUCT;
+   
+   sRobotToProcess :
+   STRUCT
+      sAct : sRobotToProcessBits;
+      sSet : sRobotToProcessBits;
+   END_STRUCT;
+   
+END_TYPE
+
+VAR PRIVATE
+  locKinematic              : MAPTO TRcuRobot;
+  svNumberOfActualBrush     : MAPTO INT;
+  svGunTrigger              : MAPTO STRING; // Gun-Triggername
+  svBrushTrigger            : MAPTO STRING; // Brush-Triggername
+  svTrigger                 : MAPTO Array_Trigger;
+  GunOnOff                  : Array_Trigger;
+  GunOnOffBackUp            : Array_Trigger;
+  bNeedlesSwitchedOff       : BOOL;   //Signal that main needles have been switch off by wait paint pos
+  rLastPaintPos             : REAL;   //value of last paint position sent by macro "WAIT_PAINTPOSITION"
+  bWaitProcessReadySet      : BOOL;   //command "WAIT_PROCESS_READY" was called during this project
+  bNeedleWasOpenThisProject : BOOL;   //any main needle was open during this project
+  // Signals that a motion program is active (might be interrupted)
+  svMotionActive            : MAPTO BOOL;
+  // Signals that a motion program is active and not interrupted
+  svRobotMoving             : MAPTO BOOL;
+  svProcessReady            : MAPTO BOOL; // Signal that movement can start
+  svProcessContinue         : MAPTO BOOL; // Signal that movement can continue
+  svTCPVelocity             : MAPTO REAL; // Actual TCP velocity of the robot
+  svActOverride             : MAPTO INT;    
+  svProgramMainRun          : MAPTO STRING; // indicates programname from mainrun, used for pcu
+  svProgramPreRun           : MAPTO STRING; // indicates programname from prerun, used for pcu
+  svProgramPrewarn          : MAPTO STRING;
+  svHTOff                   : MAPTO BOOL;
+  svWaitingTrackingPos      : MAPTO BOOL;  // Signal that WaitConv or WaitPaintPos is active
+  svInBellCleaner           : MAPTO BOOL;  // to close valves or to set idlebrush2
+  svInCapCleaner            : MAPTO BOOL; 
+  svAtomState               : MAPTO INT;
+  svAtomizerInCleaner       : MAPTO BOOL;  //Signal to IEC that atomizer is in or near cleaner
+  svReleaseProcess          : MAPTO BOOL;  //Atomizer release from BCU
+  svEnableHighTension       : MAPTO BOOL;  //Enable HT is set by PLC
+  svReleaseHighTension      : MAPTO BOOL;  //Release HT is set by PLC
+  svCleaningDeviceExists    : MAPTO INT;   //Signal from IEC if any cleaning device is used
+  
+  // Just because of Primas                
+  actTCPVelocity            : REAL;
+  svTCP_Velocity_Abs        : MAPTO REAL;
+  svTCP_Velocity_Prog       : MAPTO REAL;
+  
+  iCorrPrewarnTime          : DINT;  // prewarn time in [ms] reduced by teachcontrol runtime delay
+  compensateFollowingErrors : BOOL;  // Compensation of the following errors at trigger points 
+  defSeamTolerance          : REAL; // default tolerance from process.ini
+  dsTrigger                 : REAL;
+  // dtTrigger : REAL;
+  rProgrammedVel            : REAL;
+  rTcpVelAbs                : REAL;
+  rVelRel2Prog              : REAL;
+  rActualOverride           : REAL;
+  bAnyGunOn                 : BOOL;
+  bMultiGunOn               : BOOL;  //any needle of multigun is open
+  rLimitFactor              : REAL;
+  
+  rLengthSum                : REAL;
+  yRobotToProcessReset      : ARRAY [1..16] OF BOOL;
+  bInCleaner                : BOOL; //result of calculation  
+  bToolValid                : BOOL; //tool data is valid
+  bInboxFound               : BOOL; //fixpos InBox was found in array
+  rDistTcpCleaner           : REAL; //length of vector
+  bHtEnabledPLC             : BOOL;
+END_VAR
+
+//-----------------------------------------------------------------------------
+// After prewarnTime Trigger is signaled at its real Position 
+// (e.g. for triggers to calc the length of seam in the routine CalcLength)
+//-----------------------------------------------------------------------------
+ROUTINE WaitPrewarnTime(gunNumber : DINT; onOff : TRcuTriggerType; 
+   lastTrigger : DINT; iTriggerStackHdl : DINT; bMRTriggerSignal : BOOL; 
+   pos : TRcuTrigger; posInvalid : BOOL; triggerIdx : DINT) PRIVATE
+   
+VAR
+   kinVelo : REAL;
+   diff    : TMcuVector3;
+   cartTriggerPos : TMcuPosition;
+   actRefSysId    : TMcuDbObjID;
+   validationError : BOOL;
+   d : REAL;
+   mFinalDrives : TMcuJointVector; // Drive values of fine interpolator
+   mainDrive  : TMcuVector;
+   auxDrive   : TMcuVector;
+   mainJoint  : TMcuPosJoints;
+   auxJoint   : TMcuVector;
+   KinPos  : TMcuPosCart;
+   i          : INT;
+   refSysId   : TMcuDbObjID;
+END_VAR
+   
+   IF gunNumber > cgiMaxGuns THEN
+      RcuSetMessageOnce(RcuInterfToProces_ErrGunNr, locKinematic.kinListInx, 2, 0, "RcuInterfaceToProcess.WaitPrewarnTime", STR(gunNumber));
+      RETURN;
+   END_IF;
+   IF (onOff <= eTriggerInvalid) OR (onOff >= eTriggerMax) THEN
+      RcuSetMessageOnce(RcuInterfToProces_ErrGunStWrng, locKinematic.kinListInx, 2, 0, "RcuInterfaceToProcess.WaitPrewarnTime", STR(gunNumber));
+      RETURN;
+   END_IF;
+   
+   WAIT bMRTriggerSignal; // PrewarnTime for calculating seam-length
+   LOCK; // to set this vars consistent is very important for repos, so put them inside a lock
+   IF (onOff = eTriggerGunOn) OR (onOff = eTriggerRepos) THEN
+      GunOnOff[gunNumber] := TRUE;
+      lastGunOn := gunNumber;
+      
+   ELSIF onOff = eTriggerGunOff THEN
+      GunOnOff[gunNumber] := FALSE;
+      lastGunOn := 0;
+     
+   ELSIF onOff = eTriggerBrush THEN
+      SwoRaiseEvent(eScopeSignalBrushMR, "SignalBrushMR");
+   ELSIF onOff = eTriggerProcess THEN
+      SwoRaiseEvent(eScopeSignalProcessMR, "SignalProcessMR");
+   END_IF;
+   IF locKinematic.actCartVals.mRefSysIsExternalTool THEN
+      kinVelo := locKinematic.actCartVals.mPathVeloRel;
+   ELSE
+      kinVelo := locKinematic.actCartVals.mPathVelo;
+   END_IF;
+   locKinematic.progPath.lastExecutedTrigger := lastTrigger;
+   locKinematic.progPath.lastExecJobStackHdl := iTriggerStackHdl;
+   mFinalDrives := locKinematic.actDrives.mPos;
+   
+   // should be reseted inside the eTriggerRepos-clause but since reposTrigger 
+   // is always the first trigger it is more safe to reset it here, to avoid 
+   // problems caused by not executed repos triggers
+   locKinematic.progPath.reposTriggerGun := 0;
+   UNLOCK;
+   
+   IF (onOff = eTriggerGunOn) OR (onOff = eTriggerRepos) THEN
+      SwoRaiseEvent(eScopeSignalGunOnMR, "SignalGunOnMR");
+   ELSIF onOff = eTriggerGunOff THEN
+      SwoRaiseEvent(eScopeSignalGunOffMR, "SignalGunOffMR");
+   ELSIF onOff = eTriggerBrush THEN
+      SwoRaiseEvent(eScopeSignalBrushMR, "SignalBrushMR");
+   ELSIF onOff = eTriggerProcess THEN
+      SwoRaiseEvent(eScopeSignalProcessMR, "SignalProcessMR");
+   END_IF;
+   
+   IF TraceLevel(eTriggerVerify) THEN
+      IF NOT posInvalid AND NOT (onOff = eTriggerRepos) THEN
+         IF locKinematic.actCartVals.mRefSysIsExternalTool THEN
+            RcuRefSysGetMcuId(locKinematic.RcuRefSystemObject, actRefSysId); 
+            pos.GetMcuPos(cartTriggerPos, locKinematic);
+            IF cartTriggerPos.mPosCart.mRefSysID <> actRefSysId THEN // WORLD -> Object
+               locKinematic.DebugPrint(eTraceTrigger, "Transform position to actual Mcu ref-sys");
+               cartTriggerPos.mPosCart.mFrame.mOri := pos.pointFrame.mOri;
+//               McuTransformPosCart(cartTriggerPos.mPosCart, cartTriggerPos.mPosCart, actRefSysId);
+               McuInvertFrame(cartTriggerPos.mPosCart.mFrame, cartTriggerPos.mPosCart.mFrame);
+               McuMultiplyFrames(cartTriggerPos.mPosCart.mFrame, cartTriggerPos.mPosCart.mFrame, locKinematic.actExtTool);
+            END_IF;
+         ELSE
+            actRefSysId := McuGetRefSysForActCartVals(locKinematic.kinematicMcuId);
+            pos.GetMcuPos(cartTriggerPos, locKinematic);
+            IF cartTriggerPos.mPosCart.mRefSysID <> actRefSysId THEN
+               locKinematic.DebugPrint(eTraceTrigger, "Transform position to actual Mcu ref-sys");
+               McuTransformPosCart(cartTriggerPos.mPosCart, cartTriggerPos.mPosCart, actRefSysId); 
+            END_IF;
+         END_IF;
+         
+         // Compute cartesian position (fine interpolator) from drivevalues
+         mainDrive.mValidLen          := locKinematic.nrOfMainJoints;
+         auxDrive.mValidLen           := locKinematic.nrOfAuxJoints;
+         mainJoint.mJoints.mValidLen  := locKinematic.nrOfMainJoints;
+         auxJoint.mValidLen           := locKinematic.nrOfAuxJoints;
+         // Copy axis values for main axis (6 axis e.g.) 
+         FOR i := 0 TO locKinematic.kinematic.mNrOfMainJoints - 1 DO
+            mainDrive.mValues[i] := mFinalDrives[i];
+         END_FOR;
+         // Copy axis values for auxiliary axis
+         FOR i := locKinematic.kinematic.mNrOfMainJoints TO locKinematic.kinematic.mNrOfJoints -1 DO 
+            auxDrive.mValues[i-locKinematic.kinematic.mNrOfMainJoints] := mFinalDrives[i];
+         END_FOR;
+         McuDrivesToJoints(mainJoint.mJoints, auxJoint, mainDrive, 
+                              auxDrive, locKinematic.kinematicMcuId);
+         refSysId := McuGetRefSysForActCartVals(locKinematic.kinematicMcuId);
+         IF locKinematic.kinematic.mForwCoordTrafo THEN
+            McuForwardTrafoAux(KinPos, mainJoint, auxJoint, refSysId, 
+                                    locKinematic.kinematicMcuId, locKinematic.kinToolMcuId);
+         END_IF;
+         
+         locKinematic.DebugPrint(eTriggerVerify, "Executed trigger-pos   : "+STR(KinPos.mFrame.mPos.mValues[0])+"/"
+            +STR(KinPos.mFrame.mPos.mValues[1])+"/"+STR(KinPos.mFrame.mPos.mValues[2]));
+         locKinematic.DebugPrint(eTriggerVerify, "Programmed trigger-pos : "+STR(cartTriggerPos.mPosCart.mFrame.mPos.mValues[0])+"/"
+            +STR(cartTriggerPos.mPosCart.mFrame.mPos.mValues[1])+"/"
+            +STR(cartTriggerPos.mPosCart.mFrame.mPos.mValues[2]));
+         McuSubVector3(diff, cartTriggerPos.mPosCart.mFrame.mPos, KinPos.mFrame.mPos);
+         dsTrigger := McuLenVector3(diff);
+         
+         locKinematic.DebugPrint(eTriggerVerify, "Approximated trigger-failure: "+STR(dsTrigger)+" mm");
+         
+         IF gDoTriggerVerification THEN
+            IF gInitTriggerVerification THEN
+               gTriggerEventData[triggerIdx].mainRunPos := KinPos.mFrame.mPos; 
+            ELSE
+               d := KinPos.mFrame.mPos.mValues[0] - gTriggerEventData[triggerIdx].mainRunPos.mValues[0];
+               validationError := d <> 0.0; //rAbs(d) > gTriggerMaxPosFailure;
+               IF d > gTriggerEventData[triggerIdx].mainRunError[0].max THEN
+                  gTriggerEventData[triggerIdx].mainRunError[0].max := d;
+               END_IF;
+               IF d < gTriggerEventData[triggerIdx].mainRunError[0].min THEN
+                  gTriggerEventData[triggerIdx].mainRunError[0].min := d;
+               END_IF;
+               d := KinPos.mFrame.mPos.mValues[1] - gTriggerEventData[triggerIdx].mainRunPos.mValues[1];
+               validationError := validationError OR (d <> 0.0); //(rAbs(d) > gTriggerMaxPosFailure);
+               IF d > gTriggerEventData[triggerIdx].mainRunError[1].max THEN
+                  gTriggerEventData[triggerIdx].mainRunError[1].max := d;
+               END_IF;
+               IF d < gTriggerEventData[triggerIdx].mainRunError[1].min THEN
+                  gTriggerEventData[triggerIdx].mainRunError[1].min := d;
+               END_IF;
+               d := KinPos.mFrame.mPos.mValues[2] - gTriggerEventData[triggerIdx].mainRunPos.mValues[2];
+               validationError := validationError OR (d <> 0.0); //rAbs(d) > gTriggerMaxPosFailure);
+               IF d > gTriggerEventData[triggerIdx].mainRunError[2].max THEN
+                  gTriggerEventData[triggerIdx].mainRunError[2].max := d;
+               END_IF;
+               IF d < gTriggerEventData[triggerIdx].mainRunError[2].min THEN
+                  gTriggerEventData[triggerIdx].mainRunError[2].min := d;
+               END_IF;
+            END_IF;
+            IF validationError THEN
+               PRINT(STR(KinPos.mFrame.mPos.mValues[0])+ " <-> " + STR(gTriggerEventData[triggerIdx].mainRunPos.mValues[0]));
+               PRINT(STR(KinPos.mFrame.mPos.mValues[1])+ " <-> " + STR(gTriggerEventData[triggerIdx].mainRunPos.mValues[1]));
+               PRINT(STR(KinPos.mFrame.mPos.mValues[2])+ " <-> " + STR(gTriggerEventData[triggerIdx].mainRunPos.mValues[2]));
+               PRINT("trigger error - variation in mainrun position of trigger");
+               SwoRaiseEvent(19, "MainRunPos");
+               //RcuSetError(0, eRcuErrorRuntimeVerification, "trigger error - variation in mainrun position of trigger");
+               //locKinematic.ErrorReaction();   
+            END_IF;
+            IF dsTrigger > gTriggerMaxPosFailure THEN
+               PRINT("trigger error - position error in approximated mainrun position of trigger");
+               SwoRaiseEvent(20, "Approximation");
+               //RcuSetError(0, eRcuErrorRuntimeVerification, "trigger error - position error in approximated mainrun position of trigger");
+               //locKinematic.ErrorReaction();   
+            END_IF;
+         END_IF;
+      ELSE
+         locKinematic.DebugPrint(eTriggerVerify, "No trigger verification (ptp- or circ-segment or repos-trigger)");
+      END_IF;
+      locKinematic.DebugPrint(eTriggerVerify, "--------");
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  read values from process.ini which is not in catalog
+//-----------------------------------------------------------------------------
+ROUTINE ReadProcessIni() PRIVATE
+   VAR
+      iFileHandle : DINT;
+      iReadValue  : TDataVariant;
+      Ini         : TRcuReadCfg;
+      i           : DINT;
+      i2          : MAPTO INT;
+      s           : STRING;
+      s1          : STRING;
+   END_VAR;
+   
+   i2 := MAPX(cSV_iPrewarnTime);
+   IF NOT (IS_MAPPED (i2)) THEN 
+      IF giSysBaseHdl <> 0 THEN
+         IF CatalogReadString(giSysBaseHdl, "applPath", s, TRUE) THEN
+            s := s + "application\control\PCU" + STR(gyiNrPcu[locKinematic.kinListInx]) + "\cfg\Process.cfg";
+         ELSE
+            s := "C:\control\application\control\PCU" + STR(gyiNrPcu[locKinematic.kinListInx]) + "\cfg\Process.cfg";
+         END_IF;
+      END_IF;
+
+      iFileHandle := Ini.OpenIniFile(s);
+      IF iFileHandle <> -1 THEN
+         s1 := "PCU" + STR(gyiNrPcu[locKinematic.kinListInx]);
+         IF Ini.CopyIniGroupToMemory(iFileHandle, s1) THEN
+            // read prewarn time of triggers
+            iReadValue.dataType := eTypeInt;
+            IF Ini.GetIniValue(s1, "PrewarnTime", iReadValue) THEN
+               locKinematic.DebugPrint(eTraceProcess, "Read value from process.cfg for prewarntime: " + STR(iReadValue.dataInt));
+               IF (iReadValue.dataInt <= 0) THEN
+               RcuSetMessageOnce(RcuInterfToProces_FaErrPreTrigNP, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni");
+                  gbBootupError := TRUE;
+               ELSE
+                  i := DINT(iReadValue.dataInt);
+                  grPrewarnTime := i / 1000.0; // ms -> sec, implicit cast from DINT to REAL
+                  redPrewarnTime := i - delayRobotDrives * 1000.0;
+                  IF redPrewarnTime < 0 THEN
+                     redPrewarnTime:=0;
+                  END_IF;
+                  IF locKinematic.hasAxisFilter THEN
+                     iCorrPrewarnTime := redPrewarnTime - cRuntimeDelay - locKinematic.orderOfAxisFilter*grCycleTime;
+                  ELSE
+                     iCorrPrewarnTime := redPrewarnTime - cRuntimeDelay;
+                  END_IF;
+                  IF iCorrPrewarnTime < 0 THEN
+                     iCorrPrewarnTime:=0;
+                  END_IF;
+                  redPrewarnTime := redPrewarnTime/1000.0; // ms -> sec, implicit cast from DINT to REAL
+   //               IF NOT McuSetPreWarnTime(locKinematic.kinematicMcuId, grPrewarnTime) THEN
+                  IF NOT McuSetPreWarnTime(locKinematic.kinematicMcuId, redPrewarnTime) THEN
+                  RcuSetMessageOnce(RcuInterfToProces_FaErrPreTime, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni");
+                     gbBootupError := TRUE;
+                  ELSE
+                  RcuSetMessageOnce(RcuInterfToProces_InfPreTimeSet, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni", STR(i));
+                  END_IF;
+               END_IF;
+            ELSE
+            RcuSetMessageOnce(RcuInterfToProces_FaErrReadCfg, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni", "PrewarnTime");
+               gbBootupError := TRUE;
+            END_IF;
+         ELSE
+         RcuSetMessageOnce(RcuInterfToProces_FaErrReadCfg, locKinematic.kinListInx, 2, 0, "RcuInterfaceToProcess.ReadProcessIni", "PrewarnTime");
+            gbBootupError := TRUE;
+         END_IF;
+         // read DefaultTolerance from process.ini
+         iReadValue.dataType := eTypeReal;
+         IF Ini.GetIniValue("IECProcessAppliedVolumes", "DefaultTolerance", iReadValue) THEN
+           locKinematic.DebugPrint(eTraceProcess, "Read value from process.ini for DefaultTolerance " + STR(iReadValue.dataReal));
+           defSeamTolerance := iReadValue.dataReal;
+         END_IF;
+
+         Ini.CloseIniFile(iFileHandle);
+      ELSE
+      RcuSetMessageOnce(RcuInterfToProces_FaErrReadCfg, locKinematic.kinListInx, 3, 0, "RcuInterfaceToProcess.ReadProcessIni", "PrewarnTime");
+         gbBootupError := TRUE;
+      END_IF;
+   ELSE
+         IF (i2 <= 0) THEN
+            RcuSetMessageOnce(RcuInterfToProces_FaErrPreTrigNP, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni");
+            gbBootupError := TRUE;
+         ELSE
+            i := DINT(i2);
+            grPrewarnTime := i / 1000.0; // ms -> sec, implicit cast from DINT to REAL
+            redPrewarnTime := i - delayRobotDrives * 1000.0;
+            IF redPrewarnTime < 0 THEN
+               redPrewarnTime:=0;
+            END_IF;
+            IF locKinematic.hasAxisFilter THEN
+               iCorrPrewarnTime := redPrewarnTime - cRuntimeDelay - locKinematic.orderOfAxisFilter*grCycleTime;
+            ELSE
+               iCorrPrewarnTime := redPrewarnTime - cRuntimeDelay;
+            END_IF;
+            IF iCorrPrewarnTime < 0 THEN
+               iCorrPrewarnTime:=0;
+            END_IF;
+            redPrewarnTime := redPrewarnTime/1000.0; // ms -> sec, implicit cast from DINT to REAL
+            IF NOT McuSetPreWarnTime(locKinematic.kinematicMcuId, redPrewarnTime) THEN
+               RcuSetMessageOnce(RcuInterfToProces_FaErrPreTime, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni");
+               gbBootupError := TRUE;
+            ELSE
+               RcuSetMessageOnce(RcuInterfToProces_InfPreTimeSet, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.ReadProcessIni", STR(i));
+            END_IF;
+         END_IF;   
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Tracking of the state of the motion program
+// Override = 0 -> svRobotMoving is still TRUE
+//-----------------------------------------------------------------------------
+ROUTINE ProgActiveWatcher() PRIVATE
+   VAR
+      bKinPresent : BOOL;
+  END_VAR
+
+   bKinPresent := IS_CHANGED(locKinematic.selectingFlow.present);
+   bKinPresent := TRUE; // Init
+   
+   WHILE TRUE DO
+      WAIT bKinPresent;
+      
+      IF bKinPresent THEN
+         IF (locKinematic.selectingFlow.present) THEN
+            IF locKinematic.bEnableDvdGluing THEN
+               locKinematic.fieldbusOut.wOverride.svWord := 100; //default is 100% 
+            ELSE   
+               svNumberOfActualBrush  := 0; //default
+               svGunNumberOfActualBrush := 0;
+               iBrushNumberEps        := 0;
+            END_IF;
+         ELSE
+            // Reset gun triggers
+            Reset_svTrigger();
+            IF locKinematic.bEnableDvdGluing THEN
+               locKinematic.fieldbusOut.wOverride.svWord := 100; //default is 100% 
+            ELSE
+               svNumberOfActualBrush := 0;
+               svGunNumberOfActualBrush := 0;      
+               iBrushNumberEps       := 0;
+            END_IF;
+            IF locKinematic.bHasProcess THEN
+               svMotionAbortPushOut := FALSE;
+            END_IF;
+         END_IF;
+         bKinPresent := FALSE;
+      END_IF;
+      
+  END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Tracking of the actual TCP velocity of the robot
+//-----------------------------------------------------------------------------
+ROUTINE ActPathVelo() PRIVATE
+   VAR
+      bVeloChanged : BOOL;
+      progHdl  : DINT;
+      sProgramNameMainRun : STRING;
+      iLineNumberMainRun : DINT;
+      sProgramNamePreRun : STRING;
+      iLineNumberPreRun : DINT;
+      sBackup : STRING;
+   END_VAR
+
+   bVeloChanged := IS_CHANGED(locKinematic.actCartVals.mPathVelo);
+   // error 190: does not work!!! value is set from the MCU?
+   bVeloChanged := TRUE;
+
+   WHILE TRUE DO
+ //   WAIT bVeloChanged;
+      
+      IF IS_MAPPED(svRobotMoving) THEN
+         IF svRobotMoving THEN
+            IF locKinematic.rActProgVelocity > 0.0 THEN               
+               // actTCPVelocity is used by the routine CompensateDriveDelays
+               actTCPVelocity := locKinematic.actCartVals.mPathVeloRel;
+               svTCPVelocity  := actTCPVelocity / locKinematic.rActProgVelocity;
+            END_IF;
+ //         bVeloChanged := FALSE;
+         ELSE
+            actTCPVelocity := 0.0;
+            svTCPVelocity  := 0.0;
+         END_IF;
+      ELSE
+         actTCPVelocity := 0.0;
+         svTCPVelocity  := 0.0;
+      END_IF;
+      
+      IF svTCPVelocity > 1.0 THEN
+          svTCPVelocity := 1.0;
+      END_IF;
+
+      // Just because of Primas
+      IF IS_MAPPED(svRobotMoving)       AND
+         IS_MAPPED(svTCP_Velocity_Abs)  AND
+         IS_MAPPED(svTCP_Velocity_Prog) THEN         
+
+         IF svRobotMoving THEN
+           svTCP_Velocity_Abs  := actTCPVelocity;
+           svTCP_Velocity_Prog := locKinematic.rActProgVelocity;
+         ELSE
+            svTCP_Velocity_Abs  := 0.0;
+            svTCP_Velocity_Prog := 0.0;
+         END_IF;
+      ELSE
+//         svTCP_Velocity_Abs  := 0.0;
+//         svTCP_Velocity_Prog := 0.0;
+      END_IF;
+      svActOverride := locKinematic.override/10;
+            
+      // get ProgramHandle 
+      progHdl := PaintRobot[locKinematic.kinListInx].selectingFlow.flowId;
+      GetUserProgLine(progHdl, TRUE, sProgramNameMainRun, iLineNumberMainRun);
+      GetUserProgLine(progHdl, FALSE,sProgramNamePreRun, iLineNumberPreRun);
+      svProgramMainRun := sProgramNameMainRun;
+      svProgramPreRun := sProgramNamePreRun;
+      svProgramPrewarn:= locKinematic.RcuInterfaceToProcess.sModuleName;
+
+      locKinematic.WaitMcMicroCycles(5);
+   END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Kemroskop
+//-----------------------------------------------------------------------------
+ROUTINE ActPathVelo2Scope() PRIVATE
+VAR
+   i : INT;
+END_VAR
+
+   WHILE TRUE DO
+      rProgrammedVel := locKinematic.rActProgVelocity;
+      rTcpVelAbs     := locKinematic.actCartVals.mPathVelo;
+      IF locKinematic.rActProgVelocity > 0.0 THEN               
+         rVelRel2Prog   := locKinematic.actCartVals.mPathVeloRel / locKinematic.rActProgVelocity;
+      ELSE
+         rVelRel2Prog   := 0.0;
+      END_IF;
+      rActualOverride := locKinematic.override/10;
+      IF locKinematic.bEnableDvdGluing THEN
+         bAnyGunOn := bMultiGunOn;
+      ELSE
+         bAnyGunOn := FALSE;
+         FOR i := 1 TO cgiMaxGuns  DO
+            bAnyGunOn := bAnyGunOn OR GunOnOff[i];
+         END_FOR;
+         //bAnyGunOn       := GunOnOff[1] OR GunOnOff[2] OR GunOnOff[3];
+      END_IF;
+      locKinematic.WaitMcMicroCycles(1);
+   END_WHILE;
+END_ROUTINE
+
+
+
+ROUTINE ActPathVelo2Vision() PRIVATE
+   VAR
+      iPathVeloNormalized : INT;
+      iPathVeloNormalized2 : INT;
+   END_VAR
+   
+   WHILE TRUE DO
+      IF IS_MAPPED(locKinematic.gluing.iSeamCheckActPathVelo) THEN
+         IF locKinematic.gluing.btSeamCheckActivate = 1 THEN
+            // ToDo: Maximum speed for ISRA seamstar is 400 mm/s 
+            // only 10 bits of the interface are used (16 bit is the complete interface)
+            // 100 % speed means 1023 (all 10 bits are set)
+            // the fisrt 5 bits are unused, i.e. the value must be shifted by 5 bits
+            
+            iPathVeloNormalized := INT(locKinematic.actCartVals.mPathVeloRel / 400 * 1023); 
+            
+            iPathVeloNormalized2 := SHL(iPathVeloNormalized,5);
+            locKinematic.gluing.iSeamCheckActPathVelo := iPathVeloNormalized2; 
+         ELSE
+            locKinematic.gluing.iSeamCheckActPathVelo := 0;
+         END_IF;
+      END_IF;
+ 
+      locKinematic.WaitMcMicroCycles(1);
+   END_WHILE;
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------
+// Copy actual TCP spped to PLC interface
+//-------------------------------------------------------------------------------------
+ROUTINE ActPathVelo2PLC() PRIVATE
+ VAR
+   velo : REAL;
+ END_VAR
+
+  IF NOT IS_MAPPED(locKinematic.fieldbusOut.wTcpSpeed.svWord) THEN
+     RETURN;
+  END_IF;
+  WHILE TRUE DO 
+     velo := rAbs(locKinematic.actCartVals.mPathVeloRel);
+     locKinematic.fieldbusOut.wTcpSpeed.svWord := INT(velo);
+     locKinematic.WaitMcMicroCycles(1);
+  END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// 
+//-----------------------------------------------------------------------------
+ROUTINE SpeedCheck AT bSpeedCheck PRIVATE
+
+   WHILE bSpeedCheck DO
+      IF NOT locKinematic.bRcuAnyErrorPending THEN
+         IF bAnyGunOn THEN
+            IF rVelRel2Prog < rLimitFactor * rActualOverride/100 THEN
+               RcuSetMessageOnce(RcuInterfToProces_ErrActVelLow, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.SpeedCheck", STR(rVelRel2Prog*100));
+            END_IF;
+         END_IF;
+      ELSIF locKinematic.bRcuAnyErrorPending THEN
+         WAIT locKinematic.bRobotMoving;
+         locKinematic.WaitMcMicroCycles(100);
+      END_IF;
+      locKinematic.WaitMcMainCycles(1);
+   END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// calculates the length of the path from GunOn to GunOff
+// 20.01.05 nmr: code optimization - more simple and faster
+//-----------------------------------------------------------------------------
+ROUTINE CalcLength() PRIVATE
+   VAR
+      updCntChg : BOOL;
+      bGunOldState : ARRAY  [1..cgiMaxGuns] OF BOOL;
+      rLength : ARRAY  [1..cgiMaxGuns] OF REAL;
+      rX : ARRAY  [1..cgiMaxGuns] OF REAL;
+      rY : ARRAY  [1..cgiMaxGuns] OF REAL;
+      rZ : ARRAY  [1..cgiMaxGuns] OF REAL;
+      x : REAL;
+      y : REAL;
+      z : REAL;
+      pos   : TMcuVector3;
+      rd    : TMcuVector3;
+      i     : INT;
+      //time1 : LINT;
+      //time2 : LINT;
+      //diff  : LINT;
+   END_VAR
+
+   FOR i:=1 TO cgiMaxGuns DO
+      rLength[i] := 0.0;
+      bGunOldState[i] := GunOnOff[i];
+   END_FOR;
+
+   updCntChg := IS_CHANGED(locKinematic.actDrives.mUpdateCounterDrives);
+   WHILE TRUE DO
+      WAIT updCntChg;
+      updCntChg := FALSE;
+      IF locKinematic.actCartVals.mRefSysIsExternalTool THEN
+         pos := locKinematic.actCartVals.mTcpPosRel;
+      ELSE
+         pos := locKinematic.actCartVals.mPos;
+      END_IF;
+      x := pos.mValues[0];
+      y := pos.mValues[1];
+      z := pos.mValues[2];
+      FOR i:=1 TO cgiMaxGuns DO
+         IF (bGunOldState[i] = FALSE) AND (GunOnOff[i] = TRUE) THEN
+            rLength[i] := 0.0;
+            rX[i] := x;
+            rY[i] := y;
+            rZ[i] := z;
+            locKinematic.DebugPrint(eTraceProcess, "CalcLength GUN ON : X = " + STR(x) + " Y = " + STR(y) + " Z = " + STR(z));
+         ELSIF (GunOnOff[i] = TRUE) THEN
+            rd.mValues[0] := rX[i] - x;
+            rd.mValues[1] := rY[i] - y;
+            rd.mValues[2] := rZ[i] - z;
+            rLength[i] := rLength[i] + McuLenVector3(rd);            
+            rX[i] := x;
+            rY[i] := y;
+            rZ[i] := z;
+         ELSIF (bGunOldState[i] = TRUE) AND (GunOnOff[1] = FALSE) THEN
+            //SysTimerGetUs(time1);
+            rd.mValues[0] := rX[i] - x;
+            rd.mValues[1] := rY[i] - y;
+            rd.mValues[2] := rZ[i] - z;
+            rLength[i] := rLength[i] + McuLenVector3(rd);            
+            rX[i] := x;
+            rY[i] := y;
+            rZ[i] := z;
+            //SysTimerGetUs(time2);
+            //diff := time2-time1;
+            //locKinematic.DebugPrint(eTraceProcess, "time: "+STR(diff));
+            locKinematic.DebugPrint(eTraceProcess, "---- length of seam with GUN " + STR(i) + " = " + STR(rLength[i]));
+            rLengthSum := rLengthSum + rLength[i];
+            locKinematic.DebugPrint(eTraceProcess, "CalcLength GUN OFF : X = " + STR(x) + " Y = " + STR(y) + " Z = " + STR(z));
+         END_IF;
+         bGunOldState[i] := GunOnOff[i];
+      END_FOR;
+   END_WHILE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// get process ready for teach pendant LED
+//-----------------------------------------------------------------------------
+ROUTINE GetProcessReady() : BOOL
+  IF IS_MAPPED(svAtomState) AND IS_MAPPED(svProcessContinue) AND IS_MAPPED(svProcessReady) THEN
+     RETURN (svAtomState = 2) AND (svProcessContinue OR svProcessReady); //Atomizer green on HMI
+  ELSE   
+     RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Resets the interface variable for gun triggers
+//-----------------------------------------------------------------------------
+ROUTINE Reset_svTrigger() PRIVATE
+
+   CloseAllNeedles();
+   locKinematic.DebugPrint(eTraceProcess, "---- total length of seam = " + STR(rLengthSum));
+   rLengthSum := 0.0;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Signal that robot is in preposition set in mainrun
+//-----------------------------------------------------------------------------
+ROUTINE WaitMainRun(signal : BOOL) PRIVATE
+VAR
+   sig : MAPTO BOOL;
+END_VAR;
+
+   sig := MAP(signal);
+   WAIT MAIN_RUN;
+   locKinematic.bInPreposition := TRUE;
+   bWaitProcessReadySet        := TRUE;
+   IF locKinematic.bHasProcess THEN
+      WAIT sig;
+   END_IF;
+   locKinematic.WaitMcMicroCycles(5);
+   locKinematic.bInPreposition := FALSE;
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+// Set a msg to telnet depending on Process-states
+//-----------------------------------------------------------------------------
+ROUTINE ProcessReadyPrint(Intern : BOOL) PRIVATE
+   WAIT MAIN_RUN OR Intern;
+   IF locKinematic.bHasProcess THEN
+      IF NOT Intern THEN
+         IF svProcessActive AND NOT svProcessReady THEN
+            locKinematic.DebugPrint(eTraceProcess, "Waiting until paint process gets ready");
+            WAIT svProcessReady OR (NOT svProcessActive);
+            IF svProcessReady THEN
+               locKinematic.DebugPrint(eTraceProcess, "Paint process is ready - end of waiting");
+            ELSE
+               locKinematic.DebugPrint(eTraceProcess, "Paint process got inactive - end of waiting");
+            END_IF;
+         END_IF;
+      ELSE
+         IF svProcessActive AND NOT svProcessContinue THEN
+            locKinematic.DebugPrint(eTraceProcess, "Waiting until paint process gets ready");
+            WAIT svProcessContinue OR (NOT svProcessActive);
+            IF svProcessContinue THEN
+               locKinematic.DebugPrint(eTraceProcess, "Paint process is ready - end of waiting");
+            ELSE
+               locKinematic.DebugPrint(eTraceProcess, "Paint process got inactive - end of waiting");
+            END_IF;
+         END_IF;
+      END_IF; 
+   END_IF;
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------
+// Signal that WaitConv or WaitPaintPos is active to close valves or to set idlebrush2
+//-------------------------------------------------------------------------------------
+ROUTINE ObserveWaitingTrackingPos()
+ VAR
+  bChg : BOOL;
+ END_VAR
+ 
+  IF NOT IS_MAPPED(svWaitingTrackingPos) THEN
+     RETURN;
+  END_IF;
+  bChg := IS_CHANGED(locKinematic.bWaitingTrackingPos);
+  WHILE TRUE DO 
+    svWaitingTrackingPos := locKinematic.bWaitingTrackingPos;
+    bChg := FALSE;
+    WAIT bChg;
+  END_WHILE;
+  
+END_ROUTINE
+
+
+// Gluing: Postion of the applicator ("Schwenkantrieb" SA) is send to IEC
+ROUTINE SetApplicator_Position(Position : APP_POS)
+
+   IF IS_MAPPED(svSetAppPos) THEN
+      svSetAppPos := Position;
+   ELSE
+      // TODO Error
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE Wait_Applicator_In_Position(Position : APP_POS)
+   VAR
+      ready : BOOL;
+   END_VAR
+   
+   IF IS_MAPPED(svActAppPos) THEN
+      ready := FALSE;
+      IF NOT (svActAppPos = Position) THEN
+         WAIT (svActAppPos = Position);
+      END_IF;
+      ready := TRUE;
+   ELSE
+      // TODO Error
+   END_IF;
+
+END_ROUTINE
+
+
+ROUTINE WaitPistonChangeFinished()
+   IF (NOT svProcessReady) OR (svPistonChange AND NOT svPistonDegrade) THEN
+      DebugPrint(eTraceProcess, "Waiting until piston changed");
+      WAIT (svProcessReady AND NOT svPistonChange) OR NOT svProcessActive;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE WaitTankStopFinished()
+   IF (NOT svProcessReady) OR (svTankStop AND svPistonDegrade) THEN
+      DebugPrint(eTraceProcess, "Waiting until piston is refilled");
+      WAIT (svProcessReady AND NOT svTankStop) OR NOT svProcessActive;
+   END_IF;
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------
+// Move to a point on raising edge of signal and modify rail axis to current position
+// Move to a point but use current position for rail axis
+//-------------------------------------------------------------------------------------
+ROUTINE PointModifyRailAxis(type : TMcuInterpolationType; line : DINT; point : POINT; OPTIONAL signal : TInOutBool)
+  VAR
+    i           : SINT;
+    hasAuxJoint : BOOL;
+    iNrAux      : SINT;
+    distAux     : REAL;
+    distPath    : REAL;
+    distRot     : REAL;
+    jointPos    : TMcuPosJoints;
+    auxJoints   : TMcuVector;
+    refSysId    : TMcuDbObjID;
+    cartPos     : TMcuPosCart;
+    objPos      : TMcuFrame;
+    diff        : TMcuVector3;
+    angle       : REAL;
+    time        : REAL;
+    modifyPoint : BOOL;
+    resetPath   : BOOL;
+    rOrgAuxPos  : REAL;
+    cRotZ       : INT := 2;
+  END_VAR
+          
+  //point has to be in coord axis becuase of the fixpos feedback      
+  IF (point.Coord <> Axis) THEN
+     RcuSetMessageOnce(RcuInterfToProces_ErrNotAxis, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.PointModifyRailAxis", "LIN_RailAtSignal/LIN_RailAtCurrentPos", STR(line));
+     locKinematic.ErrorReaction(TRUE);
+     RETURN;
+  END_IF;               
+  //check if robot has any linear auxiliary joint
+  IF (locKinematic.nrOfAuxJoints > 0) THEN   
+     FOR i := 0 TO locKinematic.nrOfAuxJoints - 1 DO
+         IF (locKinematic.kinematic.mJoints[locKinematic.kinematic.mNrOfMainJoints + i].mDHParam.mTyp = eMcuJointLin) THEN
+            iNrAux      := i;
+            hasAuxJoint := TRUE;
+         END_IF;
+     END_FOR;
+     IF NOT hasAuxJoint THEN
+        RcuSetMessageOnce(RcuInterfToProces_ErrNoLinAux, locKinematic.kinListInx, 2, 0, "RcuInterfaceToProcess.PointModifyRailAxis", "LIN_RailAtSignal/LIN_RailAtCurrentPos", STR(line));
+        locKinematic.ErrorReaction(TRUE);
+        RETURN;
+     END_IF;
+  ELSE
+     hasAuxJoint := FALSE;
+  END_IF;
+  
+  IF hasAuxJoint THEN
+     //Wait until Signal is TRUE or Mainrun   
+     IF IS_USED(signal) THEN   
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess.PointModifyRailAxis - CmdCount before WAIT=" + STR(locKinematic.progPath.cmdCount));
+        WAIT MAIN_RUN OR (signal.svBool AND (locKinematic.progPath.cmdCount < 2));    
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess.PointModifyRailAxis - CmdCount after WAIT=" + STR(locKinematic.progPath.cmdCount));
+     ELSE
+        WAIT MAIN_RUN;
+     END_IF;
+     //auxiliary joint is tracking --> impossible to modify path while tracking
+     IF gbIsTrackingStation AND locKinematic.trackingActive THEN 
+        RcuSetMessageOnce(RcuInterfToProces_ErrTrackActiv, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.PointModifyRailAxis", "LIN_RailAtSignal/LIN_RailAtCurrentPos", STR(line));
+        locKinematic.ErrorReaction(TRUE);
+        RETURN;
+     END_IF;
+     //calculate new position of aux joint
+     distAux    := 400.0;                     //only init value, overwritten later - used for distance aux joint has to move
+     jointPos.mJoints.mValidLen  := locKinematic.nrOfMainJoints;
+     jointPos.mJoints.mValues[0] := point.A;
+     jointPos.mJoints.mValues[1] := point.B;
+     jointPos.mJoints.mValues[2] := point.C;
+     jointPos.mJoints.mValues[3] := point.D;
+     jointPos.mJoints.mValues[4] := point.E;
+     jointPos.mJoints.mValues[5] := point.F;
+     auxJoints.mValidLen         := locKinematic.nrOfAuxJoints;
+     //only the linear moving aux joint is modified, take other values from teached point
+     CASE iNrAux OF
+        0: auxJoints.mValues[0]        := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[0];
+           auxJoints.mValues[1]        := point.Aux2;
+           auxJoints.mValues[2]        := point.Aux3;
+        1: auxJoints.mValues[0]        := point.Aux1;
+           auxJoints.mValues[1]        := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[1];
+           auxJoints.mValues[2]        := point.Aux3;
+        2: auxJoints.mValues[0]        := point.Aux1;
+           auxJoints.mValues[1]        := point.Aux2;
+           auxJoints.mValues[2]        := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[2];
+     END_CASE;
+     //distance from actual position to teached point is added to aux joint - robot is moving slow --> aux joint is able to follow
+     IF NOT RcuRefSysGetMcuId(locKinematic.RcuRefSystemObject, refSysId) THEN 
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess.PointModifyRailAxis - Error RcuRefSystemObject = "+STR(locKinematic.RcuRefSystemObject)+" refSysId = "+STR(refSysId));
+     ELSE
+        IF NOT McuForwardTrafoAux(cartPos, jointPos, auxJoints, refSysId, locKinematic.kinematicMcuId, locKinematic.kinToolMcuId) THEN
+           locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess.PointModifyRailAxis - Error McuForwardTrafoAux ");
+        ELSE
+           objPos := locKinematic.readBackObjectPos;  
+           //calculate distance between points
+           McuSubVector3(diff, cartPos.mFrame.mPos, objPos.mPos);
+           distPath := McuLenVector3(diff);     
+           //calculate RotZ distance
+           angle := rAbs(cartPos.mFrame.mOri.mValues[cRotZ] - objPos.mOri.mValues[cRotZ]);
+           time  := angle / locKinematic.progPath.dynamic.mTurn.mVelo;
+           distRot := locKinematic.progPath.dynamic.mCart.mVelo * time;
+           locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis distRot=" + STR(distRot));
+           IF (distPath >= distRot) THEN
+              distAux := distPath;
+              locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis distPath=" + STR(distPath) + " distRot=" + STR(distRot) + " distPath is used");
+           ELSE
+              distAux := distRot;
+              locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis distPath=" + STR(distPath) + " distRot=" + STR(distRot) + " distRot is used");
+           END_IF;
+        END_IF;
+     END_IF;
+     //input signal is TRUE --> stop movement, cancel movement commands and move to teached point 
+     IF IS_USED(signal) AND signal.svBool THEN   
+        modifyPoint := TRUE;
+        resetPath   := TRUE;
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess.PointModifyRailAxis - Signal=TRUE - nrAux=" + STR(iNrAux) + " pos=" + STR(locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]));
+     ELSIF IS_USED(signal) AND NOT signal.svBool THEN  
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis waiting for signal - main run has reached point before signal raised"); 
+        WAIT signal.svBool;
+        modifyPoint := FALSE;
+        resetPath   := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis end waiting for signal - nothing to do, because main run has reached point");
+     ELSE
+        modifyPoint := TRUE;
+        resetPath   := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis main run has reached point - nrAux=" + STR(iNrAux) + " pos=" + STR(locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]));
+     END_IF;
+     //delete already calculated movement commands
+     IF resetPath THEN
+        McuStopMove(locKinematic.kinematicMcuId);             
+        WAIT locKinematic.isNotMovingOnPath;                  
+        locKinematic.progPath.EndMotionCommands();            
+        locKinematic.RcuSetPathPos(locKinematic.noPath);      
+        locKinematic.progPath.Clear();          
+     END_IF;   
+     //modify auxiliary joint position
+     IF modifyPoint THEN
+        CASE iNrAux OF
+           0: rOrgAuxPos := point.Aux1;
+              IF ((rOrgAuxPos + distAux) < locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]) THEN  //moving A7 in negative direction
+                 point.Aux1 := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux] - distAux;
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis modified point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " org=" + STR(rOrgAuxPos) + " new=" + STR(point.Aux1));
+              ELSIF ((rOrgAuxPos - distAux) > locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]) THEN //moving A7 in poitive direction
+                 point.Aux1 := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux] + distAux;
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis modified point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " org=" + STR(rOrgAuxPos) + " new=" + STR(point.Aux1));
+              ELSE
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " pos=" + STR(point.Aux1) + " not modified");
+              END_IF;
+           1: rOrgAuxPos := point.Aux2;
+              IF ((rOrgAuxPos + distAux) < locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]) THEN  //moving A8 in negative direction
+                 point.Aux2 := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux] - distAux;
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis modified point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " org=" + STR(rOrgAuxPos) + " new=" + STR(point.Aux2));
+              ELSIF ((rOrgAuxPos - distAux) > locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]) THEN //moving A8 in poitive direction
+                 point.Aux2 := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux] + distAux;
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis modified point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " org=" + STR(rOrgAuxPos) + " new=" + STR(point.Aux2));
+              ELSE
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " pos=" + STR(point.Aux2) + " not modified");
+              END_IF;
+           2: rOrgAuxPos := point.Aux3;
+              IF ((rOrgAuxPos + distAux) < locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]) THEN  //moving A9 in negative direction
+                 point.Aux3 := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux] - distAux;
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis modified point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " org=" + STR(rOrgAuxPos) + " new=" + STR(point.Aux3));
+              ELSIF ((rOrgAuxPos - distAux) > locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux]) THEN //moving A9 in poitive direction
+                 point.Aux3 := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[iNrAux] + distAux;
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis modified point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " org=" + STR(rOrgAuxPos) + " new=" + STR(point.Aux3));
+              ELSE
+                 locKinematic.DebugPrint(eTraceProcess, "RcuInterfaceToProcess PointModifyRailAxis point=" + point.GetName() + " AuxNr=" + STR(iNrAux) + " pos=" + STR(point.Aux3) + " not modified");
+              END_IF;
+         END_CASE;
+         IF resetPath THEN
+            locKinematic.RcuSetPathPos(locKinematic.progPath);        //continue movement
+            IF NOT McuMove(locKinematic.kinematicMcuId) THEN
+               RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, locKinematic.kinListInx, 1, 0, "RcuInterfaceToProcess.PointModifyRailAxis", locKinematic.robotName, "McuMove");
+               locKinematic.ErrorReaction(TRUE);
+               RETURN;
+            END_IF;
+         END_IF;    
+     END_IF;
+  END_IF;
+    
+  IF type = eMcuAxisInterpolation THEN
+     locKinematic.progPath.Ptp(point);
+  ELSIF type = eMcuCartesianInterpolation THEN
+     locKinematic.progPath.Lin(point); 
+  END_IF;    
+        
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------
+// Called from EcoTalk - Get color group - 0=invalid, 1=OK, 2=Not configured for PushOut
+//-------------------------------------------------------------------------------------
+ROUTINE GetColorGroup(colorGroup : INT) : BOOL
+
+  //IEC hastn't prepared the information in PreRun, wait for main run and try once more
+  IF (svActualColGrpState = 0) THEN
+     MAINRUN();
+  END_IF;
+  
+  //0 = IEC doesn't offer the needed information
+  IF (svActualColGrpState = 0) THEN
+     //No error treatment in teach mode
+     IF (locKinematic.mainModeMgr.mode = ciT1) OR (locKinematic.mainModeMgr.mode = ciT2) THEN
+        RETURN FALSE;
+     //mode autometic
+     ELSIF svProcessActive THEN
+        STOPPOINT();
+        RcuSetMessageOnce(RcuInterfToProces_ErrNoFeedBack, locKinematic.kinListInx, 1, 0, "EcoTalk.GET_COLORGROUP", "GET_COLORGROUP");  
+        locKinematic.ErrorReaction(TRUE);
+     END_IF;   
+  //1 = IEC delievers actual color group for push out   
+  ELSIF (svActualColGrpState = 1) THEN
+     RETURN (colorGroup = svActualColorGroup);         
+  //2 = requested color group is not configured for PushOut in Typelist   
+  ELSIF (svActualColGrpState = 2) AND (colorGroup = svActualColorGroup) AND svProcessActive THEN   
+     STOPPOINT();
+     RcuSetMessageOnce(RcuInterfToProces_ErrColGrpNCfg, locKinematic.kinListInx, 1, 0, "EcoTalk.GET_COLORGROUP", "GET_COLORGROUP", STR(colorGroup));  
+     locKinematic.ErrorReaction(TRUE);  
+  END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//send information from EcoTalk to Process (PCU)
+ROUTINE SetBitProcessInterface(bitNr : TRcuInterfaceToPCU; state : IOTYPE; resetAtProgEnd : TRcuResetAtProgEnd)
+ VAR
+  sLogText : STRING;
+ END_VAR 
+ 
+  IF (resetAtProgEnd = ResetAtProgEnd) THEN
+     IF (state = High) THEN
+        sLogText := "=TRUE - ResetAtProgEnd";
+     ELSE
+        sLogText := "=FALSE - ResetAtProgEnd";
+     END_IF;
+  ELSE
+     IF (state = High) THEN
+        sLogText := "=TRUE - NOT ResetAtProgEnd";
+     ELSE
+        sLogText := "=FALSE - NOT ResetAtProgEnd";
+     END_IF;
+  END_IF;
+  
+  CASE bitNr OF
+    1:  svRobotToProcess.sAct.bBit1  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit1" + sLogText;
+    2:  svRobotToProcess.sAct.bBit2  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit2" + sLogText;
+    3:  svRobotToProcess.sAct.bBit3  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit3" + sLogText;
+    4:  svRobotToProcess.sAct.bBit4  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit4" + sLogText;
+    5:  svRobotToProcess.sAct.bBit5  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit5" + sLogText;
+    6:  svRobotToProcess.sAct.bBit6  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit6" + sLogText;
+    7:  svRobotToProcess.sAct.bBit7  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit7" + sLogText;
+    8:  svRobotToProcess.sAct.bBit8  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit8" + sLogText;
+    9:  svRobotToProcess.sAct.bBit9  := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit9" + sLogText;
+    10: svRobotToProcess.sAct.bBit10 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit10" + sLogText;
+    11: svRobotToProcess.sAct.bBit11 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit11" + sLogText;
+    12: svRobotToProcess.sAct.bBit12 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit12" + sLogText;
+    13: svRobotToProcess.sAct.bBit13 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit13" + sLogText;
+    14: svRobotToProcess.sAct.bBit14 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit14" + sLogText;
+    15: svRobotToProcess.sAct.bBit15 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit15" + sLogText;
+    16: svRobotToProcess.sAct.bBit16 := (state = High);
+        sLogText := "SET_PROCESS_INTERFACE - bit16" + sLogText;
+  END_CASE;
+  yRobotToProcessReset[bitNr] := (resetAtProgEnd = ResetAtProgEnd);
+  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, sLogText);
+  
+END_ROUTINE
+
+ROUTINE InitRobotToProcess()
+  IF yRobotToProcessReset[1] THEN 
+     svRobotToProcess.sAct.bBit1 := FALSE;  
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit1 reset");  
+  END_IF; 
+  IF yRobotToProcessReset[2] THEN 
+     svRobotToProcess.sAct.bBit2 := FALSE;  
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit2 reset");  
+  END_IF;
+  IF yRobotToProcessReset[3] THEN 
+     svRobotToProcess.sAct.bBit3 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit3 reset");
+  END_IF;
+  IF yRobotToProcessReset[4] THEN 
+     svRobotToProcess.sAct.bBit4 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit4 reset");
+  END_IF;
+  IF yRobotToProcessReset[5] THEN 
+     svRobotToProcess.sAct.bBit5 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit5 reset");
+  END_IF;
+  IF yRobotToProcessReset[6] THEN 
+     svRobotToProcess.sAct.bBit6 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit6 reset");
+  END_IF;
+  IF yRobotToProcessReset[7] THEN 
+     svRobotToProcess.sAct.bBit7 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit7 reset");
+  END_IF;
+  IF yRobotToProcessReset[8] THEN 
+     svRobotToProcess.sAct.bBit8 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit8 reset");
+  END_IF; 
+  IF yRobotToProcessReset[9] THEN 
+     svRobotToProcess.sAct.bBit9 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit9 reset");
+  END_IF;
+  IF yRobotToProcessReset[10] THEN 
+     svRobotToProcess.sAct.bBit10 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit10 reset");
+  END_IF;
+  IF yRobotToProcessReset[11] THEN 
+     svRobotToProcess.sAct.bBit11 := FALSE;   
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit11 reset"); 
+  END_IF;
+  IF yRobotToProcessReset[12] THEN 
+     svRobotToProcess.sAct.bBit12 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit12 reset");
+  END_IF;
+  IF yRobotToProcessReset[13] THEN 
+     svRobotToProcess.sAct.bBit13 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit13 reset");
+  END_IF;
+  IF yRobotToProcessReset[14] THEN 
+     svRobotToProcess.sAct.bBit14 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit14 reset");
+  END_IF;
+  IF yRobotToProcessReset[15] THEN 
+     svRobotToProcess.sAct.bBit15 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit15 reset");
+  END_IF;
+  IF yRobotToProcessReset[16] THEN 
+     svRobotToProcess.sAct.bBit16 := FALSE;    
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "RDESELECT - RobotToProcess bit16 reset");
+  END_IF;
+END_ROUTINE
+
+//read information from Process (PCU) for EcoTalk
+ROUTINE GetBitProcessInterface(bitNr : TRcuInterfaceFromPCU) : BOOL
+  CASE bitNr OF
+    1:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit1=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit1;
+    2:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit2=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit2;
+    3:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit3=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit3;
+    4:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit4=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit4;
+    5:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit5=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit5;
+    6:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit6=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit6;
+    7:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit7=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit7;
+    8:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit8=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit8;
+    9:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit9=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit9;
+    10: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit10=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit10;
+    11: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit11=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit11;
+    12: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit12=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit12;
+    13: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit13=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit13;
+    14: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit14=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit14;
+    15: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit15=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit15;
+    16: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "GET_PROCESS_INTERFACE - bit16=" + STR(svRobotToProcess.sSet.bBit1));
+        RETURN svRobotToProcess.sSet.bBit16;
+  END_CASE;
+  RETURN FALSE;
+END_ROUTINE
+
+//read information from Process (PCU) for EcoTalk
+ROUTINE WaitBitProcessInterface(bitNr : TRcuInterfaceFromPCU)
+  CASE bitNr OF
+    1:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit1");
+        WAIT svRobotToProcess.sSet.bBit1;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit1");
+        
+    2:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit2");
+        WAIT svRobotToProcess.sSet.bBit2;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit2");
+        
+    3:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit3");
+        WAIT svRobotToProcess.sSet.bBit3;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit3");
+        
+    4:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit4");
+        WAIT svRobotToProcess.sSet.bBit4;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit4");
+        
+    5:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit5");
+        WAIT svRobotToProcess.sSet.bBit5;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit5");
+        
+    6:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit6");
+        WAIT svRobotToProcess.sSet.bBit6;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit6");
+        
+    7:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit7");
+        WAIT svRobotToProcess.sSet.bBit7;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit7");
+        
+    8:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit8");
+        WAIT svRobotToProcess.sSet.bBit8;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit8");
+        
+    9:  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit9");
+        WAIT svRobotToProcess.sSet.bBit9;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit9");
+        
+    10: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit10");
+        WAIT svRobotToProcess.sSet.bBit10;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit10");
+        
+    11: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit11");
+        WAIT svRobotToProcess.sSet.bBit11;     
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit11");
+        
+    12: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit12");
+        WAIT svRobotToProcess.sSet.bBit12;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit12");
+        
+    13: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit13");
+        WAIT svRobotToProcess.sSet.bBit13;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit13");
+        
+    14: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit14");
+        WAIT svRobotToProcess.sSet.bBit14;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit14");
+        
+    15: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit15");
+        WAIT svRobotToProcess.sSet.bBit15;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit15");
+        
+    16: locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - waiting for bit16");
+        WAIT svRobotToProcess.sSet.bBit16;
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "WAIT_PROCESS_INTERFACE - end waiting for bit16");
+  END_CASE;
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------
+// Calculate distance from TCP to InBox --> signal if atomizer is in cleaning device
+//-------------------------------------------------------------------------------------
+ROUTINE ObserveAtomizerInCleaner() PRIVATE
+ VAR
+   timeOut         : BOOL; 
+   catHdl          : DINT;               // handle of the configuration directory
+   startTool       : TMcuFrame;          // start tool robotcontrol.cfg
+   bStartToolValid : BOOL;              
+   inBoxJoints     : TMcuPosJoints;      //joint values of inbox point
+   posJoints       : TMcuPosJoints;      //joint values of actual position
+   auxJoints       : TMcuVector;         //aux joint values of actual position
+   refSysIdWorld   : TMcuDbObjID;        //ID of coordinate system World
+   sNameInBox      : STRING := "inbox";  //name of fixposa inbox - alternative config if customer wants to havbe different name
+   bChgFixpos      : BOOL;               //fixpos values have changed
+   iIndexInBox     : SINT;               //index of InBox in fixpos array
+   bCartPosInBoxOk : BOOL;              
+   cartPosInBox    : TMcuPosCart;        //fixpos InBox in World
+   i               : SINT;              
+   iProgNrHome     : INT;                //program number of fixpos HOME
+   bChgTool        : BOOL;               //tool has changed
+   actTool         : TMcuTransformation; //values of set tool
+   bCartPosOk      : BOOL;              
+   actCartPos      : TMcuPosCart;        //actual position in World but without auxiliary joints
+   vecTcpInBox     : TMcuVector3;        //vector InBox to TCP
+   sSwoName        : STRING;
+   bMsgPrinted     : BOOL;
+   bErrMoveHomeSet : BOOL;
+   bHtUsed         : BOOL;
+   bSwingArmRobot  : BOOL;
+ END_VAR
+  
+  //Safety first --> set signal InCleaner until initialisation is finished
+  WAIT locKinematic.bFieldbusSlaveReady; 
+  svAtomizerInCleaner                                  := TRUE;        
+  locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := FALSE;
+  
+  //Alternative parameter if customer wants to have different names for fixpositions than the standard names
+  IF CatalogGetHandleRelative(locKinematic.rcCatHdl, "BellCleaner", catHdl) THEN
+     IF CatalogReadString(catHdl, "PointNameInBox", sNameInBox, TRUE) THEN
+        sNameInBox := StrToLower(sNameInBox);
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Found alternative config point inbox = " + sNameInBox);
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Found alternative config point inbox = " + sNameInBox);
+     END_IF;
+  END_IF;
+  WAIT locKinematic.initRobComplete;
+  
+  //Assign signals for Kemroscope/Softlog
+  sSwoName := locKinematic.kinematic.mName + ".CleanerArea.ToolValid";
+  SwoAddBoolVariable(bToolValid, sSwoName); 
+  sSwoName := locKinematic.kinematic.mName + ".CleanerArea.AtomizerInCleaner";
+  SwoAddBoolVariable(svAtomizerInCleaner, sSwoName);  
+  sSwoName := locKinematic.kinematic.mName + ".CleanerArea.DistTcpCleaner";
+  SwoAddRealVariable(rDistTcpCleaner, sSwoName); 
+  sSwoName := locKinematic.kinematic.mName + ".CleanerArea.HtDischarged";
+  SwoAddBoolVariable(svHtDischargeCheck, sSwoName);
+  
+  //Check information from IEC if high tension is used
+  WAIT gbEquipmentReady;                           
+  SysTimerSet(5000, timeOut);
+  WAIT (svHtExists > eWaitInitDone) OR timeOut;
+  IF timeOut THEN
+     RcuSetMessageOnce(RcuInterfToProces_FaErrHtIec, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner");
+     RETURN;
+  ELSIF (svHtExists = eUsed) THEN
+     bHtUsed := TRUE;
+  END_IF;
+  //Check information from IEC if cleaning device is used
+  SysTimerClear(timeOut); 
+  SysTimerSet(5000, timeOut);
+  WAIT (svCleaningDeviceExists > eWaitInitDone) OR timeOut; 
+  IF timeOut THEN
+     RcuSetMessageOnce(RcuInterfToProces_FaErrCleanDev, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner");
+     RETURN;
+  ELSIF (svCleaningDeviceExists = eNotUsed) THEN
+     locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - IEC sends information that no cleaning device is used --> leave function");
+     locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - IEC sends information that no cleaning device is used --> leave function");
+     svAtomizerInCleaner                                  := FALSE;
+     locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := TRUE;
+     RETURN;
+  END_IF;
+  //SwingArmRobot has     at least 2 aux axis        OR            only one aux axis but this has to be rotary
+  bSwingArmRobot := (locKinematic.nrOfAuxDrives > 1) OR ((locKinematic.nrOfAuxDrives = 1) AND (locKinematic.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot));  
+  
+  locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Function started");
+  locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Function started");
+     
+  //HT selected on EcoScreen and switched on at control desk
+  bHtEnabledPLC := UPDATE(svEnableHighTension AND svReleaseHighTension);
+  //atomizer is in cleaner the signal HTSafeOff must be set and act value of HT below critical level
+  IF bHtUsed THEN
+     START ObserveConditionsInCleaner();
+  END_IF;
+  //start tool in robotcontrol.cfg has to be 0.0 or not in config - this ensures that no wrong tool is set after restart ohterwise later calculation could be wrong
+  bStartToolValid := TRUE;
+  IF CatalogGetHandleRelative(giRcBaseHdl, "KINEMATIC:" + STR(locKinematic.kinListInx) + ".Tool", catHdl) THEN
+     IF CatalogReadReal(catHdl, "x", startTool.mPos.mValues[0], TRUE) AND (startTool.mPos.mValues[0] <> 0.0) THEN
+        bStartToolValid := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - StartTool.x = " + STR(startTool.mPos.mValues[0]) + " in config - only 0.0 is allowed");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - StartTool.x = " + STR(startTool.mPos.mValues[0]) + " in config - only 0.0 is allowed");
+     END_IF;
+     IF CatalogReadReal(catHdl, "y", startTool.mPos.mValues[1], TRUE) AND (startTool.mPos.mValues[1] <> 0.0) THEN
+        bStartToolValid := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - StartTool.y = " + STR(startTool.mPos.mValues[1]) + " in config - only 0.0 is allowed");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - StartTool.y = " + STR(startTool.mPos.mValues[1]) + " in config - only 0.0 is allowed");
+     END_IF;
+     IF CatalogReadReal(catHdl, "z", startTool.mPos.mValues[2], TRUE) AND (startTool.mPos.mValues[2] <> 0.0) THEN
+        bStartToolValid := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - StartTool.z = " + STR(startTool.mPos.mValues[2]) + " in config - only 0.0 is allowed");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - StartTool.z = " + STR(startTool.mPos.mValues[2]) + " in config - only 0.0 is allowed");
+     END_IF;
+     IF CatalogReadReal(catHdl, "a", startTool.mOri.mValues[0], TRUE) AND (startTool.mOri.mValues[0] <> 0.0) THEN
+        bStartToolValid := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - StartTool.a = " + STR(startTool.mOri.mValues[0]) + " in config - only 0.0 is allowed");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - StartTool.a = " + STR(startTool.mOri.mValues[0]) + " in config - only 0.0 is allowed");
+     END_IF;
+     IF CatalogReadReal(catHdl, "b", startTool.mOri.mValues[1], TRUE) AND (startTool.mOri.mValues[1] <> 0.0) THEN
+        bStartToolValid := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - StartTool.b = " + STR(startTool.mOri.mValues[1]) + " in config - only 0.0 is allowed");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - StartTool.b = " + STR(startTool.mOri.mValues[1]) + " in config - only 0.0 is allowed");
+     END_IF;
+     IF CatalogReadReal(catHdl, "c", startTool.mOri.mValues[2], TRUE) AND (startTool.mOri.mValues[2] <> 0.0) THEN
+        bStartToolValid := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - StartTool.c = " + STR(startTool.mOri.mValues[2]) + " in config - only 0.0 is allowed");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - StartTool.c = " + STR(startTool.mOri.mValues[2]) + " in config - only 0.0 is allowed");
+     END_IF;
+  END_IF;
+  //endless error if start tool is invalid
+  WHILE NOT bStartToolValid DO
+     RcuSetMessageOnce(RcuInterfToProces_ErrInvStartT, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner");
+     WAIT NOT locKinematic.svMotionAllowed;
+     WAIT locKinematic.svMotionAllowed;
+  END_WHILE;  
+  
+  //get data from kinematic
+  WAIT gbBootupFinished;
+  inBoxJoints.mJoints.mValidLen := locKinematic.nrOfMainJoints;
+  posJoints.mJoints.mValidLen   := locKinematic.nrOfMainJoints;
+  auxJoints.mValidLen           := locKinematic.nrOfAuxJoints;
+  RcuRefSysGetMcuId(eRcuRefSystemWorld, refSysIdWorld);
+  
+  WAIT locKinematic.fixPosReady;
+  locKinematic.WaitMcMicroCycles(10);
+  bChgTool := IS_CHANGED(locKinematic.kinToolMcuId);
+  bChgTool := TRUE;
+  bChgFixpos := IS_CHANGED(locKinematic.fixPosReady);
+  bChgFixpos := TRUE;
+  START PrintInCleaner();
+  
+  WHILE TRUE DO
+     //fixpos has changed --> get fixpos "inbox" from _globalvar.ttd
+     IF bChgFixpos THEN
+        bInCleaner                                           := FALSE;
+        svAtomizerInCleaner                                  := TRUE;
+        locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := FALSE; //Safety first --> signal InCleaner
+        bInboxFound        := FALSE;
+        bCartPosInBoxOk    := FALSE;
+        iIndexInBox        := -1;
+        iProgNrHome        := -1;
+        WAIT locKinematic.fixPosReady;
+        locKinematic.WaitMcMicroCycles(10);
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Fixpos has changed --> reload inbox");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Fixpos has changed --> reload inbox");
+        FOR i:=0 TO locKinematic.fixpos.maxFixpos-1 DO
+           IF locKinematic.fixpos.yRcuFixpositions[i].bPosIsValid AND (StrFind(locKinematic.fixpos.yRcuFixpositions[i].sPointName, sNameInBox) > 0) THEN
+              IF bInboxFound THEN
+                 WHILE locKinematic.fixPosReady DO 
+                    RcuSetMessageOnce(RcuInterfToProces_ErrInBoxTwice, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner");
+                    WAIT NOT locKinematic.svMotionAllowed;
+                    WAIT locKinematic.svMotionAllowed;
+                 END_WHILE;
+              ELSE  
+                 bInboxFound := TRUE;
+                 iIndexInBox := i;
+                 locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Fixpos = " + locKinematic.fixpos.yRcuFixpositions[i].sPointName + " has index = " + STR(iIndexInBox));
+                 locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Fixpos = " + locKinematic.fixpos.yRcuFixpositions[i].sPointName + " has index = " + STR(iIndexInBox));
+              END_IF;
+           END_IF;
+           IF (locKinematic.fixpos.yRcuFixpositions[i].Option = eHomeWithAux) OR (locKinematic.fixpos.yRcuFixpositions[i].Option = eHomeWithoutAux) THEN
+              iProgNrHome := locKinematic.fixpos.yRcuFixpositions[i].iProgNumber;
+           END_IF;
+        END_FOR;      
+     END_IF;
+     //Fixpos InBox and Home not found --> set error and wait for reload of _globalvars
+     IF (iProgNrHome < giMinFixposNr) THEN
+        WHILE (iProgNrHome < giMinFixposNr) AND NOT bChgFixpos DO  
+           RcuSetMessageOnce(RcuInterfToProces_ErrNoInBox, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner", "home");
+           WAIT NOT locKinematic.svMotionAllowed;
+           WAIT locKinematic.svMotionAllowed;
+        END_WHILE;
+     ELSIF NOT bInboxFound THEN
+        WHILE NOT (bInboxFound OR bChgFixpos) DO  
+           RcuSetMessageOnce(RcuInterfToProces_ErrNoInBox, locKinematic.kinListInx, 2, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner", sNameInBox);
+           WAIT NOT locKinematic.svMotionAllowed;
+           WAIT locKinematic.svMotionAllowed;
+        END_WHILE;
+     END_IF;
+     
+     //Invalid TOOL is set --> set error and wait for valid TOOL
+     bMsgPrinted := FALSE;
+     WHILE NOT (bToolValid OR bChgTool) DO 
+        IF locKinematic.fixpos.RcuInHome THEN
+           bInCleaner                                           := FALSE;
+           svAtomizerInCleaner                                  := FALSE;
+           locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := TRUE; //Robot in Home position --> for sure not in Cleaner
+           IF NOT bMsgPrinted THEN
+              locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Invalid Tool but in HOME");
+              locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Invalid Tool but in HOME");
+              bMsgPrinted := TRUE;
+           END_IF;
+        ELSE
+           bInCleaner                                           := FALSE;
+           svAtomizerInCleaner                                  := TRUE;
+           locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := FALSE; //don't know TCP position --> signal InCleaner
+           IF NOT bMsgPrinted THEN
+              locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Invalid Tool set");
+              locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Invalid Tool set");
+              bMsgPrinted := TRUE;
+           END_IF;
+        END_IF;
+        //set error only in Hand/AutomaticExtern and robot not in Home position or moving to Home
+        IF (locKinematic.mainModeMgr.mode = ciAuto) AND svReleaseProcess AND bHtEnabledPLC AND (NOT locKinematic.fixpos.RcuInHome) AND (NOT bErrMoveHomeSet) AND
+           (locKinematic.RcuInterfaceToBCU.sMotionInterface.tBCUtoMotion.iLastProgramnumber <> iProgNrHome) THEN    
+           RcuSetMessageOnce(RcuInterfToProces_ErrToolInv, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner");
+           bErrMoveHomeSet := TRUE;
+           WAIT locKinematic.isNotMovingOnPath;
+        END_IF;
+        //wait until robot is moving (otherwise nothing changes) or new TOOL loaded  
+        WAIT (NOT locKinematic.isNotMovingOnPath) OR bChgTool;
+        locKinematic.WaitMcMicroCycles(1);
+        IF NOT bChgTool THEN
+           bErrMoveHomeSet := FALSE;
+        END_IF;
+     END_WHILE; 
+     //Tool has changed --> check if new tool is valid
+     IF bChgTool THEN
+        bInCleaner                                           := FALSE;
+        svAtomizerInCleaner                                  := TRUE;
+        locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := FALSE; //Safety first --> signal InCleaner
+        bToolValid         := FALSE;
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.ObserveAtomizerInCleaner - Tool has changed --> check if valid");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "ObserveAtomizerInCleaner - Tool has changed --> check if valid");
+        IF (locKinematic.kinToolMcuId <> 0) AND McuReadTrsf(locKinematic.kinToolMcuId, actTool) THEN
+           FOR i:=0 TO 2 DO
+               IF (actTool.mFrame.mPos.mValues[i] >= cSizeValidTool) THEN
+                  bToolValid := TRUE;
+               END_IF;
+           END_FOR;
+        END_IF;
+     END_IF;  
+     
+     IF NOT (bToolValid AND bInboxFound AND locKinematic.fixPosReady) THEN
+        bInCleaner                                           := FALSE;
+        svAtomizerInCleaner                                  := TRUE;
+        locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := FALSE; //don't know TCP position --> signal InCleaner
+     ELSE
+        //transform fixpos axis point "InBox" to world position without auxiliary joints
+        inBoxJoints.mJoints.mValues[0] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.A;
+        inBoxJoints.mJoints.mValues[1] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.B;
+        inBoxJoints.mJoints.mValues[2] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.C;
+        inBoxJoints.mJoints.mValues[3] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.D;
+        inBoxJoints.mJoints.mValues[4] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.E;
+        inBoxJoints.mJoints.mValues[5] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.F;
+        IF IsPaintArm7VWrist(locKinematic) THEN
+           inBoxJoints.mJoints.mValues[6] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.Aux1;
+        ELSIF bSwingArmRobot THEN
+           IF ((locKinematic.nrOfAuxDrives >= 1) AND (locKinematic.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot)) THEN
+              auxJoints.mValues[0] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.Aux1;
+           END_IF;
+           IF (locKinematic.nrOfAuxDrives >= 2) THEN
+              auxJoints.mValues[1] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.Aux2;
+           END_IF;
+           IF (locKinematic.nrOfAuxDrives >= 3) THEN
+              auxJoints.mValues[2] := locKinematic.fixpos.yRcuFixpositions[iIndexInBox].FixPoint.Aux3;
+           END_IF;
+        END_IF;
+        bCartPosInBoxOk := McuForwardTrafoAux(cartPosInBox, inBoxJoints, auxJoints, refSysIdWorld, locKinematic.kinematicMcuId, locKinematic.kinToolMcuId);
+        
+        //transform current axis position to world position without auxiliary joints
+        posJoints.mJoints.mValues[0] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[0];
+        posJoints.mJoints.mValues[1] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[1];
+        posJoints.mJoints.mValues[2] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[2];
+        posJoints.mJoints.mValues[3] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[3];
+        posJoints.mJoints.mValues[4] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[4];
+        posJoints.mJoints.mValues[5] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[5];
+        IF IsPaintArm7VWrist(locKinematic) THEN
+           posJoints.mJoints.mValues[6] := locKinematic.readBackVals.mJoints.mMainJoints.mValues[6];
+        ELSIF bSwingArmRobot THEN
+           IF ((locKinematic.nrOfAuxDrives >= 1) AND (locKinematic.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot)) THEN
+              auxJoints.mValues[0] := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[0];
+           END_IF;
+           IF (locKinematic.nrOfAuxDrives >= 2) THEN
+              auxJoints.mValues[1] := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[1];
+           END_IF;
+           IF (locKinematic.nrOfAuxDrives >= 3) THEN
+              auxJoints.mValues[2] := locKinematic.readBackVals.mJoints.mAuxJoints.mValues[2];
+           END_IF;
+        END_IF;
+        bCartPosOk := McuForwardTrafoAux(actCartPos, posJoints, auxJoints, refSysIdWorld, locKinematic.kinematicMcuId, locKinematic.kinToolMcuId);
+        
+        IF NOT (bCartPosInBoxOk AND bCartPosOk) THEN  
+           bInCleaner := TRUE;
+        ELSE
+           McuSubVector3(vecTcpInBox, actCartPos.mFrame.mPos, cartPosInBox.mFrame.mPos);
+           rDistTcpCleaner := McuLenVector3(vecTcpInBox);
+           //TCP near Cleaner --> signal InCleaner
+           IF (rDistTcpCleaner <= cDistNearBox) THEN 
+              bInCleaner := TRUE;
+           ELSE
+              bInCleaner := FALSE; //TCP away from Cleaner --> signal NOT InCleaner
+           END_IF;
+        END_IF;
+        svAtomizerInCleaner                                  := bInCleaner;
+        locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool := NOT bInCleaner;
+     END_IF;
+     //reset changed markers
+     bChgFixpos := FALSE;
+     bChgTool   := FALSE;
+     locKinematic.WaitMcMicroCycles(1);
+     rDistTcpCleaner := 0.0; 
+  END_WHILE;      
+  
+END_ROUTINE
+
+//--------------------------------------------------------------------------------------------------------------------
+// Observation when atomizer is in cleaner the act value of the high tension must be below critical level
+//--------------------------------------------------------------------------------------------------------------------
+ROUTINE ObserveConditionsInCleaner() PRIVATE
+  WHILE TRUE DO
+    WAIT svReleaseProcess AND bHtEnabledPLC;
+    WHILE svReleaseProcess AND bHtEnabledPLC DO                          
+       IF bInCleaner AND NOT svHtDischargeCheck THEN
+          RcuSetMessageOnce(RcuInterfToProces_ErrHtActVal, locKinematic.kinListInx, 1, 0, "TRcuInterfaceToProcess.ObserveConditionsInCleaner");
+          WAIT NOT locKinematic.svMotionAllowed;
+          WAIT locKinematic.svMotionAllowed;
+       ELSIF bInCleaner THEN
+          WAIT NOT (bInCleaner AND svHtDischargeCheck AND svReleaseProcess AND bHtEnabledPLC);
+       ELSE
+          WAIT bInCleaner AND svReleaseProcess AND bHtEnabledPLC;
+       END_IF;
+    END_WHILE;
+  END_WHILE;
+END_ROUTINE
+
+//-------------------------------------------------------------------------------------
+ROUTINE PrintInCleaner() PRIVATE
+ VAR
+  chg : BOOL;
+ END_VAR
+ 
+   chg := IS_CHANGED(locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool);
+   WHILE TRUE DO
+     IF bToolValid AND bInboxFound THEN
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.PrintInCleaner - AtomizerNotInCleaner=" + STR(locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool) + " - distance TCP-BOX=" + STR(rDistTcpCleaner) + " mm");
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "PrintInCleaner - AtomizerNotInCleaner=" + STR(locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool) + " - distance TCP-BOX=" + STR(rDistTcpCleaner) + " mm");
+     ELSE
+        locKinematic.DebugPrint(eTraceProcess, "TRcuInterfaceToProcess.PrintInCleaner - AtomizerNotInCleaner=" + STR(locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool) + " - TOOL valid=" + STR(bToolValid) + " FIXPOS-Inbox ok=" + STR(bInboxFound));
+        locKinematic.logger.SetLoggerStep(locKinematic.autoControl.iLoggerNumber, "PrintInCleaner - AtomizerNotInCleaner=" + STR(locKinematic.fieldbusOut.AtomizerNotInCleaner.svBool) + " - TOOL valid=" + STR(bToolValid) + " FIXPOS-Inbox ok=" + STR(bInboxFound));
+     END_IF;
+     WAIT chg;
+     chg := FALSE;
+   END_WHILE; 
+END_ROUTINE  
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// system routines
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+ROUTINE DELETE()
+   
+   IF IS_MAPPED(svMotionActive) THEN
+      svMotionActive := UPDATE(FALSE);
+   END_IF;
+   IF IS_MAPPED(svRobotMoving) THEN
+      svRobotMoving := UPDATE(FALSE);
+   END_IF;
+   SwoRemoveVariable("ConveyorPosition");
+   
+   SwoRemoveVariable("VelControl.ProgrammedVel");
+   SwoRemoveVariable("VelControl.ActualVel");
+   SwoRemoveVariable("VelControl.RelativeVel");
+   SwoRemoveVariable("VelControl.ActualOverride");
+   SwoRemoveVariable("VelControl.AnyGunOn");
+
+   SwoRemoveVariable("Sealing.Gun1");
+   SwoRemoveVariable("Sealing.Gun2");
+   SwoRemoveVariable("Sealing.Gun3");
+
+   SwoRemoveVariable("Sealing.dsTrigger");
+   SwoRemoveVariable("Sealing.dtTrigger");
+END_ROUTINE

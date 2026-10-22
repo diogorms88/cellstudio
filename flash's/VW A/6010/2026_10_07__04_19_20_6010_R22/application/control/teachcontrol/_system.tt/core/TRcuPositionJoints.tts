@@ -1,0 +1,113 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuPositionJoints.tts
+*  First Author : pen
+*  Date         : 15.11.2001
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Joints-Position
+*------------------------------------------------------------------------------
+*)
+
+
+INHERIT TRcuPosition;
+
+
+// data describing the current position
+VAR
+   nrMainJoints : DINT;
+//   joints : TMcuJointVector;
+   joints : ARRAY [cgiRcuMaxJoints] OF REAL;
+   nrAuxJoints : DINT;
+   auxJoints : ARRAY [cgiRcuMaxAuxJoints] OF REAL;
+END_VAR
+
+
+ROUTINE GetReferenceSystem(CONST kin : TRcuKinematic) : TRcuReferenceSystem
+   RETURN eRcuRefSystemInvalid;
+END_ROUTINE
+
+
+// Fill a Mcu-Position with values corresponding to the current position
+ROUTINE GetMcuPos(pos : TMcuPosition; CONST kin : TRcuKinematic) : BOOL
+   VAR
+      i : DINT;
+   END_VAR
+
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+   IF (nrMainJoints = 0) AND (nrAuxJoints = 0) THEN
+      RETURN FALSE; // obviously no valid content
+   END_IF;
+   pos.mDBObjTyp := eMcuPermanent;
+   pos.mName := INSTANCE_NAME();
+   pos.mPosTyp := eMcuPosJoints;
+   //pos.mPosJoints.mJoints.mValues := joints;
+   FOR i := 0 TO nrMainJoints - 1 DO
+      pos.mPosJoints.mJoints.mValues[i] := joints[i];
+   END_FOR;
+   pos.mPosJoints.mJoints.mValidLen := nrMainJoints;
+   pos.mAuxJoints.mValidLen := nrAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      pos.mAuxJoints.mValues[i] := auxJoints[i];
+   END_FOR;
+   
+   // SHIFT
+   pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShift.A7_mm;
+   // SHIFT_EXT
+   IF kin.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+      pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A8_deg;
+      pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A9_deg;
+   ELSE
+      pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A7_mm;
+      pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A8_deg;
+      pos.mAuxJoints.mValues[2] := pos.mAuxJoints.mValues[2] + kin.ActShiftExt.A9_deg;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Fill the current position with values from the current Kinematic. Can be
+// called from e.g. the Dialogue-system.
+ROUTINE TEACH(pos : TRcuPositionJoints) : BOOL
+   VAR
+      i : DINT;
+      kin : MAPTO TRcuKinematic;
+   END_VAR
+
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+   // check kinematic focus
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      RcuSetMessageOnce(TRcuPosJoints_ErrNoKinSelect, -1, 1, instId, "TRcuPositionJoints.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   ELSE
+      kin := MAP(gRcuFocusedKinematic);
+   END_IF;
+
+   // check whether kinematic is ready for teaching
+   IF NOT(kin.updateActive AND kin.allDrivesReferenced) THEN
+      RcuSetMessageOnce(TRcuPosJoints_ErrKinNotReady, kin.kinListInx, 1, instId, "TRcuPositionJoints.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+
+   // read actual values
+   nrMainJoints := kin.nrOfMainJoints;
+   FOR i := 0 TO nrMainJoints - 1 DO
+      joints[i] := kin.actJoints.mPos[i];
+   END_FOR;
+   //joints := kin.actJoints.mPos;
+   nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   RETURN TRUE;
+END_ROUTINE
+

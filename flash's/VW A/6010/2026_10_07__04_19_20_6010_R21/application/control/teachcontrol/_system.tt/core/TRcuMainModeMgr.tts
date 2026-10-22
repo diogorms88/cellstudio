@@ -1,0 +1,310 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuMainModeMgr.tts
+*  First Author : pen
+*  Date         : 12.9.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Manager for the Mainmodes of a Roboter
+*------------------------------------------------------------------------------
+* 08.09.05 nmr: changes for Teachview 2.14
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+TYPE GLOBAL
+   // configurable conditions entering the mainmode
+   TRcuMainModeConditions : STRUCT
+      TeachPendantLocked : BOOL;
+   END_STRUCT;
+
+   // configurable actions which are allowed when all conditions are fullfilled
+   TRcuMainModeActions : STRUCT
+      jogging : BOOL;
+      automatic : BOOL;
+      fullSpeed : BOOL;
+      holdToRun : BOOL;
+      externControl : BOOL;
+   END_STRUCT;
+
+   // definition of a mainmode, consists of conditions, actions and the name
+   // of the mainmode
+   TRcuMainModeDefinition : STRUCT
+      name : STRING[10];
+      conditions : TRcuMainModeConditions;
+      actions : TRcuMainModeActions;
+   END_STRUCT;
+
+   // array of mainmode definitions
+   TRcuMainModeDefArray : ARRAY [1..cgiRcuMaxMainModes] OF TRcuMainModeDefinition;
+END_TYPE
+
+
+(*******************************************************************************
+* members
+*)
+
+VAR
+   // indicates whether the modemanager is active
+   active : BOOL;
+
+   // Inputs for the selection of the different mainmodes. Only one at a time
+   // should be TRUE, with a time tolerance of cToleranceTime
+   mainModeInput : ARRAY [1..cgiRcuMaxMainModes] OF MAPTO BOOL;
+
+   yMainModeName : ARRAY [cgiRcuMaxMainModes] OF String32;
+   
+   // time tolerance for inputs (ms)
+   toleranceTime : DINT;
+
+   // active mainmode
+   mode : DINT;
+
+   // indicates whether all coonditions are fullfilled
+   ready : BOOL;
+
+   // number of different mainmodes
+   nrMainModes : DINT;
+   // array with the definitions of the different mainmodes
+   mainModeDefinition : TRcuMainModeDefArray;
+   // active mainmode definition
+   actMainModeDef : MAPTO TRcuMainModeDefinition;
+
+   // collection of flags of active mainmode
+   rights : DINT;
+   
+   // inputs
+   PlcRelease : MAPTO BOOL;       // release from safety-SPS
+
+   // outputs
+   jogging : BOOL;     // jogging allowed
+   automatic : BOOL;   // automatic programs allowed
+   fullSpeed : BOOL;   // full speed allowed
+   holdToRun : BOOL;   // Hold-To-Run Mode active
+   externControl : BOOL; // extern control active
+   TeachPendantLocked : BOOL;    // TeachPendant is locked 
+
+   jogCart : BOOL;     // cartesian jogging allowed
+
+   // instance identification number (for errors)
+   instId : DINT;
+   locKinematic : MAPTO TRcuKinematic; 
+END_VAR
+
+
+// Activate all observation routines. All reference inputs have to be mapped.
+ROUTINE StartUp(mykinematic : TRcuKinematic)
+   VAR
+      i : DINT;
+   END_VAR
+
+   locKinematic := MAP(mykinematic);  
+
+   IF active THEN
+      RcuSetMessageOnce(TRcuMainModeMgr_ErrMMMgrRpStrt, locKinematic.kinListInx, 1, instId, "TRcuMainModeMgr.StartUp", INSTANCE_NAME());
+      RETURN;
+   END_IF;
+
+   // forbid everything
+   ready := FALSE;
+   jogging := FALSE;
+   jogCart := FALSE;
+   automatic := FALSE;
+   fullSpeed := FALSE;
+   holdToRun := FALSE;
+   externControl := FALSE;
+
+   mSlaveOk := MAPX(cSV_SlaveCommOk);
+
+   // activate mode observation
+   START ObserveMainMode();
+
+   // activate observation of mainmode-switch
+   WAIT gbBootupFinished;
+   clock.Go(toleranceTime);
+   FOR i := 1 TO nrMainModes DO
+      START ObserveMainModeInput(i);
+   END_FOR;
+   START CatchTimeout;
+
+   active := TRUE;
+END_ROUTINE
+
+
+// connect to a kinematic
+ROUTINE ConnectTo(CONST kin : TRcuKinematic)
+
+   anyError := MAP(kin.bRcuAnyErrorPending);
+   // connect to kinematic variables
+   updateActive := MAP(kin.updateActive);
+   allDrivesReferenced := MAP(kin.allDrivesReferenced);
+
+   // provide reasonable behaviour although mainmodemanager not yet running
+   ready := UPDATE(updateActive AND NOT anyError);
+   jogging := UPDATE(ready);
+   fullSpeed := UPDATE(ready AND kin.interfaceToSCP.bFullSpeedAllowed);
+
+   automatic := UPDATE(ready AND allDrivesReferenced);
+   holdToRun := FALSE;
+   externControl := FALSE;
+
+   TeachPendantLocked := FALSE;
+
+   // fixed dependencies
+   jogCart := UPDATE(jogging AND allDrivesReferenced);
+END_ROUTINE
+
+
+(*******************************************************************************
+* private members
+*)
+
+VAR PRIVATE
+   // inputs from the kinematic
+   updateActive : MAPTO BOOL;        // true if all drives are operational
+   allDrivesReferenced : MAPTO BOOL; // true if all drives are referenced
+   // input from the common RCU
+   anyError : MAPTO BOOL;
+
+   clock : TRcuCountdown; // tolerance timing
+   errormode : BOOL;      // timeout occurred, mode set to 0
+   mSlaveOk : MAPTO BOOL;
+END_VAR
+
+
+// observe one mainmode
+ROUTINE ObserveMainModeInput(CONST inx : DINT) PRIVATE
+   VAR
+      locInx : DINT; // local copy of the parameter
+      i : DINT;
+      failure : BOOL;
+   END_VAR
+
+   locInx := inx;
+   WHILE TRUE DO
+      WAIT mainModeInput[locInx];
+      failure := FALSE;
+      IF NOT errormode THEN // countdown only if not in error mode
+         clock.Go(toleranceTime);
+      END_IF;
+      FOR i := 1 TO nrMainModes DO
+         IF i <> locInx THEN
+            IF mainModeInput[i] THEN // another input also TRUE
+               failure := TRUE;
+               WAIT NOT mainModeInput[i] OR NOT mainModeInput[locInx];
+            END_IF;
+         END_IF;
+      END_FOR;
+      IF NOT failure THEN // accept mode
+         clock.Cancel();
+         mode := locInx;
+         errormode := FALSE;
+         // errormode resolves WAIT and makes newmode locInx possible
+         WAIT NOT mainModeInput[locInx] OR errormode;
+         IF (mode = locInx) THEN // countdown only if still in own mode
+            clock.Go(toleranceTime);
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// reaction to invalid input-signals
+ROUTINE CatchTimeout AT clock.alarm PRIVATE
+
+   mode := 0; // error state
+   clock.alarm := FALSE;
+   errormode := TRUE;
+   IF IS_MAPPED(mSlaveOk) THEN
+      IF mSlaveOk THEN
+         RcuSetMessageOnce(TRcuMainModeMgr_WarMMMgrInvInp, locKinematic.kinListInx, 1, instId, "TRcuMainModeMgr.CatchTimeout", INSTANCE_NAME());
+      END_IF;
+   ELSE   
+      RcuSetMessageOnce(TRcuMainModeMgr_WarMMMgrInvInp, locKinematic.kinListInx, 2, instId, "TRcuMainModeMgr.CatchTimeout", INSTANCE_NAME());
+   END_IF;
+END_ROUTINE
+
+
+// react to changes in mode and set corresponding dependencies for ready flag
+// and output signals
+ROUTINE ObserveMainMode() PRIVATE
+   VAR
+      chg    : BOOL;
+      chgSCP : BOOL;
+      state  : INT;
+   END_VAR
+
+   chg := IS_CHANGED(mode);
+   chgSCP := IS_CHANGED(PaintRobot[locKinematic.kinListInx].interfaceToSCP.bFullSpeedAllowed);
+   
+   WHILE TRUE DO
+      WAIT chg OR chgSCP;
+      chg    := FALSE;
+      chgSCP := FALSE;
+      state := 0;
+      IF mode = 0 THEN
+         actMainModeDef := MAPX("");
+         ready := UPDATE(FALSE);
+         holdToRun := FALSE;
+      ELSE
+         actMainModeDef := MAP(mainModeDefinition[mode]);
+         // for the ready-flag updateActive and NOT anyError are built in
+         // conditions
+         ready := UPDATE(PaintRobot[locKinematic.kinListInx].autoControl.bPLCRelease AND updateActive AND NOT anyError);
+
+         // flags which are set directly according to the mainmode definition
+         holdToRun := actMainModeDef.actions.holdToRun;
+
+         // flags which are set according to the mainmode definition when ready is true
+         jogging := UPDATE(ready AND actMainModeDef.actions.jogging AND NOT actMainModeDef.conditions.TeachPendantLocked);
+         fullSpeed := UPDATE(ready AND actMainModeDef.actions.fullSpeed AND PaintRobot[locKinematic.kinListInx].interfaceToSCP.bFullSpeedAllowed);
+         externControl := actMainModeDef.actions.externControl;
+
+         TeachPendantLocked := actMainModeDef.conditions.TeachPendantLocked;
+
+         // for flags automatic allDrivesReferenced is a built in condition
+         automatic := UPDATE(ready AND actMainModeDef.actions.automatic AND allDrivesReferenced);
+            
+         IF actMainModeDef.actions.jogging THEN
+            state := state + cgiMaskBit0;
+         END_IF;
+         IF actMainModeDef.actions.automatic THEN
+            state := state + cgiMaskBit1;
+         END_IF;
+         IF actMainModeDef.actions.fullSpeed AND PaintRobot[locKinematic.kinListInx].interfaceToSCP.bFullSpeedAllowed THEN
+            state := state + cgiMaskBit2;
+         END_IF;
+         IF actMainModeDef.actions.externControl THEN
+            state := state + cgiMaskBit3;
+         END_IF;
+         IF actMainModeDef.actions.holdToRun THEN
+            state := state + cgiMaskBit4;
+         END_IF;
+         IF actMainModeDef.conditions.TeachPendantLocked THEN
+            state := state + cgiMaskBit5;
+         END_IF;
+
+      END_IF;
+      rights := state;
+   END_WHILE;
+END_ROUTINE
+
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   instId := RcuGetInstanceId();
+   yMainModeName[0] := "-";
+END_ROUTINE
+

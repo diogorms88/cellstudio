@@ -1,0 +1,1788 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2007 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         01.04.2010                                                  *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       TRcuObjectMeasure.tts                                       *
+*    Description:                                                             *
+*                                                                             *
+*-----------------------------------------------------------------------------
+*)
+
+TYPE GLOBAL USER
+   PLANE : (NOPLANE, XY, XZ, YZ);
+END_TYPE
+
+TYPE GLOBAL
+   tsObject : STRUCT
+      name : STRING;
+      x :  REAL;
+      y :  REAL;
+      z :  REAL;
+      A :  REAL;
+      B :  REAL;
+      C :  REAL;
+   END_STRUCT;
+END_TYPE
+
+CONSTANT
+   Eps : REAL := 0.00001;
+END_CONSTANT
+
+TYPE PRIVATE
+   tsMeasurements : ARRAY[1..2] OF tsObjects;
+   
+   tsObjects : STRUCT
+      Org  :  tsObject;
+      Meas :  tsObject;
+      Diff :  tsObject;
+   END_STRUCT;
+END_TYPE
+ 
+VAR
+   Measurements     : MAPTO tsMeasurements;
+   bBootUpOk        : BOOL; 
+END_VAR
+  
+
+// Called before init routine if successful  
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+VAR
+    iTemp             : DINT;
+    iCatalogHdl       : DINT;
+    Sym_OutLaserOnOff : STRING;
+    Sym_InSensorSig1  : STRING;
+    dirHdl            : DINT;
+    swoName           : STRING;
+END_VAR
+
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   lKin := MAP(locRobot);
+   IF NOT IS_MAPPED(lKin) THEN
+      RcuSetMessageOnce(TRcuObjMeasure_ErrMapKin, lKin.kinListInx, 2, instId, "TRcuObjMeasure.ReadConfig");
+      RETURN FALSE;
+   END_IF; 
+             
+   IF CatalogGetHandleRelative(lKin.rcCatHdl, "ObjMeasure", iCatalogHdl) THEN
+      IF CatalogReadIntRange(iCatalogHdl, "Enable", iTemp, 0, 1, FALSE) THEN
+         IF (iTemp <> 1) THEN
+            lKin.DebugPrint(eTraceVision, "---------------------------------------");
+            lKin.DebugPrint(eTraceVision, "----- Object measure deactivated ------");  
+            lKin.DebugPrint(eTraceVision, "---------------------------------------");
+            RETURN FALSE;
+         ELSE
+            IF NOT CatalogReadRealRange(iCatalogHdl, "Limit", deltaMax , 0.0, 30.0, FALSE) THEN
+               deltaMax := 10.0;
+            END_IF;
+            IF NOT CatalogReadIntRange(iCatalogHdl, "DebounceTimeSensor", iDebounceTime, 0, 200, TRUE) THEN
+               iDebounceTime := 0;
+            END_IF;           
+            IF CatalogReadIntRange(iCatalogHdl, "FastMeasure", iTemp, 0, 1, TRUE) THEN
+               IF (iTemp <> 1) OR gbEthercat THEN
+                  bFastMeasure := FALSE;
+                  lKin.DebugPrint(eTraceVision, "Object measure without 'Fast Measurement method' enabled");
+               ELSE
+                  bFastMeasure := TRUE;
+                  lKin.DebugPrint(eTraceVision, "Object measure with 'Fast Measurement method' enabled");
+                  IF NOT CatalogReadRealRange(iCatalogHdl, "MaxMethodDiffTrans", MaxMethodDiffTrans, 0.0, 30.0, FALSE) THEN
+                     MaxMethodDiffTrans := 10.0;
+                  END_IF; 
+                  IF NOT CatalogReadRealRange(iCatalogHdl, "MaxMethodDiffOri", MaxMethodDiffOri, 0.0, 10.0, FALSE) THEN
+                     MaxMethodDiffOri := 2.0;
+                  END_IF; 
+  
+               END_IF;
+            END_IF;
+            bCfgDataRead := TRUE;
+         END_IF;
+      ELSE  
+         lKin.DebugPrint(eTraceVision, "Object measure not enabled");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      lKin.DebugPrint(eTraceVision, "No configuration for Object measure found");
+      RETURN FALSE;
+   END_IF;
+   
+   IF CatalogGetHandleRelative(giRcBaseHdl, "Symbols", dirHdl) THEN
+      IF CatalogReadString(dirHdl, "Sym_OutLaserOnOff", Sym_OutLaserOnOff, FALSE) THEN
+         laserOnOff := MAPX("RCU" + STR(gyiNrRcu[lKin.kinListInx]) + "." + Sym_OutLaserOnOff);
+         IF IS_MAPPED(laserOnOff) THEN
+            swoName := lKin.kinematic.mName + ".ObjectMeasure.OutLaserOnOff"; 
+            SwoAddBoolVariable(laserOnOff, swoName);
+         END_IF;
+      END_IF;
+      IF CatalogReadString(dirHdl, "Sym_InSensorSig1", Sym_InSensorSig1, FALSE) THEN
+         cHW_mSensor := "RCU" + STR(gyiNrRcu[lKin.kinListInx]) + "." + Sym_InSensorSig1;
+         sensor := MAPX(cHW_mSensor);
+         IF IS_MAPPED(sensor) THEN
+            swoName := lKin.kinematic.mName + ".ObjectMeasure.InSensorSignal";
+            SwoAddBoolVariable(sensor, swoName);
+         END_IF;
+      END_IF;
+   END_IF;
+   
+   bPlcBadMeasurement := MAPX("RCU" + STR(gyiNrRcu[lKin.kinListInx]) + ".SLO_mBadMeasurement");
+   IF IS_MAPPED(bPlcBadMeasurement) THEN
+      swoName := lKin.kinematic.mName + ".ObjectMeasure.OutBadMeasurement";
+      SwoAddBoolVariable(bPlcBadMeasurement, swoName);
+   END_IF;
+   
+   bPlcHoleSizeNotOK := MAPX("RCU" + STR(gyiNrRcu[lKin.kinListInx]) + ".SLO_mHoleSizeNotOK");
+   IF IS_MAPPED(bPlcHoleSizeNotOK) THEN
+      swoName := lKin.kinematic.mName + ".ObjectMeasure.OutHoleSizeNotOK";
+      SwoAddBoolVariable(bPlcHoleSizeNotOK, swoName);
+   END_IF;
+   
+   RETURN TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Initialization
+//------------------------------------------------------------------------
+ROUTINE Init()
+VAR
+   s : STRING;
+END_VAR
+
+   IF NOT bCfgDataRead THEN
+      RETURN;
+   END_IF;
+   
+   WAIT lKin.initKinComplete;
+   
+   IF bFastMeasure THEN
+      START CheckSercosPhase();
+   END_IF;
+   
+   IF NOT IS_MAPPED(sensor) THEN
+      RcuSetMessageOnce(TRcuObjMeasure_ErrSensorNotMap, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Init", cHW_mSensor);
+      RETURN;
+   END_IF;
+   
+   Measurements :=  MAPX(cSV_ObjMeas[lKin.kinListInx]);
+   IF NOT IS_MAPPED(Measurements) THEN
+       RcuSetMessageOnce(TRcuObjMeasure_ErrSensorNotMap, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Init", cSV_ObjMeas[lKin.kinListInx]);
+       RETURN;
+   END_IF;
+   
+   IF lKin.vision.iLoggerNumber <> 0 THEN
+      iLoggerNumber := lKin.vision.iLoggerNumber;
+      lKin.logger.SetLoggerStep(iLoggerNumber, "3D object measurement initialized");
+   ELSE   
+      iLoggerNumber  := lKin.logger.ActivateLogger("3D Object measurement", lKin);
+      lKin.logger.SetLoggerStep(iLoggerNumber, "3D object measurement initialized");
+   END_IF;
+   bBootUpOk := TRUE;
+   lKin.DebugPrint(eTraceVision, "3D object measurement initialized");
+   
+   // Switch off laser while boot up
+   IF IS_MAPPED(laserOnOff) THEN
+      laserOnOff := TRUE;
+   ELSE
+      lKin.DebugPrint(eTraceVision, "laserOnOff not mapped");
+   END_IF;
+   
+   RETURN;
+END_ROUTINE
+
+
+ROUTINE Config3D(Step1 : BOOL; PlStep1 : PLANE; Step2 : BOOL; PlStep2 : PLANE;
+                 Step3 : BOOL; PlStep3 : PLANE)
+
+   lKin.logger.SetLoggerStep(iLoggerNumber, "CONFIG3D");
+   bStep1Select := Step1;
+   IF NOT bStep1Select THEN
+      planeStep1 := PlStep1;
+   ELSE
+      planeStep1 := NOPLANE;
+   END_IF;
+   bStep2Select := Step2;
+   IF NOT bStep2Select THEN
+      planeStep2 := PlStep2;
+   ELSE
+      planeStep2 := NOPLANE;
+   END_IF;
+   bStep3Select := Step3;
+   IF NOT bStep3Select THEN
+      planeStep3 := PlStep3;
+   ELSE
+      planeStep3 := NOPLANE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE Init3DObject(P1 : POINT; P2 : POINT; P3 : POINT; P4 : 
+                     POINT; P5 : POINT; P6 : POINT; OBJ : OBJECT)
+
+  
+   lKin.logger.SetLoggerStep(iLoggerNumber, "INIT3DOBJECT");
+   
+   IF P1.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P1 = " + P1.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Init3DObject", "1", P1.GetName(), "INIT3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF P2.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P2 = " + P2.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 2, instId, "TRcuObjMeasure.Init3DObject", "2", P2.GetName(), "INIT3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF P3.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P3 = " + P3.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 3, instId, "TRcuObjMeasure.Init3DObject", "3", P3.GetName(), "INIT3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF P4.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P4 = " + P4.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 4, instId, "TRcuObjMeasure.Init3DObject", "4", P4.GetName(), "INIT3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF P5.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P5 = " + P5.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 5, instId, "TRcuObjMeasure.Init3DObject", "5", P5.GetName(), "INIT3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF P6.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P6 = " + P6.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 6, instId, "TRcuObjMeasure.Init3DObject", "6", P6.GetName(), "INIT3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   
+   SetUnitMatrix(NewObjHomMat);
+   
+   P1r.mValues[0] := P1.A;
+   P1r.mValues[1] := P1.B;
+   P1r.mValues[2] := P1.C;
+   P2r.mValues[0] := P2.A;
+   P2r.mValues[1] := P2.B;
+   P2r.mValues[2] := P2.C;
+   P3r.mValues[0] := P3.A;
+   P3r.mValues[1] := P3.B;
+   P3r.mValues[2] := P3.C;
+   P4r.mValues[0] := P4.A;
+   P4r.mValues[1] := P4.B;
+   P4r.mValues[2] := P4.C;
+   P5r.mValues[0] := P5.A;
+   P5r.mValues[1] := P5.B;
+   P5r.mValues[2] := P5.C;
+   P6r.mValues[0] := P6.A;
+   P6r.mValues[1] := P6.B;
+   P6r.mValues[2] := P6.C;
+   OrgObj := OBJ;
+   PrintObject("Werte Referenzobjekt ", OrgObj);
+   Compute_kardan_tcp(Ori, Pos, OrgObj);
+   CopyMatrix32HomMat(OrgObjHomMat, Ori); // Drehmatrix
+   CopyVector32HomMat(OrgObjHomMat, Pos); // Verschiebevektor
+   // letzte Zeile der homogenen Matrix belegen
+   OrgObjHomMat[3][0] := 0.0;
+   OrgObjHomMat[3][1] := 0.0;
+   OrgObjHomMat[3][2] := 0.0;
+   OrgObjHomMat[3][3] := 1.0;   
+   PrintHomMat("Referenzobjekt als homogene Matrix", OrgObjHomMat);
+   
+   IF bStep1Select THEN      
+      //Vektoren in der Ebene E1r (Referenzebene)
+      McuSubVector3(H1r, P2r, P1r);
+      McuSubVector3(H2r, P3r, P1r);
+      McuCrossProductVec3(N1r, H1r, H2r);
+
+      // Ueberpruefen, ob P1r, P2r und P3r auf einer Geraden liegen
+      Theta := McuAngleVec3(H1r,H2r);
+      ThetaGrad := Theta*180.0/gcPi;
+      IF (ThetaGrad < 2.0) OR (ThetaGrad > (180 - 2.0)) THEN // Kriterium???
+         lKin.DebugPrint(eTraceVision, "P1r, P2r und P3r definieren keine Ebene!!!");
+         RcuSetMessageOnce(TRcuObjMeasure_ErrNoPlaneDef, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Init3DObject");
+         lKin.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+      IF (ThetaGrad < 5.0) OR (ThetaGrad > (180 - 5.0)) THEN // Kriterium???
+         lKin.DebugPrint(eTraceVision, "P1r, P2r und P3r liegen fast auf einer Geraden. Schlecht fuer Rechnung!!!");
+         RcuSetMessageOnce(TRcuObjMeasure_WarPlaneDef, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Init3DObject");
+      END_IF;
+   END_IF;
+   bInitOk := TRUE;
+
+END_ROUTINE
+
+
+ROUTINE Calc3DStep1(P1 : POINT; P2 : POINT; P3 : POINT; 
+                    OBJ : OBJECT) : BOOL
+VAR
+   str    : STRING;
+   b      : BOOL;
+   delta1 : REAL;
+   delta2 : REAL;
+   delta3 : REAL;
+END_VAR   
+
+   lKin := MAP(lKin);
+   OBJ := OrgObj; // fuer den Fehlerfall
+   
+   // Fehlerbehandlung
+   IF NOT bStep1Select THEN
+      // Fehler Step1 nicht ausgewählt
+      RcuSetMessageOnce(TRcuObjMeasure_ErrStepNotSelect, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Calc3DStep1", "CALC3DSTEP1");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF NOT bInitOk THEN
+      // Fehler INIT3DOBJECT nicht aufgerufen
+      RcuSetMessageOnce(TRcuObjMeasure_ErrStepNotInit, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Calc3DStep1", "CALC3DSTEP1");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   
+   lKin.DebugPrint(eTraceVision, "                Schritt 1");
+   IF P1.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P1 = " + P1.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 7, instId, "TRcuObjMeasure.Calc3DStep1", "1", P1.GetName(), "CALC3DSTEP1");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF P2.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P2 = " + P2.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 8, instId, "TRcuObjMeasure.Calc3DStep1", "2", P2.GetName(), "CALC3DSTEP1");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF P3.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P3 = " + P3.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 8, instId, "TRcuObjMeasure.Calc3DStep1", "3", P3.GetName(), "CALC3DSTEP1");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   P1m.mValues[0] := P1.A;
+   P1m.mValues[1] := P1.B;
+   P1m.mValues[2] := P1.C;
+   P2m.mValues[0] := P2.A;
+   P2m.mValues[1] := P2.B;
+   P2m.mValues[2] := P2.C;
+   P3m.mValues[0] := P3.A;
+   P3m.mValues[1] := P3.B;
+   P3m.mValues[2] := P3.C;
+   
+   delta1 := McuDistanceVec3(P1r, P1m);
+   delta2 := McuDistanceVec3(P2r, P2m);
+   delta3 := McuDistanceVec3(P3r, P3m);
+   
+   lKin.logger.SetLoggerStep(iLoggerNumber, "CALC3DSTEP1 Diff: "+STR(delta1)+" "+STR(delta2)+" "+STR(delta3)+" ");
+   IF (delta1 > deltaMax) AND NOT lKin.bRcuSimulatesAllDrives THEN
+      RcuSetMessageOnce(TRcuObjMeasure_ErrDistance, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Calc3DStep1", "CALC3DSTEP1", P1.GetName(), STR(delta1));
+	   RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+	              lKin.kinListInx, 
+	              1, 
+	              instId, 
+	              "TRcuObjMeasure.Calc3DStep1"                       
+	              );          
+      lKin.ErrorReaction(FALSE);
+      RETURN FALSE;
+   END_IF;
+   IF (delta2 > deltaMax) AND NOT lKin.bRcuSimulatesAllDrives THEN
+      RcuSetMessageOnce(TRcuObjMeasure_ErrDistance, lKin.kinListInx, 2, instId, "TRcuObjMeasure.Calc3DStep2", "CALC3DSTEP2", P2.GetName(), STR(delta2));
+	   RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+          lKin.kinListInx, 
+          2, 
+          instId, 
+          "TRcuObjMeasure.Calc3DStep1"                       
+          );
+      lKin.ErrorReaction(FALSE);
+      RETURN FALSE;
+   END_IF;
+   IF (delta3 > deltaMax) AND NOT lKin.bRcuSimulatesAllDrives THEN
+      RcuSetMessageOnce(TRcuObjMeasure_ErrDistance, lKin.kinListInx, 3, instId, "TRcuObjMeasure.Calc3DStep3", "CALC3DSTEP3", P3.GetName(), STR(delta3));
+      RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+          lKin.kinListInx, 
+          3, 
+          instId, 
+          "TRcuObjMeasure.Calc3DStep1"                       
+          );
+      lKin.ErrorReaction(FALSE);
+      RETURN FALSE;
+   END_IF;
+   
+   IF lKin.fieldbusIn.GhostMode.svBool THEN
+      lKin.DebugPrint(eTraceVision, "GHOST           Schritt 1");
+      PrintObject("Werte fuer SET_OBJECT:", OBJ);
+      LogObject(OBJ);
+   ELSE
+      lKin.DebugPrint(eTraceVision, "                Schritt 1");
+      
+      //Vektoren in der Ebene E1m (Messebene)
+      McuSubVector3(H1m, P2m, P1m);
+      McuSubVector3(H2m, P3m, P1m);
+      McuCrossProductVec3(N1m, H1m, H2m);
+
+      McuCrossProductVec3(U, N1r, N1m); // Richtung der Schnittgerade von Referenz- und Messebene
+                                        // = Drehachse
+      PrintVector3("Drehachsenrichtung", U);
+      Theta := McuAngleVec3(N1r,N1m);
+      //ArcCos(McuDotProductVec3(N1m, N1r)/(McuLenVector3(N1m)*McuLenVector3(N1r)), Theta); // Drehwinkel
+      ThetaGrad := Theta*180.0/gcPi;
+      lKin.DebugPrint(eTraceVision, "Drehwinkel = " + STR(ThetaGrad));
+
+      // Winkel mit Vorzeichen berechnen
+      AngleVector3(Theta, N1r, N1m, U);
+      ThetaGrad := Theta*180.0/gcPi;
+      lKin.DebugPrint(eTraceVision, "Drehwinkel = " + STR(ThetaGrad));
+
+      IF rAbs(Theta) < Eps  THEN
+         lKin.DebugPrint(eTraceVision, "keine Verdrehung in 1. Ebene");
+         McuSubVector3(r, P1m, P1r);
+         SetTransMatrix(r, R1_Theta);
+      ELSE
+         // Transformationsmatrix fuer eine Drehung mit dem Winkel Theta um die Achse U berechnen
+         ComputeTransformation(R1_Theta, Theta, U, N1r, P1r, N1m, P1m);
+      END_IF;
+
+      PrintHomMat("Transformation Schritt 1", R1_Theta);
+
+      CopyHomMat2Matrix3(Ori, R1_Theta);
+      CopyHomMat2Vector3(Pos, R1_Theta);
+      Compute_tcp_kardan(Ori, Pos, 0, kard); // kard = Wert fuer SET_OBJECT
+
+
+      PrintObject("Werte fuer Objektverschiebung ", kard);
+
+      MultiplyHomMat(NewObjHomMat, OrgObjHomMat, R1_Theta); // von rechts multiplizieren, da
+                                                            // R1_Theta im Objektsystem berechnet ist
+
+      PrintHomMat("Transformation Schritt 1 Neues Objekt", NewObjHomMat);
+
+      CopyHomMat2Matrix3(Ori, NewObjHomMat);
+      CopyHomMat2Vector3(Pos, NewObjHomMat);
+      Compute_tcp_kardan(Ori, Pos, 0, NewObj); // NewObj = Wert fuer SET_OBJECT
+
+
+      PrintObject("Werte fuer SET_OBJECT:", NewObj);
+      LogObject(NewObj);
+
+      OBJ := NewObj; // Rueckgabewerte
+   END_IF;
+   str := OBJ.GetInstancePathName();
+   b := WriteInitValues(str); 
+   bStep1Ok := TRUE;
+   RETURN TRUE;  
+END_ROUTINE
+
+
+ROUTINE Calc3DStep2(P4 : POINT; P5 : POINT; OBJ : OBJECT) : BOOL
+VAR
+   str    : STRING;
+   b      : BOOL;
+   delta4 : REAL;
+   delta5 : REAL;
+END_VAR   
+
+   OBJ := OrgObj; // fuer den Fehlerfall
+   
+   // Fehlerbehandlung
+   IF NOT bStep2Select THEN
+      // Fehler Step2 nicht ausgewählt
+      RcuSetMessageOnce(TRcuObjMeasure_ErrStepNotSelect, lKin.kinListInx, 2, instId, "TRcuObjMeasure.Calc3DStep2", "CALC3DSTEP2");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF NOT bInitOk THEN
+      // Fehler INIT3DOBJECT nicht aufgerufen 
+      RcuSetMessageOnce(TRcuObjMeasure_ErrStepNotInit, lKin.kinListInx, 2, instId, "TRcuObjMeasure.Calc3DStep2", "CALC3DSTEP2");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF bStep1Select THEN
+      IF NOT bStep1Ok THEN
+         // Fehler STEP1 nicht erfolgreich durchlaufen
+         RcuSetMessageOnce(TRcuObjMeasure_ErrStepNoSucc, lKin.kinListInx, 1, instId, "TRcuObjMeasure.Calc3DStep2", "CALC3DSTEP2", "CALC3DSTEP1");
+         lKin.ErrorReaction(TRUE);
+         RETURN FALSE;
+      END_IF; 
+   ELSE
+      // Ebene E1r ergibt sich aus planeStep1
+      CASE planeStep1 OF
+         NOPLANE : // Fehler
+                   RETURN FALSE;
+         XY      : N1r.mValues[0] := 0.0;
+                   N1r.mValues[1] := 0.0;
+                   N1r.mValues[2] := 1.0;
+         XZ      : N1r.mValues[0] := 0.0;
+                   N1r.mValues[1] := 1.0;
+                   N1r.mValues[2] := 0.0;
+         YZ      : N1r.mValues[0] := 1.0;
+                   N1r.mValues[1] := 0.0;
+                   N1r.mValues[2] := 0.0;
+      ELSE
+         // Fehler
+         RETURN FALSE;
+      END_CASE;
+      NewObjHomMat := OrgObjHomMat;
+      bStep1Ok := TRUE;
+   END_IF;
+ 
+   IF P4.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P4 = " + P4.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 9, instId, "TRcuObjMeasure.Calc3DStep2", "1", P4.GetName(), "CALC3DSTEP2");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF P5.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P5 = " + P5.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 10, instId, "TRcuObjMeasure.Calc3DStep2", "2", P5.GetName(), "CALC3DSTEP2");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+
+   IF lKin.fieldbusIn.GhostMode.svBool THEN
+      lKin.DebugPrint(eTraceVision, "GHOST           Schritt 2");
+      PrintObject("Werte fuer SET_OBJECT:", OBJ);
+      LogObject(OBJ);
+   ELSE   
+      P4m.mValues[0] := P4.A;
+      P4m.mValues[1] := P4.B;
+      P4m.mValues[2] := P4.C;
+      P5m.mValues[0] := P5.A;
+      P5m.mValues[1] := P5.B;
+      P5m.mValues[2] := P5.C;
+
+      delta4 := McuDistanceVec3(P4r, P4m);
+      delta5 := McuDistanceVec3(P5r, P5m);
+
+      lKin.logger.SetLoggerStep(iLoggerNumber, "CALC3DSTEP2 Diff: "+STR(delta4)+" "+STR(delta5));
+      lKin.DebugPrint(eTraceVision, "                Schritt 2");
+      IF (delta4 > deltaMax) AND NOT lKin.bRcuSimulatesAllDrives THEN
+         RcuSetMessageOnce(TRcuObjMeasure_ErrDistance, lKin.kinListInx, 4, instId, "TRcuObjMeasure.Calc3DStep2", "CALC3DSTEP2", P4.GetName(), STR(delta4));
+         RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+             lKin.kinListInx, 
+             4, 
+             instId, 
+             "TRcuObjMeasure.Calc3DStep2"                       
+             );
+         lKin.ErrorReaction(FALSE);
+         RETURN FALSE;
+      END_IF;
+      IF (delta5 > deltaMax) AND NOT lKin.bRcuSimulatesAllDrives THEN
+         RcuSetMessageOnce(TRcuObjMeasure_ErrDistance, lKin.kinListInx, 5, instId, "TRcuObjMeasure.Calc3DStep2", "CALC3DSTEP2", P5.GetName(), STR(delta5));
+         RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+             lKin.kinListInx, 
+             5, 
+             instId, 
+             "TRcuObjMeasure.Calc3DStep2"                       
+             );
+         lKin.ErrorReaction(FALSE);
+         RETURN FALSE;
+      END_IF;
+
+      // Transformation Referenzpunkte P4r und P5r
+      // nicht noetig, da wegen SET_OBJECT die Meßwerte P4m und P5m im gleichen System
+      // wie P4r und P5r sind!!!
+
+      //P5r-P4r = Gerade g und Normalenvektor der Ebene E1r (N1r) definieren die Ebene E2r
+      McuSubVector3(H2r, P5r, P4r);
+      McuCrossProductVec3(N2r, H2r, N1r);
+
+      //Vektoren in der Ebene E2m (Messebene)
+      //P5rm-P4m = Gerade gm und Normalenvektor der Ebene E1r (N1r) definieren die Ebene E2m
+      McuSubVector3(H2m, P5m, P4m);
+      McuCrossProductVec3(N2m, H2m, N1r);
+
+      McuCopyVec3(U, N1r); // Richtung der Schnittgerade von Referenz- und Messebene
+                                        // = N1r
+      PrintVector3("Drehachsenrichtung", U);
+
+      Epsilon := McuAngleVec3(N2m,N2r);
+      //ArcCos(McuDotProductVec3(N1m, N1r)/(McuLenVector3(N1m)*McuLenVector3(N1r)), Theta); // Drehwinkel
+      EpsilonGrad := Epsilon*180.0/gcPi;
+      lKin.DebugPrint(eTraceVision, "Drehwinkel = " + STR(EpsilonGrad));
+
+      // Winkel mit Vorzeichen berechnen
+      AngleVector3(Epsilon, N2r, N2m, U);
+      EpsilonGrad := Epsilon*180.0/gcPi;
+      lKin.DebugPrint(eTraceVision, "Drehwinkel = " + STR(EpsilonGrad));
+
+
+      IF rAbs(Epsilon) < Eps  THEN
+         lKin.DebugPrint(eTraceVision, "keine Verdrehung in 2. Ebene");
+         McuSubVector3(r, P4m, P4r);
+         SetTransMatrix(r, R2_Epsilon);
+      ELSE
+         // Transformationsmatrix fuer eine Drehung mit dem Winkel Epsilon um die Achse U
+         ComputeTransformation(R2_Epsilon, Epsilon, U, N2r, P4r, N2m, P4m);
+      END_IF;
+
+      PrintHomMat("Transformation Schritt 2", R2_Epsilon);
+
+      CopyHomMat2Matrix3(Ori, R2_Epsilon);
+      CopyHomMat2Vector3(Pos, R2_Epsilon);
+      Compute_tcp_kardan(Ori, Pos, 0, kard); // kard = Wert fuer SET_OBJECT
+
+      PrintObject("Werte fuer Object:", kard);
+
+      MultiplyHomMat(NewObjHomMat, NewObjHomMat, R2_Epsilon);
+
+      PrintHomMat("Transformation Schritt 2 Neues Objekt", NewObjHomMat);
+
+      CopyHomMat2Matrix3(Ori, NewObjHomMat);
+      CopyHomMat2Vector3(Pos, NewObjHomMat);
+      Compute_tcp_kardan(Ori, Pos, 0, NewObj); // NewObj = Wert fuer SET_OBJECT
+
+      PrintObject("Werte fuer SET_OBJECT:", NewObj);
+      LogObject(NewObj);
+
+      OBJ := NewObj; // Rueckgabewerte
+   END_IF;
+   
+   str := OBJ.GetInstancePathName();
+   b := WriteInitValues(str);
+   bStep2Ok := TRUE;
+   
+   RETURN TRUE;  
+END_ROUTINE
+
+
+ROUTINE Calc3DStep3(P6 : POINT; OBJ : OBJECT) : BOOL
+VAR
+   str    : STRING;
+   b      : BOOL;
+   delta6 : REAL;
+END_VAR   
+
+   OBJ := OrgObj; // fuer den Fehlerfall
+   
+   // Fehlerbehandlung
+   IF NOT bStep3Select THEN
+      // Fehler Step3 nicht ausgewählt
+      RcuSetMessageOnce(TRcuObjMeasure_ErrStepNotSelect, lKin.kinListInx, 3, instId, "TRcuObjMeasure.Calc3DStep3", "CALC3DSTEP3");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF NOT bInitOk THEN
+      // Fehler INIT3DOBJECT nicht aufgerufen 
+      RcuSetMessageOnce(TRcuObjMeasure_ErrStepNotInit, lKin.kinListInx, 3, instId, "TRcuObjMeasure.Calc3DStep3", "CALC3DSTEP3");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   IF bStep1Select THEN
+      IF NOT bStep1Ok THEN
+         // Fehler STEP1 nicht erfolgreich durchlaufen
+         RcuSetMessageOnce(TRcuObjMeasure_ErrStepNoSucc, lKin.kinListInx, 2, instId, "TRcuObjMeasure.Calc3DStep3", "CALC3DSTEP3", "CALC3DSTEP1");
+         lKin.ErrorReaction(TRUE);
+         RETURN FALSE;
+      END_IF; 
+   ELSE
+      bStep1Ok := TRUE;
+   END_IF;
+   IF bStep2Select THEN
+      IF NOT bStep2Ok THEN
+         // Fehler STEP2 nicht erfolgreich durchlaufen
+         RcuSetMessageOnce(TRcuObjMeasure_ErrStepNoSucc, lKin.kinListInx, 3, instId, "TRcuObjMeasure.Calc3DStep3", "CALC3DSTEP3", "CALC3DSTEP2");
+         lKin.ErrorReaction(TRUE);
+         RETURN FALSE;
+      END_IF; 
+   ELSE
+      bStep2Ok := TRUE;
+   END_IF;
+   IF NOT bStep1Select AND NOT bStep2Select THEN
+      NewObjHomMat := OrgObjHomMat;
+   END_IF;
+      
+   IF P6.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter P6 = " + P6.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 11, instId, "TRcuObjMeasure.Calc3DStep3", "1", P6.GetName(), "CALC3DSTEP3");
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+
+   IF lKin.fieldbusIn.GhostMode.svBool THEN
+      lKin.DebugPrint(eTraceVision, "GHOST             Schritt 3");
+      PrintObject("Werte fuer SET_OBJECT:", OBJ);
+      LogObject(OBJ);
+   ELSE 
+
+      P6m.mValues[0] := P6.A;
+      P6m.mValues[1] := P6.B;
+      P6m.mValues[2] := P6.C;
+      lKin.DebugPrint(eTraceVision, "                Schritt 3");
+      delta6 := McuDistanceVec3(P6r, P6m);
+
+      lKin.logger.SetLoggerStep(iLoggerNumber, "CALC3DSTEP3 Diff: "+STR(delta6));
+      IF (delta6 > deltaMax) AND NOT lKin.bRcuSimulatesAllDrives THEN
+         RcuSetMessageOnce(TRcuObjMeasure_ErrDistance, lKin.kinListInx, 6, instId, "TRcuObjMeasure.Calc3DStep3", "CALC3DSTEP3", P6.GetName(), STR(delta6));
+         RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+             lKin.kinListInx, 
+             6, 
+             instId, 
+             "TRcuObjMeasure.Calc3DStep3"                       
+             );
+         lKin.ErrorReaction(FALSE);
+         RETURN FALSE;
+      END_IF;
+      // Transformation Referenzpunkt P6r
+      // nicht noetig, da wegen SET_OBJECT der Meßwert P6m im gleichen System
+      // wie P6r ist !!!!
+      McuSubVector3(v, P6m, P6r);
+      // Berechnung der Transformationsmatrix R3(v)
+      SetTransMatrix(v, R3_v);
+
+      PrintHomMat("Transformation Schritt 3", R3_v);
+
+      CopyHomMat2Matrix3(Ori, R3_v);
+      CopyHomMat2Vector3(Pos, R3_v);
+      Compute_tcp_kardan(Ori, Pos, 0, kard); // kard = Wert fuer SET_OBJECT
+
+      PrintObject("Werte fuer Object:", kard);
+
+      MultiplyHomMat(NewObjHomMat, NewObjHomMat, R3_v);
+
+      PrintHomMat("Transformation Schritt 3 Neues Objekt", NewObjHomMat);
+
+      CopyHomMat2Matrix3(Ori, NewObjHomMat);
+      CopyHomMat2Vector3(Pos, NewObjHomMat);
+      Compute_tcp_kardan(Ori, Pos, 0, NewObj); // kard = Wert fuer SET_OBJECT
+
+      PrintObject("Werte fuer SET_OBJECT:", NewObj);
+      LogObject(NewObj);
+
+      OBJ := NewObj; // Rueckgabewerte
+   END_IF;
+   
+   str := OBJ.GetInstancePathName();
+   b := WriteInitValues(str);
+   bStep3Ok := TRUE;
+   RETURN TRUE;  
+END_ROUTINE
+
+ROUTINE Define3DObject(PXMIN : POINT; PXMAX : POINT; PY : POINT; OBJ_REF : OBJECT)
+VAR
+   Z           : TMcuVector3;
+   Y           : TMcuVector3;
+   X           : TMcuVector3;
+   P1          : TMcuVector3;
+   P2          : TMcuVector3;
+   P3          : TMcuVector3;
+   H           : TMcuVector3;
+   Pos         : TMcuVector3;
+   Ori         : TMcuMatrix3;
+   b           : BOOL;
+   str         : STRING;
+   resultFrame : TMcuFrame;
+   helpFrame   : TMcuFrame;
+END_VAR
+
+   
+   IF PXMIN.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter PXMIN = " + PXMIN.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 12, instId, "TRcuObjMeasure.Define3DObject", "1", PXMIN.GetName(), "DEFINE3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF PXMAX.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter PXMAX = " + PXMAX.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 13, instId, "TRcuObjMeasure.Define3DObject", "2", PXMAX.GetName(), "DEFINE3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   IF PY.Coord <> Object THEN
+      lKin.DebugPrint(eTraceVision, "Parameter PY = " + PY.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, lKin.kinListInx, 14, instId, "TRcuObjMeasure.Define3DObject", "3", PY.GetName(), "DEFINE3DOBJECT");
+      lKin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   P1.mValues[0] := PXMIN.A;
+   P1.mValues[1] := PXMIN.B;
+   P1.mValues[2] := PXMIN.C;
+
+   P2.mValues[0] := PXMAX.A;
+   P2.mValues[1] := PXMAX.B;
+   P2.mValues[2] := PXMAX.C;
+
+   P3.mValues[0] := PY.A;
+   P3.mValues[1] := PY.B;
+   P3.mValues[2] := PY.C;
+
+   McuSubVector3(X, P2, P1);
+   McuSubVector3(H, P3, P1);
+   McuCrossProductVec3(Z, X, H);
+   McuCrossProductVec3(Y, Z, X);
+
+   McuUnifyVec3(X,X);
+   McuUnifyVec3(Y,Y);
+   McuUnifyVec3(Z,Z);
+
+   Ori.mValues[0][0] := X.mValues[0];
+   Ori.mValues[1][0] := X.mValues[1];
+   Ori.mValues[2][0] := X.mValues[2];
+
+   Ori.mValues[0][1] := Y.mValues[0];
+   Ori.mValues[1][1] := Y.mValues[1];
+   Ori.mValues[2][1] := Y.mValues[2];
+
+   Ori.mValues[0][2] := Z.mValues[0];
+   Ori.mValues[1][2] := Z.mValues[1];
+   Ori.mValues[2][2] := Z.mValues[2];
+   
+   //Pos := lKin.actObject.mPos;
+
+   Compute_tcp_kardan(Ori, Pos, 0, OBJ_REF); // OBJ_REF bzgl. actObject
+   helpFrame.mFrameTyp := eMcuFrameKardan;
+   helpFrame.mPos.mValues[0] := OBJ_REF.X_mm;
+   helpFrame.mPos.mValues[1] := OBJ_REF.Y_mm;
+   helpFrame.mPos.mValues[2] := OBJ_REF.Z_mm;
+   helpFrame.mOri.mValues[0] := OBJ_REF.A_deg;
+   helpFrame.mOri.mValues[1] := OBJ_REF.B_deg;
+   helpFrame.mOri.mValues[2] := OBJ_REF.C_deg;
+   
+   
+   PrintObject("OBJ_REF in ActObject", OBJ_REF);
+
+   McuMultiplyFrames(resultFrame, lKin.actObject, helpFrame);
+   OBJ_REF.X_mm := resultFrame.mPos.mValues[0];
+   OBJ_REF.Y_mm := resultFrame.mPos.mValues[1];
+   OBJ_REF.Z_mm := resultFrame.mPos.mValues[2];
+   OBJ_REF.A_deg := resultFrame.mOri.mValues[0];
+   OBJ_REF.B_deg := resultFrame.mOri.mValues[1];
+   OBJ_REF.C_deg := resultFrame.mOri.mValues[2];
+
+   PrintObject("OBJ_REF in World", OBJ_REF);
+
+   str := OBJ_REF.GetInstancePathName();
+   b := WriteInitValues(str); 
+   
+END_ROUTINE
+
+ROUTINE Calc3DTrafo(OBJ_REF : OBJECT; OBJ_MEASURE : OBJECT; OBJ_ORG : OBJECT; OBJ_RESULT : OBJECT)
+VAR
+   refFrame     : TMcuFrame; // bzgl. Welt
+   refFrameObj  : TMcuFrame; // bzgl. Object
+   measureFrame : TMcuFrame; // bzgl. Welt
+   measureFrameObj : TMcuFrame; // bzgl. Object
+   invObject    : TMcuFrame;
+   invRefFrame  : TMcuFrame;
+   invRefFrameObj  : TMcuFrame; // bzgl. Object
+   resultFrame  : TMcuFrame;
+   orgFrame        : TMcuFrame;
+   helpFrame    : TMcuFrame;
+   b            : BOOL;
+   str          : STRING;
+END_VAR
+   
+   refFrame.mFrameTyp := eMcuFrameKardan;
+   refFrame.mPos.mValues[0] := OBJ_REF.X_mm;
+   refFrame.mPos.mValues[1] := OBJ_REF.Y_mm;
+   refFrame.mPos.mValues[2] := OBJ_REF.Z_mm;
+   refFrame.mOri.mValues[0] := OBJ_REF.A_deg;
+   refFrame.mOri.mValues[1] := OBJ_REF.B_deg;
+   refFrame.mOri.mValues[2] := OBJ_REF.C_deg;
+   
+   orgFrame.mFrameTyp := eMcuFrameKardan;
+   orgFrame.mPos.mValues[0] := OBJ_ORG.X_mm;
+   orgFrame.mPos.mValues[1] := OBJ_ORG.Y_mm;
+   orgFrame.mPos.mValues[2] := OBJ_ORG.Z_mm;
+   orgFrame.mOri.mValues[0] := OBJ_ORG.A_deg;
+   orgFrame.mOri.mValues[1] := OBJ_ORG.B_deg;
+   orgFrame.mOri.mValues[2] := OBJ_ORG.C_deg;
+   
+   measureFrame.mFrameTyp := eMcuFrameKardan;
+   measureFrame.mPos.mValues[0] := OBJ_MEASURE.X_mm;
+   measureFrame.mPos.mValues[1] := OBJ_MEASURE.Y_mm;
+   measureFrame.mPos.mValues[2] := OBJ_MEASURE.Z_mm;
+   measureFrame.mOri.mValues[0] := OBJ_MEASURE.A_deg;
+   measureFrame.mOri.mValues[1] := OBJ_MEASURE.B_deg;
+   measureFrame.mOri.mValues[2] := OBJ_MEASURE.C_deg;
+   
+   McuInvertFrame(invRefFrame, refFrame);
+   McuMultiplyFrames(helpFrame, measureFrame, invRefFrame);
+   McuMultiplyFrames(resultFrame, helpFrame, orgFrame);
+   
+   OBJ_RESULT.X_mm := resultFrame.mPos.mValues[0];
+   OBJ_RESULT.Y_mm := resultFrame.mPos.mValues[1];
+   OBJ_RESULT.Z_mm := resultFrame.mPos.mValues[2];
+   OBJ_RESULT.A_deg := resultFrame.mOri.mValues[0];
+   OBJ_RESULT.B_deg := resultFrame.mOri.mValues[1];
+   OBJ_RESULT.C_deg := resultFrame.mOri.mValues[2];
+   
+   PrintObject("OBJ_RESULT 1", OBJ_RESULT);
+   
+   //anders:
+   McuInvertFrame(invObject, orgFrame);
+   McuMultiplyFrames(refFrameObj, invObject, refFrame);
+   McuMultiplyFrames(measureFrameObj, invObject, measureFrame);
+   McuInvertFrame(invRefFrameObj, refFrameObj);
+   McuMultiplyFrames(helpFrame, measureFrameObj, invRefFrameObj);
+   McuMultiplyFrames(resultFrame, orgFrame, helpFrame);
+
+   OBJ_RESULT.X_mm := resultFrame.mPos.mValues[0];
+   OBJ_RESULT.Y_mm := resultFrame.mPos.mValues[1];
+   OBJ_RESULT.Z_mm := resultFrame.mPos.mValues[2];
+   OBJ_RESULT.A_deg := resultFrame.mOri.mValues[0];
+   OBJ_RESULT.B_deg := resultFrame.mOri.mValues[1];
+   OBJ_RESULT.C_deg := resultFrame.mOri.mValues[2];
+   
+   PrintObject("OBJ_RESULT 2", OBJ_RESULT);
+
+   // Data for HMI
+   
+   // shift from 1 to 2
+   Measurements[2].Org.name := Measurements[1].Org.name;
+   Measurements[2].Org.x    := Measurements[1].Org.x;
+   Measurements[2].Org.y    := Measurements[1].Org.y;
+   Measurements[2].Org.z    := Measurements[1].Org.z; 
+   Measurements[2].Org.A    := Measurements[1].Org.A; 
+   Measurements[2].Org.B    := Measurements[1].Org.B; 
+   Measurements[2].Org.C    := Measurements[1].Org.C; 
+   
+   Measurements[2].Meas.name := Measurements[1].Meas.name;
+   Measurements[2].Meas.x    := Measurements[1].Meas.x; 
+   Measurements[2].Meas.y    := Measurements[1].Meas.y;
+   Measurements[2].Meas.z    := Measurements[1].Meas.z; 
+   Measurements[2].Meas.A    := Measurements[1].Meas.A; 
+   Measurements[2].Meas.B    := Measurements[1].Meas.B; 
+   Measurements[2].Meas.C    := Measurements[1].Meas.C; 
+   
+   Measurements[2].Diff.name := Measurements[1].Diff.name;
+   Measurements[2].Diff.x    := Measurements[1].Diff.x; 
+   Measurements[2].Diff.y    := Measurements[1].Diff.y;
+   Measurements[2].Diff.z    := Measurements[1].Diff.z; 
+   Measurements[2].Diff.A    := Measurements[1].Diff.A; 
+   Measurements[2].Diff.B    := Measurements[1].Diff.B; 
+   Measurements[2].Diff.C    := Measurements[1].Diff.C; 
+   
+   
+   // copy actual data into 1
+   Measurements[1].Org.name := OBJ_ORG.GetInstancePathName();
+   Measurements[1].Org.x    := OBJ_ORG.X_mm;
+   Measurements[1].Org.y    := OBJ_ORG.Y_mm;
+   Measurements[1].Org.z    := OBJ_ORG.Z_mm;
+   Measurements[1].Org.A    := OBJ_ORG.A_deg;
+   Measurements[1].Org.B    := OBJ_ORG.B_deg;
+   Measurements[1].Org.C    := OBJ_ORG.C_deg;
+   
+   Measurements[1].Meas.name := OBJ_RESULT.GetInstancePathName();
+   Measurements[1].Meas.x    := OBJ_RESULT.X_mm;
+   Measurements[1].Meas.y    := OBJ_RESULT.Y_mm;
+   Measurements[1].Meas.z    := OBJ_RESULT.Z_mm;
+   Measurements[1].Meas.A    := OBJ_RESULT.A_deg;
+   Measurements[1].Meas.B    := OBJ_RESULT.B_deg;
+   Measurements[1].Meas.C    := OBJ_RESULT.C_deg;
+   
+   Measurements[1].Diff.x    := OBJ_ORG.X_mm - OBJ_RESULT.X_mm;
+   Measurements[1].Diff.y    := OBJ_ORG.Y_mm - OBJ_RESULT.Y_mm;
+   Measurements[1].Diff.z    := OBJ_ORG.Z_mm - OBJ_RESULT.Z_mm;
+   Measurements[1].Diff.A    := OBJ_ORG.A_deg - OBJ_RESULT.A_deg;
+   Measurements[1].Diff.B    := OBJ_ORG.B_deg - OBJ_RESULT.B_deg;
+   Measurements[1].Diff.C    := OBJ_ORG.C_deg - OBJ_RESULT.C_deg;
+    
+   str := OBJ_RESULT.GetInstancePathName();
+   b := WriteInitValues(str); 
+END_ROUTINE
+
+
+// Wartet auf das Sensorsignal. Bei Erkennen des Sensorsignals wird
+// die Position gespeichert
+ROUTINE ReceivePos3D(P : POINT) : BOOL
+VAR
+   b          : BOOL;
+   str        : STRING;
+   i          : DINT;
+   rTmp       : REAL;
+   P_diff     : POINT;
+  
+   // Fast measurement
+   paramValue : DINT;
+   value      : REAL;  // Value of the parameter
+   mainDrive  : TMcuVector;
+   auxDrive   : TMcuVector;
+   mainJoint  : TMcuPosJoints;
+   auxJoint   : TMcuVector;
+   bAllDataValid : BOOL;
+   refSysId    : TMcuDbObjID;
+   ObjectPos   : TMcuPosCart;
+   bError      : BOOL := FALSE; 
+   bChgSensor  : BOOL;
+   bSignalOk   : BOOL;
+END_VAR
+
+   IF NOT IS_MAPPED(sensor) THEN
+      RcuSetMessageOnce(TRcuObjMeasure_ErrSensorNotMap, lKin.kinListInx, 2, instId, "TRcuObjMeasure.ReceivePos3D", cHW_mToolDetect[lKin.kinListInx]);
+      lKin.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+   
+   lKin.DebugPrint(eTraceVision, "ReceivePos3D start macro - Sensor = "+STR(sensor));
+   
+   IF lKin.fieldbusIn.GhostMode.svBool THEN
+      WAIT MAIN_RUN;
+      RETURN TRUE;
+   END_IF;
+
+   bChgSensor := IS_CHANGED(sensor); // Flanke positiv oder negativ
+   
+   WAIT MAIN_RUN OR bChgSensor; 
+   
+   //Hauptlauf im Zielpunkt angekommen und kein Sensorsignal --> Fehler
+   IF MAIN_RUN THEN
+      bSignalOk := FALSE;
+   //Sensorsignal abgefallen --> warten auf positive Flanke   
+   ELSIF NOT sensor THEN 
+      lKin.DebugPrint(eTraceVision, "ReceivePos3D falling edge - Sensor = "+STR(sensor));
+      IF (iDebounceTime > 0) THEN
+         Sleep(iDebounceTime);  //während der konfigurierten Zeit wird keine positive Flanke akzeptiert
+      END_IF;
+      bChgSensor := FALSE;
+      WAIT MAIN_RUN OR (bChgSensor AND sensor);
+      IF MAIN_RUN THEN
+         bSignalOk := FALSE;
+      ELSE
+         bSignalOk := TRUE;
+      END_IF;
+   // Positive Flanke Sensorsignal  
+   ELSE   
+      bSignalOk := TRUE;
+   END_IF;
+     
+   IF NOT bSignalOk THEN
+      IF lKin.bRcuSimulatesAllDrives THEN
+         lKin.DebugPrint(eTraceVision, "ReceivePos3D Sensor in Simulation gesetzt");
+         P.A := lKin.readBackObjectPos.mPos.mValues[0];
+         P.B := lKin.readBackObjectPos.mPos.mValues[1];
+         P.C := lKin.readBackObjectPos.mPos.mValues[2];
+         P.D := lKin.readBackObjectPos.mOri.mValues[0];
+         P.E := lKin.readBackObjectPos.mOri.mValues[1];
+         P.F := lKin.readBackObjectPos.mOri.mValues[2];
+         P.Coord := Object;
+         str := P.GetInstancePathName();
+         b := WriteInitValues(str);
+      ELSE
+         RcuSetMessageOnce(TRcuObjMeasure_ErrNotInSensor, lKin.kinListInx, 1, instId, "TRcuObjMeasure.ReceivePos3D", P.GetName());
+         RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+                               lKin.kinListInx, 
+                               1, 
+                               instId, 
+                               "TRcuObjMeasure.ReceivePos3D"                       
+                               );
+         lKin.ErrorReaction(FALSE);
+         RETURN FALSE;
+      END_IF;
+  
+   ELSE
+     
+      lKin.DebugPrint(eTraceVision, "ReceivePos3D Sensor = "+STR(sensor));
+
+      P.Coord := Object;
+      P.A := lKin.readBackObjectPos.mPos.mValues[0];
+      P.B := lKin.readBackObjectPos.mPos.mValues[1];
+      P.C := lKin.readBackObjectPos.mPos.mValues[2];
+      P.D := lKin.readBackObjectPos.mOri.mValues[0];
+      P.E := lKin.readBackObjectPos.mOri.mValues[1];
+      P.F := lKin.readBackObjectPos.mOri.mValues[2];
+      
+      str := "ReceivePos3D: Point coordinates (MCU object pos) " +
+               "A=" + STR(P.A) + ";" +
+               "B=" + STR(P.B) + ";" +
+               "C=" + STR(P.C) + ";" +
+               "D=" + STR(P.D) + ";" +
+               "E=" + STR(P.E) + ";" +
+               "F=" + STR(P.F) + ";";
+
+      lKin.DebugPrint(eTraceVision, str);
+  
+      IF  bFastMeasure THEN
+         lKin.WaitMcMicroCycles(10);
+
+         bAllDataValid := TRUE;
+
+         mainDrive.mValidLen          := lKin.nrOfMainJoints;
+         auxDrive.mValidLen           := lKin.nrOfAuxJoints;
+         mainJoint.mJoints.mValidLen  := lKin.nrOfMainJoints;
+         auxJoint.mValidLen           := lKin.nrOfAuxJoints;
+
+         str := "";    
+         // Copy axis values for main axis (6 axis e.g.) 
+         FOR i := 0 TO lKin.kinematic.mNrOfMainJoints - 1 DO
+            IF lKin.drive[i].ReadDrive_S_Param(130, paramValue, value) THEN 
+               mainDrive.mValues[i] := value;
+               str := str + "Mainjoint[" + STR(i) + "]=" + STR(value) + ";";
+            ELSE
+               bAllDataValid              := FALSE;   
+            END_IF;
+         END_FOR;
+         
+         // Copy axis values for auxiliary axis
+         FOR i := lKin.kinematic.mNrOfMainJoints TO lKin.kinematic.mNrOfJoints -1 DO 
+            IF lKin.drive[i].ReadDrive_S_Param(130, paramValue, value) THEN 
+               auxDrive.mValues[i] := value;
+               str := str + "Auxjoint[" + STR(i) + "]=" + STR(value) + ";";
+            ELSE
+               bAllDataValid              := FALSE;   
+            END_IF;
+         END_FOR;
+         
+         //ReleaseMesstaster(FALSE);
+         lKin.DebugPrint(eTraceVision, "ReceivePos3D: FastMeasurement - Serocs values (S-130)):" + str);
+         
+         // Joints: Achsen   mit  Getriebekopplung
+         IF bAllDataValid THEN
+            // mainJoint and auxJoint are written
+            McuDrivesToJoints(mainJoint.mJoints, auxJoint, mainDrive, 
+                              auxDrive, lKin.kinematicMcuId);
+
+            // Id des Objektkoordiantensystems ermitteln
+            IF NOT RcuRefSysGetMcuId(lKin.RcuRefSystemObject, refSysId) THEN
+               // ERROR
+            ELSE
+               IF lKin.kinematic.mForwCoordTrafo THEN
+                  McuForwardTrafoAux(ObjectPos, mainJoint, auxJoint, refSysId, 
+                                       lKin.kinematicMcuId, lKin.kinToolMcuId);
+                   str := "ReceivePos3D: Point coordinates (Fast measure object pos) " +
+                     "A=" + STR(ObjectPos.mFrame.mPos.mValues[0]) + ";" +
+                     "B=" + STR(ObjectPos.mFrame.mPos.mValues[1]) + ";" +
+                     "C=" + STR(ObjectPos.mFrame.mPos.mValues[2]) + ";" +
+                     "D=" + STR(ObjectPos.mFrame.mOri.mValues[0]) + ";" +
+                     "E=" + STR(ObjectPos.mFrame.mOri.mValues[1]) + ";" +
+                     "F=" + STR(ObjectPos.mFrame.mOri.mValues[2]) + ";";
+
+                  lKin.DebugPrint(eTraceVision, str);
+               END_IF;
+            END_IF;
+         
+            P_diff.A := P.A - ObjectPos.mFrame.mPos.mValues[0];
+            P_diff.B := P.B - ObjectPos.mFrame.mPos.mValues[1];
+            P_diff.C := P.C - ObjectPos.mFrame.mPos.mValues[2];
+            P_diff.D := GetMinOriDistance(P.D, ObjectPos.mFrame.mOri.mValues[0]);
+            P_diff.E := GetMinOriDistance(P.E, ObjectPos.mFrame.mOri.mValues[1]);
+            P_diff.F := GetMinOriDistance(P.F, ObjectPos.mFrame.mOri.mValues[2]);
+
+            str := "x=" + STR(P_diff.A) + ";" +
+                   "y=" + STR(P_diff.B) + ";" +
+                   "z=" + STR(P_diff.C) + ";" +
+                   "A=" + STR(P_diff.D) + ";" +
+                   "B=" + STR(P_diff.E) + ";" +
+                   "C=" + STR(P_diff.F) + ";";
+
+            lKin.DebugPrint(eTraceVision, "ReceivePos3D: Point coordinates (DIFF) " + str);   
+
+            i:=0;
+            IF (rAbs(P_diff.A) > MaxMethodDiffTrans) THEN    
+               RcuSetMessageOnce(TRcuObjMeasure_MethodDiff, 
+                        lKin.kinListInx, 
+                        i, 
+                        instId, 
+                        "TRcuObjMeasure.ReceivePos3D", 
+                        "ReceivePos3D", 
+                        P.GetName(),
+                        "delta x=" + STR(P_diff.A)                          
+                        );
+               i:=i+1;         
+               bError := TRUE;
+            END_IF;
+
+            IF (rAbs(P_diff.B) > MaxMethodDiffTrans) THEN
+               RcuSetMessageOnce(TRcuObjMeasure_MethodDiff, 
+                        lKin.kinListInx, 
+                        i, 
+                        instId, 
+                        "TRcuObjMeasure.ReceivePos3D", 
+                        "ReceivePos3D", 
+                        P.GetName(),
+                        "delta y=" + STR(P_diff.B)                          
+                        );
+               i:=i+1; 
+               bError := TRUE;
+            END_IF;
+
+            IF (rAbs(P_diff.C) > MaxMethodDiffTrans) THEN
+               RcuSetMessageOnce(TRcuObjMeasure_MethodDiff, 
+                        lKin.kinListInx, 
+                        i, 
+                        instId, 
+                        "TRcuObjMeasure.ReceivePos3D", 
+                        "ReceivePos3D", 
+                        P.GetName(),
+                        "delta z=" + STR(P_diff.C)                          
+                        );
+                        i:=i+1;
+               bError := TRUE;
+            END_IF; 
+
+            IF (P_diff.D > MaxMethodDiffOri) THEN
+               RcuSetMessageOnce(TRcuObjMeasure_MethodDiff, 
+                        lKin.kinListInx, 
+                        i, 
+                        instId, 
+                        "TRcuObjMeasure.ReceivePos3D", 
+                        "ReceivePos3D", 
+                        P.GetName(),
+                        "delta A=" + STR(P_diff.D)                          
+                        );
+               i:=i+1;         
+               bError := TRUE;
+            END_IF; 
+
+            IF (P_diff.E > MaxMethodDiffOri) THEN
+               RcuSetMessageOnce(TRcuObjMeasure_MethodDiff, 
+                        lKin.kinListInx, 
+                        i, 
+                        instId, 
+                        "TRcuObjMeasure.ReceivePos3D", 
+                        "ReceivePos3D", 
+                        P.GetName(),
+                        "delta B=" + STR(P_diff.E)                          
+                        );
+               i:=i+1;         
+               bError := TRUE;
+            END_IF;
+
+            IF (P_diff.F > MaxMethodDiffOri) THEN
+               RcuSetMessageOnce(TRcuObjMeasure_MethodDiff, 
+                        lKin.kinListInx, 
+                        i, 
+                        instId, 
+                        "TRcuObjMeasure.ReceivePos3D", 
+                        "ReceivePos3D", 
+                        P.GetName(),
+                        "delta C=" + STR(P_diff.F)                          
+                        );
+               i:=i+1;
+               bError := TRUE;
+            END_IF;
+
+            IF bError THEN
+               RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+                              lKin.kinListInx, 
+                              1, 
+                              instId, 
+                              "TRcuObjMeasure.ReceivePos3D"                       
+                              );  
+
+               lKin.ErrorReaction(FALSE);                  
+               RETURN FALSE;
+            END_IF; 
+            
+            str := "ReceivePos3D:: bFastMeasure = TRUE AND bAllDataValid = TRUE ";
+            lKin.DebugPrint(eTraceVision, str); 
+            
+            P.A := ObjectPos.mFrame.mPos.mValues[0];
+            P.B := ObjectPos.mFrame.mPos.mValues[1];
+            P.C := ObjectPos.mFrame.mPos.mValues[2];
+            P.D := ObjectPos.mFrame.mOri.mValues[0];
+            P.E := ObjectPos.mFrame.mOri.mValues[1];
+            P.F := ObjectPos.mFrame.mOri.mValues[2];
+            
+         ELSE  // IF bAllDataValid THEN
+            RcuSetMessageOnce(TRcuObjMeasure_ErrGetDriveParam, 
+                              lKin.kinListInx, 
+                              1, 
+                              instId, 
+                              "TRcuObjMeasure.ReceivePos3D"                       
+                              );
+            RcuSetMessageOnce(TRcuObjMeasure_NoReleaseExit, 
+                                       lKin.kinListInx, 
+                                       2, 
+                                       instId, 
+                                       "TRcuObjMeasure.ReceivePos3D"                       
+                                       );                   
+            lKin.ErrorReaction(FALSE);                  
+            RETURN FALSE;
+         END_IF;  
+      END_IF;    
+       
+      str := P.GetInstancePathName();
+      b := WriteInitValues(str);
+   END_IF;
+   
+   WAIT MAIN_RUN;
+   
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE GetMinOriDistance(ori1 : REAL; ori2 : REAL) : REAL PRIVATE
+VAR
+   r1 : REAL;   
+   rReturn : REAL;
+END_VAR
+   r1 := rAbs(ori1 - ori2);
+
+   IF r1 > 180.0 THEN   
+      rReturn := 360.0 - r1;
+   ELSE
+     rReturn := r1; 
+   END_IF;
+
+   //PRINT("ori1=" + STR(ori1) + "; ori2=" + STR(ori2) + "rReturn=" + STR(rReturn));
+   RETURN rReturn;
+END_ROUTINE
+
+
+// Ein-/Ausschalten des Lasers
+ROUTINE SetLaser(State : TRcuProcessJob)
+
+   IF IS_MAPPED(laserOnOff) THEN
+      IF State = ON THEN
+         laserOnOff := FALSE;
+      ELSE
+         laserOnOff := TRUE;
+      END_IF;
+   ELSE
+      lKin.DebugPrint(eTraceVision, "laserOnOff not mapped");
+   END_IF;
+END_ROUTINE
+
+
+VAR PRIVATE
+   lKin                : MAPTO TRcuRobot;
+   bCfgDataRead        : BOOL;
+   instId              : DINT;    // instance identification number
+   sensor              : MAPTO BOOL;
+   laserOnOff          : MAPTO BOOL;
+   bPlcBadMeasurement  : MAPTO BOOL;
+   bPlcHoleSizeNotOK   : MAPTO BOOL;  
+   
+   cHW_mSensor  : STRING;
+   
+   //Referenzpunkte fuer die Messpositionen in Objektkoordinaten (nur Position)
+   P1r         : TMcuVector3;
+   P2r         : TMcuVector3;
+   P3r         : TMcuVector3;
+   P4r         : TMcuVector3;
+   P5r         : TMcuVector3;
+   P6r         : TMcuVector3;
+
+   //Messpunkte in Objektkoordinaten (nur Position)
+   P1m         : TMcuVector3;
+   P2m         : TMcuVector3;
+   P3m         : TMcuVector3;
+   P4m         : TMcuVector3;
+   P5m         : TMcuVector3;
+   P6m         : TMcuVector3;
+   
+   H1r         : TMcuVector3;
+   H2r         : TMcuVector3;
+   N1r         : TMcuVector3; // Normalenvektor Ebene E1
+   
+   H1m         : TMcuVector3;
+   H2m         : TMcuVector3;
+   N1m         : TMcuVector3; // Normalenvektor Ebene E1m
+   
+   N2r         : TMcuVector3; // Normalenvektor Ebene E2r
+   N2m         : TMcuVector3; // Normalenvektor Ebene E2m
+   
+   U           : TMcuVector3; // Richtung der Schnittgeraden von E1 und E1m
+   
+   r           : TMcuVector3; // Differenzvektor bei reiner Verschiebung
+   
+   Theta       : REAL; // Winkel zwischen E1r und E1m
+   ThetaGrad   : REAL; // Winkel zwischen E1r und E1m
+   
+   Epsilon     : REAL; // Winkel zwischen E2r und E2m
+   EpsilonGrad : REAL; // Winkel zwischen E2r und E2m
+   
+   h1    : REAL; // Hilfsvariable
+   
+   // homogene Matrizen
+   R1_Theta     : HomogenMatrix;
+   R2_Epsilon   : HomogenMatrix;
+   R3_v         : HomogenMatrix;
+   OrgObjHomMat : HomogenMatrix;
+   NewObjHomMat : HomogenMatrix;
+   TrafoObj2World : HomogenMatrix;
+   
+   v            : TMcuVector3;
+
+   // Werte zum Test
+   Ori          : TMcuMatrix3; 
+   Pos          : TMcuVector3; 
+   kard         : OBJECT;
+
+   OrgObj       : OBJECT;
+   NewObj       : OBJECT;
+   
+   deltaMax           : REAL := 20.0;
+   MaxMethodDiffTrans : REAL := 30.0;
+   MaxMethodDiffOri   : REAL := 5.0;
+   bFastMeasure       : BOOL;
+   iDebounceTime      : DINT;
+   
+   iLoggerNumber: INT;
+   
+   bStep1Select : BOOL; // Step1 muss ausgeführt werden
+   bStep2Select : BOOL; // Step2 muss ausgeführt werden
+   bStep3Select : BOOL; // Step3 muss ausgeführt werden
+   bInitOk      : BOOL; // Init wurde erfolgreich ausgefuehrt
+   bStep1Ok     : BOOL; // Step1 wurde erfolgreich ausgeführt
+   bStep2Ok     : BOOL; // Step2 wurde erfolgreich ausgeführt
+   bStep3Ok     : BOOL; // Step3 wurde erfolgreich ausgeführt
+   planeStep1   : PLANE;
+   planeStep2   : PLANE;
+   planeStep3   : PLANE;
+END_VAR
+
+
+ROUTINE SolveLGS(a1 : REAL; b1 : REAL; c1 : REAL; a2 : REAL; b2 : REAL; c2 : REAL; x1 : REAL; y1 : REAL) : BOOL PRIVATE
+VAR
+   detA : REAL;
+END_VAR   
+
+   detA := a1*b2 - a2*b1; // Determinante der Koeffizientenmatrix
+   IF rAbs(detA) < Eps THEN
+      RETURN FALSE;
+   END_IF;
+   
+   x1 := (b2*c1 - b1*c2)/detA;
+   y1 := (-a2*c1 + a1*c2)/detA;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE PrintVector3(CONST Text : STRING; vec : TMcuVector3) PRIVATE
+   lKin.DebugPrint(eTraceVision, Text + " X = " + STR(vec.mValues[0]) + " Y = " + STR(vec.mValues[1]) + " Z = " + STR(vec.mValues[2]));
+END_ROUTINE
+
+ROUTINE PrintHomMat(CONST Text : STRING; mat : HomogenMatrix) PRIVATE
+   lKin.DebugPrint(eTraceVision, Text);
+   lKin.DebugPrint(eTraceVision, STR(mat[0][0]) + " " + STR(mat[0][1]) + " " + STR(mat[0][2]) + " " + STR(mat[0][3]));
+   lKin.DebugPrint(eTraceVision, STR(mat[1][0]) + " " + STR(mat[1][1]) + " " + STR(mat[1][2]) + " " + STR(mat[1][3]));
+   lKin.DebugPrint(eTraceVision, STR(mat[2][0]) + " " + STR(mat[2][1]) + " " + STR(mat[2][2]) + " " + STR(mat[2][3]));
+   lKin.DebugPrint(eTraceVision, STR(mat[3][0]) + " " + STR(mat[3][1]) + " " + STR(mat[3][2]) + " " + STR(mat[3][3]));
+END_ROUTINE
+
+ROUTINE PrintObject(CONST Text : STRING; kard : OBJECT) PRIVATE
+   lKin.DebugPrint(eTraceVision, Text);
+   lKin.DebugPrint(eTraceVision, "X = " + STR(kard.X_mm));
+   lKin.DebugPrint(eTraceVision, "Y = " + STR(kard.Y_mm));
+   lKin.DebugPrint(eTraceVision, "Z = " + STR(kard.Z_mm));
+   lKin.DebugPrint(eTraceVision, "A = " + STR(kard.A_deg));
+   lKin.DebugPrint(eTraceVision, "B = " + STR(kard.B_deg));
+   lKin.DebugPrint(eTraceVision, "C = " + STR(kard.C_deg));
+END_ROUTINE
+
+
+ROUTINE LogObject(kard : OBJECT) PRIVATE
+VAR
+   sLogText : STRING;
+END_VAR
+
+   sLogText := " X = " + STR(kard.X_mm) + ", Y = " + STR(kard.Y_mm) + ", Z = " + STR(kard.Z_mm);
+   lKin.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   sLogText := " A = " + STR(kard.A_deg) + ", B = " + STR(kard.B_deg) + ", C = " + STR(kard.C_deg);
+   lKin.logger.SetLoggerStep(iLoggerNumber, sLogText);
+END_ROUTINE
+
+
+// Winkel der Drehung um U zwischen N1r und N1m mit Vorzeichen berechnen
+ROUTINE AngleVector3(x : REAL; N1r : TMcuVector3; N1m : TMcuVector3; U : TMcuVector3) PRIVATE
+VAR
+   N1rNorm    : TMcuVector3;
+   N1mNorm    : TMcuVector3;
+   UNorm      : TMcuVector3;
+   O1rNorm    : TMcuVector3;
+   O1mNorm    : TMcuVector3;
+   HomMatr    : HomogenMatrix;
+   InvHomMatr : HomogenMatrix;
+   HomMatm    : HomogenMatrix;
+   HomMatx    : HomogenMatrix;
+   i          : INT;
+   j          : INT;
+END_VAR
+
+   McuUnifyVec3(N1rNorm, N1r);
+   McuUnifyVec3(N1mNorm, N1m);
+   McuUnifyVec3(UNorm, U);
+   McuCrossProductVec3(O1rNorm, N1rNorm, UNorm);
+   McuCrossProductVec3(O1mNorm, N1mNorm, UNorm);
+   
+   FOR i := 0 TO 2 DO
+      HomMatr[i][0] := O1rNorm.mValues[i];
+      HomMatr[i][1] := N1rNorm.mValues[i];
+      HomMatr[i][2] := UNorm.mValues[i];
+      HomMatm[i][0] := O1mNorm.mValues[i];
+      HomMatm[i][1] := N1mNorm.mValues[i];
+      HomMatm[i][2] := UNorm.mValues[i];
+   END_FOR;
+   HomMatr[3][3] := 1.0;
+   HomMatm[3][3] := 1.0;
+   
+   InvertHomMat(InvHomMatr, HomMatr);
+   
+   MultiplyHomMat(HomMatx, InvHomMatr, HomMatm);
+   
+   x := ArcTan2(HomMatx[1][0], HomMatx[0][0]);
+      
+END_ROUTINE
+
+
+// Berechnet die Transformationsmatrix fuer eine Drehung mit dem Winkel Phi um die Achse U, die
+// eine Ebene E1 (gegeben durch den Punkt P1 und die Normale N1) in die Ebene E2(gegeben durch den
+// Punkt P2 und die Normale N2) ueberfuehrt
+ROUTINE ComputeTransformation(T_Phi : HomogenMatrix; Phi : REAL; VAR_IN U : TMcuVector3; 
+                              VAR_IN N1 : TMcuVector3; VAR_IN P1 : TMcuVector3; 
+                              VAR_IN N2 : TMcuVector3; VAR_IN P2 : TMcuVector3) PRIVATE
+
+VAR
+   Rz_Phi     : HomogenMatrix;
+   // Koeffizienten der Ebenengleichungen
+   a1r : REAL;
+   b1r : REAL;
+   c1r : REAL;
+   d1r : REAL;
+
+   a1m : REAL;
+   b1m : REAL;
+   c1m : REAL;
+   d1m : REAL;
+   // Koordinaten des Punktes auf der Schnittgerade
+   Ax  : REAL;
+   Ay  : REAL;
+   Az  : REAL;
+   A           : TMcuVector3; // Punkt auf der Schnittgeraden von E1r und E1m
+   A_Min       : TMcuVector3;
+   S           : TMcuVector3; // Punkt auf der Schnittgeraden von E2r und E2m
+   S_Min       : TMcuVector3;
+
+   Alpha : REAL; // Winkel fuer Hilfsdrehungen
+   Beta  : REAL; 
+  
+   T_A          : HomogenMatrix;
+   T_Min_A      : HomogenMatrix;
+   T_S          : HomogenMatrix;
+   T_Min_S      : HomogenMatrix;
+   Rx_Min_Alpha : HomogenMatrix;
+   Ry_Min_Beta  : HomogenMatrix;
+   Rz_Theta     : HomogenMatrix;
+   Rz_Epsilon   : HomogenMatrix;
+   Ry_Beta      : HomogenMatrix;
+   Rx_Alpha     : HomogenMatrix;
+   H_Mat        : HomogenMatrix; // Zwischenergebnis
+END_VAR
+
+   // Punkt auf Drehachse berechnen
+
+   // Ebenengleichung E in der Form ax + by + cz = d (lineare Gleichung der Koordinaten)
+   // aus Punkt in der Ebene (P1) und Normalenvektor (n)
+
+   a1r := N1.mValues[0];
+   b1r := N1.mValues[1];
+   c1r := N1.mValues[2];
+   d1r := McuDotProductVec3(N1, P1);
+
+   a1m := N2.mValues[0];
+   b1m := N2.mValues[1];
+   c1m := N2.mValues[2];
+   d1m := McuDotProductVec3(N2, P2);
+
+   // Ein Punkt auf der Schnittgeraden muss beide Ebenengleichungen erfuellen. Die Schnittgerade
+   // schneidet auf jeden Fall eine der drei Hauptebenen.
+   Ax := 0.0;
+   Ay := 0.0;
+   Az := 0.0;
+   IF rAbs(U.mValues[0]) < rAbs(U.mValues[1]) THEN
+      IF rAbs(U.mValues[0]) < rAbs(U.mValues[2]) THEN
+         IF rAbs(U.mValues[1]) < rAbs(U.mValues[2]) THEN
+            // X  < Y < Z
+            // Versuch mit der XY-Ebene, d.h. z=0
+            IF SolveLGS(a1r, b1r, d1r, a1m, b1m, d1m, Ax, Ay) THEN
+               lKin.DebugPrint(eTraceVision, "Schnitt mit XY-Ebene Ax = " + STR(Ax) + " Ay = " + STR(Ay));
+            ELSE
+               lKin.DebugPrint(eTraceVision, "--------------Fehler beim Schnitt mit XY-Ebene");
+               RETURN;
+            END_IF;
+         ELSE
+            // X < Z < Y
+            // Versuch mit der XZ-Ebene, d.h. y=0
+            IF SolveLGS(a1r, c1r, d1r, a1m, c1m, d1m, Ax, Az) THEN
+               lKin.DebugPrint(eTraceVision, "Schnitt mit XZ-Ebene Ax = " + STR(Ax) + " Az = " + STR(Az));
+            ELSE
+               lKin.DebugPrint(eTraceVision, "--------------Fehler beim Schnitt mit XZ-Ebene");
+               RETURN;
+            END_IF;
+         END_IF;
+      ELSE
+         // Z < X < Y
+         // Versuch mit der XZ-Ebene, d.h. y=0
+         IF SolveLGS(a1r, c1r, d1r, a1m, c1m, d1m, Ax, Az) THEN
+            lKin.DebugPrint(eTraceVision, "Schnitt mit XZ-Ebene Ax = " + STR(Ax) + " Az = " + STR(Az));
+         ELSE
+            lKin.DebugPrint(eTraceVision, "--------------Fehler beim Schnitt mit XZ-Ebene");
+            RETURN;
+         END_IF;
+      END_IF;
+   ELSE // X > Y
+      IF rAbs(U.mValues[0]) < rAbs(U.mValues[2]) THEN
+         // Y < X < Z      
+         // Versuch mit der XY-Ebene, d.h. z=0
+         IF SolveLGS(a1r, b1r, d1r, a1m, b1m, d1m, Ax, Ay) THEN
+            lKin.DebugPrint(eTraceVision, "Schnitt mit XY-Ebene Ax = " + STR(Ax) + " Ay = " + STR(Ay));
+         ELSE
+            lKin.DebugPrint(eTraceVision, "--------------Fehler beim Schnitt mit XY-Ebene");
+            RETURN;
+         END_IF;
+      ELSE
+         //  X > Y,Z
+         // Versuch mit der YZ-Ebene, d.h. x=0
+         IF SolveLGS(b1r, c1r, d1r, b1m, c1m, d1m, Ay, Az) THEN
+            lKin.DebugPrint(eTraceVision, "Schnitt mit YZ-Ebene Ay = " + STR(Ay) + " Az = " + STR(Az));
+         ELSE
+            lKin.DebugPrint(eTraceVision, "--------------Fehler beim Schnitt mit YZ-Ebene");
+            RETURN;
+         END_IF;  
+      END_IF;
+   END_IF;
+
+   A.mValues[0] := Ax;
+   A.mValues[1] := Ay;
+   A.mValues[2] := Az;
+
+   McuUnifyVec3(U,U);
+   Sqrt(U.mValues[2]*U.mValues[2] + U.mValues[1]*U.mValues[1], h1);
+   lKin.DebugPrint(eTraceVision, "Drehachse X = " + STR(U.mValues[0]) + " Y = " + STR(U.mValues[1]) + " Z = " + STR(U.mValues[2]));
+   Alpha := ArcTan2(U.mValues[1] , U.mValues[2]);
+   lKin.DebugPrint(eTraceVision, "Alpha (ArcTan2) = "+STR(Alpha*180.0/gcPi));
+   
+   Beta := ArcTan2(-U.mValues[0] , h1);
+   lKin.DebugPrint(eTraceVision, "Beta = (ArcTan2) "+STR(Beta*180.0/gcPi));
+
+   // Berechnung der Transformationsmatrix T(Phi)
+   SetTransMatrix(A, T_A);
+   A_Min.mValues[0] := -Ax;
+   A_Min.mValues[1] := -Ay;
+   A_Min.mValues[2] := -Az;
+   SetTransMatrix(A_Min, T_Min_A);
+   SetRotXMatrix(-Alpha, Rx_Min_Alpha);
+   SetRotYMatrix(-Beta, Ry_Min_Beta);
+   SetRotZMatrix(Phi, Rz_Phi);
+   SetRotYMatrix(Beta, Ry_Beta);
+   SetRotXMatrix(Alpha, Rx_Alpha);
+
+   MultiplyHomMat(H_Mat, Rx_Alpha, T_Min_A);
+   MultiplyHomMat(H_Mat, Ry_Beta, H_Mat);
+   MultiplyHomMat(H_Mat, Rz_Phi, H_Mat);
+   MultiplyHomMat(H_Mat, Ry_Min_Beta, H_Mat);
+   MultiplyHomMat(H_Mat, Rx_Min_Alpha, H_Mat);
+   MultiplyHomMat(T_Phi, T_A, H_Mat);
+END_ROUTINE
+
+
+ROUTINE ReleaseMesstaster(enable : BOOL) PRIVATE 
+   VAR
+      i          : DINT;
+      ident      : DINT; //Parameter
+      ret        : TKSC_Status;
+   END_VAR   
+   
+   lKin.DebugPrint(eTraceVision, "TRcuObjMeasure.ReleaseMesstaster:" + STR(enable));
+   
+   FOR i := 0 TO lKin.kinematic.mNrOfJoints - 1 DO
+      IF enable THEN
+         // S-0-0405, Messtaster 1 Freigabe
+         // S-0-0405 dec Value = 1
+         ident := 405;
+         ret := RcWriteSercosParameter( lKin.drive[i].sercHdl, ident, 1);
+         IF ret = eKSC_Ok THEN
+            //lKin.DebugPrint(eTraceRcuDrive, "FastMeasure-Write Parameter: Axis " + STR(i) + " (S-0-405) = 1");
+         ELSE
+            RcuSetMessageOnce(TRcuDrive_ErrWriteParamFail, lKin.kinListInx, 3, 0, "TRcuDrive.StartFastMeasure", lKin.drive[i].resourceName, "S-0-405");
+         END_IF;
+
+      ELSE         
+         // S-0-0405, Messtaster 1 Freigabe
+         // S-0-0405 dec Value = 0
+         ident := 405;
+         ret := RcWriteSercosParameter( lKin.drive[i].sercHdl, ident, 0);
+         IF ret = eKSC_Ok THEN
+            //lKin.DebugPrint(eTraceRcuDrive, "FastMeasure-Write Parameter: Axis " + STR(i) + " (S-0-405) = 0");
+         ELSE
+            RcuSetMessageOnce(TRcuDrive_ErrWriteParamFail, lKin.kinListInx, 3, 0, "TRcuDrive.StartFastMeasure", lKin.drive[i].resourceName, "S-0-405");
+         END_IF;
+
+      END_IF;
+
+    END_FOR; 
+
+END_ROUTINE
+
+
+ROUTINE KommandoMesstasterzyklus () PRIVATE 
+   VAR
+      i          : DINT;
+      ident      : DINT; //Parameter
+      ret        : TKSC_Status;
+   END_VAR   
+   
+   lKin.DebugPrint(eTraceVision, "TRcuObjMeasure.KommandoMesstasterzyklus");
+   
+   FOR i := 0 TO lKin.kinematic.mNrOfJoints - 1 DO
+       // S-0-0170, Kommando Messtasterzyklus
+       // S-0-0170 dec Value = 3, binary value = 11
+      ident := 170;
+      ret := RcWriteSercosParameter( lKin.drive[i].sercHdl, ident, 3);
+      IF ret = eKSC_Ok THEN
+         lKin.DebugPrint(eTraceRcuDrive, " Axis " + STR(i) + " (S-0-170) = ");
+      ELSE
+         RcuSetMessageOnce(TRcuDrive_ErrReadParamFail, lKin.kinListInx, 1, 0, "TRcuDrive.StartFastMeasure", "xxxxx", "S-0-170");
+      END_IF;
+    END_FOR; 
+
+END_ROUTINE
+
+
+ROUTINE CheckSercosPhase () PRIVATE 
+   VAR
+      bChgSercosPhase     : BOOL;
+   END_VAR 
+   
+   bChgSercosPhase      := IS_CHANGED(gmSercosRing.actComPhase);
+
+   WHILE TRUE DO
+      IF (gmSercosRing.actComPhase = 4) THEN
+         KommandoMesstasterzyklus();
+         ReleaseMesstaster(TRUE);
+      END_IF;
+      
+      WAIT bChgSercosPhase;
+      bChgSercosPhase := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE NEW()
+   bStep1Select := TRUE;
+   bStep2Select := TRUE;
+   bStep3Select := TRUE;
+   bInitOk      := FALSE;
+   bStep1Ok     := FALSE;
+   bStep2Ok     := FALSE;
+   bStep3Ok     := FALSE;
+   planeStep1   := NOPLANE;
+   planeStep2   := NOPLANE;
+   planeStep3   := NOPLANE;
+END_ROUTINE
+
+ROUTINE DELETE()
+   bBootUpOk := FALSE;
+END_ROUTINE
+
+ROUTINE RELEASE()
+   bInitOk    := FALSE;
+   bStep1Ok   := FALSE;
+   bStep2Ok   := FALSE;
+   bStep3Ok   := FALSE;
+END_ROUTINE
+

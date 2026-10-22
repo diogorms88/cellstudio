@@ -1,0 +1,458 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date :       24.05.06                                                    *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuTypeList.ttp                                             *
+*    Description: Routines for access to the typelist                         *
+*                                                                             *
+*-----------------------------------------------------------------------------
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+CONSTANT GLOBAL
+ cMaxType : INT := 2000 (* Max. number of types *);
+ cMaxTypeKey : INT := 21 (* Max. number of keys in type list *);
+END_CONSTANT
+
+TYPE
+ tyTypeKeys : ARRAY  [1..cMaxTypeKey] OF STRING[40] (* Keys for Type List from typelist.def *);
+ tyTypeData : ARRAY  [1..cMaxType] OF MAPTO tyTypeKeys (* Type data according to Key List *);
+ tsTypeList : 
+   STRUCT 
+    Key : MAPTO tyTypeKeys;
+    y : tyTypeData;
+   END_STRUCT;
+ tyTypeList : ARRAY  [1..2] OF tsTypeList;
+ tsSVTypeList : 
+   STRUCT 
+    Select : MAPTO INT;
+    Data : tyTypeList;
+   END_STRUCT;
+END_TYPE
+// End of Type definition from T_TypeList.tu
+
+
+
+
+ROUTINE GetTypelistKeys(iKeyProject :INT; iKeyProgram :INT): BOOL
+   VAR
+      i : INT;
+      iSelector   : INT;
+   END_VAR;
+   
+   LOCK;
+   iSelector := svTypeList.Select;
+   
+   iKeyProject :=0;
+   i:=1;
+   WHILE ((iKeyProject = 0) AND (i <= cMaxTypeKey)) DO
+      IF (svTypeList.Data[iSelector].Key[i] = "Proj") THEN
+         iKeyProject := i;
+      END_IF;
+      i:=i+1;
+   END_WHILE;
+   
+     
+   iKeyProgram :=0;    
+   i:=1;      
+   WHILE ((iKeyProgram = 0) AND (i <= cMaxTypeKey)) DO
+      IF (svTypeList.Data[iSelector].Key[i] = "Prog") THEN
+         iKeyProgram := i;
+      END_IF;
+      i:=i+1;
+   END_WHILE;
+   UNLOCK;
+   IF (iKeyProject = 0) OR (iKeyProgram = 0) THEN
+      RETURN FALSE;
+   ELSE
+      RETURN TRUE;
+   END_IF; 
+         
+END_ROUTINE
+
+ROUTINE GetTypelistKey(CONST sKey : STRING;
+                       iKeyIdx :INT): BOOL
+   VAR
+      i : INT;
+      iSelector   : INT;
+   END_VAR;
+   
+   LOCK;
+   iSelector := svTypeList.Select;
+   
+   iKeyIdx :=0;
+   
+   i:=1;
+   WHILE ((iKeyIdx = 0) AND (i<= cMaxTypeKey)) DO
+      IF (StrToLower(svTypeList.Data[iSelector].Key[i]) = StrToLower(sKey)) THEN
+         iKeyIdx := i;
+      END_IF;
+      
+      i:=i+1;
+   END_WHILE;
+   UNLOCK;
+     
+   IF (iKeyIdx = 0) THEN
+      RETURN FALSE;
+   ELSE
+      RETURN TRUE;
+   END_IF; 
+         
+END_ROUTINE
+
+
+ROUTINE SearchTypeListEntry(CONST project : STRING; CONST program : STRING; nr : INT ): BOOL
+   VAR
+      i : INT;
+      s : STRING;
+      error : BOOL;
+      projectState : TProjectState;
+      lprogram : STRING;
+      lproject : STRING;
+      point   : STRING;
+      iKeyProject : INT;
+      iKeyProgram : INT;
+      iSelector   : INT;
+      bTimeOut    : BOOL;
+   END_VAR
+
+   WAIT typeListInit;
+   nr := 0;
+   //  the read in of the typlist
+   SysTimerSet(20000, bTimeOut); // waiting until typelist is read by PCU
+   WAIT (svTypeList.Select <> 0) OR bTimeOut;
+   IF bTimeOut THEN
+      myKinematic.DebugPrint(eTraceAutoControl, "Waiting 20 sec but Typelist not ready"); // @ERROR???
+      error := TRUE;
+   END_IF;
+   IF (svTypeList.Select = 1) OR (svTypeList.Select = 2) THEN
+      iSelector := svTypeList.Select;
+
+      IF NOT GetTypelistKeys(iKeyProject, iKeyProgram) THEN
+         error := TRUE;
+         myKinematic.DebugPrint(eTraceAutoControl, "Keys 'Proj' or 'prog' not found in typelist"); // @ERROR???  
+         END_IF;
+
+      IF NOT error THEN
+      FOR i:= 1 TO giNoOfTypes DO
+         LOCK;
+         lproject := svTypeList.Data[iSelector].y[i][iKeyProject];
+         lprogram := svTypeList.Data[iSelector].y[i][iKeyProgram];
+         UNLOCK;
+         IF (StrToLower(lprogram) = StrToLower(program)) 
+            AND (StrToLower(lproject) = StrToLower(project)) THEN
+            nr := i;
+            RETURN TRUE;
+         END_IF;
+         WAIT TRUE;
+      END_FOR; 
+      END_IF;
+
+   ELSE
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector wrong"); // @ERROR???
+   END_IF;
+   
+   IF iSelector <> svTypeList.Select THEN
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector has changed while reading "); // @ERROR???
+   END_IF;
+
+   IF error THEN
+      RcuSetMessageOnce(RcuTypeList_ErrProgTab, myKinematic.kinListInx, 1, instId, "RcuTypeList.SearchTypeListEntry");
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+
+ROUTINE SearchTypeListEntryFromPath(CONST path : STRING; nr : INT ): BOOL
+   VAR
+      project  : STRING;
+      program  : STRING;
+      pos      : DINT;
+      len      : DINT;
+   END_VAR
+
+   len := StrLen(path);
+   pos := StrFind(path, ".");
+   pos := pos -1;
+   project := StrLeft(path, pos);
+   pos := len-(pos+1);
+   program := StrRight(path, pos);
+   RETURN SearchTypeListEntry(project, program, nr);
+
+END_ROUTINE
+
+
+ROUTINE SearchTypeListEntryFromKey(CONST sKey    : STRING; 
+                                   CONST iTypeNo : INT;
+                                   sValue       : STRING): BOOL
+   VAR
+      i : INT;
+      error : BOOL;
+      iKeyIdx : INT;
+      iSelector   : INT;
+      bTimeOut    : BOOL;
+   END_VAR
+
+   WAIT typeListInit;
+   //  the read in of the typlist
+   SysTimerSet(20000, bTimeOut); // waiting until typelist is read by PCU
+   WAIT (svTypeList.Select <> 0) OR bTimeOut;
+   IF bTimeOut THEN
+      myKinematic.DebugPrint(eTraceAutoControl, "Waiting 20 sec but Typelist not ready"); // @ERROR???
+      error := TRUE;
+   END_IF;
+   IF (svTypeList.Select = 1) OR (svTypeList.Select = 2) THEN
+      iSelector := svTypeList.Select;
+
+      IF NOT GetTypelistKey(sKey, iKeyIdx ) THEN
+         error := TRUE;
+         myKinematic.DebugPrint(eTraceAutoControl, "Keys '" + sKey + "' not found in typelist"); // @ERROR???  
+       END_IF;
+
+      IF NOT error THEN
+         IF ((iTypeNo>0) AND (iTypeNo<=giNoOfTypes)) THEN
+            sValue := svTypeList.Data[iSelector].y[iTypeNo][iKeyIdx];
+
+            RETURN TRUE;
+         END_IF;
+      END_IF;
+   ELSE
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector wrong"); // @ERROR???
+   END_IF;
+   
+   IF iSelector <> svTypeList.Select THEN
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector has changed while reading "); // @ERROR???
+   END_IF;
+
+   IF error THEN
+      RcuSetMessageOnce(RcuTypeList_ErrProgTab, myKinematic.kinListInx, 1, instId, "RcuTypeList.SearchTypeListEntry");
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE CheckProjectIsFixpos(CONST path : STRING): BOOL
+   VAR
+      i : INT;
+      s : STRING;
+      error : BOOL;
+      projectState : TProjectState;
+      lprogram : STRING;
+      lproject : STRING;
+      point   : STRING;
+      iKeyProject : INT;
+      iKeyProgram : INT;
+      iSelector   : INT;
+      bTimeOut    : BOOL;
+      nr : INT;
+      pos      : DINT;
+      len      : DINT;
+      project  : STRING;
+   END_VAR
+
+   len := StrLen(path);
+   pos := StrFind(path, ".");
+   pos := pos -1;
+   pos := len-(pos+1);
+   project := StrRight(path, pos);
+   
+   WAIT typeListInit;
+   nr := 0;
+   //  the read in of the typlist
+   SysTimerSet(20000, bTimeOut); // waiting until typelist is written by PCU
+   WAIT (svTypeList.Select <> 0) OR bTimeOut;
+   IF bTimeOut THEN
+      myKinematic.DebugPrint(eTraceAutoControl, "Waiting 20 sec but Typelist not ready"); // @ERROR???
+      error := TRUE;
+   END_IF;
+   IF (svTypeList.Select = 1) OR (svTypeList.Select = 2) THEN
+      iSelector := svTypeList.Select;
+
+      IF NOT GetTypelistKeys(iKeyProject, iKeyProgram) THEN
+         error := TRUE;
+         myKinematic.DebugPrint(eTraceAutoControl, "Keys 'Proj' or 'prog' not found in typelist"); // @ERROR???  
+         END_IF;
+
+      project := StrToLower(project);
+      FOR i:= giMinFixposNr TO giNoOfTypes DO
+         lproject := svTypeList.Data[iSelector].y[i][iKeyProject];
+         IF (StrToLower(lproject) = project) THEN
+            RETURN TRUE;
+         END_IF;
+//            WAIT TRUE;
+         myKinematic.WaitMcMicroCycles(1);
+      END_FOR; 
+   ELSE
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector wrong"); // @ERROR???
+   END_IF;
+   
+   IF iSelector <> svTypeList.Select THEN
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector has changed while reading "); // @ERROR???
+   END_IF;
+
+   IF error THEN
+      RcuSetMessageOnce(RcuTypeList_ErrProgTab, myKinematic.kinListInx, 1, instId, "RcuTypeList.SearchTypeListEntry");
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+
+ROUTINE ReadTypeListEntry(VAR_IN progNumber: INT; project : STRING; program : STRING; OPTIONAL CONST robot : STRING): BOOL
+   VAR
+      i : INT;
+      s : STRING;
+      error : BOOL;
+      projectState : TProjectState;
+      lprogram : STRING;
+      lproject : STRING;
+      point   : STRING;
+      iKeyProject : INT;
+      iKeyProgram : INT;
+      iSelector   : INT;
+      bTimeOut    : BOOL;
+   END_VAR
+
+   IF (progNumber < 1) OR (progNumber > giNoOfTypes) THEN
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Index = " + STR(progNumber) + " in Typelist out of bounds"); // @ERROR???
+      RETURN FALSE;
+   END_IF;
+   
+   WAIT typeListInit;
+   //  the read in of the typlist
+   SysTimerSet(20000, bTimeOut); // waiting until typelist is read by PCU
+   WAIT (svTypeList.Select <> 0) OR bTimeOut;
+   IF bTimeOut THEN
+      myKinematic.DebugPrint(eTraceAutoControl, "Waiting 20 sec but Typelist not ready"); // @ERROR???
+      error := TRUE;
+   END_IF;
+   IF (svTypeList.Select = 1) OR (svTypeList.Select = 2) THEN
+      iSelector := svTypeList.Select;
+
+      IF NOT GetTypelistKeys(iKeyProject, iKeyProgram) THEN
+         myKinematic.DebugPrint(eTraceAutoControl, "Keys 'Proj' or 'prog' not found in typelist"); // @ERROR??? 
+         RETURN FALSE;
+         END_IF;
+
+      project := StrToLower(svTypeList.Data[svTypeList.Select].y[progNumber][iKeyProject]);
+      program := StrToLower(svTypeList.Data[svTypeList.Select].y[progNumber][iKeyProgram]);
+
+      IF (project <> "") AND (program <> "") THEN
+         IF IS_USED(robot) THEN
+            project := StrToLower(robot) + "." + project;
+         END_IF;
+         RETURN TRUE;
+      END_IF;
+   ELSE
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector wrong"); // @ERROR???
+   END_IF;
+   
+   IF iSelector <> svTypeList.Select THEN
+      error := TRUE;
+      myKinematic.DebugPrint(eTraceAutoControl, "Typelist selector has changed while reading "); // @ERROR???
+   END_IF;
+
+   IF error THEN
+      RcuSetMessageOnce(RcuTypeList_ErrProgTab, myKinematic.kinListInx, 2, instId, "RcuTypeList.ReadTypeListEntry");
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+
+
+// instead of NEW-Routine
+ROUTINE InitTypeList(kin : TRcuKinematic)
+VAR
+   i           : INT;
+   j           : INT;
+   mapString   : STRING;
+   helpString  : STRING;
+   posInString : DINT;
+   pos2InString: DINT;
+   bError      : BOOL := FALSE;
+END_VAR
+
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myKinematic := MAP(kin);
+   WAIT (giNoOfTypes <> 0);
+   svTypeList.Select := MAPX(cSV_TypeListSelect[myKinematic.kinListInx]);
+   IF NOT IS_MAPPED(svTypeList.Select) THEN
+      bError := TRUE;
+      RcuSetMessageOnce(RcuTypeList_FaErrNotMapped, myKinematic.kinListInx, 1, instId, 
+                        "RcuTypeList.InitTypeList", cSV_TypeListSelect[myKinematic.kinListInx]);
+   END_IF;
+   
+   posInString  := StrFind(cSV_TypeListDataKey[myKinematic.kinListInx], "[") + 1;
+   FOR i := 1 TO 2 DO
+      helpString := STR(i);
+      mapString := StrInsert(cSV_TypeListDataKey[myKinematic.kinListInx], helpString, posInString);
+      svTypeList.Data[i].Key := MAPX(mapString);
+      IF NOT IS_MAPPED(svTypeList.Data[i].Key) THEN
+         bError := TRUE;
+         RcuSetMessageOnce(RcuTypeList_FaErrNotMapped, myKinematic.kinListInx, 1, instId, 
+                           "RcuTypeList.InitTypeList", cSV_TypeListDataKey[myKinematic.kinListInx]);
+      END_IF;
+   END_FOR;
+
+   
+   posInString  := StrFind(cSV_TypeListDataY[myKinematic.kinListInx], "[") + 1;
+   FOR i := 1 TO 2 DO
+      FOR j := 1 TO giNoOfTypes DO
+         helpString := STR(i);
+         mapString := StrInsert(cSV_TypeListDataY[myKinematic.kinListInx], helpString, posInString);
+         pos2InString := StrFind(mapString, "[", posInString) + 1;
+         helpString := STR(j);
+         mapString := StrInsert(mapString, helpString, pos2InString);
+         svTypeList.Data[i].y[j] := MAPX(mapString);
+         IF NOT IS_MAPPED(svTypeList.Data[i].y[j]) THEN
+            bError := TRUE;
+            RcuSetMessageOnce(RcuTypeList_FaErrNotMapped, myKinematic.kinListInx, 1, instId, 
+                              "RcuTypeList.InitTypeList", cSV_TypeListDataY[myKinematic.kinListInx]);
+         END_IF;
+      END_FOR;
+   END_FOR;
+   
+   
+   
+   
+   IF NOT bError THEN       
+      typeListInit := TRUE;
+      select := MAP(svTypeList.Select);
+   END_IF;
+END_ROUTINE
+
+VAR
+   select : MAPTO INT;
+END_VAR
+
+(*******************************************************************************
+* private members
+*)
+VAR PRIVATE
+   svTypeList    : tsSVTypeList;
+   instId        : DINT;    // instance identification number
+   typeListInit  : BOOL;
+   myKinematic   : MAPTO TRcuKinematic;
+END_VAR
+

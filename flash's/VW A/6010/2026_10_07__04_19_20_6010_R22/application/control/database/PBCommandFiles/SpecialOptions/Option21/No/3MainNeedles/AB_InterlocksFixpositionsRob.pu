@@ -1,0 +1,660 @@
+(*
+
+<Begin_History>
+ Version     | ReleaseDate | Respon | Changes 
+------------------------------------------------------------
+ 2.01        | 23.07.2008  |  pzb   | delete sInPosition.Bypass in interlocks 5 in fCalculate
+ v2_01.00.00 | 25.03.2010  |  koi   | tagged as v2_01.00.00; version info is kept in a string var now
+ v2_01.00.01 | 21.02.2011  |  WRO   | change: different fixpositions for multikinematik
+ v2_01.00.02 | 20.03.2012  |  STL   | AddOn: start diagnostic movement in automatic mode after a door was open 
+ v2_01.01.00 | 16.04.2014  |  PZB   | Addon: fInit, check for new compatibility info from hmi and use extended user guide for fixpositions if supported
+
+*)
+
+IMPORT_OVER_LISTFILE
+ F_Version_String
+, cCatRootVersion
+, cCatPathVersion
+, ci_Homepos
+, cFB_InterlFixpos_NotInHomepos
+, cFifoZone
+, cFB_InterlFixpos_NoFixpos
+, cFB_InterlFixpos_OnlyPurgepos
+, ci_Maintenancepos
+, ci_ZeroPositionpos
+, tsBCU2HMI
+, tSystem2HMI
+, FB_SetProtocolAdv
+, AB_BodyManagementBCU
+, AB_InterfaceToMotion
+, FB_SetMessage
+, FB_GetMessageStringForHMI
+, AB_FunctionLib
+, AB_ParPool_IntFixposRob
+
+END_IMPORT
+
+ALGORITHM_BLOCK AB_InterlocksFixpositionsRob #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ SV_BCU2HMI : tsBCU2HMI;
+ SV_System2HMI : tSystem2HMI;
+END_VAR
+
+VAR_EXTERNAL
+ fbSetProtocol : FB_SetProtocolAdv;
+ abBodyManagement : AB_BodyManagementBCU (* body managemant for real and simulated bodies *);
+ abInterfaceToMotion : AB_InterfaceToMotion;
+ fbSetMessage : FB_SetMessage;
+END_VAR
+
+VAR
+ fbGetMessageStringForHMI : FB_GetMessageStringForHMI;
+ abFunctionLib : AB_FunctionLib;
+ Ag_zVersion : STRING(15) := 'V2_01.01.00' (* The last REAL-Version was 2.01 *);
+ Ag_iNrProgAfterDoorOpened : INT;
+ p : AB_ParPool_IntFixposRob;
+END_VAR
+
+FUNCTION fInit : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR
+ mInitError : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+//Set Version Info to catalog
+mInitError := NOT F_Version_String(i_zRoot    := cCatRootVersion,
+                                   i_zPath    := cCatPathVersion,
+                                   i_zName    := 'AB_InterlocksFixpositionsRob',
+                                   i_zVersion := Ag_zVersion); 
+IF NOT mInitError THEN
+  mInitError := NOT p.fInit();
+  IF NOT mInitError THEN
+    Ag_iNrProgAfterDoorOpened := p.NrProgAfterDoorOpened();
+  END_IF; 
+END_IF;
+
+//Set info to hmi that functionality 'extended user guide for start fixpositions in manually' is implemented
+abFunctionLib.aSetMask_DWORD(io_dValue:=SV_System2HMI.tCommon.sOut.o_dCompatibilityInfo,
+                             i_dMask  :=cCompFuncBit1);
+
+fInit := NOT mInitError;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fCalculate : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ i_iReqProgNumber : INT;
+ i_mHMIFixposRequest : BOOL;
+END_VAR
+
+VAR
+ udiErrorIdent : UDINT;
+ iMsgCnt : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+udiErrorIdent := 0;
+SV_BCU2HMI.tFixpos.sOut.o_zInterlockMsg := '';
+
+// Interlock 1 : movement is only allowed between PurgeHN1..3 and HOME
+IF ( abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN1pos)   OR
+     abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN2pos)   OR
+     abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN3pos) )    AND
+    (i_iReqProgNumber <> ci_PurgeHN1pos)                      AND
+    (i_iReqProgNumber <> ci_PurgeHN2pos)                      AND
+    (i_iReqProgNumber <> ci_PurgeHN3pos)                      AND
+    (i_iReqProgNumber <> ci_Homepos)                               THEN  
+     
+  udiErrorIdent := cFB_InterlFixpos_NotInHomepos;
+  iMsgCnt       := 1;
+  
+END_IF;
+  
+
+// Interlock 2 : movement is only allowed between PurgeHN1..3, HOME, PrePos and SavePos
+//               when body in zone sealing has a high risk of collision with the body
+
+IF ( (NOT abBodyManagement.fIsFifoEmpty(cFifoZone))               AND
+     (NOT abInterfaceToMotion.fIsRobotInHome())                   AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN1pos)) AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN2pos)) AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN3pos)) AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PrePospos))   AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_SavePospos)) )    THEN
+  
+  udiErrorIdent := cFB_InterlFixpos_NoFixpos;
+  iMsgCnt       := 2;
+    
+END_IF;
+  
+
+// Interlock 3 : If robot in home position and body in zone then only purge position possible
+IF (NOT abBodyManagement.fIsFifoEmpty(cFifoZone)     AND
+    abInterfaceToMotion.fIsRobotInHome()             AND
+    (i_iReqProgNumber <> ci_PurgeHN1pos)             AND
+    (i_iReqProgNumber <> ci_PurgeHN2pos)             AND
+    (i_iReqProgNumber <> ci_PurgeHN3pos))            AND
+    (i_iReqProgNumber <> ci_PrePospos)               AND
+    (i_iReqProgNumber <> ci_SavePospos)              AND
+    (i_iReqProgNumber <> ci_SavePospos)              AND
+    ((i_iReqProgNumber <> Ag_iNrProgAfterDoorOpened) OR
+     (Ag_iNrProgAfterDoorOpened = -1))               THEN
+     
+  udiErrorIdent := cFB_InterlFixpos_OnlyPurgepos;
+  iMsgCnt       := 3;
+  
+END_IF;
+  
+
+// Interlock 4 : Fix position only possible if robot in home position
+IF  (((abInterfaceToMotion.fIsRobotInPosition(ci_Maintenancepos)                             OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_Cleanpos)                                   OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_ZeroPositionpos)                            OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_PrePospos)                                  OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_SavePospos) )                                AND
+      (i_iReqProgNumber <> ci_Homepos))  OR
+     ((NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN1pos))                           AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN2pos))                           AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN3pos))                           AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_Maintenancepos))                        AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_ZeroPositionpos))                       AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_Cleanpos))                              AND
+      (NOT abInterfaceToMotion.fIsRobotInHome()  )                               AND
+      (i_iReqProgNumber <> ci_Homepos))) THEN
+     
+  udiErrorIdent := cFB_InterlFixpos_NotInHomepos;
+  iMsgCnt        := 4;
+  
+END_IF;
+  
+// Check for error
+IF (udiErrorIdent <> 0) THEN
+  // if fixpos request from hmi and hmi supports functionality of extended user guide for fixpositions, use this interface.
+  // if functionality is not supported, set error message
+  IF i_mHMIFixposRequest AND 
+     abFunctionLib.fCheckMask_DWORD(i_dValue:=SV_System2HMI.tCommon.sIn.i_dCompatibilityInfo,
+                                    i_dMask := cCompFuncBit1) 
+    THEN
+  
+    fbGetMessageStringForHMI(i_iIdent   := udiErrorIdent,
+                             i_zParam1  := '',
+                             i_zParam2  := '',
+                             i_zParam3  := '',
+                             o_zMsgText => SV_BCU2HMI.tFixpos.sOut.o_zInterlockMsg);
+    
+    fbSetProtocol(Ident    := cNothing,
+                  BodyID   := 0,
+                  Location := 'AB_InterlocksFixpositionsRob.fCalculate',
+                  Message  := CONCAT('Fixpos interlock message to HMI : ',SV_BCU2HMI.tFixpos.sOut.o_zInterlockMsg)
+                 );
+  ELSE
+    
+    fbSetMessage(i_iIdent        := udiErrorIdent,
+                 i_iMsgCount     := iMsgCnt,
+                 i_iDeviceNr     := 0,
+                 i_zLocation     := 'AB_InterlocksFixpositionsRob.fCalculate',
+                 i_zTimeProgName := '',
+                 i_iTimeProgStep := 0,
+                 i_zParam1       := '',
+                 i_zParam2       := '',
+                 i_zParam3       := '');       
+  
+  END_IF;       
+END_IF;
+
+// return true in case of an error
+fCalculate := (udiErrorIdent <> 0);
+  
+  
+  
+  
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 123 @Pou 25 
+@@@BEG_Comment@@@
+
+<Begin_History>
+ Version     | ReleaseDate | Respon | Changes 
+------------------------------------------------------------
+ 2.01        | 23.07.2008  |  pzb   | delete sInPosition.Bypass in interlocks 5 in fCalculate
+ v2_01.00.00 | 25.03.2010  |  koi   | tagged as v2_01.00.00; version info is kept in a string var now
+ v2_01.00.01 | 21.02.2011  |  WRO   | change: different fixpositions for multikinematik
+ v2_01.00.02 | 20.03.2012  |  STL   | AddOn: start diagnostic movement in automatic mode after a door was open 
+ v2_01.01.00 | 16.04.2014  |  PZB   | Addon: fInit, check for new compatibility info from hmi and use extended user guide for fixpositions if supported
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(16)F_Version_String @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+9 
+@Var @RT(15)cCatRootVersion @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCatPathVersion @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)ci_Homepos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(29)cFB_InterlFixpos_NotInHomepos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cFifoZone @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)cFB_InterlFixpos_NoFixpos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(29)cFB_InterlFixpos_OnlyPurgepos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)ci_Maintenancepos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)ci_ZeroPositionpos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(28)AB_InterlocksFixpositionsRob @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(10)SV_BCU2HMI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tsBCU2HMI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)SV_System2HMI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tSystem2HMI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)fbSetProtocol @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FB_SetProtocolAdv @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(16)abBodyManagement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)AB_BodyManagementBCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)body managemant for real and simulated bodies @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(19)abInterfaceToMotion @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)AB_InterfaceToMotion @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)fbSetMessage @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FB_SetMessage @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(24)fbGetMessageStringForHMI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)FB_GetMessageStringForHMI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abFunctionLib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)AB_FunctionLib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)Ag_zVersion @RT(0) @T @F @DT @RT(10)STRING(15) @RT(0) @T @T @STRING 0 @F @RT(2)15 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(13)'V2_01.01.00' @RT(30)The last REAL-Version was 2.01 @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)Ag_iNrProgAfterDoorOpened @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)p @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)AB_ParPool_IntFixposRob @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(5)fInit @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(10)mInitError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(10)fCalculate @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(16)i_iReqProgNumber @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)udiErrorIdent @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iMsgCnt @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)i_mHMIFixposRequest @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(18)
+//Set Version Info to catalog
+mInitError := NOT F_Version_String(i_zRoot    := cCatRootVersion,
+                                   i_zPath    := cCatPathVersion,
+                                   i_zName    := 'AB_InterlocksFixpositionsRob',
+                                   i_zVersion := Ag_zVersion); 
+IF NOT mInitError THEN
+  mInitError := NOT p.fInit();
+  IF NOT mInitError THEN
+    Ag_iNrProgAfterDoorOpened := p.NrProgAfterDoorOpened();
+  END_IF; 
+END_IF;
+
+//Set info to hmi that functionality 'extended user guide for start fixpositions in manually' is implemented
+abFunctionLib.aSetMask_DWORD(io_dValue:=SV_System2HMI.tCommon.sOut.o_dCompatibilityInfo,
+                             i_dMask  :=cCompFuncBit1);
+
+fInit := NOT mInitError;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(116)
+udiErrorIdent := 0;
+SV_BCU2HMI.tFixpos.sOut.o_zInterlockMsg := '';
+
+// Interlock 1 : movement is only allowed between PurgeHN1..3 and HOME
+IF ( abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN1pos)   OR
+     abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN2pos)   OR
+     abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN3pos) )    AND
+    (i_iReqProgNumber <> ci_PurgeHN1pos)                      AND
+    (i_iReqProgNumber <> ci_PurgeHN2pos)                      AND
+    (i_iReqProgNumber <> ci_PurgeHN3pos)                      AND
+    (i_iReqProgNumber <> ci_Homepos)                               THEN  
+     
+  udiErrorIdent := cFB_InterlFixpos_NotInHomepos;
+  iMsgCnt       := 1;
+  
+END_IF;
+  
+
+// Interlock 2 : movement is only allowed between PurgeHN1..3, HOME, PrePos and SavePos
+//               when body in zone sealing has a high risk of collision with the body
+
+IF ( (NOT abBodyManagement.fIsFifoEmpty(cFifoZone))               AND
+     (NOT abInterfaceToMotion.fIsRobotInHome())                   AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN1pos)) AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN2pos)) AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN3pos)) AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PrePospos))   AND
+     (NOT abInterfaceToMotion.fIsRobotInPosition(ci_SavePospos)) )    THEN
+  
+  udiErrorIdent := cFB_InterlFixpos_NoFixpos;
+  iMsgCnt       := 2;
+    
+END_IF;
+  
+
+// Interlock 3 : If robot in home position and body in zone then only purge position possible
+IF (NOT abBodyManagement.fIsFifoEmpty(cFifoZone)     AND
+    abInterfaceToMotion.fIsRobotInHome()             AND
+    (i_iReqProgNumber <> ci_PurgeHN1pos)             AND
+    (i_iReqProgNumber <> ci_PurgeHN2pos)             AND
+    (i_iReqProgNumber <> ci_PurgeHN3pos))            AND
+    (i_iReqProgNumber <> ci_PrePospos)               AND
+    (i_iReqProgNumber <> ci_SavePospos)              AND
+    (i_iReqProgNumber <> ci_SavePospos)              AND
+    ((i_iReqProgNumber <> Ag_iNrProgAfterDoorOpened) OR
+     (Ag_iNrProgAfterDoorOpened = -1))               THEN
+     
+  udiErrorIdent := cFB_InterlFixpos_OnlyPurgepos;
+  iMsgCnt       := 3;
+  
+END_IF;
+  
+
+// Interlock 4 : Fix position only possible if robot in home position
+IF  (((abInterfaceToMotion.fIsRobotInPosition(ci_Maintenancepos)                             OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_Cleanpos)                                   OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_ZeroPositionpos)                            OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_PrePospos)                                  OR
+       abInterfaceToMotion.fIsRobotInPosition(ci_SavePospos) )                                AND
+      (i_iReqProgNumber <> ci_Homepos))  OR
+     ((NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN1pos))                           AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN2pos))                           AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_PurgeHN3pos))                           AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_Maintenancepos))                        AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_ZeroPositionpos))                       AND
+      (NOT abInterfaceToMotion.fIsRobotInPosition(ci_Cleanpos))                              AND
+      (NOT abInterfaceToMotion.fIsRobotInHome()  )                               AND
+      (i_iReqProgNumber <> ci_Homepos))) THEN
+     
+  udiErrorIdent := cFB_InterlFixpos_NotInHomepos;
+  iMsgCnt        := 4;
+  
+END_IF;
+  
+// Check for error
+IF (udiErrorIdent <> 0) THEN
+  // if fixpos request from hmi and hmi supports functionality of extended user guide for fixpositions, use this interface.
+  // if functionality is not supported, set error message
+  IF i_mHMIFixposRequest AND 
+     abFunctionLib.fCheckMask_DWORD(i_dValue:=SV_System2HMI.tCommon.sIn.i_dCompatibilityInfo,
+                                    i_dMask := cCompFuncBit1) 
+    THEN
+  
+    fbGetMessageStringForHMI(i_iIdent   := udiErrorIdent,
+                             i_zParam1  := '',
+                             i_zParam2  := '',
+                             i_zParam3  := '',
+                             o_zMsgText => SV_BCU2HMI.tFixpos.sOut.o_zInterlockMsg);
+    
+    fbSetProtocol(Ident    := cNothing,
+                  BodyID   := 0,
+                  Location := 'AB_InterlocksFixpositionsRob.fCalculate',
+                  Message  := CONCAT('Fixpos interlock message to HMI : ',SV_BCU2HMI.tFixpos.sOut.o_zInterlockMsg)
+                 );
+  ELSE
+    
+    fbSetMessage(i_iIdent        := udiErrorIdent,
+                 i_iMsgCount     := iMsgCnt,
+                 i_iDeviceNr     := 0,
+                 i_zLocation     := 'AB_InterlocksFixpositionsRob.fCalculate',
+                 i_zTimeProgName := '',
+                 i_iTimeProgStep := 0,
+                 i_zParam1       := '',
+                 i_zParam2       := '',
+                 i_zParam3       := '');       
+  
+  END_IF;       
+END_IF;
+
+// return true in case of an error
+fCalculate := (udiErrorIdent <> 0);
+  
+  
+  
+  
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

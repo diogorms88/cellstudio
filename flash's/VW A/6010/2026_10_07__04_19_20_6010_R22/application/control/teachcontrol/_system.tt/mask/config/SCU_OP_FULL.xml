@@ -1,0 +1,211 @@
+<!-- **************************************************************************
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Duerr Systems GmbH APT                                                   *
+*    Carl-Benz-Str. 34                                                        *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2013 Duerr Systems GmbH APT                                *
+*    All rights reserved.                                                     *
+*                                                                             *
+*    Date         22.08.2013                                                  *
+*    Author :     Friese                                                      *
+*    E-Mail:      heiko.Friese@durr.com                                       *
+*                                                                             *
+*    Modul:       SCU_Ghost.xml                                               *
+*    Description: Full Operator-Panel with safety-signals for                 *
+*                 offline-simulation without safety-plc                       *
+*    Changes:     15.04.2014 input variables for virtual desk from            *
+*                 "tsScuControlPanel" removed.                                *
+*                 -> Are now in SV_SCU2HMI.tDesk (similar to S7 - requested   *
+*				  by JOO)                                                     *
+*                                                                             *
+*************************************************************************** -->
+
+
+<MASKS>
+	<MASKDEF maskkey="TeachView.mask.OP_FULL" textdef="userTx" permissiondef="userMenuPermission" height="800">
+    	<GROUP key="OP_FULL.label.group" columns="40" rows="30" col="1" row="1" halign="stretch" valign="stretch">
+
+  
+          	<LABEL key="OP_FULL.Maint" col="31" row="1" cspan="3" halign="center"/>  
+      	  	<LABEL key="OP_FULL.Prod"  col="34" row="1" cspan="3" halign="center"/>  
+      	  	<LABEL key="OP_FULL.Clean" col="37" row="1" cspan="3" halign="center"/>
+      	  
+      	 	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mMaint" 		vartype="SV" col="31" row="2" enabled="true" cspan="3"/>
+          	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mProduction" 	vartype="SV" col="34" row="2" enabled="true" cspan="3"/>      	
+      	  	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mClean" 		vartype="SV" col="37" row="2" enabled="true" cspan="3"/>
+      	  	
+      	  	<LABEL key="OP_FULL.Deadman" col="32" row="5" cspan="3" halign="center" visiblevar="SCU.SV_ScuControlPanel.mVisible_Deadman"    visiblevartype="SV"/> 
+          	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mDeadmanOK"     vartype="SV" enablevar="SCU.SV_ScuControlPanel.mEnable_Deadman"       enablevartype="SV" col="34" row="6" enabled="true" cspan="3" visiblevar="SCU.SV_ScuControlPanel.mVisible_Deadman"    visiblevartype="SV"/>
+      	  	
+      	 
+      	  	<LABEL  key="OP_FULL.Auto"           cspan="2"  col="1"  row="1"                                                                                           halign="center"/>
+      	  	<BUTTON key="OP_FULL.but.Auto"       cspan="2"  col="8"  row="1"  var="SCU.SV_SCU2HMI.tDesk.i_mStationAuto"   rspan="1"  valign="stretch"  vartype="SV"    enabled="true"/>
+			<CHECKBOX                            cspan="2"  col="10" row="1"  var="SCU.SV_SCU2HMI.tDesk.o_mStationAuto"                                vartype="SV"    enabled="false" />
+      		                                                                  
+      		<LABEL  key="OP_FULL.Hand"           cspan="2"  col="1"  row="2"                                                                                           halign="center"/>
+			<BUTTON key="OP_FULL.but.Hand"       cspan="2"  col="8"  row="2"  var="SCU.SV_SCU2HMI.tDesk.i_mStationHand"   rspan="1"  valign="stretch"  vartype="SV"    enabled="true"/>
+			<CHECKBOX                            cspan="2"  col="10" row="2"  var="SCU.SV_SCU2HMI.tDesk.o_mStationHand"                                vartype="SV"    enabled="false" />
+			                                                                  
+			                                                                  
+			<LABEL  key="OP_FULL.Conv"           cspan="2"  col="1"  row="6"                                                                                           halign="center"/>
+			<BUTTON key="OP_FULL.but.Conv"       cspan="2"  col="8"  row="6"  var="SCU.SV_SCU2HMI.tDesk.i_mConvONOFF"   rspan="1"  valign="stretch"  vartype="SV"      />
+			<CHECKBOX                            cspan="2"  col="10" row="6"  var="SCU.SV_SCU2HMI.tDesk.o_mConvON"                                   vartype="SV"      enabled="false" />
+			<LABEL                               cspan="4"  col="13" row="6"  var="SCU.SV_ScuControlPanel.zConveyorState" vartype="SV" enabled="FALSE"                 halign="left"/>
+			                                                                  
+      	  	<LABEL  key="OP_FULL.ErrorQuit"      cspan="2"  col="1"  row="7"                                                                                           halign="center"/>
+			<BUTTON key="OP_FULL.but.ErrorQuit"  cspan="2"  col="8"  row="7"  var="SCU.SV_SCU2HMI.tDesk.i_mErrorQuit"  rspan="1"  valign="stretch"  vartype="SV"       />
+			<CHECKBOX                            cspan="2"  col="10" row="7"  var="SCU.SV_SCU2HMI.tDesk.o_mError_BLINK"                             vartype="SV"       enabled="false" />
+			                                                                  
+      	  	<LABEL  key="OP_FULL.ClearFifo"      cspan="2"  col="1"  row="9"                                                                                           halign="center"/>
+			<BUTTON key="OP_FULL.but.ClearFifo"  cspan="2"  col="8"  row="9"  var="SCU.SV_SCU2HMI.tDesk.i_mClearFifos" rspan="1"  valign="stretch"  vartype="SV"      />
+      	                                                                      
+			<LABEL key="SCU_Real.LockInlet" 	 cspan="12"	col="1"  row="11"  halign="left"/>  
+			<CHECKBOX var="SCU.SV_SCU2HMI.tStation.i_mLockConvInlet" vartype="SV" col="14" row="11" enabled="true" cspan="3"/>
+
+			<LABEL key="SCU_Real.LockOutlet" 	 cspan="12" col="1"  row="12"  halign="left" 			    				    visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>  
+			<CHECKBOX var="SCU.SV_SCU2HMI.tStation.i_mLockConvOutlet" vartype="SV" col="14" row="12" enabled="true" cspan="3"     visiblevar="SCU.SV_SimInterface.tRealConv.o_mVisible_StopGo"      visiblevartype="SV"/>
+ 
+
+ 
+      	                                                                      
+      	  	<LABEL  key="OP_FULL.Drives"         cspan="2"  col="15" row="1"                                                                                          halign="center"/>
+			<BUTTON key="OP_FULL.DrivesON"       cspan="2"  col="23" row="1"  var="SCU.SV_SCU2HMI.tStation.i_mDrivesON"                     vartype="SV"              rspan="1"  valign="stretch"/>
+			<BUTTON key="OP_FULL.DrivesOFF"      cspan="2"  col="25" row="1"  var="SCU.SV_SCU2HMI.tStation.i_mDrivesOFF"                    vartype="SV"              rspan="1"  valign="stretch"/>
+			<CHECKBOX                            cspan="2"  col="27" row="1"  var="SCU.SV_SCU2HMI.tStation.o_mDrivesON"                     vartype="SV"              enabled="false" />
+                                                                              
+			<LABEL  key="OP_FULL.Process"        cspan="2"  col="15" row="2"                                                                                          halign="center"/>
+			<BUTTON key="OP_FULL.ProcessON"      cspan="2"  col="23" row="2"  var="SCU.SV_SCU2HMI.tStation.i_mProcessON"                    vartype="SV"              rspan="1"  valign="stretch"/>
+			<BUTTON key="OP_FULL.ProcessOFF"     cspan="2"  col="25" row="2"  var="SCU.SV_SCU2HMI.tStation.i_mProcessOFF"                   vartype="SV"              rspan="1"  valign="stretch"/>
+			<CHECKBOX                            cspan="2"  col="27" row="2"  var="SCU.SV_SCU2HMI.tStation.o_mProcessON"                    vartype="SV"              enabled="false" />
+			                                                                  
+			<LABEL  key="OP_FULL.HT"             cspan="2"  col="15" row="3"                                                                                          halign="center"                   visiblevar="SCU.SV_ScuControlPanel.mHighTension"    visiblevartype="SV"/>
+			<BUTTON key="OP_FULL.HTON"           cspan="2"  col="23" row="3"  var="SCU.SV_SCU2HMI.tDesk.i_mHtON"                            vartype="SV"              rspan="1"  valign="stretch"       visiblevar="SCU.SV_ScuControlPanel.mHighTension"    visiblevartype="SV"/>
+			<BUTTON key="OP_FULL.HTOFF"          cspan="2"  col="25" row="3"  var="SCU.SV_SCU2HMI.tDesk.i_mHtOFF"                           vartype="SV"              rspan="1"  valign="stretch"       visiblevar="SCU.SV_ScuControlPanel.mHighTension"    visiblevartype="SV"/>
+			<CHECKBOX                            cspan="2"  col="27" row="3"  var="SCU.SV_SCU2HMI.tDesk.o_mHtON"                            vartype="SV"              enabled="false"                   visiblevar="SCU.SV_ScuControlPanel.mHighTension"    visiblevartype="SV"/>
+
+			<LABEL  key="OP_FULL.BURNER"         cspan="2"  col="15" row="4"                                                                                          halign="center"                   visiblevar="SCU.SV_ScuControlPanel.mBurner"         visiblevartype="SV"/>
+			<BUTTON key="OP_FULL.BURNERON"       cspan="2"  col="23" row="4"  var="SCU.SV_SCU2HMI.tDesk.i_mBurnerON"                        vartype="SV"              rspan="1"  valign="stretch"       visiblevar="SCU.SV_ScuControlPanel.mBurner"         visiblevartype="SV"/>
+			<BUTTON key="OP_FULL.BURNEROFF"      cspan="2"  col="25" row="4"  var="SCU.SV_SCU2HMI.tDesk.i_mBurnerOFF"                       vartype="SV"              rspan="1"  valign="stretch"       visiblevar="SCU.SV_ScuControlPanel.mBurner"         visiblevartype="SV"/>
+			<CHECKBOX                            cspan="2"  col="27" row="4"  var="SCU.SV_SCU2HMI.tDesk.o_mBurnerON"                        vartype="SV"              enabled="false"                   visiblevar="SCU.SV_ScuControlPanel.mBurner"         visiblevartype="SV"/>
+      	  
+      	  	<LABEL  key="OP_FULL.StatON"         cspan="2"  col="15" row="5"                                                                                           halign="center"/>
+			<BUTTON key="OP_FULL.but.StatON"     cspan="2"  col="23" row="5"  var="SCU.SV_SCU2HMI.tDesk.i_mStationON"   rspan="1"  valign="stretch"  vartype="SV"      enabled="true"/>
+			<BUTTON key="OP_FULL.but.StatOFF"    cspan="2"  col="25" row="5"  var="SCU.SV_SCU2HMI.tDesk.i_mStationOFF"  rspan="1"  valign="stretch"  vartype="SV"      enabled="true"/>
+			<CHECKBOX                            cspan="2"  col="27" row="5"  var="SCU.SV_SCU2HMI.tDesk.o_mStationON"                                vartype="SV"      enabled="false" />
+
+      	  
+      	  
+      	  	<LABEL  key="OP_FULL.Selections"     cspan="8"  col="17" row="8"                                                                               halign="left"/>
+      	  	<LABEL                               cspan="1"  col="26" row="8"  var="SCU.SV_ScuControlPanel.yFG[1].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mEnabled"    visiblevartype="SV"/>
+      	  	<LABEL                               cspan="1"  col="29" row="8"  var="SCU.SV_ScuControlPanel.yFG[2].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mEnabled"    visiblevartype="SV"/>
+      	  	<LABEL                               cspan="1"  col="32" row="8"  var="SCU.SV_ScuControlPanel.yFG[3].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mEnabled"    visiblevartype="SV"/>
+      	  	<LABEL                               cspan="1"  col="35" row="8"  var="SCU.SV_ScuControlPanel.yFG[4].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mEnabled"    visiblevartype="SV"/>
+
+
+
+			                                                                 
+			<LABEL  key="OP_FULL.SelRob"         cspan="8"  col="17" row="9"                                                                               halign="left"/>
+          	<CHECKBOX                            cspan="3"  col="26" row="9"  var="SCU.SV_SCU2HMI.tRob.tR1.io_mSelectRobot"                vartype="SV"    halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mEnabled"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="9"  var="SCU.SV_SCU2HMI.tRob.tR2.io_mSelectRobot"                vartype="SV"    halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mEnabled"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="9"  var="SCU.SV_SCU2HMI.tRob.tR3.io_mSelectRobot"                vartype="SV"    halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mEnabled"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="9"  var="SCU.SV_SCU2HMI.tRob.tR4.io_mSelectRobot"                vartype="SV"    halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mEnabled"    visiblevartype="SV"/>
+          	                                                                 
+          	                                                                 
+          	<LABEL  key="OP_FULL.SelProcess"     cspan="8"  col="17" row="10"                                                                               halign="left"/>
+          	<CHECKBOX                            cspan="3"  col="26" row="10" var="SCU.SV_SCU2HMI.tRob.tR1.io_mSelectProcess"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="10" var="SCU.SV_SCU2HMI.tRob.tR2.io_mSelectProcess"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="10" var="SCU.SV_SCU2HMI.tRob.tR3.io_mSelectProcess"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="10" var="SCU.SV_SCU2HMI.tRob.tR4.io_mSelectProcess"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>
+			                                                                 
+	                                                                 
+          	                                                                 
+          	<LABEL  key="OP_FULL.SelHT"          cspan="8"  col="17" row="11"                                                                          halign="left"                   visiblevar="SCU.SV_ScuControlPanel.mHighTension"           visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="26" row="11" var="SCU.SV_SCU2HMI.tRob.tR1.io_mSelectHT"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mHighTension"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="11" var="SCU.SV_SCU2HMI.tRob.tR2.io_mSelectHT"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mHighTension"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="11" var="SCU.SV_SCU2HMI.tRob.tR3.io_mSelectHT"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mHighTension"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="11" var="SCU.SV_SCU2HMI.tRob.tR4.io_mSelectHT"             vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mHighTension"    visiblevartype="SV"/>
+
+          	<LABEL  key="OP_FULL.SelNeedle1"     cspan="8"  col="17" row="12"                                                                          halign="left"                   />
+          	<CHECKBOX                            cspan="3"  col="26" row="12" var="SCU.SV_SCU2HMI.tRob.tR1.i_mRelMainNeedle1"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="12" var="SCU.SV_SCU2HMI.tRob.tR2.i_mRelMainNeedle1"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="12" var="SCU.SV_SCU2HMI.tRob.tR3.i_mRelMainNeedle1"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="12" var="SCU.SV_SCU2HMI.tRob.tR4.i_mRelMainNeedle1"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>
+
+          	<LABEL  key="OP_FULL.SelNeedle2"     cspan="8"  col="17" row="13"                                                                          halign="left"                   />
+          	<CHECKBOX                            cspan="3"  col="26" row="13" var="SCU.SV_SCU2HMI.tRob.tR1.i_mRelMainNeedle2"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="13" var="SCU.SV_SCU2HMI.tRob.tR2.i_mRelMainNeedle2"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="13" var="SCU.SV_SCU2HMI.tRob.tR3.i_mRelMainNeedle2"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="13" var="SCU.SV_SCU2HMI.tRob.tR4.i_mRelMainNeedle2"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>
+
+          	<LABEL  key="OP_FULL.SelNeedle3"     cspan="8"  col="17" row="14"                                                                          halign="left"                   />
+          	<CHECKBOX                            cspan="3"  col="26" row="14" var="SCU.SV_SCU2HMI.tRob.tR1.i_mRelMainNeedle3"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="14" var="SCU.SV_SCU2HMI.tRob.tR2.i_mRelMainNeedle3"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="14" var="SCU.SV_SCU2HMI.tRob.tR3.i_mRelMainNeedle3"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="14" var="SCU.SV_SCU2HMI.tRob.tR4.i_mRelMainNeedle3"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>
+
+          	<LABEL  key="OP_FULL.SelNeedle4"     cspan="8"  col="17" row="15"                                                                          halign="left"                   />
+          	<CHECKBOX                            cspan="3"  col="26" row="15" var="SCU.SV_SCU2HMI.tRob.tR1.i_mRelMainNeedle4"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="15" var="SCU.SV_SCU2HMI.tRob.tR2.i_mRelMainNeedle4"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="15" var="SCU.SV_SCU2HMI.tRob.tR3.i_mRelMainNeedle4"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="15" var="SCU.SV_SCU2HMI.tRob.tR4.i_mRelMainNeedle4"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>
+
+          	<LABEL  key="OP_FULL.SelNeedle5"     cspan="8"  col="17" row="16"                                                                          halign="left"                   />
+          	<CHECKBOX                            cspan="3"  col="26" row="16" var="SCU.SV_SCU2HMI.tRob.tR1.i_mRelMainNeedle5"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="29" row="16" var="SCU.SV_SCU2HMI.tRob.tR2.i_mRelMainNeedle5"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="32" row="16" var="SCU.SV_SCU2HMI.tRob.tR3.i_mRelMainNeedle5"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>
+          	<CHECKBOX                            cspan="3"  col="35" row="16" var="SCU.SV_SCU2HMI.tRob.tR4.i_mRelMainNeedle5"        vartype="SV"      halign="left" enabled="true"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>
+
+
+
+		<!-- ############# show actual process- and robot-mode in textfield ############# -->
+
+			<LABEL                               cspan="1"  col="7"  row="17" var="SCU.SV_ScuControlPanel.yFG[1].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mEnabled"    visiblevartype="SV"/>
+      	  	<LABEL                               cspan="1"  col="15" row="17" var="SCU.SV_ScuControlPanel.yFG[2].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mEnabled"    visiblevartype="SV"/>
+      	  	<LABEL                               cspan="1"  col="23" row="17" var="SCU.SV_ScuControlPanel.yFG[3].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mEnabled"    visiblevartype="SV"/>
+      	  	<LABEL                               cspan="1"  col="31" row="17" var="SCU.SV_ScuControlPanel.yFG[4].zRobotName"               vartype="SV"    halign="left"      enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mEnabled"    visiblevartype="SV"/>
+
+
+			<LABEL  key="OP_FULL.SelRob"         cspan="8"  col="1"   row="18"                                                                                  />
+          	<TEXTFIELD                           cspan="7"  col="7"   row="18"  var="SCU.SV_ScuControlPanel.yFG[1].zRobotState" vartype="SV" enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[1].mEnabled"    visiblevartype="SV"/>
+          	<TEXTFIELD                           cspan="7"  col="15"  row="18"  var="SCU.SV_ScuControlPanel.yFG[2].zRobotState" vartype="SV" enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[2].mEnabled"    visiblevartype="SV"/>
+          	<TEXTFIELD                           cspan="7"  col="23"  row="18"  var="SCU.SV_ScuControlPanel.yFG[3].zRobotState" vartype="SV" enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[3].mEnabled"    visiblevartype="SV"/>
+          	<TEXTFIELD                           cspan="7"  col="31"  row="18"  var="SCU.SV_ScuControlPanel.yFG[4].zRobotState" vartype="SV" enabled="FALSE"    visiblevar="SCU.SV_ScuControlPanel.yFG[4].mEnabled"    visiblevartype="SV"/>
+
+
+          	<LABEL  key="OP_FULL.SelProcess"     cspan="8"  col="1"   row="19"                                                                                  />
+          	<TEXTFIELD                           cspan="7"  col="7"   row="19"  var="SCU.SV_ScuControlPanel.yFG[1].zProcessState" vartype="SV" enabled="FALSE"  visiblevar="SCU.SV_ScuControlPanel.yFG[1].mProcess"    visiblevartype="SV"/>
+          	<TEXTFIELD                           cspan="7"  col="15"  row="19"  var="SCU.SV_ScuControlPanel.yFG[2].zProcessState" vartype="SV" enabled="FALSE"  visiblevar="SCU.SV_ScuControlPanel.yFG[2].mProcess"    visiblevartype="SV"/>
+          	<TEXTFIELD                           cspan="7"  col="23"  row="19"  var="SCU.SV_ScuControlPanel.yFG[3].zProcessState" vartype="SV" enabled="FALSE"  visiblevar="SCU.SV_ScuControlPanel.yFG[3].mProcess"    visiblevartype="SV"/>          	
+          	<TEXTFIELD                           cspan="7"  col="31"  row="19"  var="SCU.SV_ScuControlPanel.yFG[4].zProcessState" vartype="SV" enabled="FALSE"  visiblevar="SCU.SV_ScuControlPanel.yFG[4].mProcess"    visiblevartype="SV"/>          	
+          	
+          	<!-- #############################################################################  -->
+          	
+      	  
+          	<LABEL key="OP_FULL.RobAuto" col="31" row="3" cspan="3" halign="center"/>  
+      	  	<LABEL key="OP_FULL.RobT1" col="34" row="3" cspan="3" halign="center"/>  
+      	  	<LABEL key="OP_FULL.RobT2" col="37" row="3" cspan="3" halign="center"/>
+
+          	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mRobAuto" vartype="SV" enablevar="SCU.SV_ScuControlPanel.mEnable_RobMode"     	enablevartype="SV" col="31" row="4" enabled="true" cspan="3"/>
+          	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mRobT1"   vartype="SV" enablevar="SCU.SV_ScuControlPanel.mEnable_RobMode"     	enablevartype="SV" col="34" row="4" enabled="true" cspan="3"/>      	
+      	  	<CHECKBOX var="SCU.SV_SCU2HMI.tDesk.i_mRobT2"   vartype="SV" enablevar="SCU.SV_ScuControlPanel.mEnable_RobMode"       	enablevartype="SV" col="37" row="4" enabled="true" cspan="3"/>
+
+    	</GROUP>
+
+	</MASKDEF>
+		
+<MENUDEF maskkey="TeachView.mask.OP_FULL" textdef="userTx" permissiondef="userMenuPermission" imagedef="KvtMenuIcon">
+	<MENU>
+		<MENUITEM type="empty"/>
+		<MENUITEM type="empty"/>
+		<MENUITEM type="empty"/>
+		<MENUITEM type="empty"/>
+		<MENUITEM type="empty"/>
+      <MENUITEM key="OP_FULL.menu.versions" enabled="true" var="_system.RcUtils.bBrowseVersions" vartype="TT" />
+	</MENU>
+</MENUDEF>
+
+</MASKS>
+

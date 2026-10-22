@@ -1,0 +1,723 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Carl-Benz-Strasse 34                                                     *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         14.07.2011                                                  *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       POINT_M.tts                                                 *
+*    Description: POINT + MODE + TURNS                                        *
+*                                                                             *
+*-----------------------------------------------------------------------------
+* 11.12.05 BIT: Added "PosJoints()" zo get the angle of axis1 for bypass
+* 09.03.06 BIT: Added "GetName()" to get the name of the point
+*)
+USER;
+NAME POINT_M; { prefix="P_M" }
+INHERIT TRcuPosition;
+
+VAR USER
+   Coord : COORDTYPE := Object;
+   A    : REAL;
+   B    : REAL;
+   C    : REAL;
+   D    : REAL;
+   E    : REAL;
+   F    : REAL;
+   Aux1 : REAL;
+   Aux2 : REAL;
+   Aux3 : REAL;
+   MODE     : DINT;
+   NR_TURNS : DINT;
+   TURNS    : ARRAY [cMcuMaxJ] OF DINT;
+END_VAR
+
+
+ROUTINE GetReferenceSystem(CONST kin : TRcuKinematic) : TRcuReferenceSystem
+
+   IF Coord = World THEN
+      RETURN eRcuRefSystemWorld;
+   ELSIF Coord = Object THEN
+      RETURN kin.RcuRefSystemObject;
+   ELSE
+      RETURN eRcuRefSystemInvalid;
+   END_IF;
+END_ROUTINE
+
+
+// Fill a Mcu-Position with values corresponding to the current position
+ROUTINE GetMcuPos(pos : TMcuPosition; CONST kin : TRcuKinematic) : BOOL
+
+   IF IsPaintArm7VWrist(kin) THEN
+      RETURN GetMcuPosArm7VWrist(pos, kin);
+   ELSE
+      RETURN GetMcuPosOrg(pos, kin);
+   END_IF;
+   
+END_ROUTINE
+
+
+// Fill a Mcu-Position with values corresponding to the current position
+ROUTINE GetMcuPosOrg(pos : TMcuPosition; CONST kin : TRcuKinematic) : BOOL PRIVATE
+VAR
+   p : DINT;
+   i : INT;
+END_VAR
+
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+   IF Coord = Axis THEN
+      pos.mDBObjTyp := eMcuPermanent;
+      pos.mName := INSTANCE_NAME();
+      p := StrFindRight(pos.mName, ".");
+      IF p > 0 THEN // to avoid long names, especialy long segment names - lang names are truncated 
+         // by mc and thus debugging gets complicated
+         pos.mName := StrDelete(pos.mName, p, 0);
+      END_IF;
+      pos.mPosTyp := eMcuPosJoints;
+      pos.mPosJoints.mJoints.mValues[0] := A;
+      pos.mPosJoints.mJoints.mValues[1] := B;
+      pos.mPosJoints.mJoints.mValues[2] := C;
+      pos.mPosJoints.mJoints.mValues[3] := D;
+      pos.mPosJoints.mJoints.mValues[4] := E;
+      pos.mPosJoints.mJoints.mValues[5] := F;
+      pos.mPosJoints.mJoints.mValidLen := kin.nrOfMainJoints;
+      pos.mAuxJoints.mValidLen := kin.nrOfAuxJoints;
+      pos.mAuxJoints.mValues[0] := Aux1 + kin.ActShift.A7_mm;
+      pos.mAuxJoints.mValues[1] := Aux2;
+      pos.mAuxJoints.mValues[2] := Aux3;
+      // SHIFT_EXT
+      IF kin.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A8_deg;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A9_deg;
+      ELSE
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A7_mm;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A8_deg;
+         pos.mAuxJoints.mValues[2] := pos.mAuxJoints.mValues[2] + kin.ActShiftExt.A9_deg;
+      END_IF;
+      RETURN TRUE;
+   ELSE
+      IF Coord = World THEN
+         IF NOT RcuRefSysGetMcuId(eRcuRefSystemWorld, pos.mPosCart.mRefSysID) THEN
+            RETURN FALSE;
+         END_IF;
+      ELSIF Coord = Object THEN
+         IF NOT RcuRefSysGetMcuId(kin.RcuRefSystemObject, pos.mPosCart.mRefSysID) THEN
+            RETURN FALSE;
+         END_IF;
+      ELSE
+         RETURN FALSE;
+      END_IF;  
+      pos.mDBObjTyp := eMcuPermanent;
+      pos.mName := INSTANCE_NAME();
+      p := StrFindRight(pos.mName, ".");
+      IF p > 0 THEN // to avoid long names, especialy long segment names - lang names are truncated 
+         // by mc and thus debugging gets complicated
+         pos.mName := StrDelete(pos.mName, p, 0);
+      END_IF;
+      pos.mPosTyp := eMcuPosCart;
+      pos.mPosCart.mFrame.mFrameTyp := gMcuFrameTyp;
+      pos.mPosCart.mFrame.mPos.mValues[0] := A + kin.ActShift.X_mm;
+      pos.mPosCart.mFrame.mPos.mValues[1] := B + kin.ActShift.Y_mm;
+      pos.mPosCart.mFrame.mPos.mValues[2] := C + kin.ActShift.Z_mm;
+      pos.mPosCart.mFrame.mOri.mValues[0] := D;
+      pos.mPosCart.mFrame.mOri.mValues[1] := E;
+      pos.mPosCart.mFrame.mOri.mValues[2] := F;
+      pos.mAuxJoints.mValidLen := kin.nrOfAuxJoints;
+      pos.mAuxJoints.mValues[0] := Aux1 + kin.ActShift.A7_mm;
+      pos.mAuxJoints.mValues[1] := Aux2;
+      pos.mAuxJoints.mValues[2] := Aux3;
+      
+      // SHIFT_EXT
+      pos.mPosCart.mFrame.mPos.mValues[0] := pos.mPosCart.mFrame.mPos.mValues[0] + kin.ActShiftExt.X_mm;
+      pos.mPosCart.mFrame.mPos.mValues[1] := pos.mPosCart.mFrame.mPos.mValues[1] + kin.ActShiftExt.Y_mm;
+      pos.mPosCart.mFrame.mPos.mValues[2] := pos.mPosCart.mFrame.mPos.mValues[2] + kin.ActShiftExt.Z_mm;
+      IF kin.kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A8_deg;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A9_deg;
+      ELSE
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A7_mm;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A8_deg;
+         pos.mAuxJoints.mValues[2] := pos.mAuxJoints.mValues[2] + kin.ActShiftExt.A9_deg;
+      END_IF;
+      
+      IF (Coord = Object) AND (kin.vision.bShiftA7Enable) THEN
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.vision.rShiftA7Value;
+      END_IF;
+            
+      pos.mPosCart.mMode.mIsValid := TRUE;
+      pos.mPosCart.mMode.mConfig := MODE;
+      pos.mPosCart.mMode.mTurns.mValidLen := NR_TURNS;
+      FOR i:=0 TO NR_TURNS-1 DO
+         pos.mPosCart.mMode.mTurns.mValues[i] := TURNS[i];
+      END_FOR;
+   
+      IF kin.vision.VisionZeiss.bCorrActive THEN
+         IF (Coord = Object) THEN
+            kin.vision.VisionZeiss.PosCorr(GetName(), pos.mPosCart.mFrame.mPos.mValues[0], pos.mPosCart.mFrame.mPos.mValues[1], pos.mPosCart.mFrame.mPos.mValues[2]);
+         END_IF;
+      END_IF;
+   
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+// Fill a Mcu-Position with values corresponding to the current position. Only for
+// PaintArm7VWrist
+ROUTINE GetMcuPosArm7VWrist(pos : TMcuPosition; CONST kin : TRcuKinematic) : BOOL PRIVATE
+VAR
+   p : DINT;
+   i : DINT;
+   add : ADD_POSITIONS;
+END_VAR
+
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+   IF Coord = Axis THEN
+      pos.mDBObjTyp := eMcuPermanent;
+      pos.mName := INSTANCE_NAME();
+      p := StrFindRight(pos.mName, ".");
+      IF p > 0 THEN // to avoid long names, especialy long segment names - lang names are truncated 
+         // by mc and thus debugging gets complicated
+         pos.mName := StrDelete(pos.mName, p, 0);
+      END_IF;
+      pos.mPosTyp := eMcuPosJoints;
+      pos.mPosJoints.mJoints.mValues[0] := A;
+      pos.mPosJoints.mJoints.mValues[1] := B;
+      pos.mPosJoints.mJoints.mValues[2] := C;
+      pos.mPosJoints.mJoints.mValues[3] := D;
+      pos.mPosJoints.mJoints.mValues[4] := E;
+      pos.mPosJoints.mJoints.mValues[5] := F;
+      pos.mPosJoints.mJoints.mValues[6] := Aux1;
+      pos.mPosJoints.mJoints.mValidLen := kin.nrOfMainJoints;
+      pos.mAuxJoints.mValidLen := kin.nrOfAuxJoints;
+      pos.mAuxJoints.mValues[0] := Aux2 + kin.ActShift.A7_mm;
+      pos.mAuxJoints.mValues[1] := Aux3;
+      // SHIFT_EXT
+      IF kin.kinematic.mJoints[7].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+         pos.mAuxJoints.mValues[0] := Aux2 + kin.ActShiftExt.A8_deg;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A9_deg;
+      ELSE
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A7_mm;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A8_deg;
+      END_IF;
+      
+      
+      RETURN TRUE;
+   ELSE
+      IF Coord = World THEN
+         IF NOT RcuRefSysGetMcuId(eRcuRefSystemWorld, pos.mPosCart.mRefSysID) THEN
+            RETURN FALSE;
+         END_IF;
+      ELSIF Coord = Object THEN
+         IF NOT RcuRefSysGetMcuId(kin.RcuRefSystemObject, pos.mPosCart.mRefSysID) THEN
+            RETURN FALSE;
+         END_IF;
+      ELSE
+         RETURN FALSE;
+      END_IF;  
+      pos.mDBObjTyp := eMcuPermanent;
+      pos.mName := INSTANCE_NAME();
+      p := StrFindRight(pos.mName, ".");
+      IF p > 0 THEN // to avoid long names, especialy long segment names - lang names are truncated 
+         // by mc and thus debugging gets complicated
+         pos.mName := StrDelete(pos.mName, p, 0);
+      END_IF;
+      pos.mPosTyp := eMcuPosCart;
+      pos.mPosCart.mFrame.mFrameTyp := gMcuFrameTyp;
+      pos.mPosCart.mFrame.mPos.mValues[0] := A + kin.ActShift.X_mm;
+      pos.mPosCart.mFrame.mPos.mValues[1] := B + kin.ActShift.Y_mm;
+      pos.mPosCart.mFrame.mPos.mValues[2] := C + kin.ActShift.Z_mm;
+      pos.mPosCart.mFrame.mOri.mValues[0] := D;
+      pos.mPosCart.mFrame.mOri.mValues[1] := E;
+      pos.mPosCart.mFrame.mOri.mValues[2] := F;
+      pos.mAuxJoints.mValidLen :=  kin.nrOfAuxJoints;
+      pos.mAuxJoints.mValues[0] := Aux2 + kin.ActShift.A7_mm;
+      pos.mAuxJoints.mValues[1] := Aux3;
+      
+      FOR i := 0 TO NrOfRobotAdditionalPositions(kin)-1 DO
+         CASE i OF
+         0: add[i] := Aux1;
+         ELSE
+         ;
+         END_CASE;
+         
+      END_FOR;
+      SetAdditionalPos(add, pos.mPosCart, kin);
+      
+      // SHIFT_EXT
+      pos.mPosCart.mFrame.mPos.mValues[0] := pos.mPosCart.mFrame.mPos.mValues[0] + kin.ActShiftExt.X_mm;
+      pos.mPosCart.mFrame.mPos.mValues[1] := pos.mPosCart.mFrame.mPos.mValues[1] + kin.ActShiftExt.Y_mm;
+      pos.mPosCart.mFrame.mPos.mValues[2] := pos.mPosCart.mFrame.mPos.mValues[2] + kin.ActShiftExt.Z_mm;
+      IF kin.kinematic.mJoints[7].mDHParam.mTyp = eMcuJointRot THEN // axis 7 is rotatory => RP-L-053
+         pos.mAuxJoints.mValues[0] := Aux2 + kin.ActShiftExt.A8_deg;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A9_deg;
+      ELSE
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.ActShiftExt.A7_mm;
+         pos.mAuxJoints.mValues[1] := pos.mAuxJoints.mValues[1] + kin.ActShiftExt.A8_deg;
+      END_IF;
+
+      IF (Coord = Object) AND (kin.vision.bShiftA7Enable) THEN
+         pos.mAuxJoints.mValues[0] := pos.mAuxJoints.mValues[0] + kin.vision.rShiftA7Value;
+      END_IF;
+            
+      pos.mPosCart.mMode.mIsValid := TRUE;
+      pos.mPosCart.mMode.mConfig := MODE;
+      pos.mPosCart.mMode.mTurns.mValidLen := NR_TURNS;
+      FOR i:=0 TO NR_TURNS-1 DO
+         pos.mPosCart.mMode.mTurns.mValues[i] := TURNS[i];
+      END_FOR;
+      
+      IF kin.vision.VisionZeiss.bCorrActive THEN
+         IF (Coord = Object) THEN
+            kin.vision.VisionZeiss.PosCorr(GetName(), pos.mPosCart.mFrame.mPos.mValues[0], pos.mPosCart.mFrame.mPos.mValues[1], pos.mPosCart.mFrame.mPos.mValues[2]);
+         END_IF;
+      END_IF;
+   
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE GetCartPos(pos : TRcuPositionCart; CONST kin : TRcuKinematic) : BOOL
+
+   IF IsPaintArm7VWrist(kin) THEN
+      RETURN GetCartPosArm7VWrist(pos, kin);
+   ELSE
+      RETURN GetCartPosOrg(pos, kin);
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE GetCartPosOrg(pos : TRcuPositionCart; CONST kin : TRcuKinematic) : BOOL PRIVATE
+VAR
+   joints : TMcuPosition;
+   cart   : TMcuPosCart;
+   i      : DINT;
+END_VAR
+
+   IF Coord = Axis THEN
+      GetMcuPos(joints, kin);
+      RcuTransformPosToCart(joints, cart, eRcuRefSystemWorld, 
+         kin.kinematicMcuId, kin.progPath.segHdl.mRobotToolID);
+      pos.frame := cart.mFrame;
+      FOR i:=0 TO kin.nrOfAuxJoints-1 DO
+         pos.auxJoints[i] := joints.mAuxJoints.mValues[i];
+      END_FOR;
+      pos.nrAuxJoints := joints.mAuxJoints.mValidLen;
+      pos.refSys := eRcuRefSystemWorld;
+   ELSE
+      pos.frame.mFrameTyp := eMcuFrameKardan;
+      pos.frame.mPos.mValues[0] := A;
+      pos.frame.mPos.mValues[1] := B;
+      pos.frame.mPos.mValues[2] := C;
+      pos.frame.mOri.mValues[0] := D;
+      pos.frame.mOri.mValues[1] := E;
+      pos.frame.mOri.mValues[2] := F;
+      pos.nrAuxJoints := kin.nrOfAuxJoints;
+      IF Coord = World THEN
+         pos.refSys := eRcuRefSystemWorld;
+      ELSIF Coord = Object THEN
+         pos.refSys := kin.RcuRefSystemObject;
+      ELSE
+         RETURN FALSE;
+      END_IF;
+      FOR i := 0 TO pos.nrAuxJoints - 1 DO
+         CASE i OF
+         0: pos.auxJoints[i] := Aux1;
+         1: pos.auxJoints[i] := Aux2;
+         2: pos.auxJoints[i] := Aux3;
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      IF (Coord = Object) AND (kin.vision.bShiftA7Enable) THEN
+         pos.auxJoints[0] := pos.auxJoints[0] + kin.vision.rShiftA7Value;
+      END_IF;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE GetCartPosArm7VWrist(pos : TRcuPositionCart; CONST kin : TRcuKinematic) : BOOL PRIVATE
+VAR
+   joints : TMcuPosition;
+   cart   : TMcuPosCart;
+   i      : DINT;
+   val    : ADD_POSITIONS;
+END_VAR
+
+   IF Coord = Axis THEN
+      GetMcuPos(joints, kin);
+      RcuTransformPosToCart(joints, cart, eRcuRefSystemWorld, 
+         kin.kinematicMcuId, kin.progPath.segHdl.mRobotToolID);
+      pos.frame := cart.mFrame;
+      GetAdditionalPos(pos.add, cart, kin);
+      FOR i:=0 TO kin.nrOfAuxJoints-1 DO
+         pos.auxJoints[i] := joints.mAuxJoints.mValues[i];
+      END_FOR;
+      pos.nrAuxJoints := joints.mAuxJoints.mValidLen;
+      pos.refSys := eRcuRefSystemWorld;
+   ELSE
+      pos.frame.mFrameTyp := eMcuFrameKardan;
+      pos.frame.mPos.mValues[0] := A;
+      pos.frame.mPos.mValues[1] := B;
+      pos.frame.mPos.mValues[2] := C;
+      pos.frame.mOri.mValues[0] := D;
+      pos.frame.mOri.mValues[1] := E;
+      pos.frame.mOri.mValues[2] := F;
+      pos.nrAuxJoints := kin.nrOfAuxJoints;
+      IF Coord = World THEN
+         pos.refSys := eRcuRefSystemWorld;
+      ELSIF Coord = Object THEN
+         pos.refSys := kin.RcuRefSystemObject;
+      ELSE
+         RETURN FALSE;
+      END_IF;
+      
+      FOR i := 0 TO NrOfRobotAdditionalPositions(kin) - 1 DO
+         CASE i OF
+         0: pos.add[i] := Aux1;
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      
+      
+      FOR i := 0 TO pos.nrAuxJoints - 1 DO
+         CASE i OF
+         0: pos.auxJoints[i] := Aux2;
+         1: pos.auxJoints[i] := Aux3;
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      IF (Coord = Object) AND (kin.vision.bShiftA7Enable) THEN
+         pos.auxJoints[0] := pos.auxJoints[0] + kin.vision.rShiftA7Value;
+      END_IF;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Fill the current position with values from the current Kinematic. Can be
+// called from e.g. the Dialogue-system.
+ROUTINE TEACH(point : POINT_M) : BOOL PRIVATE USER
+VAR
+      kin : MAPTO TRcuKinematic;
+END_VAR
+
+   // check kinematic focus
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      RcuSetMessageOnce(POINT_ErrPosTeachRejectNoKin, -1, 1, instId, "POINT.TEACH", INSTANCE_NAME());
+      RETURN FALSE;
+   ELSE
+      kin := MAP(gRcuFocusedKinematic);
+   END_IF;
+
+   // check whether kinematic is ready for teaching
+   IF NOT(kin.updateActive AND kin.allDrivesReferenced) THEN
+      RcuSetMessageOnce(POINT_ErrPosTeachRejectNotRd, kin.kinListInx, 1, instId, "POINT.TEACH", INSTANCE_NAME(), kin.robotName);
+      RETURN FALSE;
+   END_IF;
+
+   IF IsPaintArm7VWrist(kin) THEN
+      RETURN teachArm7VWrist(point, kin);
+   ELSE
+      RETURN teachOrg(point, kin);
+   END_IF;
+END_ROUTINE
+
+
+// Fill the current position with values from the current Kinematic. Can be
+// called from e.g. the Dialogue-system.
+ROUTINE teachOrg(point : POINT_M; kin : MAPTO TRcuKinematic) : BOOL PRIVATE
+   VAR
+      i : DINT;
+      calcFrame : TMcuFrame;
+      tmpRefSys : TRcuReferenceSystem;
+      nrAuxJoints  : DINT;
+      nrMainJoints : DINT;
+      refSys       : TRcuReferenceSystem;
+      objFrame     : TMcuFrame;
+      mInvPosWorld : TMcuFrame;
+      worldFrame   : TMcuFrame;
+      extToolPos   : TMcuFrame;
+      auxJoints    : TMcuVector;
+      b            : BOOL;
+   END_VAR
+
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+
+   IF (Coord = Axis) OR (Coord = Invalid) THEN
+      // read actual values
+      Coord := Axis;
+      nrMainJoints := kin.nrOfMainJoints;
+      FOR i := 0 TO nrMainJoints - 1 DO
+         CASE i OF
+         0: A := kin.actJoints.mPos[i];
+         1: B := kin.actJoints.mPos[i];
+         2: C := kin.actJoints.mPos[i];
+         3: D := kin.actJoints.mPos[i];
+         4: E := kin.actJoints.mPos[i];
+         5: F := kin.actJoints.mPos[i];
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      //tracking teach-in
+      IF kin.railTrackingActive THEN
+         kin.actJoints.mPos[kin.railAxisNr] := kin.actJoints.mPos[kin.railAxisNr]
+                                               - kin.signOfRail*kin.tracking.rActPos ;
+      END_IF;
+      Aux1 := 0.0;
+      Aux2 := 0.0;
+      Aux3 := 0.0;
+      nrAuxJoints := kin.nrOfAuxJoints;
+      FOR i := 0 TO nrAuxJoints - 1 DO
+         CASE i OF
+         0: Aux1 := kin.actJoints.mPos[nrMainJoints + i];
+         1: Aux2 := kin.actJoints.mPos[nrMainJoints + i];
+         2: Aux3 := kin.actJoints.mPos[nrMainJoints + i];
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      RETURN TRUE;
+   // if Coord is set then use it, otherwise use gRcuTeachRefSystem
+   ELSIF Coord = World THEN
+      tmpRefSys := eRcuRefSystemWorld;
+   ELSIF Coord = Object THEN
+      tmpRefSys := kin.RcuRefSystemObject;
+   END_IF;
+
+   IF kin.extToolActive AND (Coord = Object) THEN
+      IF NOT RcuReadTransformedActPos(kin, tmpRefSys, objFrame) THEN
+         RcuSetMessageOnce(POINT_ErrPosTeachRejectTransf, kin.kinListInx, 2, instId, "POINT.TEACH", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;
+      b := McuInvertFrame(calcFrame, objFrame );
+   ELSE
+     IF NOT RcuReadTransformedActPos(kin, tmpRefSys, calcFrame) THEN
+         RcuSetMessageOnce(POINT_ErrPosTeachRejectTransf, kin.kinListInx, 1, instId, "POINT.TEACH", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+
+   // write values
+   refSys := tmpRefSys;
+
+   nrAuxJoints := kin.nrOfAuxJoints;
+   nrMainJoints := kin.nrOfMainJoints;
+   A := calcFrame.mPos.mValues[0];
+   B := calcFrame.mPos.mValues[1];
+   C := calcFrame.mPos.mValues[2];
+   D := calcFrame.mOri.mValues[0];
+   E := calcFrame.mOri.mValues[1];
+   F := calcFrame.mOri.mValues[2];
+   //tracking teach-in
+   IF kin.railTrackingActive THEN
+      kin.actJoints.mPos[kin.railAxisNr] := kin.actJoints.mPos[kin.railAxisNr]
+                                            - kin.signOfRail*kin.tracking.rActPos ;
+   END_IF;
+   Aux1 := 0.0;
+   Aux2 := 0.0;
+   Aux3 := 0.0;
+   nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      CASE i OF
+        0: Aux1 := kin.actJoints.mPos[nrMainJoints + i];
+           //vision displacement to aux1
+           IF (Coord = Object) AND (kin.vision.bShiftA7Enable) THEN
+              Aux1 := Aux1 - kin.vision.rShiftA7Value;
+           END_IF;
+        1: Aux2 := kin.actJoints.mPos[nrMainJoints + i];
+        2: Aux3 := kin.actJoints.mPos[nrMainJoints + i];
+      ELSE
+        ;
+      END_CASE;
+   END_FOR;
+   
+   IF tmpRefSys = eRcuRefSystemWorld THEN
+      Coord := World;
+   ELSIF tmpRefSys = kin.RcuRefSystemObject THEN
+      Coord := Object;
+   END_IF;
+
+   MODE     := kin.actCartVals.mRobotMode.mConfig;
+   NR_TURNS := kin.actCartVals.mRobotMode.mTurns.mValidLen;
+   FOR i:=0 TO NR_TURNS-1 DO
+      TURNS[i] := kin.actCartVals.mRobotMode.mTurns.mValues[i];
+   END_FOR;
+   
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Fill the current position with values from the current Kinematic. Can be
+// called from e.g. the Dialogue-system.  Only for PaintArm7VWrist
+ROUTINE teachArm7VWrist(point : POINT_M; kin : MAPTO TRcuKinematic) : BOOL PRIVATE
+   VAR
+      i : DINT;
+      calcFrame : TMcuFrame;
+      tmpRefSys : TRcuReferenceSystem;
+      nrAuxJoints  : DINT;
+      nrMainJoints : DINT;
+      refSys       : TRcuReferenceSystem;
+      objFrame     : TMcuFrame;
+      mInvPosWorld : TMcuFrame;
+      worldFrame   : TMcuFrame;
+      extToolPos   : TMcuFrame;
+      auxJoints    : TMcuVector;
+      b            : BOOL;
+      val          : ADD_POSITIONS;
+   END_VAR
+
+   IF instId = 0 THEN
+      instId := RcuGetInstanceId();
+   END_IF;
+
+   IF (Coord = Axis) OR (Coord = Invalid) THEN
+      // read actual values
+      Coord := Axis;
+      nrMainJoints := kin.nrOfMainJoints;
+      FOR i := 0 TO nrMainJoints - 1 DO
+         CASE i OF
+         0: A := kin.actJoints.mPos[i];
+         1: B := kin.actJoints.mPos[i];
+         2: C := kin.actJoints.mPos[i];
+         3: D := kin.actJoints.mPos[i];
+         4: E := kin.actJoints.mPos[i];
+         5: F := kin.actJoints.mPos[i];
+         6: Aux1 := kin.actJoints.mPos[i];
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      //tracking teach-in
+      IF kin.railTrackingActive THEN
+         kin.actJoints.mPos[kin.railAxisNr] := kin.actJoints.mPos[kin.railAxisNr]
+                                               - kin.signOfRail*kin.tracking.rActPos ;
+      END_IF;
+      Aux2 := 0.0;
+      Aux3 := 0.0;
+      nrAuxJoints := kin.nrOfAuxJoints;
+      FOR i := 0 TO nrAuxJoints - 1 DO
+         CASE i OF
+         0: Aux2 := kin.actJoints.mPos[nrMainJoints + i];
+         1: Aux3 := kin.actJoints.mPos[nrMainJoints + i];
+         ELSE
+         ;
+         END_CASE;
+      END_FOR;
+      
+      
+      RETURN TRUE;
+   // if Coord is set then use it, otherwise use gRcuTeachRefSystem
+   ELSIF Coord = World THEN
+      tmpRefSys := eRcuRefSystemWorld;
+   ELSIF Coord = Object THEN
+      tmpRefSys := kin.RcuRefSystemObject;
+   END_IF;
+
+   IF kin.extToolActive AND (Coord = Object) THEN
+      IF NOT RcuReadTransformedActPos(kin, tmpRefSys, objFrame) THEN
+         RcuSetMessageOnce(POINT_ErrPosTeachRejectTransf, kin.kinListInx, 2, instId, "POINT.TEACH", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;
+      b := McuInvertFrame(calcFrame, objFrame );
+   (* Ende Test 3 *)
+   ELSE
+     IF NOT RcuReadTransformedActPos(kin, tmpRefSys, calcFrame) THEN
+         RcuSetMessageOnce(POINT_ErrPosTeachRejectTransf, kin.kinListInx, 1, instId, "POINT.TEACH", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+
+   // write values
+   refSys := tmpRefSys;
+
+   nrAuxJoints := 0;
+   nrMainJoints := kin.nrOfMainJoints;
+   A := calcFrame.mPos.mValues[0];
+   B := calcFrame.mPos.mValues[1];
+   C := calcFrame.mPos.mValues[2];
+   D := calcFrame.mOri.mValues[0];
+   E := calcFrame.mOri.mValues[1];
+   F := calcFrame.mOri.mValues[2];
+   
+   Aux1 := 0.0;
+   Aux2 := 0.0;
+   Aux3 := 0.0;   
+
+   GetActAdditionalPos(val, kin);
+   FOR i := 0 TO NrOfRobotAdditionalPositions(kin) - 1 DO
+      CASE i OF
+      0: Aux1 := val[i];
+      ELSE
+      ;
+      END_CASE;
+   END_FOR;
+
+   //tracking teach-in
+   IF kin.railTrackingActive THEN
+      kin.actJoints.mPos[kin.railAxisNr] := kin.actJoints.mPos[kin.railAxisNr]
+                                            - kin.signOfRail*kin.tracking.rActPos ;
+   END_IF;
+   nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO nrAuxJoints - 1 DO
+      CASE i OF
+        0: Aux2 := kin.actJoints.mPos[nrMainJoints + i];
+           //vision displacement to aux1
+           IF (Coord = Object) AND (kin.vision.bShiftA7Enable) THEN
+              Aux2 := Aux2 - kin.vision.rShiftA7Value;
+           END_IF;
+        1: Aux3 := kin.actJoints.mPos[nrMainJoints + i];
+      ELSE
+        ;
+      END_CASE;
+   END_FOR;
+   
+   IF tmpRefSys = eRcuRefSystemWorld THEN
+      Coord := World;
+   ELSIF tmpRefSys = kin.RcuRefSystemObject THEN
+      Coord := Object;
+   END_IF;
+   
+   MODE     := kin.actCartVals.mRobotMode.mConfig;
+   NR_TURNS := kin.actCartVals.mRobotMode.mTurns.mValidLen;
+   FOR i:=0 TO NR_TURNS-1 DO
+      TURNS[i] := kin.actCartVals.mRobotMode.mTurns.mValues[i];
+   END_FOR;
+   
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE GetName() : STRING
+  RETURN INSTANCE_NAME();
+END_ROUTINE
+
+
+
+ROUTINE GetInstancePathName() : STRING
+VAR
+   str : STRING;
+END_VAR 
+
+   GetFullInstancePath(str);
+   RETURN str;
+END_ROUTINE

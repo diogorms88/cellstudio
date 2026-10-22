@@ -1,0 +1,170 @@
+(*-----------------------------------------------------------------------------            
+*    K2-System Robot Control Unit                                             *            
+*                                                                             *            
+*    Dürr Systems GmbH APT                                                    *            
+*    Rosenstr. 39                                                             *            
+*    74321 Bietigheim-Bissingen                                               *            
+*    Germany                                                                  *            
+*                                                                             *            
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *            
+*    All rights reserved.                                                     *            
+*                                                                             *            
+*                                                                             *            
+*    Author :                                                                 *            
+*    E-Mail:                                                                  *            
+*                                                                             *            
+*    Modul:       TEmergencyStop.tts                                          *            
+*    Description:                                                             *            
+*------------------------------------------------------------------------------                     
+*)
+// 04.07.05 kto: translated into english
+VAR
+  stop             : MAPTO BOOL;  // emergency-stop input
+  firealarm        : MAPTO BOOL;  // fire alarm input
+  iCntAtomSensors  : DINT;        // number of sensors to detect atomizer collision
+  hwSensor1        : MAPTO BOOL;
+  hwSensor2        : MAPTO BOOL;
+  bRobotMoving : BOOL;
+END_VAR
+
+
+ROUTINE Create (mykinematic : TRcuKinematic)
+
+   myRobot := MAP(mykinematic);   
+   WAIT myRobot.initRobComplete;   
+   
+   IF gbEstopFromBusMaster AND NOT gbSimulationOS THEN
+      stop := MAPX(cHW_mEmergencyStop[myRobot.kinListInx]);
+      IF NOT IS_MAPPED(stop) THEN
+         RcuSetMessageOnce(emergencyStop_FaErrNotConf, myRobot.kinListInx, 1, 0, "emergencyStop.NEW", cHW_mEmergencyStop[myRobot.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+   ELSE
+      stop := MAPX(cSV_mEmergencyStop[myRobot.kinListInx]);
+      IF NOT IS_MAPPED(stop) THEN
+         RcuSetMessageOnce(emergencyStop_FaErrNotConf, myRobot.kinListInx, 1, 0, "emergencyStop.NEW", cSV_mEmergencyStop[myRobot.kinListInx]);
+         gbBootupError := TRUE;
+      END_IF;
+   END_IF;
+   
+   firealarm := MAPX(cHW_FireAlarm);
+   IF NOT IS_MAPPED(firealarm) THEN
+      RcuSetMessageOnce(emergencyStop_ErrNotConf, myRobot.kinListInx, 1, 0, "emergencyStop.NEW", cHW_FireAlarm);
+   END_IF;
+   
+   IF (iCntAtomSensors > 0) THEN
+      START ObserveAtomizerCollision();
+   END_IF;
+   
+   IF IS_MAPPED(stop) THEN
+      START StopAction;
+      START NotStopAction;
+   END_IF;        
+END_ROUTINE
+
+
+VAR PRIVATE
+   powerOn          : MAPTO BOOL;      // power on output
+   stopInSimulation : BOOL := TRUE;
+   myRobot          : MAPTO TRcuRobot;
+END_VAR
+
+//------------------------------------------------------------------------
+// stop kinematic with maximum override
+//------------------------------------------------------------------------
+ROUTINE StopAction AT NOT stop PRIVATE 
+   VAR
+      fast : BOOL;
+   END_VAR
+
+   fast := TRUE;
+   IF fast THEN // set maximum factor
+      McuSetTimeOverrideFactor(myRobot.kinematicMcuId, myRobot.emergencyTimeOverrideFactor);
+      DebugPrint(eTraceCommon, "TimeOverrideFactor 12 : " + STR(myRobot.emergencyTimeOverrideFactor));
+   END_IF;
+   // McuStopMove(PaintRobot.kinematicMcuId); // commented ?
+   IF myRobot.actCartVals.mPathVeloRel >= 20 THEN
+      bRobotMoving := TRUE;
+   END_IF;   
+   myRobot.SetMotionMode(eRcuMMgrModeStopEmergency); // stop on path
+   START CES();   
+   WAIT myRobot.isNotMovingOnPath;
+   IF gbRcuSimulateStationPLC THEN
+      myRobot.autoControl.bPLCReleaseFieldBus := FALSE;
+   END_IF;
+   WAIT NOT myRobot.updateActive;
+   IF IS_MAPPED(powerOn) THEN
+      powerOn := FALSE;
+   END_IF;       
+   IF fast THEN // restore default factor
+      McuSetTimeOverrideFactor(myRobot.kinematicMcuId, myRobot.defaultTimeOverrideFactor);
+      DebugPrint(eTraceCommon, "TimeOverrideFactor 13 : " + STR(myRobot.defaultTimeOverrideFactor));
+   END_IF;
+END_ROUTINE
+
+ROUTINE CES()
+
+   IF NOT (myRobot.iSerialNr = -2)   THEN
+      IF bRobotMoving THEN
+         IF (myRobot.mainModeMgr.mainModeInput[1] = TRUE) OR (myRobot.mainModeMgr.mainModeInput[3] = TRUE) THEN
+            myRobot.iI := myRobot.iI + 1;
+         END_IF;
+         bRobotMoving := FALSE;
+      END_IF;
+   END_IF;
+      
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE NotStopAction AT stop PRIVATE
+   IF myRobot.autoControl.bPLCPowerOn THEN
+      IF IS_MAPPED(powerOn) THEN
+         powerOn := TRUE;
+      END_IF;       
+   END_IF;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Detect atomizer collisions
+//------------------------------------------------------------------------
+ROUTINE ObserveAtomizerCollision() PRIVATE
+ 
+  hwSensor1 := MAPX(cHW_InAtomCollision1[myRobot.kinListInx]);
+  IF NOT IS_MAPPED(hwSensor1) THEN
+     RcuSetMessageOnce(emergencyStop_FaErrNotConf, myRobot.kinListInx, 2, 0, "emergencyStop.ObserveAtomizerCollision", cHW_InAtomCollision1[myRobot.kinListInx]);
+  ELSIF gbRcuSimulateStationPLC THEN
+     hwSensor1 := TRUE;
+  END_IF;
+  IF (iCntAtomSensors = 2) THEN
+     hwSensor2 := MAPX(cHW_InAtomCollision2[myRobot.kinListInx]);
+     IF NOT IS_MAPPED(hwSensor2) THEN
+        RcuSetMessageOnce(emergencyStop_FaErrNotConf, myRobot.kinListInx, 3, 0, "emergencyStop.ObserveAtomizerCollision", cHW_InAtomCollision2[myRobot.kinListInx]);
+     ELSIF gbRcuSimulateStationPLC THEN
+        hwSensor2 := TRUE;
+     END_IF;
+  END_IF;
+  WAIT gbBootupFinished;
+  
+  WHILE TRUE DO
+    IF (iCntAtomSensors = 1) THEN
+        WAIT (NOT hwSensor1) AND (myRobot.mainModeMgr.mode <> ciT1);
+    ELSIF (iCntAtomSensors = 2) THEN
+        WAIT ((NOT hwSensor1) OR (NOT hwSensor2)) AND (myRobot.mainModeMgr.mode <> ciT1);    
+    END_IF;   
+    RcuSetMessageOnce(emergencyStop_ErrAtomColl, myRobot.kinListInx, 1, 0, "emergencyStop.ObserveAtomizerCollision");
+    // avoid cyclic override-factor switching
+    IF (myRobot.motionMode <> eRcuMMgrModeStop) AND (myRobot.motionMode <> eRcuMMgrModeStopJoints) THEN
+       McuSetTimeOverrideFactor(myRobot.kinematicMcuId, myRobot.emergencyTimeOverrideFactor);  //set maximum override
+       DebugPrint(eTraceCommon, "TimeOverrideFactor 17 : " + STR(myRobot.emergencyTimeOverrideFactor));  
+       myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+       WAIT myRobot.isNotMovingOnPath;          // wait until movement has stopped
+       WAIT NOT myRobot.updateActive;          
+       McuSetTimeOverrideFactor(myRobot.kinematicMcuId, myRobot.defaultTimeOverrideFactor);
+       DebugPrint(eTraceCommon, "TimeOverrideFactor 18 : " + STR(myRobot.defaultTimeOverrideFactor)); //restore default override
+    END_IF;   
+    myRobot.WaitMcMicroCycles(2);
+  END_WHILE;
+  
+END_ROUTINE

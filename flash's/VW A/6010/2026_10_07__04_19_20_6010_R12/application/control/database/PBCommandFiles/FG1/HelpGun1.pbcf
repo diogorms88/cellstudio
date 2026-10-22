@@ -1,0 +1,146 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 17.10.2016  | STL    | First release
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion
+
+Call Main_HelpGun1
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_HelpGun1
+	SelectNode RPC1.R11
+	SelectCase Option1
+		Case EcoDose_PCL // Process type
+			Call AddDeviceToMaterial1_HelpGun1	                   
+		Case EcoDose_PM 
+			SelectCase Option2 // Variant of process group
+				Case 3D
+				//
+			        CaseElse
+					Message Wrong variant type (Option3)!!    
+			EndSelect                          
+		Case EcoDose_ES  
+			SelectCase Option2 // Variant of process group
+				Case 3D
+				//
+			        CaseElse
+					Message Wrong variant type (Option3)!!    
+			EndSelect                         
+		Case EcoDose_PCL_PCL 
+			SelectCase Option2 // Variant of process group
+				Case 3D
+				//
+			        CaseElse
+					Message Wrong variant type (Option3)!!    
+			EndSelect          
+		Case EcoDose_SM_PCL  
+			SelectCase Option2 // Variant of process group
+				Case 3D
+				//
+			        CaseElse
+					Message Wrong variant type (Option3)!!    
+			EndSelect 		
+		CaseElse
+			Message Wrong process type (Option3)!! 
+		EndSelect
+			
+Return
+
+SubRoutine AddDeviceToMaterial1_HelpGun1
+        IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+			Delete	
+	Endif
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1
+	SelectCase HelpGun1
+		Case 1	
+			Call Common_AddDevice_YHG1	
+			SelectNode RPC1.R11.PCU1
+			SelectTab [BrushTrigger]
+			SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+			// Set boolean signals for trigger devices (YHG1)
+			NotResetTriggerAtEnd YHG1.Set 0
+			SetInverseTrigger YHG1.Set 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.HelpGunValve
+				OptionalUsed 1
+				Value "HG1"
+			Endif	
+		Case 0
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.AMV2FC
+				SelectTab [CfgParameter]
+				SelectCfg AMV2FC.DeviceNames.HelpGunValve
+				OptionalUsed 1
+				Value "''"
+			Endif		
+		EndSelect
+		
+		SelectCase NumberOfMainNeedles
+		Case 1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1		
+				FSCopy ..\SpecialOptions\MainNeedle\1MainNeedle\HelpGun1\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 YHG1.Set 1
+			Else
+				FSCopy ..\SpecialOptions\MainNeedle\1MainNeedle\HelpGun1\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles	
+			Endif	
+		Case 2
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1		
+				FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\HelpGun1\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 YHG1.Set 1
+				SetTriggerGun2 YHG1.Set 1
+			Else
+				FSCopy ..\SpecialOptions\MainNeedle\2MainNeedles\HelpGun1\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles	
+			Endif	
+		Case 3
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1		
+				FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\HelpGun1\Yes\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				SelectNode RPC1.R11.PCU1
+				SelectTab [BrushTrigger]
+				SelectTab [BrushTriggerSetValuesBrushGunTrigger]
+				SetTriggerGun1 YHG1.Set 1
+				SetTriggerGun2 YHG1.Set 1
+				SetTriggerGun3 YHG1.Set 1
+			Else
+				FSCopy ..\SpecialOptions\MainNeedle\3MainNeedles\HelpGun1\No\AB_GenerateActValues.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles	
+			Endif
+		CaseElse
+			Message Wrong number of main needles!! 	
+		EndSelect 
+		    
+		SelectCase MaterialValve1
+			Case 0
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+					FSCopy ..\SpecialOptions\MaterialValve1\No\HelpGun1\Yes\releasePressure.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\No\HelpGun1\Yes\beakering.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\No\HelpGun1\Yes\circulation.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+				Else
+					FSCopy ..\SpecialOptions\MaterialValve1\No\HelpGun1\No\releasePressure.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\No\HelpGun1\No\beakering.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\No\HelpGun1\No\circulation.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+				Endif	
+			Case 1
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].Material1.YHG1
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\HelpGun1\Yes\releasePressure.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\HelpGun1\Yes\beakering.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\HelpGun1\Yes\circulation.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+				Else
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\HelpGun1\No\releasePressure.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\HelpGun1\No\beakering.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+					FSCopy ..\SpecialOptions\MaterialValve1\Yes\HelpGun1\No\circulation.tp ..\..\..\..\..\application\control\PCU1\TimeProg
+				Endif
+		EndSelect		
+Return

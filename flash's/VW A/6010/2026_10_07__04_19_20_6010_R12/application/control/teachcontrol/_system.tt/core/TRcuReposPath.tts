@@ -1,0 +1,1727 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuReposPath.tts
+*  First Author : pen
+*  Date         : 15.11.2001
+*-----------------------------------------------------------------------------
+*  Description:
+*
+*  The Path used to Reposition to a certain Path-Position
+*-----------------------------------------------------------------------------
+* 16.02.05 nmr: Extension for GoldenRepos,
+*               Change-over to giTraceWordcontrolled debugoutput
+* 23.03.05 nmr: use reposPosMcuId instead of pathPosMcuId on repostioning,
+*               because pathPosMcuId is only a virtuel position on creating 
+*               a path.
+* 25.04.05 nmr: The restarttrigger should be activated a little bit earlier
+*               (reposToleranceTime) as the original breakpoint on GoldenRepos,
+*               to prevent a gaps in seam.
+* 29.04.05 nmr: There was a problem with the restarttrigger, if the last 
+*               activated trigger was in a line > breakline 
+*               (possible because of overlap)
+* 04.05.05 nmr: Fixed an error on repositioning in a segment, no SetPc executed
+* 13.05.05 nmr: Corrections to allow multiple repositionings
+* 04.06.05 nmr: reposToleranceTime removed, instead repositioning on point of 
+*               brakestart, some corrections on repositioning
+* 24.08.05 nmr: several bugfixes concerning golden repos and backward movemnent
+* 26.08.05 nmr: a bugfix concerning golden repos
+* 03.10.05 nmr: improvements concerning backward movement
+* 27.10.05 nmr: renaming and redesign of getVelo to getDyn
+*)
+
+
+INHERIT TRcuPath;
+
+
+(*-----------------------------------------------------------------------------
+* members
+*)
+
+VAR
+   backwardSegLength : REAL := 0.10; // segment-length for backward-movment on path
+   lastItrptInfo     : TUserProgStackInfo;
+   lastItrpParam     : REAL;
+   lastItrpGun       : DINT;
+   lastItrpJobNum    : DINT;
+   lastItrpStackHdl  : DINT;
+   lastItrpNextJobOnSegStackHdl : DINT;
+   toolIdKin         : TMcuDbObjID;
+   trsf              : TMcuTransformation;
+   reposActive       : BOOL;
+END_VAR
+
+
+// Save the current position in pathPosId
+ROUTINE SavePathPos()
+   VAR
+      pathPos   : TMcuPosition;
+      userData  : TMcuUserData;
+      userData2 : TMcuUserData;
+      tmpStr    : STRING;
+      dbId      : TMcuDbObjID;
+   END_VAR
+   
+   IF myKinematic.actExecData.mActSegmentID = 0 THEN
+      // empty path! reset to make sure.
+      McuReleaseDbObj(pathPosMcuId);
+      pathPosMcuId := McuGetInitPathPosID(pathMcuId);
+      segmentMcuId := 0;
+   ELSE
+      // save data from progPath for continued repositioning
+      IF McuReadUserData(myKinematic.actExecData.mActSegmentID,6,2,userData) THEN
+         IF (reposPathPosId = newPathPosID) AND (myKinematic.reposState = eReposStateEnd) THEN // end of backward movement
+            // release old position and create new one
+            IF (oldPathPosID <> myKinematic.progPath.pathPosMcuId) AND 
+                  (oldPathPosID <> myKinematic.progPath.reposPosMcuId) THEN
+               McuReleaseDbObj(oldPathPosID);  // release preliminary pathposition
+               tmpStr := ", released oldPathPosID: "+STR(oldPathPosID);
+            ELSE
+               tmpStr := ", no oldPathPosID released";
+            END_IF;
+            oldPathPosID := reposPathPosId;
+            myKinematic.DebugPrint(eTraceMotionModesFine, "oldPathPosID (= reposPathPosId): "+STR(oldPathPosID) + tmpStr);
+            RcuPrintPosition(oldPathPosID, eTraceMotionModesFine);
+         ELSE
+            // save actual position
+            pathPos.mPosPath.mSegmentID := userData.mDataInt[eSegEndSegId];
+            pathPos.mPosPath.mSegmentParam := userData.mDataFloat[1];
+            // save reference joint values
+            pathPos.mPosJoints.mJoints.mValues := myKinematic.actExecData.mLastPathJoints.mValues;
+            pathPos.mPosJoints.mJoints.mValidLen := myKinematic.actExecData.mLastPathJoints.mValidLen;
+            // prepare the position
+            pathPos.mDBObjTyp := eMcuPermanent;
+            pathPos.mKinematicID := myKinematic.kinematicMcuId;
+            pathPos.mPosTyp := eMcuPosPath;
+            pathPos.mPosPath.mOccurenceCount := 0;
+            pathPos.mPosPath.mPathID := myKinematic.progPath.pathMcuId; // pathMcuId;
+            // position war ursprünglich auf ProgPath und kann nicht beliebig auf andere Bahn gelegt werden,
+            // warum kann man die pathId überhaupt angeben??
+
+            pathPos.mPosPath.mUseMainRefJoints := TRUE;
+            pathPos.mJointsOffsetID := 0;
+            pathPos.mName := "saved_reposPath_pos";
+            // release old position and create new one
+            IF (oldPathPosID <> myKinematic.progPath.pathPosMcuId) AND 
+                  (oldPathPosID <> myKinematic.progPath.reposPosMcuId) THEN
+               McuReleaseDbObj(oldPathPosID);  // release preliminary pathposition
+               tmpStr := ", released oldPathPosID: "+STR(oldPathPosID);
+            ELSE
+               tmpStr := ", no oldPathPosID released";
+            END_IF;
+            McuCreatePosition(oldPathPosID, pathPos);
+            myKinematic.DebugPrint(eTraceMotionModesFine, "oldPathPosID: "+STR(oldPathPosID) + tmpStr);
+            RcuPrintPosition(oldPathPosID, eTraceMotionModesFine);
+         END_IF;
+         myKinematic.DebugPrint(eTraceSegment, "save repos-pathPos on progPath: " + STR(oldPathPosID));
+         dbId := TMcuDbObjID(userData.mDataInt[eSegEndSegId]);
+         IF McuReadUserData(dbId,2,0,userData2) THEN
+            IF userData2.mDataInt[eSegOvlId] <> 0 THEN
+               myKinematic.progPath.segmentMcuId := userData.mDataInt[eSegEndSegId];
+               myKinematic.DebugPrint(eTraceMotionModesFine, "SegmentMcuId set in reposPath.SavePathPos: " + STR(userData.mDataInt[eSegEndSegId]));
+            ELSE
+               myKinematic.DebugPrint(eTraceMotionModesFine, "No ovl stored in segment");
+               iCntMinorError := iCntMinorError + 1;
+            END_IF;
+         ELSE
+            myKinematic.DebugPrint(eTraceMotionModesFine, "User data not read in savepathpos");
+            iCntMinorError := iCntMinorError + 1;
+         END_IF;
+      ELSE
+         myKinematic.DebugPrint(eTraceMotionModesFine, "User data from actual segment not read in savepathpos");
+         iCntMinorError := iCntMinorError + 1;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// Reposition to the saved Pathposition of Path onPath. The function returns
+// FALSE when the Kinematic is initially not on this Path or when Errors
+// occur.
+ROUTINE Repos(onPath : TRcuPath) : BOOL
+   VAR
+      finished      : BOOL;
+      reposPosMcuId : TMcuDbObjID;
+      toolId        : TMcuDbObjID;
+      bRet          : BOOL;
+   END_VAR
+
+   myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Repos begin");
+   IF bSetPcError THEN
+      RcuSetMessageOnce(TRcuReposPath_ErrSetPcFailed, myKinematic.kinListInx, 1, instId, "TRcuReposPath.Repos", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+
+   IF myKinematic.actExecData.mActPathID <> pathMcuId THEN
+      RcuSetMessageOnce(TRcuReposPath_ErrNotOnPath, myKinematic.kinListInx, 1, instId, "TRcuReposPath.Repos", INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+   
+   reposActive := TRUE;
+   IF McuCreatePosFromPathPos(onPath.pathPosMcuId, lastPosFromPathPosId) THEN
+      reposPosMcuId := lastPosFromPathPosId;
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: vor McuGetOpenEndTrsfID segHdl.mRobotToolID = "+ STR(segHdl.mRobotToolID));
+      segHdl.mRobotToolID := McuGetOpenEndTrsfID();
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: nach McuGetOpenEndTrsfID segHdl.mRobotToolID = "+ STR(segHdl.mRobotToolID));
+   ELSE
+      myKinematic.DebugPrint(eTraceReposDebug, "McuCreatePosFromPathPos failed");
+      iCntMinorError := iCntMinorError + 1;         
+   END_IF;
+   // consider the tool saved for onPath
+   IF onPath.segmentMcuId = 0 THEN
+      // no movement on path - use actual path tool or robot tool, if both fail use flange
+      IF onPath.segHdl.mRobotToolID <> 0 THEN
+         toolId := onPath.segHdl.mRobotToolID;
+      ELSIF myKinematic.kinToolMcuId <> 0 THEN
+         toolId := myKinematic.kinToolMcuId;
+      ELSE
+         toolId := McuGetOpenEndTrsfID();
+      END_IF;
+   ELSE
+      IF NOT McuGetToolFromPathPos(onPath.pathPosMcuId, toolId) THEN
+         myKinematic.DebugPrint(eTraceReposDebug, "Repos: McuGetToolFromPathPos failed");
+         iCntMinorError := iCntMinorError + 1;
+      END_IF;
+   END_IF;
+   
+   IF (toolId <> defaultToolMcuId) AND (toolId <> segHdl.mRobotToolID) THEN // already released, reserve again
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: defaultToolMcuId = "+ STR(defaultToolMcuId));
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: segHdl.mRobotToolID = "+ STR(segHdl.mRobotToolID));
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: McuReserveDbObj toolId = "+ STR(toolId));
+      McuReserveDbObj(toolId);
+   END_IF;
+   IF (toolId <> myKinematic.kinToolMcuId) THEN
+      toolIdKin := myKinematic.kinToolMcuId; // Store myKinematic.kinToolMcuId
+      McuReadTrsf(toolIdKin, trsf);          // Store transformation
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: Tooltransformation "+trsf.mName+" stored ID = " + STR(toolIdKin));
+   END_IF;
+   myKinematic.SetToolIdIntern(toolId);
+   
+   
+   // creating the path for repositioning
+   AppendSegment(reposPosMcuId, 0, FALSE, eMcuPTP, 1.0, finished, 0);
+   // reset toolId, inhibits unwanted release at next reset of the repospath
+   segHdl.mRobotToolID := 0;
+   // reset mode, inhibits unwanted settings at next use
+   segHdl.mTargetMode.mIsValid := FALSE;
+
+   (*$$$$$* motionstep *$$$$$*)
+   myKinematic.DebugPrint(eTraceGoldenRepos, "TRcuReposPath.Repos() McuMove");
+   // move on the path
+   IF NOT McuMove(myKinematic.kinematicMcuId) THEN
+      RcuSetMessageOnce(TRcuReposPath_ErrMove, myKinematic.kinListInx, 1, instId, "TRcuReposPath.Repos", myKinematic.robotName, INSTANCE_NAME());
+      myKinematic.ErrorReaction(FALSE);
+   END_IF;
+   // waiting for endposition
+   WAIT finished AND myKinematic.isNotMovingOnPath;
+   //McuReleaseDbObj(reposPosMcuId);
+   IF toolIdKin <> 0 THEN // restore myKinematic.kinToolMcuId
+      IF (toolIdKin <> defaultToolMcuId) AND (toolIdKin <> segHdl.mRobotToolID) THEN // already released, make new
+         bRet := McuCreateTrsf(toolIdKin, trsf);
+         myKinematic.DebugPrint(eTraceGoldenRepos, "McuCreateTrsf  toolIdKin = "+ STR(toolIdKin));
+         IF (bRet = FALSE) OR (toolIdKin = 0) THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "McuCreateTrsf with ERRROR");
+            myKinematic.DebugPrint(eTraceGoldenRepos, "trsf.mName = " + trsf.mName);
+            myKinematic.DebugPrint(eTraceGoldenRepos, "trsf.mRefSysID = " + STR(trsf.mRefSysID));
+            RcuSetMessageOnce(TRcuReposPath_ErrMcuFuncFailed,  myKinematic.kinListInx, 2, instId, 
+                  "TRcuReposPath.Repos", "McuCreateTrsf");
+            myKinematic.bNoContinue := TRUE;
+            myKinematic.ErrorReaction(TRUE);
+         END_IF;
+      END_IF;
+      myKinematic.progPath.SetToolIdDefault(toolIdKin);
+      myKinematic.reposPath.SetToolIdDefault(toolIdKin);
+      myKinematic.jogPath.SetToolIdDefault(toolIdKin);
+      // only at changes
+      IF toolIdKin <> myKinematic.kinToolMcuId THEN
+         // release current kinToolMcuId if apppropriate
+         IF myKinematic.kinToolMcuId <> 0 THEN
+            McuReleaseDbObj(myKinematic.kinToolMcuId);
+            myKinematic.DebugPrint(eTraceReposDebug, "Repos McuReleaseDbObj kinToolMcuId = " + STR(myKinematic.kinToolMcuId));
+            // In case of jogging before repos the tool may be reserved twice
+            // it must be released also twice!!!!
+            IF (myKinematic.jogPath.reservedToolId = myKinematic.kinToolMcuId) THEN
+               McuReleaseDbObj(myKinematic.kinToolMcuId);
+               myKinematic.DebugPrint(eTraceReposDebug, "Repos McuReleaseDbObj myKinematic.jogPath.reservedToolId = " + STR(myKinematic.kinToolMcuId));
+            END_IF;
+         END_IF;
+         // register new Id
+         myKinematic.kinToolMcuId := toolIdKin;
+         McuReadTrsf(toolIdKin, trsf);
+         myKinematic.DebugPrint(eTraceReposDebug, "Repos kinToolMcuId = " + STR(myKinematic.kinToolMcuId) + " name = " + trsf.mName);
+         myKinematic.actToolName := trsf.mName;
+      END_IF;
+      toolIdKin := 0;
+   END_IF;
+   myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Repos end");
+   reposActive := FALSE;
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE InitBackwardMovement(targetSegId : TMcuDbObjID; targetSegParam : REAL; 
+   CONST golden : BOOL; required : BOOL; pathEmpty : BOOL) : BOOL
+   VAR
+      sCurrentProg      : STRING;
+      nextSegId         : TMcuDbObjID;
+      tmpSegId          : TMcuDbObjID;
+      targetPathPos     : TMcuPosition;
+      targetPathPosId   : TMcuDbObjID;
+      restartPathPosId  : TMcuDbObjID;
+      restartSegId      : TMcuDbObjID;
+      boundaryReached   : BOOL;
+      restartSegParam   : REAL;
+      locSegHdl         : TMcuSegHdl;
+      locSeg            : TMcuSegment;
+      tmpSeg            : TMcuSegment;
+      locSegId          : TMcuDbObjID;
+      found             : BOOL;
+      aborted           : BOOL;
+      minIdx            : DINT;
+      //lengthSeg        : REAL;
+      reposStr          : STRING;
+      currentLineNr     : DINT;
+      stackInfo         : TUserProgStackInfo;
+      tmpStackInfo      : TUserProgStackInfo;
+      stopPointStackInfo : TUserProgStackInfo;
+      jobInfo           : TUserProgStackInfo;
+      pathEndsWithStopPoint : BOOL;
+      result            : DINT;
+      ovlStartPathPosId : TMcuDbObjID;
+      pathPosType       : DINT;
+      ovlTyp            : TMcuOvlTyp;
+      locJob            : TMcuJob;
+      type              : TRcuTriggerType;
+      minValue : REAL;
+      i  : DINT;
+      p1 : REAL; l1 : DINT;
+      lastJobName : STRING;
+      firstNotExecuted : DINT;
+      doSearch : BOOL; foundPrevSegJob : BOOL; error : BOOL; futureTrigger : BOOL;
+      lastJobOnRestartSegment : BOOL; lastTrigger : BOOL;
+      actSegId : TMcuDbObjID; prevSegId : TMcuDbObjID;
+      prevSegName : STRING;
+      actLastJob : TMcuJob;
+      jobFound : BOOL;
+   END_VAR
+   
+   //iLastStackHdl := 0;
+   //iLastReposSegId := 0;
+   bSetPcError   := FALSE;
+   myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Backward movement init");
+   
+   IF (myKinematic.progPath.segmentMcuId <> 0) AND NOT myKinematic.bEmptyProgPath THEN
+      IF NOT McuReadSegment(myKinematic.progPath.segmentMcuId, locSeg) THEN
+         RcuResetMessage(TRcuReposPath_WarPCallFailed, myKinematic.kinListInx, 1, instId, 
+            "TRcuReposPath.InitBackwardMovement", "McuReadSegment", "segmentMcuId");
+         RETURN FALSE;
+      END_IF;
+      p1 := myKinematic.progPath.segmentMcuParam;
+      IF GetUserProgCallStackInfo(locSeg.mUserData.mDataInt[eSegStackHdl], stackInfo) THEN
+         l1 := stackInfo.lineNrs[stackInfo.depth-1];
+         myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: " + 
+            stackInfo.progNames[stackInfo.depth-1] + " stopped in line " + STR(l1) + 
+            ", Segment: " + STR(myKinematic.progPath.segmentMcuId) + "@" + STR(p1));
+      ELSE
+         // no call stack because LIN is generated internally in TRcuTracking
+         IF golden AND (locSeg.mName = ".LIN(tracking)") THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos,"Repos at TRACKING(On/Off)");
+            required := FALSE;
+            RETURN TRUE;
+         ELSE
+            myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: GetUserProgCallStackInfo 1 failed locSeg.mName = " + 
+               locSeg.mName + " locSeg.mUserData.mDataInt[eSegStackHdl] = " + STR(locSeg.mUserData.mDataInt[eSegStackHdl]));
+            RcuResetMessage(TRcuReposPath_WarPCallFailed, myKinematic.kinListInx, 1, instId, 
+               "TRcuReposPath.InitBackwardMovement", "GetUserProgCallStackInfo", INSTANCE_NAME());
+            RETURN FALSE;
+         END_IF;
+      END_IF;
+      
+      restartSegId    := myKinematic.progPath.reposSegmentMcuId;
+      restartSegParam := myKinematic.progPath.reposSegmentMcuParam;
+      IF NOT McuReadSegment(restartSegId, locSeg) THEN
+         RcuSetMessageOnce(TRcuReposPath_WarPCallFailed, myKinematic.kinListInx, 1, instId, "TRcuReposPath.InitBackwardMovement",
+            "McuReadSegment", "restartSegId");
+         RETURN FALSE;
+      END_IF;
+      // now it gets really ill: If repos is stopped on rebuild-segment, than we are 
+      // not on the segment shown in the callstack of this rebuild-segment, but a little 
+      // bit before, so we can set the segment-param to 0.0 instead of 1.0 (it is very
+      // likely that we are standing on 1.0 because the rebuild-segment is often a zero-segment)
+      //myKinematic.DebugPrint(eTraceGoldenRepos, "Interrupt-Segment: " + locSeg.mName);
+      IF StrLeft(locSeg.mName,18) = "RebuildPathSegment" THEN
+         restartSegParam := 0.0;
+         myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Restart param modified because of standing in initial repos-segment");
+      END_IF;
+      IF GetUserProgCallStackInfo(locSeg.mUserData.mDataInt[eSegStackHdl], stackInfo) THEN
+         sCurrentProg   := stackInfo.progNames[stackInfo.depth-1];
+         currentLineNr  := stackInfo.lineNrs[stackInfo.depth-1];
+         lastTriggerLine := myKinematic.progPath.lastExecutedTrigger / 100;
+         lastTriggerNum := myKinematic.progPath.lastExecutedTrigger MOD 100;
+         myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: " + 
+            sCurrentProg + " interrupted in line " + STR(currentLineNr) + 
+            ", Segment: " + STR(restartSegId) + "@" + STR(restartSegParam));
+      ELSE
+         myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: GetUserProgCallStackInfo 2 failed locSeg.mName = " + 
+            locSeg.mName + " locSeg.mUserData.mDataInt[eSegStackHdl] = " + STR(locSeg.mUserData.mDataInt[eSegStackHdl]));
+         RcuSetMessageOnce(TRcuReposPath_WarPCallFailed, myKinematic.kinListInx, 2, instId, "TRcuReposPath.InitBackwardMovement",
+            "GetUserProgCallStackInfo", INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;     
+      (*
+      IF l1 = currentLineNr THEN
+         IF RcuCalculateSegmentLength(restartSegId, myKinematic.kinematicMcuId, lengthSeg) THEN
+            p1 := lengthSeg * (p1 - restartSegParam);
+            myKinematic.DebugPrint(eTraceGoldenRepos,"Repos: path-distance while stopping: " + STR(p1) + " mm");
+         END_IF;
+      END_IF;
+      *)   
+      IF golden THEN
+         // check if this is the most advanced interrupt in program-progress
+         // only stackInfo is tested, so it is necessary to reset stackInfo in e.g. SetPC
+         IF RcCompareStacks(stackInfo, lastItrptInfo, result) AND 
+               ((result < 0) 
+                   OR 
+                (result = 0) AND (restartSegParam < lastItrpParam)) THEN
+            myKinematic.DebugPrint(eTraceReposDebug, "Interrupt before reaching last interrupt pos ("+STR(result)+"/"+STR(restartSegParam)+"/"+STR(lastItrpParam)+")");
+            //RcuPrintUserProgCallStack2(stackInfo, "stackInfo", eTraceGoldenRepos);
+            //RcuPrintUserProgCallStack2(lastItrptInfo, "lastItrptInfo", eTraceGoldenRepos);
+            found := result = 0; // in line of latest interrupt
+            aborted := FALSE;
+            WHILE NOT found AND NOT aborted DO // search segment for latest interrupt
+               IF RcuReadSegNext(restartSegId, nextSegId) THEN 
+                  restartSegId := nextSegId;
+                  IF McuReadSegment(restartSegId, locSeg) THEN
+                     IF GetUserProgCallStackInfo(locSeg.mUserData.mDataInt[eSegStackHdl], stackInfo) THEN
+                        IF RcCompareStacks(stackInfo, lastItrptInfo, result) THEN
+                           IF result < 0 THEN
+                              reposStr := "before reaching last interrupt pos";
+                           ELSIF result = 0 THEN
+                              found := TRUE;
+                              restartSegParam := lastItrpParam;
+                              reposStr := "stored position";
+                           ELSE
+                              aborted := TRUE;
+                              restartSegParam := 0.0;
+                              reposStr := "after stored position!?";
+                           END_IF;
+                        ELSE
+                           aborted := TRUE;
+                           restartSegParam := 1.0;
+                           reposStr := "couldn't compare callstacks";
+                        END_IF;
+                     ELSE
+                        aborted := TRUE;
+                        restartSegParam := 0.0;
+                        reposStr := "GetUserProgCallStackInfo failed";
+                        gTriggerError := gTriggerError + 1;
+                        myKinematic.DebugPrint(eTraceTrigger, "Trigger: logical error in trigger execution");
+                     END_IF; 
+                  ELSE // McuReadSegment failed -> ToDo: ERROR !!
+                     aborted := TRUE;
+                     restartSegParam := 1.0;
+                     gTriggerError := gTriggerError + 1;
+                     myKinematic.DebugPrint(eTraceTrigger, "Trigger: logical error in trigger execution");
+                     reposStr := "McuReadSegment failed";
+                  END_IF;
+               ELSE // no next segment - start at end of current segment
+                  aborted := TRUE;
+                  restartSegParam := 1.0;
+                  reposStr := "end of path";
+               END_IF;
+               myKinematic.DebugPrint(eTraceReposDebug, "search itrpt-pos (segId: "+STR(restartSegId)+") -> " + reposStr);
+            END_WHILE;
+         ELSE
+            found := TRUE;
+            
+            // initial data as collected during program execution
+            myKinematic.DebugPrint(eTraceReposDebug, "Repos: Check jobs on interrupt segment");
+            myKinematic.DebugPrint(eTraceReposDebug, "Repos: restartParam: " + STR(restartSegParam) 
+                  + ", lastGun: " + STR(myKinematic.progPath.reposLastGunOn)
+                  + ", lastTrigger: " + STR(myKinematic.progPath.reposLastJobNum) 
+                  + ", lastStackHdl: " + STR(myKinematic.progPath.reposLastStackHdl));
+            IF myKinematic.progPath.reposLastStackHdl <> 0 THEN
+               RcuPrintUserProgCallStack(myKinematic.progPath.reposLastStackHdl, 
+                  "Repos: Stack of lastTrigger", eTraceReposDebug);
+            END_IF;
+            
+            // first check of the latest signaled trigger is in the future
+            // this could happen because of timing inaccurracy 
+            // In this case the trigger should be executed again
+            IF myKinematic.progPath.reposLastStackHdl <> 0 THEN
+               IF GetUserProgCallStackInfo(myKinematic.progPath.reposLastStackHdl, jobInfo) THEN
+                  tmpSegId := restartSegId;
+                  tmpStackInfo := stackInfo;
+                  error := FALSE; futureTrigger := FALSE; lastJobOnRestartSegment := FALSE;
+                  IF RcCompareStacks(tmpStackInfo, jobInfo, result) THEN
+                     lastJobOnRestartSegment := result = 0; // job on actual segment
+                  ELSE
+                     myKinematic.DebugPrint(eTraceReposDebug, "Could not compare callstacks interrupt segment <-> last job");
+                     iCntMinorError := iCntMinorError + 1;
+                     error := TRUE;
+                  END_IF;
+                  WHILE (result < 0) AND NOT error DO
+                     futureTrigger := TRUE; // trigger not on restart segment
+                     IF RcuReadSegNext(tmpSegId, nextSegId) THEN
+                        IF McuReadSegment(nextSegId, tmpSeg) THEN
+                           tmpSegId := nextSegId;
+                           IF GetUserProgCallStackInfo(tmpSeg.mUserData.mDataInt[eSegStackHdl], tmpStackInfo) THEN
+                              IF NOT RcCompareStacks(tmpStackInfo, jobInfo, result) THEN
+                                 myKinematic.DebugPrint(eTraceReposDebug, "Could not compare callstacks next segment <-> last job");
+                                 iCntMinorError := iCntMinorError + 1;
+                                 error := TRUE;
+                              END_IF;
+                           ELSE
+                              myKinematic.DebugPrint(eTraceReposDebug, "Could not read callstack for last signaled job");
+                              iCntMinorError := iCntMinorError + 1;
+                              error := TRUE;
+                           END_IF;                           
+                        ELSE
+                           myKinematic.DebugPrint(eTraceReposDebug, "Could not read segment for last signaled job");
+                           iCntMinorError := iCntMinorError + 1;
+                           error := TRUE;
+                        END_IF;
+                     ELSE
+                        myKinematic.DebugPrint(eTraceReposDebug, "No next segment - last signaled job not found");
+                        iCntMinorError := iCntMinorError + 1;
+                        error := TRUE;
+                     END_IF;
+                  END_WHILE;
+                  IF NOT error THEN
+                     IF futureTrigger THEN // found the segment with last trigger
+                        // clear future trigger and find a trigger on actual segment
+                        myKinematic.DebugPrint(eTraceReposDebug, "Repos: future trigger - reset data");
+                        myKinematic.progPath.reposLastJobNum := (myKinematic.progPath.reposLastJobNum/100)*100;
+                        myKinematic.progPath.reposLastStackHdl := 0;
+                        myKinematic.progPath.reposLastGunOn := 0;
+                        lastJobOnRestartSegment := TRUE; // search on actual segment
+                     END_IF;
+                     IF lastJobOnRestartSegment THEN // last job is on last segment -> check param
+                        myKinematic.DebugPrint(eTraceReposDebug, "Repos: last signaled trigger is on interrupt segment");
+                        // find this job and set the data
+                        lastTrigger := FALSE;
+                        IF McuReadSegHdl(restartSegId, locSegHdl) THEN
+                           FOR i := 0 TO locSegHdl.mJobSet.mValidLen-1 DO
+                              IF McuReadJob(locSegHdl.mJobSet.mJobIDs[i], locJob) AND (locJob.mUserData.mIntValidLen >= 1)
+                                    // before this job
+                                    AND (locJob.mUserData.mDataInt[1] < myKinematic.progPath.reposLastJobNum) 
+                                    // after interrupt position
+                                    AND (((locJob.mJobTyp = eMcuJobParam) AND (locJob.mGeo.mValue < restartSegParam)) 
+                                       OR (locJob.mJobTyp <> eMcuJobParam))
+                                    // after last found job
+                                    AND (locJob.mUserData.mDataInt[1] > actLastJob.mUserData.mDataInt[1]) THEN
+                                 // this is the last executed trigger
+                                 actLastJob := locJob;
+                                 lastTrigger := TRUE;
+                              END_IF;
+                           END_FOR;
+                        ELSE
+                           myKinematic.DebugPrint(eTraceReposDebug, "SegHandler for segment with last trigger could not be read");
+                           iCntMinorError := iCntMinorError + 1;
+                        END_IF;
+                        IF lastTrigger THEN
+                           myKinematic.DebugPrint(eTraceReposDebug, "Repos: future trigger - last trigger set to " 
+                              + actLastJob.mName + " param: " + STR(actLastJob.mGeo.mValue));
+                           myKinematic.progPath.reposLastJobNum := actLastJob.mUserData.mDataInt[1];
+                           myKinematic.progPath.reposLastStackHdl := actLastJob.mUserData.mDataInt[2];
+                           myKinematic.progPath.reposLastGunOn := actLastJob.mUserData.mDataInt[3];
+                        ELSE
+                           myKinematic.DebugPrint(eTraceReposDebug, "Repos: future trigger - no previous trigger on interrupt segment");
+                           myKinematic.progPath.reposLastJobNum := 0; //(myKinematic.progPath.reposLastJobNum/100)*100;
+                           myKinematic.progPath.reposLastStackHdl := 0;
+                           myKinematic.progPath.reposLastGunOn := 0;
+                        END_IF;
+                        // modified restart data
+                        myKinematic.DebugPrint(eTraceReposDebug, "Repos: modified data: " 
+                              + ", lastGun: " + STR(myKinematic.progPath.reposLastGunOn)
+                              + ", lastTrigger: " + STR(myKinematic.progPath.reposLastJobNum) 
+                              + ", lastStackHdl: " + STR(myKinematic.progPath.reposLastStackHdl)); 
+                        IF myKinematic.progPath.reposLastStackHdl <> 0 THEN
+                           RcuPrintUserProgCallStack(myKinematic.progPath.reposLastStackHdl, 
+                              "Repos: Stack of lastTrigger", eTraceReposDebug);
+                        END_IF;
+                     END_IF;
+                  END_IF;
+               ELSE
+                  myKinematic.DebugPrint(eTraceReposDebug, "Could not read callstack for last signaled job");
+                  iCntMinorError := iCntMinorError + 1;
+               END_IF;
+            END_IF;
+            
+            // check all triggers on segment, if there is a job which should already have signaled
+            // (because of its position) but has not signaled, then set values as if it
+            // had signaled
+            IF McuReadSegHdl(restartSegId, locSegHdl) THEN
+               FOR i := 0 TO locSegHdl.mJobSet.mValidLen-1 DO
+                  IF McuReadJob(locSegHdl.mJobSet.mJobIDs[i], locJob) AND 
+                        (locJob.mUserData.mIntValidLen >= 1) AND (locJob.mJobTyp = eMcuJobParam) THEN
+                     myKinematic.DebugPrint(eTraceReposDebug, "Repos: Job(" + STR(i) 
+                           + ") on Interr-Seg: " + locJob.mName + " (p: " + STR(locJob.mGeo.mValue) + ")");
+                     // trigger is not signaled but should be!!
+                     IF (locJob.mGeo.mValue < restartSegParam) 
+                           AND (locJob.mUserData.mDataInt[1] > myKinematic.progPath.reposLastJobNum) THEN
+                        myKinematic.DebugPrint(eTraceReposDebug, "Repos: Trigger should have signaled already: " 
+                           + locJob.mName + " " + STR(restartSegParam) + " -> " + STR(locJob.mGeo.mValue));
+                        myKinematic.progPath.reposLastJobNum := locJob.mUserData.mDataInt[1];
+                        myKinematic.progPath.reposLastStackHdl := locJob.mUserData.mDataInt[2];
+                        minValue := locJob.mGeo.mValue;
+                        lastJobName := locJob.mName; 
+                        type := TRcuTriggerType(locJob.mUserData.mDataInt[0]);
+                        IF (type = eTriggerGunOn) OR (type = eTriggerRepos) THEN
+                           myKinematic.progPath.reposLastGunOn := locJob.mUserData.mDataInt[3];
+                        ELSIF (type = eTriggerGunOff) THEN
+                           myKinematic.progPath.reposLastGunOn := 0;
+                        END_IF; // do not change lastGun in case of a Brush- or Process-Trigger
+                     END_IF;
+                  END_IF;
+               END_FOR;
+            ELSE
+               myKinematic.DebugPrint(eTraceReposDebug, "Could not read segment handler for restart segment");
+               iCntMinorError := iCntMinorError + 1;
+            END_IF;
+            
+            // it is also possible that a job on a previous segment has not been marked as executed
+            IF myKinematic.progPath.reposLastStackHdl = 0 THEN // no job in this session
+               doSearch := TRUE;
+            ELSE // there was a job, but maybe not on this segment
+               IF GetUserProgCallStackInfo(myKinematic.progPath.reposLastStackHdl, jobInfo) THEN
+                  IF RcCompareStacks(jobInfo, stackInfo, result) AND (result < 0) THEN
+                     myKinematic.DebugPrint(eTraceReposDebug, "Last job not on current segment");
+                     doSearch := TRUE;
+                  END_IF;
+               ELSE
+                  myKinematic.DebugPrint(eTraceReposDebug, "Could not read callstack for last executed trigger");
+                  iCntMinorError := iCntMinorError + 1;
+               END_IF;
+            END_IF;
+            
+            actSegId := restartSegId;
+            WHILE doSearch DO
+               IF RcuReadSegPrev(actSegId, prevSegId, FALSE, prevSegName) THEN
+                  actSegId := prevSegId; 
+                  IF McuReadSegHdl(actSegId, locSegHdl) THEN
+                     FOR i := 0 TO locSegHdl.mJobSet.mValidLen-1 DO
+                        IF McuReadJob(locSegHdl.mJobSet.mJobIDs[i], locJob) AND 
+                              (locJob.mUserData.mIntValidLen >= 1) THEN
+                           myKinematic.DebugPrint(eTraceReposDebug, "Repos: Job(" + STR(i) 
+                                 + ") before Interr-Seg: " + locJob.mName + " (p: " + STR(locJob.mGeo.mValue) + ")");
+                           // trigger is not signaled but should be!!
+                           IF locJob.mUserData.mDataInt[1] > myKinematic.progPath.reposLastJobNum THEN
+                              myKinematic.DebugPrint(eTraceReposDebug, "Repos: Trigger should have "
+                                 + "signaled already (before interrupt segment): " + locJob.mName);
+                              myKinematic.progPath.reposLastJobNum := locJob.mUserData.mDataInt[1];
+                              myKinematic.progPath.reposLastStackHdl := locJob.mUserData.mDataInt[2];
+                              lastJobName := locJob.mName; 
+                              type := TRcuTriggerType(locJob.mUserData.mDataInt[0]);
+                              IF (type = eTriggerGunOn) OR (type = eTriggerRepos) THEN
+                                 myKinematic.progPath.reposLastGunOn := locJob.mUserData.mDataInt[3];
+                              ELSIF (type = eTriggerGunOff) THEN
+                                 myKinematic.progPath.reposLastGunOn := 0;
+                              END_IF; // do not change lastGun in case of a Brush- or Process-Trigger
+                              foundPrevSegJob := TRUE;
+                           END_IF;
+                           jobFound := TRUE; // there was a job on this segment, continue searching on this segment
+                                             // but dont search previous segments
+                        END_IF;
+                     END_FOR;
+                     doSearch := NOT jobFound;
+                     IF doSearch THEN
+                        myKinematic.DebugPrint(eTraceReposDebug, "Repos: No matching job found on segment " 
+                           + prevSegName + " (" +STR(actSegId) + ")");
+                     END_IF;
+                  ELSE
+                     myKinematic.DebugPrint(eTraceReposDebug, "Could not read segment handler for segment " + STR(actSegId));
+                     iCntMinorError := iCntMinorError + 1;
+                  END_IF;
+               ELSE
+                  doSearch := FALSE;
+               END_IF;
+            END_WHILE;
+            
+            // restart data has been modified
+            IF (minValue < restartSegParam) OR foundPrevSegJob THEN
+            // modified restart data
+               myKinematic.DebugPrint(eTraceReposDebug, "Repos: Last executed Job: " + lastJobName);
+               myKinematic.DebugPrint(eTraceReposDebug, "Repos: latestTriggerParam: " + STR(minValue) 
+                     + ", lastGun: " + STR(myKinematic.progPath.reposLastGunOn)
+                     + ", lastTrigger: " + STR(myKinematic.progPath.reposLastJobNum) 
+                     + ", lastStackHdl: " + STR(myKinematic.progPath.reposLastStackHdl));                  
+               RcuPrintUserProgCallStack(myKinematic.progPath.reposLastStackHdl, 
+                  "Repos: Stack of lastTrigger", eTraceReposDebug);
+            END_IF;
+                                    
+            // search the first not executed job on this segment (= first trigger with position > interrupt position)
+            // needed if interrupt position and restart position are on the same segment,
+            // in this case a setPC on the segment is not sufficient, a setPC on the next trigger
+            // is required
+            lastItrpNextJobOnSegStackHdl := 0;  
+            firstNotExecuted := currentLineNr * 100 + 99;
+            IF McuReadSegHdl(restartSegId, locSegHdl) THEN
+               FOR i := 0 TO locSegHdl.mJobSet.mValidLen-1 DO
+                  IF McuReadJob(locSegHdl.mJobSet.mJobIDs[i], locJob) THEN
+                     IF (locJob.mUserData.mIntValidLen >= 1) 
+                           AND (((locJob.mJobTyp = eMcuJobParam) AND (locJob.mGeo.mValue >= restartSegParam)) 
+                              OR (locJob.mJobTyp <> eMcuJobParam))
+                           AND (locJob.mUserData.mDataInt[1] > myKinematic.progPath.reposLastJobNum) THEN
+                        // this is a not executed trigger - search the first one
+                        IF locJob.mUserData.mDataInt[1] < firstNotExecuted THEN
+                           firstNotExecuted := locJob.mUserData.mDataInt[1];
+                           lastItrpNextJobOnSegStackHdl := locJob.mUserData.mDataInt[2];
+                           myKinematic.DebugPrint(eTraceReposDebug, STR(i) + ":<first> Job " + locJob.mName 
+                              + ": p:" + STR(locJob.mGeo.mValue) + " lj:" + STR(myKinematic.progPath.reposLastJobNum)
+                              + " ne:" + STR(firstNotExecuted));
+                        ELSE
+                           myKinematic.DebugPrint(eTraceReposDebug, STR(i) + ":<not first> Job " + locJob.mName + ": p:" + STR(locJob.mGeo.mValue)
+                              + " rp:" + STR(restartSegParam) + " t:" + STR(locJob.mJobTyp) 
+                              + " ud:" + STR(locJob.mUserData.mDataInt[1]) + " ne:" + STR(firstNotExecuted));
+                        END_IF;
+                     ELSE
+                        myKinematic.DebugPrint(eTraceReposDebug, STR(i) + ":<no match> Job " + locJob.mName + ": p:" + STR(locJob.mGeo.mValue)
+                           + " rp:" + STR(restartSegParam) + " t:" + STR(locJob.mJobTyp) 
+                           + " ud:" + STR(locJob.mUserData.mDataInt[1]) + " lj:" + STR(myKinematic.progPath.reposLastJobNum));
+                     END_IF;
+                  ELSE
+                     myKinematic.DebugPrint(eTraceReposDebug, STR(i) + ": Job not read");
+                     iCntMinorError := iCntMinorError + 1;
+                  END_IF;
+               END_FOR;
+            ELSE
+               iCntMinorError := iCntMinorError + 1;
+               myKinematic.DebugPrint(eTraceReposDebug, "SegHdl for restart segment not read");
+            END_IF;
+
+            RcuPrintUserProgCallStack2(stackInfo, "Repos: Stack of current pos", eTraceReposDebug);
+            RcuPrintUserProgCallStack2(lastItrptInfo, "Repos: Stack of latest interrupt", eTraceReposDebug);
+            IF lastItrpNextJobOnSegStackHdl <> 0 THEN
+               RcuPrintUserProgCallStack(lastItrpNextJobOnSegStackHdl, "Repos: Stack of next job on segment", eTraceReposDebug);
+            ELSE
+               myKinematic.DebugPrint(eTraceReposDebug, "Repos: All jobs on interrupt segment already executed");
+            END_IF;
+            
+            lastItrptInfo  := stackInfo; // stackInfo = pos of actual interrupt
+            lastItrpParam  := restartSegParam; 
+            lastItrpGun    := myKinematic.progPath.reposLastGunOn;
+            lastItrpJobNum := myKinematic.progPath.reposLastJobNum;
+            lastItrpStackHdl := myKinematic.progPath.reposLastStackHdl;
+            
+            // modified progPath data
+            myKinematic.RcuInterfaceToProcess.lastGunOn := myKinematic.progPath.reposLastGunOn;
+            myKinematic.progPath.lastExecutedTrigger := myKinematic.progPath.reposLastJobNum;
+            myKinematic.progPath.lastExecJobStackHdl := myKinematic.progPath.reposLastStackHdl;
+         END_IF;
+
+         IF (lastItrpGun = 0) AND found THEN
+            // needle closed at point of interrupt -> search next gun on or next brush
+            found := FALSE;
+            aborted := FALSE;
+            IF NOT McuReadSegHdl(restartSegId, locSegHdl) THEN
+               // reset toolId, inhibits unwanted release at next reset of the repospath
+               segHdl.mRobotToolID := 0;
+               RcuSetMessageOnce(TRcuReposPath_ErrMcuFuncFailed, myKinematic.kinListInx, 1, instId, 
+                  "TRcuReposPath.InitBackwardMovement", "McuReadSegHdl");
+               myKinematic.ErrorReaction(FALSE); 
+               myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: GoldenRepos end");
+               RETURN FALSE;
+            END_IF;
+            IF lastItrpStackHdl <> 0 THEN
+               IF GetUserProgCallStackInfo(lastItrpStackHdl, jobInfo) THEN
+                  IF (jobInfo.progNames[jobInfo.depth-1] = lastItrptInfo.progNames[lastItrptInfo.depth-1]) AND 
+                        (lastItrptInfo.lineNrs[lastItrptInfo.depth-1] = (lastItrpJobNum / 100)) THEN
+                     minIdx := (lastItrpJobNum MOD 100) + 1;
+                  ELSE
+                     minIdx := 1;
+                  END_IF;
+               ELSE
+                  iCntMinorError := iCntMinorError + 1;
+                  myKinematic.DebugPrint(eTraceReposDebug, "GetUserProgCallStackInfo from last job failed");
+               END_IF; 
+            ELSE
+               minIdx := 1;
+            END_IF;
+            WHILE NOT found AND NOT aborted DO
+               found := FindJob(locSegHdl.mJobSet, minIdx, restartSegParam, FALSE);
+               IF found THEN
+                  reposStr := "found job";
+               ELSE
+                  IF RcuReadSegNext(restartSegId, nextSegId) THEN 
+                     minIdx := 1;
+                     reposStr := "before reaching next trigger";
+                     IF McuReadSegHdl(nextSegId, locSegHdl) THEN
+                        restartSegId := nextSegId;
+                     ELSE
+                        aborted := TRUE;
+                        restartSegParam := 1.0;
+                        gTriggerError := gTriggerError + 1;
+                        myKinematic.DebugPrint(eTraceTrigger, "Trigger: logical error in trigger execution");
+                        reposStr := "McuReadSegHdl failed";
+                     END_IF;
+                  ELSE // no next segment - start at end of current segment
+                     aborted := TRUE;
+                     restartSegParam := 1.0;
+                     reposStr := "end of path";
+                     // check if there is a stop-point after the  last segment in path
+                     // if there is a stop point and no trigger has been found, then there
+                     // is no need to repos 
+                     IF myKinematic.progPath.stopPointCallStackHdl <> 0 THEN                    
+                        IF McuReadSegment(restartSegId, locSeg) THEN
+                           IF GetUserProgCallStackInfo(locSeg.mUserData.mDataInt[eSegStackHdl], stackInfo) THEN
+                              RcuPrintUserProgCallStack2(stackInfo, "Callstack of last segment in path", eTraceReposDebug); 
+                              IF GetUserProgCallStackInfo(myKinematic.progPath.stopPointCallStackHdl, stopPointStackInfo) THEN
+                                 RcuPrintUserProgCallStack2(stopPointStackInfo, "Callstack of latest stoppoint (" 
+                                    + STR(myKinematic.progPath.stopPointCallStackHdl) + ")", eTraceReposDebug); 
+                                 IF RcCompareStacks(stackInfo, stopPointStackInfo, result) THEN
+                                    IF result <= 0 THEN
+                                       pathEndsWithStopPoint := TRUE;
+                                       myKinematic.DebugPrint(eTraceReposDebug, "Path ends with a stoppoint");
+                                    ELSE
+                                       myKinematic.DebugPrint(eTraceReposDebug, "Path does not end with a stoppoint");
+                                    END_IF;
+                                 ELSE
+                                    iCntMinorError := iCntMinorError + 1;
+                                    myKinematic.DebugPrint(eTraceReposDebug, "Could not compare callstacks");
+                                 END_IF;
+                              ELSE
+                                 iCntMinorError := iCntMinorError + 1;
+                                 myKinematic.DebugPrint(eTraceReposDebug, "GetUserProgCallStackInfo from last stoppoint failed (" 
+                                    + STR(myKinematic.progPath.stopPointCallStackHdl) + ")");
+                              END_IF;
+                           ELSE
+                              iCntMinorError := iCntMinorError + 1;
+                              myKinematic.DebugPrint(eTraceReposDebug, "GetUserProgCallStackInfo from last segment failed");
+                           END_IF; 
+                        ELSE
+                           iCntMinorError := iCntMinorError + 1;
+                           myKinematic.DebugPrint(eTraceReposDebug, "McuReadSegment of last segment failed");
+                        END_IF;
+                     ELSE
+                        myKinematic.DebugPrint(eTraceReposDebug, "No stoppoint set");
+                     END_IF;
+                  END_IF;
+               END_IF;            
+               myKinematic.DebugPrint(eTraceReposDebug, "Search next job (segId: "+STR(restartSegId)+") -> " + reposStr);
+            END_WHILE;
+         ELSIF (lastItrpGun = 0) AND NOT found THEN  
+            // needle was closed, but we are unable to find restart segment, e.g. path too
+            // short because of subsequent repos events -> restartPos = interruptPos
+            ; // nothing to do
+         ELSE // needle was open -> restartPos = interruptPos
+            ; // nothing to do
+         END_IF;
+         
+         IF pathEndsWithStopPoint OR myKinematic.progPath.reposIsOnPathEnd THEN
+            //robot was on path end, so no repos is required
+            required := FALSE;
+            myKinematic.DebugPrint(eTraceReposDebug, "Repos: Standing on path end or stoppoint prior to next trigger - no golden repos required");
+         ELSIF locSeg.mPosStart = locSeg.mPosEnd THEN
+            //robot was on Zerosegment, so no repos is required
+            required := FALSE;
+            myKinematic.DebugPrint(eTraceReposDebug, "Repos: Standing on zero segment - no golden repos required");
+         ELSIF RcuCreatePathPos(restartSegId, restartSegParam, "RestartPathPos", 
+               myKinematic, myKinematic.progPath.pathMcuId, restartPathPosId) THEN
+
+            //McuCreateRestartPathPos:
+            //1. Gufall -> return true, id = ...
+            //2. ungültige StartPos -> return false, id = 0
+            //3. Suche geht über den Bahnanfang hinaus: return true, 
+            //      id = Bahnposition auf 1. Segment/Par. 0, Erreichen des Bahnanfangs 
+            //      mittels boolsches Flag signalisieren 
+            //4. VS/Hauptlauf war noch nicht auf StartPos (StartPos liegt in der Zukunft): 
+            //      letzte verfügbare Bahnposition nehmen und von dort aus zurückrechnen. 
+            //      In der Folge sind Fall 1 und 3 möglich.
+            //5. Bahn wurde überhaupt noch nie befahren -> Fehlermeldung, return false, id=0
+            IF McuCreateRestartPathPos(restartPathPosId, targetPathPosId, boundaryReached) THEN
+               IF NOT boundaryReached THEN // full repos is possible
+                  iCntMcuCreateRestartPathPosOk := iCntMcuCreateRestartPathPosOk + 1;
+                  
+                  
+                  (* no longer necessary because McuCreateRestartPathPos() returns a PathPos not in overlap-area
+                  IF NOT McuIsPathPosInOverlap(targetPathPosId, ovlTyp) THEN
+                     iCntMinorError := iCntMinorError + 1;
+                     myKinematic.DebugPrint(eTraceMotionStep, "Repos: McuIsPathPosInOverlap failed");
+                     RETURN FALSE;
+                  END_IF;
+                  // fetch position where overlapping starts
+                  IF (ovlTyp = eMcuCartOvl) OR (ovlTyp = eMcuDynOvl) THEN
+                     myKinematic.DebugPrint(eTraceMotionStep, "Repos: Current PathPos is in overlap-section: "+STR(targetPathPosId));
+                     IF NOT McuCreatePathPosPrevTransPoint(targetPathPosId, ovlStartPathPosId, pathPosType, eMcuPosOverlapStart) THEN
+                        WAIT FALSE;
+                     END_IF;
+                     McuReleaseDbObj(targetPathPosId);
+                     targetPathPosId := ovlStartPathPosId;
+                     myKinematic.DebugPrint(eTraceMotionStep, "Repos: Position from overlap start: "+STR(targetPathPosId));
+                  END_IF;
+                  *)
+                  
+                  
+                  
+               ELSE
+                  // If the path is to short for repositioning (could happen on repeated repositionings)
+                  // McuGetRestartPathPos will be FALSE and the path begin is returned in targetPathPosId
+                  // using the path begin the pathvelocity is possibly to low, but its still better than
+                  // not repositioning
+                  iCntMcuCreateRestartPathPosBound := iCntMcuCreateRestartPathPosBound + 1;
+                  myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: McuCreateRestartPathPos returned pathStartPos (id: "+STR(targetPathPosId)+")");
+                  RcuSetMessageOnce(TRcuReposPath_WarFullReposImp, myKinematic.kinListInx, 1, instId, 
+                     "TRcuReposPath.InitBackwardMovement");
+               END_IF;
+               McuReadPosition(targetPathPosId, targetPathPos);
+               //RcuPrintPosition(targetPathPosId, eTraceReposDebug);
+               McuReleaseDbObj(targetPathPosId);
+               targetSegId := targetPathPos.mPosPath.mSegmentID;
+               McuReadSegment(targetSegId, locSeg);
+               IF locSeg.mSegTyp = eMcuCirc THEN
+                  targetSegParam := 0.0;
+               ELSE
+                  targetSegParam := targetPathPos.mPosPath.mSegmentParam;
+               END_IF;
+               // check if repos is required
+               IF lastItrpGun <> 0 THEN
+                  required := (targetSegId <> myKinematic.progPath.segmentMcuId) 
+                     OR ((targetSegId = myKinematic.progPath.segmentMcuId) AND (targetSegParam < myKinematic.progPath.segmentMcuParam));
+                  myKinematic.DebugPrint(eTraceReposDebug, "Repos: gun was open > " + STR(required));
+               ELSIF targetSegId = myKinematic.progPath.segmentMcuId THEN
+                  required := targetSegParam < myKinematic.progPath.segmentMcuParam;
+                  myKinematic.DebugPrint(eTraceReposDebug, "Repos: in act line, targetParam < actParam: " + STR(required));
+               ELSIF NOT boundaryReached THEN
+                  tmpSegId := myKinematic.progPath.segmentMcuId;
+                  WHILE (tmpSegId <> targetSegId) AND (tmpSegId <> 0) DO
+                     RcuReadSegNext(tmpSegId, tmpSegId);
+                  END_WHILE;  
+                  required := tmpSegId = 0;  // targetSegment not found in prerun
+                  myKinematic.DebugPrint(eTraceReposDebug, "Repos: future pos > " + STR(required));
+               ELSE // path start pos has been returned by McuCreateRestartPathPos
+                  required := TRUE;
+                  myKinematic.DebugPrint(eTraceReposDebug, "Repos: pathStartPos");
+               END_IF;
+            ELSE     
+               // creating pathPos not possible - so repos is not possible
+               required := FALSE;
+               iCntMcuCreateRestartPathPosFalse := iCntMcuCreateRestartPathPosFalse + 1;
+               myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: McuCreateRestartPathPos failed");
+               myKinematic.DebugPrint(eTraceGoldenRepos, "restartPathPosId: " + STR(restartPathPosId));
+               IF restartPathPosId <> 0 THEN
+                  RcuPrintPosition(restartPathPosId, eTraceGoldenRepos);
+               END_IF;
+               myKinematic.DebugPrint(eTraceGoldenRepos, "targetPathPosId: " + STR(targetPathPosId));
+               IF targetPathPosId <> 0 THEN
+                  RcuPrintPosition(targetPathPosId, eTraceGoldenRepos);
+               END_IF;
+               myKinematic.DebugPrint(eTraceGoldenRepos, "boundaryReached: " + STR(boundaryReached));
+            END_IF; 
+            McuReleaseDbObj(restartPathPosId);
+         ELSE
+            // creating pathPos not possible - so repos is not possible
+            required := FALSE;
+            iCntRcuCreateRestartPathPosFalse := iCntRcuCreateRestartPathPosFalse + 1;
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Creating restart-pathPos failed"); 
+         END_IF;
+      ELSE  // backward movement requested - this is allways required, except standing on path-startpos
+         locSegId := myKinematic.progPath.segmentMcuId;
+         IF myKinematic.progPath.segmentMcuParam = 0 THEN  // check if standing on path-startpos
+            required := RcuReadSegPrev(locSegId, tmpSegId, FALSE);
+            IF required THEN
+               locSegId := tmpSegId;
+            END_IF;
+         ELSE
+            required := TRUE;
+         END_IF;
+         WHILE required AND RcuReadSegPrev(locSegId, tmpSegId, FALSE) DO // find first path-segment
+            locSegId := tmpSegId;
+         END_WHILE;
+         targetSegParam := 0.0;
+         targetSegId := locSegId;
+      END_IF;
+   ELSE
+      pathEmpty := TRUE;
+      IF NOT myKinematic.bEmptyProgPath AND NOT golden THEN
+         RcuSetMessageOnce(TRcuReposPath_ErrBackWMovFail, myKinematic.kinListInx, 1, instId, "TRcuReposPath.InitBackwardMovement", INSTANCE_NAME());
+      END_IF;
+      RETURN FALSE;
+   END_IF;
+   
+   myKinematic.progPath.interruptProgStack := lastItrptInfo;
+   IF lastItrpStackHdl <> 0 THEN // a previous executed trigger has been set
+      GetUserProgCallStackInfo(lastItrpStackHdl, stackInfo);
+      RcuPrintUserProgCallStack2(lastItrptInfo, "Last interrupt");
+      RcuPrintUserProgCallStack2(stackInfo, "Last executed trigger");
+      // check if interrupt happend in line of last trigger
+      IF RcCompareStacks(lastItrptInfo, stackInfo, result) AND (result >= 0) 
+            AND (lastItrptInfo.lineNrs[lastItrptInfo.depth-1] = (lastItrpJobNum / 100)) THEN
+         myKinematic.progPath.lastTriggerOnInterrSeg := lastItrpJobNum MOD 100;
+         myKinematic.DebugPrint(eTraceReposDebug, "Repos: Set last trigger to " 
+            + STR(myKinematic.progPath.lastTriggerOnInterrSeg));
+         myKinematic.progPath.lastExecutedTrigger := lastItrpJobNum;
+      ELSE // last trigger was on different segment -> don't skip
+         myKinematic.progPath.lastTriggerOnInterrSeg := 0;
+         myKinematic.DebugPrint(eTraceReposDebug, "Repos: Reset last trigger to 0");
+         myKinematic.progPath.lastExecutedTrigger    := 0;
+         myKinematic.progPath.lastExecJobStackHdl    := 0;
+      END_IF;
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: itrpt: " + lastItrptInfo.progNames[lastItrptInfo.depth-1]
+         + ":" + STR(lastItrptInfo.lineNrs[lastItrptInfo.depth-1]) + " --- trig: " 
+         + stackInfo.progNames[stackInfo.depth-1] + ":" + STR(lastItrpJobNum));
+   ELSE // no previous executed trigger has been set
+      myKinematic.progPath.lastTriggerOnInterrSeg := 0;
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: Reset last trigger to 0 - no previous trigger");
+      myKinematic.progPath.lastExecutedTrigger    := 0;
+      myKinematic.progPath.lastExecJobStackHdl    := 0;
+   END_IF;
+   IF golden THEN // don't skip triggers in case of backward movement
+      myKinematic.progPath.reposTriggerGun := lastItrpGun;
+      myKinematic.progPath.interruptSegParam := lastItrpParam;
+      myKinematic.DebugPrint(eTraceReposDebug, "Repos: lastTriggerOnInterrSeg: "+STR(myKinematic.progPath.lastTriggerOnInterrSeg));
+      myKinematic.progPath.skipTriggers := TRUE; //required;
+   END_IF;
+
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Reposition to the saved Pathposition of Path onPath. The function returns
+// FALSE when the Kinematic is initially not on this Path or when Errors
+// occur.
+ROUTINE BackwardMovement(reposSegId : TMcuDbObjID; segParam : REAL; CONST golden : BOOL) : BOOL
+   VAR
+      thisId         : TMcuDbObjID;
+      dynId          : TMcuDbObjID;
+      locSeg         : TMcuSegment;
+      prevSegId      : TMcuDbObjID;
+      circHelpPosId  : TMcuDbObjID;
+      endPosMcuId    : TMcuDbObjID;
+      toolMcuId      : TMcuDbObjID;
+      oldToolMcuId   : TMcuDbObjID;
+      nrOfInt        : DINT;
+      nrOfFloat      : DINT;
+      userData       : TMcuUserData;
+      maxDyn         : TMcuSubDyn;
+      i              : DINT;
+      dyn            : TMcuDynamic;
+      ovl            : TMcuOverlap;
+      error          : BOOL;
+      pathPos        : TMcuPosition;
+      iStackHdl      : DINT;
+      iOldStackHdl   : DINT;
+      running        : BOOL;
+      pathPosType    : DINT;
+      startPosSegId  : TMcuDbObjID;
+      startPosSegParam : REAL;
+      userDataOk       : BOOL;
+      tmpStr           : STRING;
+      velo             : REAL;
+      stackInfo        : TUserProgStackInfo;
+      nextJobStackInfo : TUserProgStackInfo;
+      result           : DINT;
+      errorReason      : TMcuPathPosErrorType;
+      minPosReached    : BOOL;
+      segChange        : BOOL;
+      startSeg         : BOOL := TRUE;
+      ovlTyp           : TMcuOvlTyp;
+      ovlId            : TMcuDbObjID;
+      b1               : BOOL;
+      b2               : BOOL;
+      bTrackingActive  : BOOL; // aktuelle Position ist Segment nach TRACKING(On)
+      bFlagSpecialState: BOOL := FALSE;
+   END_VAR
+
+   IF (myKinematic.reposState <> eReposStateInit) AND 
+      (myKinematic.reposState <> eReposStateActive) THEN
+      BackwardError(TRcuReposPath_ErrRepsNInit, INSTANCE_NAME());
+      RETURN FALSE;
+   END_IF;
+   IF myKinematic.reposState = eReposStateInit THEN
+      myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Backward movement begin");
+      myKinematic.progPath.EndMotionCommands();
+      startSegId := myKinematic.progPath.segmentMcuId;
+      startSegParam := myKinematic.progPath.segmentMcuParam;
+      McuReadUserData(startSegId,nrOfInt,nrOfFloat,userData);
+      
+      // beim Golden Repos nicht auf eine Position zurückfahren, die vor einer Handlerbeauftragung liegt
+      // wegen Kollisionsgefahr!!!
+      IF (userData.mDataInt[eSegSpecialState] = 1) AND golden THEN
+         ovlId := userData.mDataInt[eSegOvlId];
+         McuReadOverlap(ovlId, ovl);
+         IF McuIsPathPosInOverlap(myKinematic.progPath.pathPosMcuId, ovlTyp) THEN
+            IF ((ovlTyp = eMcuCartOvl) OR (ovlTyp = eMcuDynOvl) OR  (ovlTyp = eMcuCartOvl3) OR  (ovlTyp = eMcuCartOvl5)) AND (startSegParam <= 0.5) THEN
+               minPosReached := TRUE; // segment with setorder. Finish backward movement
+               myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: Segment with setorder. backward movement not possible");
+            ELSE
+               bFlagSpecialState := TRUE;
+               myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: Segment with setorder. bFlagSpecialState := TRUE");
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      bTrackingActive := (userData.mDataInt[eSegSpecialState] >= 10) AND golden;
+      
+      iStackHdl := userData.mDataInt[eSegStackHdl];
+      IF reposSegId = 0 THEN  // get first segment on path
+         reposSegId := startSegId;
+         WHILE RcuReadSegPrev(reposSegId, prevSegId, FALSE) DO
+            reposSegId := prevSegId;
+         END_WHILE;
+         segParam := 0.0;
+      END_IF;
+      IF (reposPathPosId <> myKinematic.progPath.pathPosMcuId) AND (reposPathPosId <> 0) THEN
+         McuReleaseDbObj(reposPathPosId);
+         myKinematic.DebugPrint(eTraceMotionModesFine, "1 ReposPathPosId released: " + STR(reposPathPosId));
+         reposPathPosId := 0;
+      END_IF;
+      IF RcuCreatePathPos(reposSegId, segParam, "RestartPos", myKinematic, 
+            myKinematic.progPath.pathMcuId, reposPathPosId) THEN
+         myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: " + STR(myKinematic.progPath.pathPosMcuId) + 
+            " (" + STR(startSegId) + "@" + STR(startSegParam) + ")" +
+            " -> " + STR(reposPathPosId) + " (" + STR(reposSegId) + "@" + 
+            STR(segParam) + ")");         
+         inSegmentRepos := (myKinematic.progPath.reposSegmentMcuId = reposSegId);
+      ELSE
+         BackwardError(TRcuReposPath_ErrCreatePos, "RestartPos");
+         RETURN FALSE;
+      END_IF;
+      oldPathPosID := myKinematic.progPath.pathPosMcuId;
+      myKinematic.DebugPrint(eTraceMotionModesFine, "oldPathPosID: "+STR(oldPathPosID));
+      myKinematic.reposState := eReposStateActive;
+      startPosSegId    := startSegId;
+      startPosSegParam := startSegParam;
+      
+      // Delete the prerun
+      IF GetUserProgCallStackInfo(iStackHdl, stackInfo) THEN
+         myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetPc on actual segment (line: " + STR(stackInfo.lineNrs[stackInfo.depth-1]) + ")");
+         SetPcWithoutStop(iStackHdl, stackInfo);
+      ELSE
+         iCntMinorError := iCntMinorError + 1;
+         myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Error reading callstacks - PC not set");
+      END_IF;
+      
+   ELSE // continue backward movement
+      myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Continue backward movement");
+      IF McuReadPosition(oldPathPosID, pathPos) THEN
+         startPosSegId := pathPos.mPosPath.mSegmentID;
+         startPosSegParam := pathPos.mPosPath.mSegmentParam;
+         McuReadUserData(startPosSegId,nrOfInt,nrOfFloat,userData);
+
+         // beim Golden Repos nicht auf eine Position zurückfahren, die vor einer Handlerbeauftragung liegt
+         // wegen Kollisionsgefahr!!!
+         IF (userData.mDataInt[eSegSpecialState] = 1) AND golden THEN
+            IF McuIsPathPosInOverlap(myKinematic.progPath.pathPosMcuId, ovlTyp) THEN
+               IF ((ovlTyp = eMcuCartOvl) OR (ovlTyp = eMcuDynOvl) OR  (ovlTyp = eMcuCartOvl3) OR  (ovlTyp = eMcuCartOvl5)) AND (startPosSegParam <= 0.5) THEN
+                  minPosReached := TRUE; // segment with setorder. Finish backward movement
+                  myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: Segment with setorder. backward movement not possible");
+               ELSE
+                  bFlagSpecialState := TRUE;
+                  myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: Segment with setorder. bFlagSpecialState := TRUE");
+               END_IF;
+            END_IF;
+         END_IF;
+
+         bTrackingActive := (userData.mDataInt[eSegSpecialState] >= 10) AND golden;
+         
+         iStackHdl := userData.mDataInt[eSegStackHdl];
+         IF (reposPathPosId <> myKinematic.progPath.pathPosMcuId) AND (reposPathPosId <> 0) THEN
+            McuReleaseDbObj(reposPathPosId);
+            myKinematic.DebugPrint(eTraceMotionModesFine, "2 ReposPathPosId released: " + STR(reposPathPosId));
+            reposPathPosId := 0;
+         END_IF;
+         IF RcuCreatePathPos(reposSegId, segParam, "RestartPos", myKinematic, 
+               myKinematic.progPath.pathMcuId, reposPathPosId) THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: " + STR(myKinematic.progPath.pathPosMcuId) + 
+               " (" + STR(startSegId) + "@" + STR(startSegParam) + ")" +
+               " -> " + STR(reposPathPosId) + " (" + STR(reposSegId) + "@" + 
+               STR(segParam) + ")");         
+            inSegmentRepos := (myKinematic.progPath.reposSegmentMcuId = reposSegId);
+         ELSE
+            BackwardError(TRcuReposPath_ErrCreatePos, "RestartPos");
+            RETURN FALSE;
+         END_IF; 
+      ELSE
+         BackwardError(TRcuReposPath_ErrReadPosFail, INSTANCE_NAME(), STR(oldPathPosID));
+         RETURN FALSE;
+      END_IF;
+      EndMotionCommands();
+      IF (oldPathPosID <> newPathPosID) AND (newPathPosID <> myKinematic.progPath.pathPosMcuId) THEN
+         // Release not used pathposition
+         McuReleaseDbObj(newPathPosID);
+      END_IF;
+   END_IF;
+
+   thisId := startSegId;
+   // general settings - maybe separate config-settings??
+   IF myKinematic.bHandlerDoBackwardMove THEN             
+      maxDyn.mDece := 1.00;              
+      maxDyn.mJerk := 0.50;          
+      maxDyn.mVelo := 0.1;              
+      maxDyn.mAcce := 0.20; 
+   ELSE
+      maxDyn.mVelo := 0.30; 
+      (*
+      maxDyn.mAcce := 1.00;              
+      maxDyn.mDece := 1.00;              
+      maxDyn.mJerk := 1.00;
+      *)
+      maxDyn.mAcce := 0.1;              
+      maxDyn.mDece := 0.1;              
+      maxDyn.mJerk := 0.1;              
+   END_IF;
+   // if there is no fullspeed-flag (e.g. T1), maybe maxVelo has to be reduced
+   //IF NOT myKinematic.mainModeMgr.fullSpeed THEN   
+   //T2 is fullspeed then robot moves very fast, to be a little bit slower use the mainmodes to reduce velo BIT 4.12.05
+   IF (myKinematic.mainModeMgr.mode = ciT1) OR (myKinematic.mainModeMgr.mode = ciT2) THEN  
+      FOR i := 0 TO myKinematic.kinematic.mNrOfJoints - 1 DO
+          velo := myKinematic.veloLimits.mJoints.mValues[i] / 
+                  myKinematic.kinematic.mJoints[i].mDynLimits.mVelo;
+          IF velo < maxDyn.mVelo THEN
+             maxDyn.mVelo := velo;
+         END_IF;
+      END_FOR;
+   END_IF;
+   IF McuReadDynamic(segHdl.mDynamicID, dyn) THEN
+      dyn.mJoint := maxDyn;
+      dyn.mName := INSTANCE_NAME() + "_bwDyn";
+      IF NOT McuCreateDynamic(dynId, dyn) THEN // create default dynamic
+         dynId := segHdl.mDynamicID; // use dynamic form segHdl
+      END_IF;
+   END_IF;
+   // fetch velo from segment and create/fetch dynamicId
+   GetDyn(thisId, maxDyn, dynId, velo); 
+   
+   ovl.mOvlTyp := eMcuDynOvl;
+   ovl.mOvlDefTyp := eMcuSegParam; 
+   ovl.mOvlStartPrevSeg := 0.5;
+   ovl.mOvlEndOnThisSeg := 0.5;
+   ovl.mName := "BW_DynOvl";
+   NewOverlap(ovl);
+      
+   WHILE NOT minPosReached AND NOT error AND NOT bSetPcError DO
+      myKinematic.DebugPrint(eTraceMotionModesFine, "Calculate previous pathPos: posId: "  + 
+         STR(oldPathPosID)+", minPosId: "+STR(reposPathPosId)+", velo: "+STR(velo));
+      // McuCreatePathPosRelativeDyn does not return reposPosMcuId, when reaching
+      // reposPosMcuId a different id is returned
+      IF McuCreatePathPosRelativeDyn(oldPathPosID, backwardSegLength, newPathPosID, 
+            pathPosType, reposPathPosId, toolMcuId, velo, errorReason) THEN
+         McuReleaseDbObj(endPosMcuId);
+         IF NOT McuCreatePosFromPathPos(newPathPosID, lastPosFromPathPosId) THEN
+            RcuSetMessageOnce(TRcuReposPath_ErrMcuError, myKinematic.kinListInx, 2, instId, 
+               "TRcuReposPath.BackwardMovement", myKinematic.robotName, INSTANCE_NAME());
+            error := TRUE;
+            myKinematic.ErrorReaction(FALSE);
+         ELSE
+            // check the existence of the callstack for the pathpos
+            userDataOk := McuReadUserData(newPathPosID, nrOfInt, nrOfFloat, userData);
+            IF NOT userDataOk THEN
+               error := TRUE;
+               RcuSetMessageOnce(TRcuReposPath_ErrRdUserDatFail, myKinematic.kinListInx, 1, instId, 
+                  "TRcuReposPath.BackwardMovement", INSTANCE_NAME(),
+               STR(newPathPosID));
+            ELSE
+               IF (userData.mDataInt[eSegSpecialState] = 1) AND golden THEN
+                  // beim Golden Repos nicht auf eine Position zurückfahren, die vor einer Handlerbeauftragung liegt
+                  // wegen Kollisionsgefahr!!!
+                  IF McuIsPathPosInOverlap(newPathPosID, ovlTyp) THEN
+                     IF NOT McuReadPosition(newPathPosID, pathPos) THEN
+                        error := TRUE;
+                        RcuSetMessageOnce(TRcuReposPath_ErrReadPosFail, myKinematic.kinListInx, 1, instId, "TRcuReposPath.BackwardMovement", INSTANCE_NAME(),
+                           STR(newPathPosID));
+                     ELSE   
+                        IF ((ovlTyp = eMcuCartOvl) OR (ovlTyp = eMcuDynOvl) OR  (ovlTyp = eMcuCartOvl3) OR  (ovlTyp = eMcuCartOvl5)) AND (pathPos.mPosPath.mSegmentParam <= 0.5) THEN
+                           minPosReached := TRUE; // segment with setorder. Finish backward movement
+                           myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: Segment with setorder. ovlTyp <> noOvl. Finish backward movement");
+                        ELSE
+                           IF NOT bFlagSpecialState THEN
+                              myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: Segment with setorder. bFlagSpecialState := TRUE");
+                           END_IF;
+                           bFlagSpecialState := TRUE;
+                        END_IF;
+                     END_IF;
+                  END_IF;
+               ELSE
+                  IF golden AND bFlagSpecialState THEN
+                     minPosReached := TRUE; // segment with setorder. Finish backward movement
+                     myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: End of Segment with setorder. Finish backward movement");
+                  END_IF;
+               END_IF;
+
+               // beim Golden Repos nicht auf eine Position zurückfahren, die vor dem Tracking-Start liegt
+               IF bTrackingActive AND NOT((userData.mDataInt[eSegSpecialState] >= 10) AND golden) THEN
+                  minPosReached := TRUE; // segment with start tracking. Finish backward movement
+                  myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: segment before start tracking. Finish backward movement");
+               END_IF;
+               IF NOT minPosReached THEN
+                  iOldStackHdl := iStackHdl;
+                  iStackHdl    := userData.mDataInt[eSegStackHdl];
+                  IF GetUserProgCallStackInfo(iStackHdl, stackInfo) THEN
+                     IF toolMcuId <> oldToolMcuId THEN
+                        IF (toolMcuId <> defaultToolMcuId) AND (toolMcuId <> segHdl.mRobotToolID) THEN // already released, reserve again
+                           myKinematic.DebugPrint(eTraceReposDebug, "BackwardMovement: McuReserveDbObj toolMcuId = "+STR(toolMcuId));
+                           McuReserveDbObj(toolMcuId);
+                        END_IF;
+                        myKinematic.SetToolIdIntern(toolMcuId);
+                        oldToolMcuId := toolMcuId;
+                     END_IF;
+                  ELSE
+                     minPosReached := TRUE; // no callstack exists. Finish backward movement
+                     myKinematic.DebugPrint(eTraceGoldenRepos, "BackwardMovement: no callstack exists. Finish backward movement");
+                  END_IF;
+               END_IF;
+            END_IF;
+              
+            IF NOT error AND NOT minPosReached THEN
+               endPosMcuId := lastPosFromPathPosId;
+               IF NOT McuReadPosition(newPathPosID, pathPos) THEN
+                  error := TRUE;
+                  RcuSetMessageOnce(TRcuReposPath_ErrReadPosFail, myKinematic.kinListInx, 1, instId, "TRcuReposPath.BackwardMovement", INSTANCE_NAME(),
+                     STR(newPathPosID));
+               ELSE   
+                  IF iStackHdl <> iOldStackHdl THEN
+                     GetDyn(pathPos.mPosPath.mSegmentID, maxDyn, dynId, velo);
+                  END_IF;   
+               END_IF;
+               IF NOT running AND cmdLimitReached THEN
+                  running := TRUE;
+                  // move on the path
+                  (*$$$$$* motionstep *$$$$$*)
+                  PRINT("TrcuReposPath.BackwardMovement() McuMove");
+                  IF NOT McuMove(myKinematic.kinematicMcuId) THEN
+                     BackwardError(TRcuReposPath_ErrMove, myKinematic.robotName, INSTANCE_NAME());
+                     RETURN FALSE;
+                  END_IF;   
+               END_IF;
+               userData.mDataInt[eSegStartSegId] := startPosSegId; // segment laying on startposition
+               startPosSegId := pathPos.mPosPath.mSegmentID;
+               userData.mDataInt[eSegEndSegId] := startPosSegId; // segment laying on endposition
+               userData.mDataFloat[0] := startPosSegParam; // segmentparameter of startposition 
+               startPosSegParam := pathPos.mPosPath.mSegmentParam;
+               userData.mDataFloat[1] := startPosSegParam; // segmentparameter of endposition 
+               userData.mFloatValidLen := 2;
+               userData.mIntValidLen := 6;
+               //RcuPrintUserData(userData);
+               segChange := startSeg OR (userData.mDataInt[eSegStartSegId] <> userData.mDataInt[eSegEndSegId]);
+               startSeg := FALSE;               
+               AppendReposSegment(endPosMcuId, 0, eMcuPTP, 1.0, dynId, userData, toolMcuId, segChange);
+               IF (oldPathPosID <> myKinematic.progPath.pathPosMcuId) AND 
+                     (oldPathPosID <> myKinematic.progPath.reposPosMcuId) THEN
+                  McuReleaseDbObj(oldPathPosID);  // release preliminary pathposition
+                  tmpStr := ", released oldPathPosID: "+STR(oldPathPosID);
+               ELSE
+                  tmpStr := ", no oldPathPosID released";
+               END_IF;
+               oldPathPosID := newPathPosID; 
+               myKinematic.DebugPrint(eTraceMotionModesFine, "oldPathPosID: "+STR(oldPathPosID) + tmpStr);
+            END_IF;
+         END_IF;
+      ELSE // McuCreatePathPosRelativeDyn returned FALSE
+         IF errorReason = eMcuPathPosWrongParams THEN
+            RcuPrintPosition(oldPathPosID, eTraceMotionStep);
+            RcuPrintPosition(reposPathPosId, eTraceMotionStep);
+            RcuSetMessageOnce(TRcuReposPath_ErrClcPrevPosFail, myKinematic.kinListInx, 1, instId, "TRcuReposPath.BackwardMovement", INSTANCE_NAME());
+            error := TRUE;
+         ELSE
+            myKinematic.DebugPrint(eTraceMotionModesFine, "McuCreatePathPosRelativeDyn returned " + STR(errorReason));
+            minPosReached := TRUE; // Normal end of backward path
+         END_IF;
+      END_IF; 
+   END_WHILE;
+   IF (dynId <> dynamicId) AND (dynId <> cartDynamicId) AND (dynId <> defaultCartDynMcuId) 
+         AND (dynId <> defaultDynMcuId) AND (dynId <> segHdl.mDynamicID) THEN
+      McuReleaseDbObj(dynId);
+   END_IF;
+
+   IF NOT running THEN
+      running := TRUE;
+      // move on the path
+       (*$$$$$* motionstep *$$$$$*)
+       PRINT("TrcuReposPath.BackwardMovement() McuMove2");
+      IF NOT McuMove(myKinematic.kinematicMcuId) THEN
+         BackwardError(TRcuReposPath_ErrMove, myKinematic.robotName, INSTANCE_NAME());
+         RETURN FALSE;
+      END_IF;   
+   END_IF;
+   
+   // waiting for endposition
+   WAIT IS_FINISHED;
+   IF NOT minPosReached AND (oldPathPosID <> myKinematic.progPath.pathPosMcuId) AND 
+         (oldPathPosID <> myKinematic.progPath.reposPosMcuId) AND 
+         (reposPathPosId <> oldPathPosID) THEN
+      McuReleaseDbObj(oldPathPosID);  // vorläufige Bahnposition freigeben
+      myKinematic.DebugPrint(eTraceMotionModesFine, "OldPathPosId released: " + STR(oldPathPosID));
+   END_IF;
+   //McuReleaseDbObj(endPosMcuId); 
+   myKinematic.progPath.reposCircHelpPosId := 0;
+   IF bSetPcError THEN
+      segHdl.mRobotToolID := 0;
+      myKinematic.reposState := eReposStateEnd;
+      RcuSetMessageOnce(TRcuReposPath_ErrSetPcFailed, myKinematic.kinListInx, 2, instId, 
+         "TRcuReposPath.BackwardMovement", INSTANCE_NAME());
+      RETURN FALSE;
+   ELSIF minPosReached THEN
+      myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: inSegmentRepos: "+STR(inSegmentRepos));
+      IF lastItrpNextJobOnSegStackHdl <> 0 THEN
+         b1 := GetUserProgCallStackInfo(lastItrpNextJobOnSegStackHdl, nextJobStackInfo);
+         b2 := GetUserProgCallStackInfo(iStackHdl, stackInfo);
+         IF b1 AND b2 THEN
+            RcuPrintUserProgCallStack2(nextJobStackInfo, "Repos: StackInfo for next job", eTraceReposDebug); 
+            RcuPrintUserProgCallStack2(stackInfo, "Repos: StackInfo of current pos", eTraceReposDebug); 
+            IF RcCompareStacks(nextJobStackInfo, stackInfo, result) AND (result < 0) THEN
+               myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetPc on first trigger on segment (line: " + STR(nextJobStackInfo.lineNrs[nextJobStackInfo.depth-1]) + ")");
+               SetPcWithoutStop(lastItrpNextJobOnSegStackHdl, nextJobStackInfo);
+               // no triggers to skip in this case
+               myKinematic.progPath.skipTriggers := FALSE;
+               myKinematic.progPath.lastTriggerOnInterrSeg := 0;
+               myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Don't skip any trigger");  
+            ELSE
+               myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetPc on last backward segment (line: " + STR(stackInfo.lineNrs[stackInfo.depth-1]) + ")");
+               SetPcWithoutStop(iStackHdl, stackInfo);
+            END_IF;
+         ELSIF b1 THEN
+            RcuPrintUserProgCallStack2(nextJobStackInfo, "Repos: StackInfo for next job", eTraceReposDebug); 
+            iCntMinorError := iCntMinorError + 1;
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Error reading callstack for last repos segment - PC not set");
+         ELSIF b2 THEN
+            RcuPrintUserProgCallStack2(stackInfo, "Repos: StackInfo of current pos", eTraceReposDebug); 
+            iCntMinorError := iCntMinorError + 1;
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Error reading callstack for next job - PC not set");
+         ELSE
+            iCntMinorError := iCntMinorError + 1;
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Error reading callstacks - PC not set");
+         END_IF;
+      ELSE
+         IF GetUserProgCallStackInfo(iStackHdl, stackInfo) THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: SetPc on last backward segment (line: " + STR(stackInfo.lineNrs[stackInfo.depth-1]) + ")");
+            SetPcWithoutStop(iStackHdl, stackInfo);
+         ELSE
+            iCntMinorError := iCntMinorError + 1;
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Error reading callstack for last repos segment - PC not set");
+         END_IF;
+      END_IF;
+      IF inSegmentRepos THEN // modify param because segment is only partly executed in future runs
+         //McuReadSegHdl(startSegId, tmpSegHdl);
+         IF (locSeg.mSegTyp = eMcuCirc) THEN
+            myKinematic.progPath.reposCircHelpPosId := circHelpPosId;
+         END_IF;
+         // modify param because segment is only partly executed in future runs
+         IF GetUserProgCallStackInfo(iStackHdl, stackInfo) THEN
+            IF RcCompareStacks(stackInfo, lastItrptInfo, i) THEN
+               IF i = 0 THEN
+                  IF segParam = 1.0 THEN // avoid division by zero
+                     myKinematic.progPath.interruptSegParam := 0.0;
+                  ELSE
+                     myKinematic.progPath.interruptSegParam := 
+                        (myKinematic.progPath.interruptSegParam - segParam) / (1.0 - segParam);
+                  END_IF;     
+                  IF  myKinematic.progPath.interruptSegParam < 0 THEN
+                     myKinematic.DebugPrint(eTraceReposDebug, "Repos: modify myKinematic.progPath.interruptSegParam: " 
+                        + STR(myKinematic.progPath.interruptSegParam)+ " -> 0.0");
+                     myKinematic.progPath.interruptSegParam := 0.0;
+                  END_IF;
+                  myKinematic.DebugPrint(eTraceReposDebug, "Repos: modify lastItrpParam: " +STR(lastItrpParam)+ " -> " +STR(myKinematic.progPath.interruptSegParam));
+                  lastItrpParam := myKinematic.progPath.interruptSegParam;
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;     
+      RcuResetMessage(TRcuReposPath_InfBckwrdSuccess, myKinematic.kinListInx, 1, instId, 
+         "TRcuReposPath.BackwardMovement", INSTANCE_NAME());
+   ELSIF thisId = 0 THEN
+      RcuResetMessage(TRcuReposPath_WarBackwardPStart, myKinematic.kinListInx, 1, instId, 
+         "TRcuReposPath.BackwardMovement", INSTANCE_NAME());
+   ELSE
+      RcuSetMessageOnce(TRcuReposPath_ErrBackWMovFail, myKinematic.kinListInx, 2, instId, 
+         "TRcuReposPath.BackwardMovement", INSTANCE_NAME());
+   END_IF;
+   
+   // reset toolId, inhibits unwanted release at next reset of the repospath
+   myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Tool at end of backward movement: " + 
+      STR(segHdl.mRobotToolID));
+   segHdl.mRobotToolID := 0;
+   myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Backward movement end");
+   McuReleaseDbObj(myKinematic.progPath.reposPosMcuId);
+   myKinematic.progPath.reposPosMcuId := oldPathPosID;
+   IF (reposPathPosId <> oldPathPosID) AND (reposPathPosId <> 0) THEN
+      McuReleaseDbObj(reposPathPosId); 
+      myKinematic.DebugPrint(eTraceMotionModesFine, "3 ReposPathPosId released: " + STR(reposPathPosId));
+      reposPathPosId := 0;
+   END_IF;
+   IF golden THEN
+      myKinematic.DebugPrint(eTraceMotionModesFine, "BackwardMovement: END");
+   ELSE
+      myKinematic.reposState := eReposStateEnd;
+      myKinematic.DebugPrint(eTraceMotionModesFine, "BackwardMovement: reposState := eReposStateEnd ");
+   END_IF;
+   EndMotionCommands();
+   WAIT myKinematic.isNotMovingOnPath;
+   RETURN NOT error AND NOT bSetPcError AND minPosReached;
+END_ROUTINE
+
+
+(*-----------------------------------------------------------------------------
+* private members
+*)
+
+VAR PRIVATE
+   pathToolId : TMcuDbObjID;
+   startSegId     : TMcuDbObjID;
+   startSegParam  : REAL;
+   inSegmentRepos : BOOL;
+   reposPathPosId : TMcuDbObjID;
+   oldPathPosID   : TMcuDbObjID;
+   newPathPosID   : TMcuDbObjID;
+   lastTriggerLine : DINT;
+   lastTriggerNum  : DINT;
+END_VAR
+
+
+// find the next trigger-job on segment (no segment end jobs)
+ROUTINE FindJob(CONST jobSet : TMcuJobSet; CONST startIdx : DINT; param : REAL; 
+   reposOnly : BOOL) : BOOL PRIVATE
+VAR
+   i : DINT;
+   job : TMcuJob;
+END_VAR
+
+   IF startIdx < 1 THEN
+      RETURN FALSE;
+   END_IF;
+   FOR i := 1 TO jobSet.mValidLen DO
+      IF McuReadJob(jobSet.mJobIDs[i-1], job) THEN
+         // segment end jobs are ignored (they have no user data)
+         IF (job.mUserData.mIntValidLen >= 1) AND ((job.mUserData.mDataInt[0] = eTriggerRepos) AND reposOnly) THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Next reposTrigger: " + job.mName);
+            IF job.mJobTyp = eMcuJobParam THEN
+               param := job.mGeo.mValue;
+            ELSE  // no param-trigger -> start calculating at param 0.0
+               param := 0.0;
+            END_IF;
+            RETURN TRUE;
+         // we can't be sure that triggers are read in correct order
+         ELSIF (job.mUserData.mIntValidLen >= 2) AND NOT reposOnly AND (job.mUserData.mDataInt[1] MOD 100 = startIdx) THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Next trigger: " + job.mName);            
+            IF job.mJobTyp = eMcuJobParam THEN
+               param := job.mGeo.mValue;
+            ELSE  // no param-trigger -> start calculating at param 0.0
+               param := 0.0;
+            END_IF;
+            RETURN TRUE;
+         ELSIF (job.mUserData.mIntValidLen >= 1) AND ((job.mUserData.mDataInt[0] <> eTriggerRepos) AND reposOnly) THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Search reposTrigger ("+STR(startIdx)+"): " + STR(i) + ": " + job.mName);  
+         ELSIF (job.mUserData.mIntValidLen >= 2) AND NOT reposOnly THEN
+            myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Search next trigger ("+STR(startIdx)+"): " + STR(i) + ": " + job.mName + " " + STR(job.mUserData.mDataInt[1]));  
+         END_IF;
+      ELSE
+         iCntMinorError := iCntMinorError + 1;
+         myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Error reading job data (job " + STR(i) + 
+            " of " + STR(jobSet.mValidLen) + ", id: "+STR(jobSet.mJobIDs[i-1])+")");
+      END_IF;
+   END_FOR;
+   RETURN FALSE;
+END_ROUTINE
+
+
+ROUTINE BackwardError(CONST error : TRcuError; VAR_IN param : STRING; OPTIONAL VAR_IN param2 : STRING) PRIVATE
+
+   // reset toolId, inhibits unwanted release at next reset of the repospath
+   segHdl.mRobotToolID := 0;
+   IF (reposPathPosId <> myKinematic.progPath.pathPosMcuId) AND 
+         (reposPathPosId <> myKinematic.progPath.reposPosMcuId) AND (reposPathPosId <> 0) THEN
+      McuReleaseDbObj(reposPathPosId);  // release preliminary pathposition
+      myKinematic.DebugPrint(eTraceMotionModesFine, "4 ReposPathPosId released: " + STR(reposPathPosId));
+      reposPathPosId := 0;
+   END_IF;
+   IF (oldPathPosID <> myKinematic.progPath.pathPosMcuId) AND 
+         (oldPathPosID <> myKinematic.progPath.reposPosMcuId) THEN
+      McuReleaseDbObj(oldPathPosID);  // release preliminary pathposition
+      myKinematic.DebugPrint(eTraceMotionModesFine, "OldPathPosId released: " + STR(oldPathPosID));
+   END_IF;
+   McuReleaseDbObj(newPathPosID);
+   myKinematic.DebugPrint(eTraceGoldenRepos, "Repos: Backward movement end");
+   RcuSetMessageOnce(error, myKinematic.kinListInx, 1, instId, "TRcuReposPath.BackwardError", param, param2);
+   myKinematic.ErrorReaction(FALSE);
+END_ROUTINE
+
+
+// fetch dynamic settings from segment and reduce them if necessary
+ROUTINE GetDyn(CONST iSegId : TMcuDbObjID; CONST tMaxDyn : TMcuSubDyn; 
+      iDynId : TMcuDbObjID; rVelo : REAL) : BOOL PRIVATE
+   VAR
+      tTmpSegHdl : TMcuSegHdl;
+      tDyn       : TMcuDynamic;
+      bReduce    : BOOL;
+   END_VAR
+
+   IF McuReadSegHdl(iSegId, tTmpSegHdl) THEN
+      IF McuReadDynamic(tTmpSegHdl.mDynamicID, tDyn) THEN
+         IF tDyn.mJoint.mVelo > tMaxDyn.mVelo THEN // velocity has to be reduced
+            rVelo := tMaxDyn.mVelo;
+            tDyn.mJoint.mVelo := tMaxDyn.mVelo;
+            bReduce := TRUE;
+         ELSE // use dynamic from segment
+            rVelo := tDyn.mJoint.mVelo; 
+         END_IF;
+         IF tDyn.mJoint.mAcce > tMaxDyn.mAcce THEN // acceleration has to be reduced
+            tDyn.mJoint.mAcce := tMaxDyn.mAcce;
+            bReduce := TRUE;
+         END_IF;
+         IF tDyn.mJoint.mDece > tMaxDyn.mDece THEN // deceleration has to be reduced
+            tDyn.mJoint.mDece := tMaxDyn.mDece;
+            bReduce := TRUE;
+         END_IF;
+         IF tDyn.mJoint.mJerk > tMaxDyn.mJerk THEN // jerk has to be reduced
+            tDyn.mJoint.mJerk := tMaxDyn.mJerk;
+            bReduce := TRUE;
+         END_IF;
+         IF bReduce THEN
+            IF (iDynId <> 0) AND (iDynId <> dynamicId) AND (iDynId <> cartDynamicId) AND (iDynId <> defaultCartDynMcuId) 
+                  AND (iDynId <> defaultDynMcuId) AND (iDynId <> segHdl.mDynamicID) THEN // already released, reserve again
+               McuReleaseDbObj(iDynId);
+            END_IF;
+            tDyn.mName := INSTANCE_NAME() + "_bwRedDyn";
+            IF NOT McuCreateDynamic(iDynId, tDyn) THEN
+               RETURN FALSE;
+            END_IF;
+         END_IF;
+         RETURN TRUE;
+      END_IF;
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+
+// append a segment with an additional job at segment-start
+ROUTINE AppendReposSegment(
+   posId : TMcuDbObjID;       // Mcu-Id of the endposition
+   helpPosId : TMcuDbObjID;   // Mcu-Id of a helpposition (for circle segment)
+   segType : TMcuSegmentTyp;  // type of the segment (lin, ptp, circ)
+   jobParam : REAL;           // parameter in the segment at which a signal
+                              // will be generated
+   dynId : TMcuDbObjID;       // Mcu-Id of the dynamic to use, 0 for the
+                              // dynamic stored with the path.
+   VAR_IN userData : TMcuUserData; 
+   VAR_IN toolId : TMcuDbObjID;
+   segChange : BOOL // indicates a segment-change in the corresponding forward path
+   ) PRIVATE
+VAR
+   finished : BOOL;
+   started : BOOL;
+   jobSet : TMcuJobSet;
+   iStackHdl : DINT;
+END_VAR
+    
+   iStackHdl := userData.mDataInt[eSegStackHdl];
+   
+   // wait until number of active motioncommands below limit
+   WAIT NOT cmdLimitReached;
+
+   // set parameter-job (none if jobParam negative)
+   job.mEvent.mEventHdl := InternalHandle(started);
+   job.mName := "segment-start job";
+   job.mGeo.mValue := 0.0;
+   McuCreateJob(jobSet.mJobIDs[jobSet.mValidLen], job);
+   jobSet.mValidLen := jobSet.mValidLen + 1;
+
+   segment.mName := "ReposSegment";
+   AppendSegmentWithJobSet(posId, helpPosId, FALSE, segType, jobParam, finished, dynId, jobSet, userData);
+   START WaitReposFinished(finished, started, iStackHdl, segChange, dynId, toolId, segType);
+END_ROUTINE
+
+
+// Wait until the Motion is finished, manage maximum motion-commands
+ROUTINE WaitReposFinished(finished : BOOL; started : BOOL; VAR_IN iStackHdl : DINT; VAR_IN segChange : BOOL; 
+   dynId : TMcuDbObjID; toolId : TMcuDbObjID; CONST segType : TMcuSegmentTyp) PRIVATE
+   VAR
+      cancel : BOOL;
+      locDyn : TMcuDynamic;
+      oldJointDyn : TMcuSubDyn;
+      tStackInfo  : TUserProgStackInfo;
+   END_VAR
+
+   // signal for cancelling all open commands
+   cancel := IS_CHANGED(cancelFlipFlop);
+
+   // increase number of active motion-commands
+   cmdCount := cmdCount + 1;
+   IF cmdCount = giRcuMaxCmd THEN
+      cmdLimitReached := TRUE;
+   END_IF;
+
+   WAIT started OR cancel;
+   IF NOT cancel THEN
+      IF segChange THEN
+         IF GetUserProgCallStackInfo(iStackHdl, tStackInfo) THEN
+            SetPcWithoutStop(iStackHdl, tStackInfo);
+            //iLastReposSegId := iSegId;
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, myKinematic.kinListInx, 2, instId, "WaitReposFinished", myKinematic.robotName, "GetUserProgCallStackInfo");
+            myKinematic.ErrorReaction(FALSE);
+            RETURN;
+         END_IF;
+      END_IF;
+      
+      // set dynamic and tool for progPath in MainRun at beginning of segment
+      McuReadDynamic(dynId, locDyn);
+      IF segType = eMcuPTP THEN
+         myKinematic.progPath.dynamic := locDyn;         
+      ELSE 
+         // don't set joint-dynamic for cartesian segments, because 
+         // there the values are allways set to 1.0 (cartDynamic)
+         oldJointDyn := myKinematic.progPath.dynamic.mJoint;
+         myKinematic.progPath.dynamic := locDyn;         
+         myKinematic.progPath.dynamic.mJoint := oldJointDyn;         
+      END_IF;
+      pathToolId := toolId;
+
+      // wait for finished motion
+      WAIT finished OR cancel;
+      IF NOT cancel THEN
+         // decrease number of active motion-commands
+         cmdCount := cmdCount - 1;
+         cmdLimitReached := FALSE;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// Release the path and create it again, release all pathobjects. Returns FALSE when the kinematic
+// is on this path (clear impossible), TRUE otherwise.
+ROUTINE Reset() : BOOL
+
+   RETURN SUPER.Reset();
+END_ROUTINE
+
+
+(* -----------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   SUPER.NEW();
+   noLookAhead := TRUE; // deactivate Lookahead for Repospath
+END_ROUTINE
+
+
+ROUTINE RELEASE()
+
+   SUPER.RELEASE();
+   bSetPcError := FALSE;
+   lastItrptInfo.depth := 0;
+   lastItrpParam    := 0.0;
+   lastItrpGun      := 0;
+   lastItrpJobNum   := 0;   
+   lastItrpStackHdl := 0;
+   lastItrpNextJobOnSegStackHdl := 0;
+   reposActive := FALSE;
+   toolIdKin := 0;
+END_ROUTINE
+
+   
+ROUTINE SETPC()
+
+   IF myKinematic.movementDirection = eDirNormal THEN
+      lastItrptInfo.depth := 0;
+      lastItrpParam    := 0.0;
+      lastItrpGun      := 0;
+      lastItrpJobNum   := 0;   
+      lastItrpStackHdl := 0;
+      lastItrpNextJobOnSegStackHdl := 0;
+   END_IF;
+END_ROUTINE

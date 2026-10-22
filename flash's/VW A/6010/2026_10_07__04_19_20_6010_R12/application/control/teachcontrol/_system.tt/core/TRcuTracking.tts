@@ -1,0 +1,1501 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       RcuTracking.ttp                                             *
+*    Description:                                                             *
+*    testing-state:                                                           *
+*------------------------------------------------------------------------------
+*)
+
+CONSTANT GLOBAL
+   cgiMaxConvTabEntries : DINT := 100;
+END_CONSTANT
+   
+TYPE GLOBAL
+   ConvTabEntry : STRUCT
+      rConvVal : REAL;
+      rTransZ  : REAL;
+      rRotY    : REAL;
+   END_STRUCT;
+END_TYPE
+
+VAR
+   rActPos : REAL;
+   rActConveyor : REAL;
+   rActTrackingPos : REAL;
+   rPosFromUserpage : REAL;
+   bSetPosFromUserpage :BOOL;
+   rRailWithoutOffset : REAL;
+   rTrackingOnFromUserpage : BOOL;
+   rTrackingOffFromUserpage : BOOL;
+   rTrackingFinishFromUserpage : BOOL;
+   rTrackingResumeFromUserpage : BOOL;
+   bPartDetect: BOOL;
+   updateConveyor : INT;
+   bIsTrackingObject : BOOL;
+   bStartTrackingFlag : BOOL;
+   rStartPositionBCU : REAL := -1500.0;
+   kin : MAPTO TRcuKinematic; // the kinematic to which the tracking belongs
+   
+   bEnableConveyorTable : BOOL;
+   convTab : ARRAY[1 .. cgiMaxConvTabEntries] OF ConvTabEntry;
+   iNrConvTabEntries : DINT;
+   indexConvTab      : DINT;
+   
+        rXPar : REAL; // distance on interval
+        rDeltaX : REAL;
+        rDeltaY : REAL;
+   
+END_VAR
+
+
+// macro for tracking
+ROUTINE Tracking(Cmd : TRcuTrackingCmd)
+
+   STOPPOINT();
+   CASE Cmd OF
+      On :        // starting or resuming the tracking
+         kin.DebugPrint(eTraceTracking, "TRACKING was started - Tracking");
+         IF bTrackingStarted THEN
+            bStopTracking := FALSE; // resuming
+            WAIT kin.trackingActive;
+         ELSE
+            bStartTracking := TRUE;
+            bTrackingStarted := TRUE;
+            bStopTracking := FALSE;
+            WAIT kin.trackingActive;
+         END_IF;
+      Resume :        // starting or resuming the tracking
+         bStopTracking := FALSE; // resuming
+         WAIT kin.trackingActive;
+      Off :       // interrupt tracking
+         IF kin.homing.bHomingRun THEN
+            kin.trackingActive := FALSE;
+         END_IF;
+         kin.DebugPrint(eTraceTracking, "TRACKING was stopped - TRACKING");
+         bStopTracking := TRUE;
+         kin.bAppendToMotionBuffer := FALSE;
+         WAIT NOT kin.trackingActive;
+
+         MoveToWorldPos(kin);
+
+      Finished :  // finish tracking
+         // wait until movement has stopped
+         IF IS_MAPPED(svWaitConveyor) THEN
+            svWaitConveyor := 0.0;
+         END_IF;
+         WAIT kin.isNotMovingOnPath;
+         IF NOT kin.actExecData.mIsTracking THEN
+            kin.DebugPrint(eTraceTracking, "TRACKING was finished - TRACKING");
+            bTrackingStarted := FALSE;
+            bStartTracking := FALSE;
+            bStopTracking := FALSE;
+            kin.trackingActive := FALSE;
+            bIsTrackingObject := FALSE;
+            rActPos := 0.0;
+            rActTrackingPos := 0.0;
+            deltaPos := 0.0;
+            kin.RcuInterfaceToBCU.SetT1ConveyorPosition(rStartPositionBCU);
+            
+            WAIT kin.actExecData.mIsStoppedJoints;
+            
+            IF kin.lineTracking THEN
+               gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2] := 0.0;
+               gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[0] := 0.0;
+               gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mOri.mValues[1] := 0.0;
+               bInclinePosSet := FALSE;
+               bInclineActive := FALSE;
+               indexConvTab := 0;
+            END_IF;
+            IF kin.railTracking THEN
+               kin.railAxisVector.mValues[kin.railAxisNr] := 0.0;
+            END_IF;
+            kin.bAppendToMotionBuffer := FALSE;
+            McuReleaseDbObj(kin.motionBuffer[kin.iActMotionBuffer].motionBufId);
+            bPartDetect := FALSE; //?????
+         ELSE
+            kin.DebugPrint(eTraceTracking, "TRACKING(finished) not possible: mIsJointsTracking = TRUE");
+         END_IF;
+         bInterruptTracking := FALSE;
+   ELSE ;
+   END_CASE;
+   RETURN;
+END_ROUTINE
+
+// macro for tracking
+ROUTINE SetTrackingMode(mode : TRcuTrackingMode)
+
+   MAINRUN();
+   IF kin.trackingActive OR bTrackingStarted THEN
+      MAINRUN();
+      RcuSetMessageOnce(RcuTracking_ErrSetTrackingMode, kin.kinListInx, 1, 0, "RcuTracking.SetTrackingMode");
+      kin.ErrorReaction(TRUE);
+      RETURN;
+   END_IF;
+   CASE mode OF
+      LineTracking :        // railtracking switch off
+         kin.DebugPrint(eTraceTracking, "TRACKING Rail tracking switched off - SetTrackingMode");
+         kin.railTrackingActive := FALSE;
+      RailTracking :        // railtracking switch on
+         kin.DebugPrint(eTraceTracking, "TRACKING Rail tracking switched on - SetTrackingMode");
+         kin.railTrackingActive := TRUE;
+   ELSE ;
+   END_CASE;
+   RETURN;
+END_ROUTINE
+
+
+ROUTINE WaitConveyor(Conveyor: REAL) 
+VAR
+   bMRFlag : BOOL;
+END_VAR;
+
+   IF IS_MAPPED(svWaitConveyor) THEN
+      svWaitConveyor := Conveyor;
+   END_IF;
+   rWaitConveyorValue := Conveyor;
+   kin.dataRecorder.RecWaitConveyor(Conveyor);
+
+   // check in prerun
+   IF gbEnableWaitConvTolerance THEN
+      IF (rActConveyor - rStartPositionBCU > rWaitConveyorValue) AND 
+         kin.mainModeMgr.externControl AND NOT kin.RcuInterfaceToBCU.bConvStopDueToProcess THEN
+         STOPPOINT();
+         RcuSetMessageOnce(RcuTracking_ErrWaitConveyor, kin.kinListInx, 3, 0, "RcuTracking.WAIT_CONVEYOR");
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      ELSIF(rActConveyor - rStartPositionBCU > rWaitConveyorValue + grWaitConvTolerance) AND 
+         kin.mainModeMgr.externControl AND kin.RcuInterfaceToBCU.bConvStopDueToProcess THEN
+         STOPPOINT();
+         RcuSetMessageOnce(RcuTracking_ErrWaitConveyor, kin.kinListInx, 4, 0, "RcuTracking.WAIT_CONVEYOR");
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+      IF (rActConveyor - rStartPositionBCU > rWaitConveyorValue) AND 
+         kin.mainModeMgr.externControl AND kin.RcuInterfaceToBCU.bConvStopDueToProcess THEN
+         kin.RcuInterfaceToBCU.mDelayedConvRelease := FALSE;
+         kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR "+STR(Conveyor)+" trackingStartPos = "+STR(rActConveyor - rStartPositionBCU));
+         bConvToleranceActive := TRUE;
+         rDistanceExceeded := rActConveyor - rStartPositionBCU - rWaitConveyorValue;
+         rConveyorDelayTime := grConveyorDelayTime * rDistanceExceeded/grWaitConvTolerance;
+         kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR exceeded. Distance = "+STR(rDistanceExceeded)+" Delay = "+STR(rConveyorDelayTime));
+      END_IF;
+   ELSE
+      IF (rActConveyor - rStartPositionBCU > rWaitConveyorValue) AND 
+         kin.mainModeMgr.externControl THEN
+         STOPPOINT();
+         RcuSetMessageOnce(RcuTracking_ErrWaitConveyor, kin.kinListInx, 1, 0, "RcuTracking.WAIT_CONVEYOR");
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+   END_IF;
+   bWaitConveyorReached := FALSE;
+   bWaitConveyorStart := TRUE;
+   kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR "+STR(Conveyor)+" AktPos = "+STR(rActConveyor - rStartPositionBCU));
+   bMRFlag := MAIN_RUN;
+   STOPPOINT();
+   // check in mainrun
+   IF gbEnableWaitConvTolerance THEN
+      IF (rActConveyor - rStartPositionBCU > rWaitConveyorValue) AND 
+         kin.mainModeMgr.externControl 
+         AND NOT (kin.RcuInterfaceToBCU.bConvStopDueToProcess OR bConvToleranceActive) THEN
+         STOPPOINT();
+         RcuSetMessageOnce(RcuTracking_ErrWaitConveyor, kin.kinListInx, 5, 0, "RcuTracking.WAIT_CONVEYOR");
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      ELSIF (rActConveyor - rStartPositionBCU > rWaitConveyorValue + grWaitConvTolerance) AND 
+         kin.mainModeMgr.externControl AND kin.RcuInterfaceToBCU.bConvStopDueToProcess THEN
+         STOPPOINT();
+         RcuSetMessageOnce(RcuTracking_ErrWaitConveyor, kin.kinListInx, 6, 0, "RcuTracking.WAIT_CONVEYOR");
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+      IF (rActConveyor - rStartPositionBCU > rWaitConveyorValue) AND 
+         kin.mainModeMgr.externControl AND kin.RcuInterfaceToBCU.bConvStopDueToProcess THEN
+         kin.RcuInterfaceToBCU.mDelayedConvRelease := FALSE;
+         kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR "+STR(Conveyor)+" trackingStartPos = "+STR(rActConveyor - rStartPositionBCU));
+         bConvToleranceActive := TRUE;
+         rDistanceExceeded := rActConveyor - rStartPositionBCU - rWaitConveyorValue;
+         rConveyorDelayTime := grConveyorDelayTime * rDistanceExceeded/grWaitConvTolerance;
+         kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR exceeded. Distance = "+STR(rDistanceExceeded)+" Delay = "+STR(rConveyorDelayTime));
+      END_IF;
+   ELSE
+      IF (rActConveyor - rStartPositionBCU > rWaitConveyorValue) AND 
+         kin.mainModeMgr.externControl THEN
+         RcuSetMessageOnce(RcuTracking_ErrWaitConveyor, kin.kinListInx, 2, 0, "RcuTracking.WAIT_CONVEYOR");
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+   END_IF;
+   kin.bWaitingTrackingPos := TRUE;
+   kin.bStartPosReached := TRUE;
+   kin.bInPreposition := TRUE;
+   IF bConvToleranceActive THEN
+      bStartConveyorDelay := TRUE;
+   END_IF;
+   //If macro is entered in prerun, flag "bMRFlag" is FALSE.
+   //Now if bWaitConveyorReached turns TRUE between pre-/mainrun we raise and lower "bInPreposition" in 
+   //the same cycle, too fast for the BCU. BIT 19.08.08
+   IF bWaitConveyorReached AND NOT bMRFlag THEN
+      bMRFlag := TRUE;
+   END_IF;
+   WAIT bWaitConveyorReached;
+   kin.bWaitingTrackingPos := FALSE;
+   kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR "+STR(Conveyor)+" trackingStartPos = "+STR(rActConveyor - rStartPositionBCU));
+   IF bMRFlag THEN
+      bStart5CyclesPrepos := TRUE;
+   ELSE
+      kin.bInPreposition := FALSE;
+   END_IF;
+END_ROUTINE
+
+ROUTINE ObserveStart5CyclesPrepos() PRIVATE
+VAR
+   t : DINT;
+   bChg : BOOL;
+END_VAR
+
+   bChg := IS_CHANGED(bStart5CyclesPrepos);
+   WHILE TRUE DO
+      WAIT bChg;
+      IF bStart5CyclesPrepos THEN
+         kin.WaitMcMicroCycles(5);
+         kin.bInPreposition := FALSE;
+      END_IF;
+      bStart5CyclesPrepos := FALSE;
+      bChg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveConvReleaseDelay() PRIVATE
+VAR
+   t : DINT;
+   bChg : BOOL;
+END_VAR
+
+   bChg := IS_CHANGED(bStartConveyorDelay);
+   WHILE TRUE DO
+      WAIT bChg;
+      IF bStartConveyorDelay THEN
+         kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR Start Delaytime");
+         t := DINT(rConveyorDelayTime*1000);
+         Sleep(t);
+         IF kin.svMotionAllowed THEN
+            kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR End Delaytime");
+            kin.RcuInterfaceToBCU.mDelayedConvRelease := TRUE;
+            bConvToleranceActive := FALSE;
+            bStartConveyorDelay := FALSE;
+            bChg := FALSE;
+         ELSE
+            kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR Error while Delaytime active");
+            bStartConveyorDelay := FALSE;
+            bChg := FALSE;
+            WAIT (kin.mmgrState = eRcuMMgrStateAutoActive) OR NOT kin.selectingFlow.present;
+            IF (kin.mmgrState = eRcuMMgrStateAutoActive) THEN
+               bStartConveyorDelay := TRUE;
+               kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR Restart Delaytime");
+            ELSE   
+               kin.DebugPrint(eTraceTracking, "WAIT_CONVEYOR Abort Delaytime");
+               kin.RcuInterfaceToBCU.mDelayedConvRelease := TRUE;
+               bConvToleranceActive := FALSE;
+               bStartConveyorDelay := FALSE;
+               bChg := FALSE;
+            END_IF;
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE CheckConveyor(Conveyor: REAL): BOOL
+
+   IF NOT kin.progPath.bAppendLate THEN
+      STOPPOINT();
+      RcuSetMessageOnce(RcuTracking_ErrNoAppendLate, kin.kinListInx, 2, 0, "TRcuTracking.GetPaintposition");
+      kin.ErrorReaction(TRUE);
+   END_IF;
+   kin.DebugPrint(eTraceTracking, "CHECK_CONVEYOR in prerun  "+STR(Conveyor)+" AktPos = "+STR(rActConveyor - rStartPositionBCU));
+   STOPPOINT();
+   kin.DebugPrint(eTraceTracking, "CHECK_CONVEYOR in mainrun "+STR(Conveyor)+" AktPos = "+STR(rActConveyor - rStartPositionBCU));
+   RETURN (rActConveyor - rStartPositionBCU > Conveyor); 
+   
+END_ROUTINE
+
+
+ROUTINE ConveyorInclineAt(Conveyor: REAL)
+
+   kin.DebugPrint(eTraceTracking, "CONVEYOR_INCLINE_AT  "+STR(Conveyor)+" AktPos = "+STR(rActConveyor - rStartPositionBCU));
+   IF bEnableConveyorTable THEN
+      IF Conveyor <= rWaitConveyorValue THEN
+         RcuSetMessageOnce(RcuTracking_ErrConvIncline, kin.kinListInx, 1, 0, "RcuTracking.ConveyorInclineAt", STR(Conveyor));
+         kin.ErrorReaction(TRUE);
+         RETURN;
+      END_IF;
+      ConveyorInclinePos := Conveyor;
+      bInclinePosSet := TRUE;
+   END_IF;
+
+END_ROUTINE
+
+
+ROUTINE WaitPaintposition(Paintposition: REAL)
+   kin.DebugPrint(eTraceTracking, "WAIT_PAINTPOSITION "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   START SignalWaitingTrackingPos();
+   kin.RcuInterfaceToProcess.CheckPaintPosValue(Paintposition);
+   WHILE rActPos < trackingStartPos + Paintposition DO
+      kin.WaitMcMicroCycles(1);
+   END_WHILE;
+   STOP SignalWaitingTrackingPos;
+   kin.bWaitingTrackingPos := FALSE;
+   kin.RcuInterfaceToProcess.SwitchNeedlesWaitPaintPos(TRUE);
+   kin.DebugPrint(eTraceTracking, "WAIT_PAINTPOSITION "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+END_ROUTINE
+
+
+ROUTINE WaitCleanOnPaintpos(Paintposition: REAL) : BOOL
+
+   kin.DebugPrint(eTraceTracking, "WAIT_CLEANONPAINTPOS "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   IF NOT kin.progPath.bAppendLate THEN
+      STOPPOINT();
+      RcuSetMessageOnce(RcuTracking_ErrNoAppendLate, kin.kinListInx, 2, 0, "TRcuTracking.WaitCleanOnPaintpos");
+      kin.ErrorReaction(TRUE);
+   END_IF;
+   IF NOT IS_MAPPED(PaintRobot[kin.kinListInx].fieldbusIn.CleanRequest.svBool) THEN
+      kin.DebugPrint(eTraceTracking, "WAIT_CLEANONPAINTPOS: CleanRequest not mapped");
+      // andere Fehlermeldung!!!!
+      RcuSetMessageOnce(RcuTracking_ErrNoAppendLate, kin.kinListInx, 2, 0, "TRcuTracking.WaitCleanOnPaintpos");
+      RETURN FALSE; 
+   END_IF;
+   WHILE rActPos < trackingStartPos + Paintposition DO
+      IF PaintRobot[kin.kinListInx].fieldbusIn.CleanRequest.svBool THEN
+         kin.DebugPrint(eTraceTracking, "WAIT_CLEANONPAINTPOS "+STR(Paintposition)+" ActPos = "+STR(rActPos)+" CleanRequest");
+         RETURN TRUE;
+      END_IF;
+      kin.WaitMcMicroCycles(1);
+   END_WHILE;
+   IF PaintRobot[kin.kinListInx].fieldbusIn.CleanRequest.svBool THEN
+      kin.DebugPrint(eTraceTracking, "WAIT_CLEANONPAINTPOS "+STR(Paintposition)+" ActPos = "+STR(rActPos)+" CleanRequest");
+      RETURN TRUE;
+   END_IF;
+   kin.DebugPrint(eTraceTracking, "WAIT_CLEANONPAINTPOS "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   RETURN FALSE;
+END_ROUTINE
+
+// called from macro
+ROUTINE ConveyorStopAt(Paintposition: REAL)
+VAR
+   lPos : REAL;
+END_VAR
+
+   kin.DebugPrint(eTraceTracking, "CONVEYOR_STOP_AT WAIT MainRun "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   lPos := Paintposition;
+   WAIT MAIN_RUN;
+   kin.DebugPrint(eTraceTracking, "CONVEYOR_STOP_AT after WAIT "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   ConveyorStopPosition := lPos;
+   bFlagConveyorStop := TRUE;
+END_ROUTINE
+
+// activated/deactivated by ConveyorStopAt and ConveyorStart
+ROUTINE ObserveConveyorStopAt(kin : TRcuKinematic)
+   WHILE TRUE DO
+      WAIT bFlagConveyorStop;
+      kin.DebugPrint(eTraceTracking, "ObserveConveyorStopAt "+STR(ConveyorStopPosition)+" ActPos = "+STR(rActPos));
+      WHILE (rActPos < trackingStartPos + ConveyorStopPosition) AND bFlagConveyorStop DO
+         kin.RcuInterfaceToBCU.mMacroConveyorRelease := TRUE;
+         kin.WaitMcMicroCycles(1);
+      END_WHILE;
+      IF bFlagConveyorStop THEN
+         kin.DebugPrint(eTraceTracking, "ObserveConveyorStopAt "+STR(ConveyorStopPosition)+" ActPos = "+STR(rActPos));
+         kin.RcuInterfaceToBCU.mMacroConveyorRelease := FALSE; 
+      ELSE
+         kin.DebugPrint(eTraceTracking, "ObserveConveyorStopAt "+STR(ConveyorStopPosition)+" ActPos = "+STR(rActPos)+" cancelled");
+      END_IF;
+      bFlagConveyorStop := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+ROUTINE ConveyorStart()
+   kin.DebugPrint(eTraceTracking, "CONVEYOR_START WAIT MainRun "+" ActPos = "+STR(rActPos));
+   WAIT MAIN_RUN;
+   kin.DebugPrint(eTraceTracking, "CONVEYOR_START after WAIT   "+" ActPos = "+STR(rActPos));
+   bFlagConveyorStop := FALSE;
+   ConveyorStopPosition := 0.0;
+   kin.RcuInterfaceToBCU.mMacroConveyorRelease := TRUE;
+END_ROUTINE
+
+
+ROUTINE WaitPurgeOnPaintpos(Paintposition: REAL): BOOL
+
+   kin.DebugPrint(eTraceTracking, "WAIT_PURGEONPAINTPOS "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   WHILE rActPos < trackingStartPos + Paintposition DO
+(*         IF Spülanforderung THEN
+         RETURN TRUE;
+      END_IF;
+*)
+      kin.WaitMcMicroCycles(1);
+   END_WHILE;
+   kin.DebugPrint(eTraceTracking, "WAIT_PURGEONPAINTPOS "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE GetPaintposition(GreaterSmaller: TRcuGreaterSmaller; Paintposition: REAL): BOOL
+
+   kin.DebugPrint(eTraceTracking, "GET_PAINTPOSITION "+STR(Paintposition)+" ActPos = "+STR(rActPos));
+   IF NOT kin.progPath.bAppendLate THEN
+      STOPPOINT();
+      RcuSetMessageOnce(RcuTracking_ErrNoAppendLate, kin.kinListInx, 1, 0, "TRcuTracking.GetPaintposition");
+      kin.ErrorReaction(TRUE);
+   END_IF;
+   CASE GreaterSmaller OF
+      SMALLER :
+         RETURN rActPos - trackingStartPos < Paintposition;
+      GREATER :
+         RETURN rActPos - trackingStartPos > Paintposition;
+      EQUAL   :
+         RETURN rActPos - trackingStartPos <> Paintposition;
+   ELSE
+      STOPPOINT();
+      RcuSetMessageOnce(RcuTracking_ErrInvParameter, kin.kinListInx, 1, 0, "TRcuTracking.GetPaintposition");
+      kin.ErrorReaction(TRUE);
+   END_CASE;
+   RETURN TRUE;
+END_ROUTINE
+
+ROUTINE StartTracking(Conveyor: REAL)  
+   VAR
+      convStartPos : REAL;
+   END_VAR
+
+   IF IS_MAPPED(svWaitConveyor) THEN
+      svWaitConveyor := Conveyor;
+   END_IF;
+   kin.DebugPrint(eTraceTracking, "START_TRACKING "+STR(Conveyor)+" AktPos = "+STR(rActConveyor));
+   convStartPos := rActConveyor;
+   MAINRUN();
+   kin.bStartPosReached := TRUE;
+   bStartTrackingFlag := TRUE; // signaling to MoveTrackingFrame that Macro
+                               // START_TRACKING is used
+   WAIT NOT bStartTrackingFlag;
+   WHILE rActConveyor - convStartPos < Conveyor DO
+      rActPos := rActConveyor - convStartPos - Conveyor;
+      IF IS_MAPPED(svTrackingPos) THEN
+           svTrackingPos := rActPos;
+      END_IF;
+      kin.WaitMcMicroCycles(1);
+   END_WHILE;
+   trackingStartPos := 0.0;
+   kin.DebugPrint(eTraceTracking, "START_TRACKING "+STR(Conveyor)+" trackingStartPos = "+STR(rActConveyor));
+   kin.DebugPrint(eTraceTracking, "TRACKING was started - START_TRACKING");
+
+   bStartTracking := TRUE;
+   bTrackingStarted := TRUE;
+   bStopTracking := FALSE;
+   kin.trackingActive := TRUE;
+   trackingStartPos := rActPos;
+
+   kin.bAppendToMotionBuffer := TRUE;
+   kin.iActMotionBuffer := 0;
+   kin.motionBuffer[0].bCheckMotionBuffer := FALSE;
+   kin.bGunOffReached := FALSE;
+  //create motionbuffers
+   kin.motionBuffer[0].mcuMotionBuffer.mDBObjTyp := eMcuPermanent;
+   kin.motionBuffer[0].mcuMotionBuffer.mName := "Buffer" + STR(0);
+   kin.motionBuffer[0].mcuMotionBuffer.mKinematicID := kin.kinematicMcuId;
+//      kin.motionBuffer[0].mUserData := ;
+   McuCreateMotionBuffer(kin.motionBuffer[0].motionBufId, kin.motionBuffer[0].mcuMotionBuffer);
+
+   kin.WaitMcMainCycles(2);
+   kin.bGunOffReached := TRUE;
+   MoveToObjectPos(kin); //robot should track at now. object position necessary
+END_ROUTINE
+
+
+ROUTINE InTrackingWindow(kin:     TRcuKinematic; 
+                         waitPos: TMcuPosition; 
+                         pos:     TMcuPosition;
+                         segHdl:  TMcuSegHdl;
+                         delta:   REAL
+                         ): BOOL PRIVATE
+VAR
+   x : REAL;
+   xWait : REAL;
+   cartPos : TMcuPosCart;
+   cartPosWait : TMcuPosCart;
+   cartP1: TMcuPosCart;
+   cartP2: TMcuPosCart;
+   updCntChg : BOOL;
+   xPos      : REAL;
+   xPosWait  : REAL;
+   xPosOld   : REAL;
+   positiv   : BOOL;
+END_VAR
+   
+   IF NOT RcuTransformPosToCart(pos, cartPos, eRcuRefSystemWorld, kin.kinematicMcuId, segHdl.mRobotToolID) THEN
+      RETURN FALSE;
+   END_IF;
+   xPosOld := cartPos.mFrame.mPos.mValues[0];
+   updCntChg := IS_CHANGED(kin.actExecData.mUpdateCounterMain);
+   xPos := xPosOld;
+   
+   WHILE xPos = xPosOld DO
+      WAIT updCntChg;
+      updCntChg := FALSE;
+      IF NOT RcuTransformPosToCart(pos, cartPos, eRcuRefSystemWorld, kin.kinematicMcuId, segHdl.mRobotToolID) THEN
+         RETURN FALSE;
+      END_IF;
+      xPos := cartPos.mFrame.mPos.mValues[0];
+   END_WHILE;
+   
+   IF xPos > xPosOld THEN
+      kin.DebugPrint(eTraceTracking, "InTrackingWindow: TCP-X (World) POSITIVE direction");
+      positiv := TRUE;
+   ELSE 
+      kin.DebugPrint(eTraceTracking, "InTrackingWindow: TCP-X (World) NEGATIVE direction");
+      positiv := FALSE;
+   END_IF;
+
+   IF NOT RcuTransformPosToCart(waitPos, cartPosWait, eRcuRefSystemWorld, kin.kinematicMcuId, segHdl.mRobotToolID) THEN
+      RETURN FALSE;
+   END_IF;
+   xPosWait := cartPosWait.mFrame.mPos.mValues[0];
+
+   IF positiv THEN
+      IF xPos > (xPosWait + kin.outbound) THEN
+         RcuSetMessageOnce(RcuTracking_ErrBehindTrckWindow, kin.kinListInx, 2, 0, "RcuTracking.InTrackingWindow");
+         RETURN FALSE;
+      END_IF;
+   ELSE
+      IF xPos < (xPosWait - kin.outbound) THEN
+         RcuSetMessageOnce(RcuTracking_ErrBehindTrckWindow, kin.kinListInx, 3, 0, "RcuTracking.InTrackingWindow");
+         RETURN FALSE;
+      END_IF;
+   END_IF;
+   
+   IF positiv THEN
+      IF xPos >= (xPosWait - kin.inbound) THEN
+         delta := xPos - (xPosWait - kin.inbound);
+         kin.DebugPrint(eTraceTracking, "InTrackingWindow: Object in tracking window. Delta = "+STR(delta));
+         kin.DebugPrint(eTraceTracking, "TRACKING was started - InTrackingWindow");
+         bStartTracking := TRUE;
+         bTrackingStarted := TRUE;
+         bStopTracking := FALSE;
+         kin.trackingActive := TRUE;
+         trackingStartPos := xPos;
+         RETURN TRUE;
+      END_IF;
+   ELSE
+      IF xPos <= (xPosWait + kin.inbound) THEN
+         delta := xPos - (xPosWait + kin.inbound);
+         kin.DebugPrint(eTraceTracking, "InTrackingWindow: Object in tracking window. Delta = "+STR(delta));
+         kin.DebugPrint(eTraceTracking, "TRACKING was started - InTrackingWindow");
+         bStartTracking := TRUE;
+         bTrackingStarted := TRUE;
+         bStopTracking := FALSE;
+         kin.trackingActive := TRUE;
+         trackingStartPos := xPos;
+         RETURN TRUE;
+      END_IF;
+   END_IF;
+
+   kin.DebugPrint(eTraceTracking, "InTrackingWindow: Object out of tracking window");
+   RETURN FALSE;
+END_ROUTINE
+
+
+ROUTINE WaitPosInTrackingWindow(kin: TRcuKinematic; pos: TMcuPosition)
+VAR
+   updCntChg : BOOL;
+   xPos      : REAL;
+   xPosOld   : REAL;
+   inWindow  : BOOL;
+   positiv   : BOOL;
+   delta     : REAL;
+END_VAR;
+
+   xPosOld := ActXInObjectCoord(kin);
+   updCntChg := IS_CHANGED(kin.actExecData.mUpdateCounterMain);
+   xPos := xPosOld;
+   delta := xPos - xPosOld;
+   WHILE rAbs(delta) < 1.0 DO
+      WAIT updCntChg;
+      updCntChg := FALSE;
+      xPos := ActXInObjectCoord(kin);
+      delta := xPos - xPosOld;
+   END_WHILE;
+   
+   IF xPos > xPosOld THEN
+      kin.DebugPrint(eTraceTracking, "WaitPosInTrackingWindow: TCP-X (Object) POSITIVE direction");
+      positiv := TRUE;
+   ELSE 
+      kin.DebugPrint(eTraceTracking, "WaitPosInTrackingWindow: TCP-X (Object) NEGATIVE direction");
+      positiv := FALSE;
+   END_IF;
+   kin.DebugPrint(eTraceTracking, "WaitPosInTrackingWindow: xPos = "+STR(xPos)+" xPosOld = "+STR(xPosOld));
+
+   kin.DebugPrint(eTraceTracking, "WaitPosInTrackingWindow: X-Position TCP (Object) = " 
+               + STR(xPos));
+   kin.DebugPrint(eTraceTracking, "                         X-Position first point  = " 
+               + STR(pos.mPosCart.mFrame.mPos.mValues[0]));
+
+   IF positiv THEN
+      IF xPos > (pos.mPosCart.mFrame.mPos.mValues[0] + kin.outbound) THEN
+         RcuSetMessageOnce(RcuTracking_ErrBehindTrckWindow, kin.kinListInx, 4, 0, "RcuTracking.WaitPosInTrackingWindow");
+         kin.bNoContinue := TRUE;
+         RETURN;
+      END_IF;
+   ELSE
+      IF xPos < (pos.mPosCart.mFrame.mPos.mValues[0] - kin.outbound) THEN
+         RcuSetMessageOnce(RcuTracking_ErrBehindTrckWindow, kin.kinListInx, 5, 0, "RcuTracking.WaitPosInTrackingWindow");
+         kin.bNoContinue := TRUE;
+         RETURN;
+      END_IF;
+   END_IF;
+      
+   IF positiv THEN
+      IF xPos < (pos.mPosCart.mFrame.mPos.mValues[0] - kin.inbound) THEN
+         kin.DebugPrint(eTraceTracking, "waiting for tracking window");
+      END_IF;
+   ELSE
+      IF xPos > (pos.mPosCart.mFrame.mPos.mValues[0] + kin.inbound) THEN
+         kin.DebugPrint(eTraceTracking, "waiting for tracking window");
+      END_IF;
+   END_IF;
+   
+   WHILE NOT inWindow DO
+      WAIT updCntChg;
+      updCntChg := FALSE;
+      xPos := ActXInObjectCoord(kin);
+      IF (positiv AND (xPos >= (pos.mPosCart.mFrame.mPos.mValues[0] - kin.inbound))) OR
+         (NOT positiv AND (xPos <= (pos.mPosCart.mFrame.mPos.mValues[0] + kin.inbound))) THEN
+         kin.DebugPrint(eTraceTracking, "Trackingwindow reached");
+         inWindow := TRUE;
+         kin.DebugPrint(eTraceTracking, "TRACKING was started - WaitPosInTrackingWindow");
+         bStartTracking := TRUE;
+         bTrackingStarted := TRUE;
+         bStopTracking := FALSE;
+         kin.trackingActive := TRUE;
+         trackingStartPos := rActPos;
+         kin.DebugPrint(eTraceTracking, "WaitPosInTrackingWindow: actual X-Position = " + STR(xPos));
+         kin.DebugPrint(eTraceTracking, "                         Object X-Position = " + STR(pos.mPosCart.mFrame.mPos.mValues[0]));
+
+         kin.bAppendToMotionBuffer := TRUE;
+         kin.iActMotionBuffer := 0;
+         kin.motionBuffer[0].bCheckMotionBuffer := FALSE;
+         kin.bGunOffReached := FALSE;
+         //create motionbuffers
+         kin.motionBuffer[0].mcuMotionBuffer.mDBObjTyp := eMcuPermanent;
+         kin.motionBuffer[0].mcuMotionBuffer.mName := "Buffer" + STR(0);
+         kin.motionBuffer[0].mcuMotionBuffer.mKinematicID := kin.kinematicMcuId;
+         //      kin.motionBuffer[0].mUserData := ;
+         McuCreateMotionBuffer(kin.motionBuffer[0].motionBufId, kin.motionBuffer[0].mcuMotionBuffer);
+      
+         kin.bGunOffReached := TRUE;
+         MoveToObjectPos(kin); //robot should track at now. object position necessary
+      END_IF;
+      IF positiv THEN
+         IF xPos > (pos.mPosCart.mFrame.mPos.mValues[0] + kin.outbound) THEN
+            RcuSetMessageOnce(RcuTracking_ErrBehindTrckWindow, kin.kinListInx, 6, 0, "RcuTracking.WaitPosInTrackingWindow");
+            kin.bNoContinue := TRUE;
+            RETURN;
+         END_IF;
+      ELSE
+         IF xPos < (pos.mPosCart.mFrame.mPos.mValues[0] - kin.outbound) THEN
+            RcuSetMessageOnce(RcuTracking_ErrBehindTrckWindow, kin.kinListInx, 7, 0, "RcuTracking.WaitPosInTrackingWindow");
+            kin.bNoContinue := TRUE;
+            RETURN;
+         END_IF;
+      END_IF;
+   END_WHILE;
+      
+END_ROUTINE
+
+
+ROUTINE InitTracking(mykin : TRcuKinematic)
+VAR
+   i : INT;
+END_VAR;
+
+   kin := MAP(mykin);
+
+   kin.bNewTracking := giRcuTrackingStyle <> 0;
+   svWaitConveyor := MAPX(cSV_WaitConveyor[kin.kinListInx]);
+   svTrackingStyle := MAPX(cSV_TrackingStyle[kin.kinListInx]);
+   svInbound := MAPX(cSV_Inbound[kin.kinListInx]);
+   svOutbound := MAPX(cSV_Outbound[kin.kinListInx]);
+   svPreposition := MAPX(cSV_Preposition[kin.kinListInx]);
+   
+   IF IS_MAPPED(svTrackingStyle) THEN
+      svTrackingStyle := giRcuTrackingStyle;
+   END_IF;
+   IF IS_MAPPED(svInbound) THEN
+      svInbound := kin.inbound;
+   END_IF;
+   IF IS_MAPPED(svOutbound) THEN
+      svOutbound := kin.outbound;
+   END_IF;
+   
+   svTrackingStartPos := MAPX(cSV_TrackingStartPos[kin.kinListInx]);
+   
+   ReadBCUCfg(kin);
+   
+   START ObservePart(kin);
+   START ObserveStartPosReached(kin);
+   IF kin.lineTracking THEN
+      START kin.RcuInterfaceToBCU.ObserveConveyorPosition(kin) PRIO 0;
+      START MoveTrackingFrame(kin) PRIO 0;
+      START ObserveTrackingPos(kin);
+      START ObserveTrackingBits(kin);
+      START ObserveConveyorStopAt(kin);
+      START ObserveStart5CyclesPrepos();
+      IF gbEnableWaitConvTolerance THEN
+         START ObserveConvReleaseDelay();
+      END_IF;
+   END_IF;
+   IF kin.railTrackingActive THEN
+      START MoveRail(kin) PRIO 0;
+   END_IF;
+END_ROUTINE
+
+ROUTINE StopTracking(kin : TRcuKinematic)
+
+   IF bTrackingStarted THEN
+      kin.DebugPrint(eTraceTracking, "TRACKING was stopped - StopTracking");
+      bTrackingStarted := FALSE;
+      bStartTracking := FALSE;
+      bStopTracking := FALSE;
+      kin.trackingActive := FALSE;
+      bIsTrackingObject := FALSE;
+      // wait until movement has stopped
+      WAIT kin.isNotMovingOnPath;
+      IF kin.actExecData.mIsTracking THEN
+         kin.DebugPrint(eTraceTracking, "mIsJointsTracking = TRUE");
+      ELSE
+         kin.DebugPrint(eTraceTracking, "mIsJointsTracking = FALSE");
+      END_IF;
+      rActPos := 0.0;
+      rActTrackingPos := 0.0;
+      deltaPos := 0.0;
+      kin.RcuInterfaceToBCU.SetT1ConveyorPosition(rStartPositionBCU);
+                  
+      WAIT kin.actExecData.mIsStoppedJoints;
+      
+      IF kin.lineTracking THEN
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2] := 0.0;
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[0] := 0.0;
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mOri.mValues[1] := 0.0;
+         bInclinePosSet := FALSE;
+         bInclineActive := FALSE;
+         indexConvTab := 0;
+      END_IF;
+      IF kin.railTracking THEN
+         kin.railAxisVector.mValues[kin.railAxisNr] := 0.0;
+      END_IF;
+      kin.bAppendToMotionBuffer := FALSE;
+      McuReleaseDbObj(kin.motionBuffer[kin.iActMotionBuffer].motionBufId);
+      bPartDetect := FALSE; //?????
+   ELSE
+      kin.DebugPrint(eTraceTracking, "Tracking already finished");
+      kin.trackingActive := FALSE;
+      bIsTrackingObject := FALSE;
+      rActPos := 0.0;
+      rActTrackingPos := 0.0;
+      deltaPos := 0.0;
+      IF kin.lineTracking THEN
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2] := 0.0;
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[0] := 0.0;
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mOri.mValues[1] := 0.0;
+         bInclinePosSet := FALSE;
+         bInclineActive := FALSE;
+         indexConvTab := 0;
+      END_IF;
+      IF kin.railTracking THEN
+         kin.railAxisVector.mValues[kin.railAxisNr] := 0.0;
+      END_IF;
+      bPartDetect := FALSE; //?????
+   END_IF;
+   IF IS_MAPPED(svWaitConveyor) THEN
+      svWaitConveyor := 0.0;
+   END_IF;
+   bWaitConveyorStart := FALSE;
+END_ROUTINE
+
+
+VAR PRIVATE
+   bTrackingStarted     : BOOL;
+   bStartTracking       : BOOL;
+   bStopTracking        : BOOL;
+   bInterruptTracking   : BOOL;
+   bResume              : BOOL;
+   rPosAtInterrupt      : REAL;
+   deltaPos             : REAL;
+   trackingStartPos     : REAL;
+   updateFrame          : INT;
+   svTrackingPos        : MAPTO REAL;
+   svWaitConveyor       : MAPTO REAL;
+   svTrackingStyle      : MAPTO INT;
+   svInbound            : MAPTO REAL;
+   svOutbound           : MAPTO REAL;
+   svPreposition        : MAPTO BOOL;
+   svTrackingStartPos   : MAPTO REAL;
+   bWaitConveyorStart   : BOOL;
+   bWaitConveyorReached : BOOL;
+   rWaitConveyorValue   : REAL;
+   rRailOffset          : REAL;
+   rEpsilon             : REAL := 5.0;
+   trackOffPos          : TRcuPositionCart;
+   trackStartPos        : TRcuPositionCart;
+   trackA7Pos           : TRcuPositionJoints;
+   s                    : STRING;
+   bFlagConveyorStop    : BOOL;
+   ConveyorStopPosition : REAL;
+   ConveyorInclinePos   : REAL;
+   bInclinePosSet       : BOOL;
+   bInclineActive       : BOOL;
+   
+   bConvToleranceActive : BOOL;
+   rDistanceExceeded    : REAL;
+   rConveyorDelayTime   : REAL;
+   bStartConveyorDelay  : BOOL;
+   bStart5CyclesPrepos  : BOOL;
+   
+END_VAR
+
+// workaround because actCartVals is in OBJECT or in WORLD depending of 
+// the coordinate system chosen by the Teach Pendant
+ROUTINE ActXInObjectCoord(kin: TRcuKinematic) : REAL PRIVATE
+VAR
+   xPos : REAL;
+   actPos : TMcuPosCart;
+   calcPos : TMcuPosCart;
+   refSysId : TMcuDbObjID;
+   frame : TMcuFrame;
+END_VAR;
+
+   actPos.mFrame.mPos := kin.actCartVals.mPos;
+   actPos.mFrame.mOri := kin.actCartVals.mOri;
+   actPos.mRefSysID := McuGetRefSysForActCartVals(kin.kinematicMcuId);
+   actPos.mFrame.mFrameTyp := gMcuFrameTyp;
+   IF NOT RcuRefSysGetMcuId(kin.RcuRefSystemObject, refSysId) THEN
+      RcuResetMessage(RcuTracking_WarDefRefSysInv, kin.kinListInx, 1, 0, "RcuTracking.ActXInObjectCoord", STR(kin.RcuRefSystemObject));
+      RETURN 0.0;
+   END_IF;
+   IF refSysId <> actPos.mRefSysID THEN
+      IF NOT McuTransformPosCart(calcPos, actPos, refSysId) THEN
+         PRINT("Fehler bei McuTransformPosCart in TRcuTracking");
+      END_IF;
+
+      IF calcPos.mFrame.mFrameTyp <> gMcuFrameTyp THEN
+         RcuSetMessageOnce(RcuTracking_ErrWrgFrameType, kin.kinListInx, 1, 0, "RcuTracking.ActXInObjectCoord", kin.robotName);
+      END_IF;
+      frame := calcPos.mFrame;
+   ELSE
+      frame := actPos.mFrame;
+   END_IF;
+
+   xPos := frame.mPos.mValues[0];
+   RETURN(xPos);
+END_ROUTINE
+
+
+ROUTINE MoveToWorldPos(kin : TRcuKinematic) PRIVATE
+VAR
+   i   : INT;
+END_VAR;
+
+   kin.DebugPrint(eTraceTracking, "MoveToWorldPos");
+   
+      // read actual values and transform to the specified reference system
+   IF NOT RcuReadTransformedActPos(kin, eRcuRefSystemWorld, trackOffPos.frame) THEN
+      RcuSetMessageOnce(RcuTracking_ErrTrafoNoSucc, kin.kinListInx, 1, 0, "RcuTracking.MoveToWorldPos", kin.robotName);
+      RETURN;
+   END_IF;
+   
+   trackOffPos.refSys := eRcuRefSystemWorld;
+   
+   IF IsPaintArm7VWrist(kin) THEN
+      GetActAdditionalPos(trackOffPos.add, kin);
+   END_IF;
+
+   trackOffPos.nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO trackOffPos.nrAuxJoints - 1 DO
+      trackOffPos.auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   kin.progPath.TrckOffDyn := kin.progPath.dynamic;
+   kin.progPath.TrckOffDyn.mUseJointLimForCartSeg := TRUE;
+   kin.progPath.TrckOffDyn.mName := kin.kinematic.mName + ".TrckOffDyn";
+   kin.progPath.TrckOffDyn.mCart.mAcce := kin.progPath.dynamic.mCart.mAcce/2.0;
+   kin.progPath.TrckOffDyn.mCart.mDece := kin.progPath.dynamic.mCart.mDece/2.0;
+   McuCreateDynamic(kin.progPath.TrckOffDynID, kin.progPath.TrckOffDyn);
+   kin.progPath.bUseTrckOffDyn := TRUE;
+   kin.progPath.LinIntern(trackOffPos);
+   kin.progPath.bUseTrckOffDyn := FALSE;
+   McuReleaseDbObj(kin.progPath.TrckOffDynID);
+
+END_ROUTINE
+
+ROUTINE MoveToObjectPos(kin : TRcuKinematic) PRIVATE
+VAR
+   i : INT;
+END_VAR;
+
+   kin.DebugPrint(eTraceTracking, "MoveToObjectPos");
+   
+      // read actual values and transform to the specified reference system
+   IF NOT RcuReadTransformedActPos(kin, kin.RcuRefSystemObject, trackStartPos.frame) THEN
+      RcuSetMessageOnce(RcuTracking_ErrTrafoNoSucc, kin.kinListInx, 2, 0, "RcuTracking.MoveToObjectPos", kin.robotName);
+      RETURN;
+   END_IF;
+   
+   trackStartPos.refSys := kin.RcuRefSystemObject;
+   
+   IF IsPaintArm7VWrist(kin) THEN
+      GetActAdditionalPos(trackStartPos.add, kin);
+   END_IF;
+
+   trackStartPos.nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO trackStartPos.nrAuxJoints - 1 DO
+      trackStartPos.auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   
+   kin.progPath.bWait7Cycles := TRUE;; // warten wegen Beschleunigungssprung
+   
+   kin.progPath.TrckOnDyn := kin.progPath.dynamic;
+   kin.progPath.TrckOnDyn.mUseJointLimForCartSeg := TRUE;
+   kin.progPath.TrckOnDyn.mName := kin.kinematic.mName + ".TrckOnDyn";
+   kin.progPath.TrckOnDyn.mCart.mAcce := kin.progPath.dynamic.mCart.mAcce/2.0;
+   kin.progPath.TrckOnDyn.mCart.mDece := kin.progPath.dynamic.mCart.mDece/2.0;
+   McuCreateDynamic(kin.progPath.TrckOnDynID, kin.progPath.TrckOnDyn);
+   kin.progPath.bUseTrckOnDyn := TRUE;
+   kin.progPath.LinIntern(trackStartPos);
+   kin.progPath.bUseTrckOnDyn := FALSE;
+   McuReleaseDbObj(kin.progPath.TrckOnDynID);
+
+END_ROUTINE
+
+ROUTINE MoveToPtpPos(kin : TRcuKinematic) PRIVATE
+VAR
+   i : INT;
+END_VAR;
+
+   kin.DebugPrint(eTraceTracking, "MoveToPtpPos");
+   
+   trackA7Pos.nrMainJoints := kin.nrOfMainJoints;
+   FOR i := 0 TO trackA7Pos.nrMainJoints - 1 DO
+      trackA7Pos.joints[i] := kin.actJoints.mPos[i];
+   END_FOR;
+   trackA7Pos.nrAuxJoints := kin.nrOfAuxJoints;
+   FOR i := 0 TO trackA7Pos.nrAuxJoints - 1 DO
+      trackA7Pos.auxJoints[i] := kin.actJoints.mPos[kin.nrOfMainJoints + i];
+   END_FOR;
+   kin.progPath.Ptp(trackA7Pos);
+
+END_ROUTINE
+
+
+ROUTINE MoveTrackingFrame(kin : TRcuKinematic) PRIVATE
+    
+    VAR
+        bChanged : BOOL;
+        bIsTrackingObjectOld : BOOL;
+        bStartTrackingOld : BOOL;
+        rActOldPos : REAL;
+        rActOldConveyor : REAL;
+        rDiff : REAL;
+        rDiffTracking : REAL; // Test
+        rNewValue     : REAL;
+    END_VAR
+
+   svTrackingPos := MAPX(cSV_ActTrackingPos[kin.kinListInx]);
+ 
+   bChanged := IS_CHANGED(updateConveyor);
+
+   WHILE NOT (IS_MAPPED(gyRcuTrackingFrame[kin.RcuRefSystemConveyor])) DO
+      Sleep(100); 
+   END_WHILE;
+   bIsTrackingObjectOld := bIsTrackingObject;
+   rActOldPos := rActConveyor;
+   s := kin.kinematic.mName + ".TrackingFrame";
+   SwoAddRealVariable(gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2], 
+      s);
+
+   s := kin.kinematic.mName + ".rXPar";
+   SwoAddRealVariable(rXPar, 
+      s);
+
+   s := kin.kinematic.mName + ".rDeltaX";
+   SwoAddRealVariable(rDeltaX, 
+      s);
+
+   s := kin.kinematic.mName + ".rDeltaY";
+   SwoAddRealVariable(rDeltaY, 
+      s);
+
+
+
+   WHILE TRUE DO
+      IF giRcuTrackingStyle <> 0 THEN
+         IF bIsTrackingObject THEN
+            IF bStartTrackingFlag THEN // Signal from Macro START_TRACKING
+               bStartTrackingFlag := FALSE;
+               WAIT bStartTracking AND NOT bStopTracking;
+               rActOldConveyor := rActConveyor;
+               rActPos := 0.0; // now the real object is at the position defined with the
+                               // SETOBJECT command. This is the trick of WAIT_CONVEYOR
+                               // followed by TRACKING(On)               
+            END_IF;
+            IF NOT bIsTrackingObjectOld THEN
+               rActOldConveyor := rActConveyor;
+               rActPos := rActConveyor;
+            END_IF;
+
+            deltaPos := rActConveyor - rActOldConveyor;
+            IF rAbs(deltaPos) > 5 THEN
+               kin.DebugPrint(eTraceTracking,"difference to large: delta = "+STR(deltaPos));
+               kin.DebugPrint(eTraceTracking,"rActConveyor = "+STR(rActConveyor)+" rActOldConveyor = "+STR(rActOldConveyor));
+            END_IF;
+            rActPos := rActPos + deltaPos;
+            IF NOT bInterruptTracking THEN
+               rDiff := rActPos - gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2];
+               IF rAbs(rDiff) > 10.0 THEN
+                  RcuSetMessageOnce(RcuTracking_ErrJumpTrackObject, kin.kinListInx, 1, 0, "RcuTracking.MoveTrackingFrame", STR(rDiff));
+                  kin.bNoContinue := TRUE;
+                  StopTracking(kin);
+               ELSE
+                  gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2] 
+                     := rActPos;
+               END_IF;
+               IF (NOT kin.isNotMovingOnPath OR kin.actExecData.mIsOnPathEnd) AND NOT kin.actExecData.mIsStoppedJoints  THEN
+                  rActTrackingPos := rActPos;
+               ELSE
+                  rDiffTracking := rActPos - rActTrackingPos;
+               END_IF;
+            END_IF;
+            rActOldConveyor := rActConveyor;
+            updateFrame := updateFrame+1;
+         END_IF;
+      ELSE
+         IF bIsTrackingObject THEN
+            IF NOT bIsTrackingObjectOld THEN
+               WAIT bWaitConveyorStart;
+               bWaitConveyorStart := FALSE;
+               WHILE (rActConveyor - rStartPositionBCU < rWaitConveyorValue) AND bIsTrackingObject DO
+                  IF kin.mainModeMgr.externControl THEN
+                     rActPos := rActConveyor - rStartPositionBCU - rWaitConveyorValue;
+                     rActTrackingPos := rActPos;
+                  END_IF;
+                  IF IS_MAPPED(svTrackingPos) THEN
+                       svTrackingPos := rActPos;
+                  END_IF;
+                  WAIT bChanged OR NOT bIsTrackingObject;
+                  bChanged := FALSE;
+               END_WHILE;
+               bWaitConveyorReached := TRUE;
+               trackingStartPos := 0.0;
+               deltaPos := 0.0;
+               
+//               WHILE NOT (bStartTracking AND NOT bStopTracking) AND bIsTrackingObject DO
+                  bWaitConveyorStart := FALSE;
+                  bWaitConveyorReached := TRUE;
+                  rActPos := rActConveyor - rStartPositionBCU - rWaitConveyorValue;
+                  IF IS_MAPPED(svTrackingPos) THEN
+                       svTrackingPos := rActPos;
+                  END_IF;
+//                  WAIT bChanged OR NOT bIsTrackingObject;
+                  bChanged := FALSE;
+//               END_WHILE;
+               bStartTracking := TRUE; // Starts tracking automatically at WAITCONVEYOR-position
+               
+               IF bIsTrackingObject THEN
+                  IF kin.mainModeMgr.externControl THEN
+                     IF bConvToleranceActive  THEN
+                        kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: bConvToleranceActive = TRUE");
+                        kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rActConveyor = "+STR(rActConveyor));
+                        kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rActPos = "+STR(rActPos));
+                     ELSE
+                        IF rActConveyor - rStartPositionBCU > rWaitConveyorValue + rEpsilon THEN
+                           kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rActConveyor = "+STR(rActConveyor)); // ERROR
+                           kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rStartPositionBCU = "+STR(rStartPositionBCU)); // ERROR
+                           kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rWaitConveyorValue = "+STR(rWaitConveyorValue)); // ERROR
+                           kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rEpsilon = "+STR(rEpsilon)); // ERROR
+                           kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: Position > WAIT_CONVEYOR value"); // ERROR
+                           kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rActPos = "+STR(rActPos)); // ERROR
+                           RcuSetMessageOnce(RcuTracking_ErrTrackingOn, kin.kinListInx, 1, 0, "RcuTracking.MoveTrackingFrame");
+                           kin.bNoContinue := TRUE;
+                        END_IF;
+                     END_IF;
+                  ELSE // in T1,T2 no error but offset of late start must be considered
+                     IF rActConveyor - rStartPositionBCU > rWaitConveyorValue + rEpsilon THEN
+                        IF kin.railTrackingActive THEN
+                           kin.railAxisVector.mValues[kin.railAxisNr] := kin.signOfRail*rActPos;
+                           rRailOffset := kin.signOfRail*rActPos;
+                           MoveToPtpPos(kin);
+                        END_IF;
+                     END_IF;
+                  END_IF;
+
+                  IF kin.railTrackingActive THEN
+                     kin.railAxisVector.mValues[kin.railAxisNr] := kin.signOfRail*rActPos;
+                     rRailOffset := kin.signOfRail*rActPos;
+                  END_IF;
+
+                  kin.trackingActive := TRUE;
+                  rActOldConveyor := rActConveyor;
+                  kin.DebugPrint(eTraceTracking, "MoveTrackingFrame: rActConveyor = rActOldConveyor = "+STR(rActConveyor));
+                  START MoveToObjectPos(kin);
+
+   //               rActPos := 0.0; // now the real object is at the position defined with the
+                                  // SETOBJECT command. This is the trick of WAIT_CONVEYOR
+                                  // followed by TRACKING(On)
+                  bStartTrackingOld := bStartTracking;
+               END_IF;
+            END_IF; // NOT bIsTrackingObjectOld
+            
+            IF bIsTrackingObject THEN
+               IF NOT kin.railTrackingActive THEN
+                  kin.trackingActive := bStartTracking AND NOT bStopTracking;
+               END_IF;
+
+               deltaPos := rActConveyor - rActOldConveyor;
+               IF rAbs(deltaPos) > 5 THEN
+                  kin.DebugPrint(eTraceTracking,"difference to large: delta = "+STR(deltaPos));
+                  kin.DebugPrint(eTraceTracking,"rActConveyor = "+STR(rActConveyor)+" rActOldConveyor = "+STR(rActOldConveyor));
+               END_IF;
+               rActPos := rActPos + deltaPos;
+               IF NOT bInterruptTracking THEN
+                  rDiff := rActPos - gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2];
+                  IF (rAbs(rDiff) > 10.0) AND NOT bConvToleranceActive THEN
+                     RcuSetMessageOnce(RcuTracking_ErrJumpTrackObject, kin.kinListInx, 2, 0, "RcuTracking.MoveTrackingFrame", STR(rDiff));
+                     kin.bNoContinue := TRUE;
+                     StopTracking(kin);
+                  ELSE
+                     gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2] 
+                        := rActPos;
+                     IF bEnableConveyorTable THEN
+                        IF bInclinePosSet THEN
+                           IF ConveyorInclinePos <= rActConveyor - rStartPositionBCU THEN
+                              bInclinePosSet := FALSE;
+                              bInclineActive := TRUE;
+                              indexConvTab := 1;
+                           END_IF;
+                        END_IF;
+                        IF bInclineActive THEN
+                           IF indexConvTab < iNrConvTabEntries THEN
+                              IF (convTab[indexConvTab+1].rConvVal <= rActConveyor - rStartPositionBCU - ConveyorInclinePos) THEN
+                                indexConvTab := indexConvTab + 1; 
+                              END_IF;
+                              IF (indexConvTab < iNrConvTabEntries) THEN
+                                 rDeltaX := convTab[indexConvTab+1].rConvVal - convTab[indexConvTab].rConvVal;
+                                 rDeltaY := (convTab[indexConvTab+1].rTransZ - convTab[indexConvTab].rTransZ);
+                                 rXPar := rActConveyor - rStartPositionBCU - ConveyorInclinePos;
+                                 rNewValue := rDeltaY * (rXPar - convTab[indexConvTab].rConvVal) / rDeltaX + convTab[indexConvTab].rTransZ;
+                                 rDiff := rNewValue - gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[0];
+                                 IF rAbs(rDiff) > 10.0 THEN
+                                    RcuSetMessageOnce(RcuTracking_ErrJumpTrackIncline, kin.kinListInx, 1, 0, "RcuTracking.MoveTrackingFrame", STR(rDiff), "Z");
+                                    kin.bNoContinue := TRUE;
+                                    StopTracking(kin);
+                                 ELSE
+                                    gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[0] := rNewValue;
+                                    rDeltaY := (convTab[indexConvTab+1].rRotY - convTab[indexConvTab].rRotY);
+                                    rNewValue := rDeltaY * (rXPar - convTab[indexConvTab].rConvVal) / rDeltaX + convTab[indexConvTab].rRotY;
+                                    rDiff := rNewValue - gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mOri.mValues[1];
+                                    IF rAbs(rDiff) > 1.0 THEN
+                                       RcuSetMessageOnce(RcuTracking_ErrJumpTrackOri, kin.kinListInx, 1, 0, "RcuTracking.MoveTrackingFrame", STR(rDiff));
+                                       kin.bNoContinue := TRUE;
+                                       StopTracking(kin);
+                                    ELSE
+                                       gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mOri.mValues[1] := rNewValue;
+                                    END_IF;
+                                 END_IF;
+                              END_IF;
+                           ELSE
+                              bInclinePosSet := FALSE;
+                              bInclineActive := FALSE;
+                              indexConvTab := 0;
+                           END_IF;
+                        END_IF;
+                     END_IF;
+                  END_IF;
+                  IF (NOT kin.isNotMovingOnPath OR kin.actExecData.mIsOnPathEnd) AND NOT kin.actExecData.mIsStoppedJoints  THEN
+                     rActTrackingPos := rActPos;
+                  ELSE
+                     rDiffTracking := rActPos - rActTrackingPos;
+                  END_IF;
+               END_IF;
+               rActOldConveyor := rActConveyor;
+               updateFrame := updateFrame+1;
+            END_IF;
+         END_IF; // bIsTrackingObject
+      END_IF;
+      bIsTrackingObjectOld := bIsTrackingObject;
+      IF IS_MAPPED(svTrackingPos) THEN
+           svTrackingPos := rActPos;
+      END_IF;
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+
+ROUTINE MoveRail(kin : TRcuKinematic) PRIVATE
+    
+    VAR
+        bChanged : BOOL;
+        diff : DINT;
+        oldUpdCnt : DINT;
+        index : INT;
+        s     : STRING;
+    END_VAR
+    
+   bChanged := IS_CHANGED(updateFrame);
+
+   IF NOT (IS_MAPPED(kin.railAxisVector)) THEN
+      RcuSetMessageOnce(RcuTracking_FaErrRlAxisNtMap, kin.kinListInx, 1, 0, "RcuTracking.MoveRail");
+      RETURN;
+   END_IF;
+   
+   index := kin.railAxisNr;
+   s := kin.kinematic.mName + ".railAxisVector";
+   SwoAddRealVariable(kin.railAxisVector.mValues[index], 
+      s);
+   WHILE TRUE DO
+      //(*
+      diff := updateFrame - oldUpdCnt;
+      oldUpdCnt := updateFrame;
+      IF diff <> 1 THEN
+           kin.DebugPrint(eTraceTracking,"## MoveRail: Cycle lost");
+      END_IF;//*)
+      kin.trackingActive := bStartTracking AND NOT bStopTracking;
+      WAIT bStartTracking AND kin.railTrackingActive;
+      IF NOT bInterruptTracking THEN
+         IF rAbs(deltaPos) > 10.0 THEN
+           RcuSetMessageOnce(RcuTracking_ErrJumpTrackObject, kin.kinListInx, 3, 0, "RcuTracking.MoveRail", STR(deltaPos));
+           kin.bNoContinue := TRUE;
+           StopTracking(kin);
+         ELSE
+            kin.railAxisVector.mValues[index] 
+            := kin.railAxisVector.mValues[index] 
+               + kin.signOfRail*deltaPos;
+            rRailWithoutOffset := kin.actJoints.mPos[index] - kin.railAxisVector.mValues[index];
+         END_IF;
+      END_IF;
+      rRailOffset := kin.railAxisVector.mValues[index];
+         // ...
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+ROUTINE ObservePart(kin : TRcuKinematic) PRIVATE
+   VAR
+      bPartDetectOld : BOOL;
+      bChanged      : BOOL;
+   END_VAR;
+   
+   bChanged := IS_CHANGED(bPartDetect);
+   WHILE TRUE DO
+      WAIT bChanged;
+      bChanged := FALSE;
+      IF bPartDetect AND NOT bPartDetectOld THEN
+         kin.DebugPrint(eTraceTracking, "New part detected");
+         kin.bCheckStartMove := TRUE; 
+         bIsTrackingObject := TRUE;
+      END_IF;
+      bPartDetectOld := bPartDetect;
+   END_WHILE;
+
+END_ROUTINE
+
+// User page
+ROUTINE ObserveTrackingPos(kin : TRcuKinematic) PRIVATE
+   VAR
+      bChanged      : BOOL;
+   END_VAR;
+   
+   bChanged := IS_CHANGED(bSetPosFromUserpage);
+   WHILE TRUE DO
+      WAIT bChanged;
+      bChanged := FALSE;
+      IF  NOT kin.mainModeMgr.externControl AND kin.selectingFlow.lock  AND bSetPosFromUserpage THEN
+         kin.DebugPrint(eTraceTracking, "Tracking position changed by User");
+         kin.trackingPos := rPosFromUserpage;
+         kin.SetMotionMode(eRcuMMgrModeStopJoints); 
+         WAIT kin.isStopped; // @? if stop then keep in mind stoppedOnPath 
+         gyRcuTrackingFrame[kin.RcuRefSystemConveyor].mPos.mValues[2] 
+            := kin.trackingPos;
+         kin.trackingPosSet := TRUE;
+         rActPos := kin.trackingPos;
+         IF kin.railTrackingActive THEN
+            kin.railAxisVector.mValues[kin.railAxisNr] 
+                := kin.signOfRail*kin.trackingPos;
+         END_IF;
+            
+         kin.SetMotionMode(eRcuMMgrModeAuto);
+         ContinueProg(kin.selectingFlow.flowId);
+      END_IF;
+      bSetPosFromUserpage := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+// User page
+ROUTINE ObserveTrackingBits(kin : TRcuKinematic) PRIVATE
+   VAR
+      bChgOn     : BOOL;
+      bChgOff    : BOOL;
+      bChgFinish : BOOL;
+      bChgResume : BOOL;
+   END_VAR;
+   
+   bChgOn     := IS_CHANGED(rTrackingOnFromUserpage);
+   bChgOff    := IS_CHANGED(rTrackingOffFromUserpage);
+   bChgFinish := IS_CHANGED(rTrackingFinishFromUserpage);
+   bChgResume := IS_CHANGED(rTrackingResumeFromUserpage);
+   WHILE TRUE DO
+      IF  NOT kin.mainModeMgr.externControl AND kin.selectingFlow.lock THEN
+         IF rTrackingOnFromUserpage THEN
+            kin.DebugPrint(eTraceTracking, "TRACKING was started - ObserveTrackingBits");
+            IF bTrackingStarted THEN
+               bStopTracking := FALSE; // resuming
+            ELSE
+               bStartTracking := TRUE;
+               bTrackingStarted := TRUE;
+               bStopTracking := FALSE;
+               kin.trackingActive := TRUE;
+            END_IF;
+         ELSIF rTrackingOffFromUserpage THEN
+            kin.DebugPrint(eTraceTracking, "TRACKING was stopped - ObserveTrackingBits");
+            bStopTracking := TRUE;
+            kin.bAppendToMotionBuffer := FALSE;
+            kin.trackingActive := FALSE;
+         ELSIF rTrackingFinishFromUserpage THEN
+            StopTracking(kin);
+         ELSIF rTrackingResumeFromUserpage THEN
+            bStopTracking := FALSE; // resuming
+            kin.trackingActive := FALSE;
+         END_IF;
+      END_IF;
+      
+      rTrackingOnFromUserpage := FALSE;
+      rTrackingOffFromUserpage := FALSE;
+      rTrackingFinishFromUserpage := FALSE;
+      rTrackingResumeFromUserpage := FALSE;
+      WAIT bChgOn OR bChgOff OR bChgFinish OR bChgResume;
+      bChgOn     := FALSE;
+      bChgOff    := FALSE;
+      bChgFinish := FALSE;
+      bChgResume := FALSE;
+   END_WHILE;
+
+END_ROUTINE
+
+ROUTINE ObserveStartPosReached(kin: TRcuKinematic) PRIVATE
+   VAR
+        bChanged : BOOL;
+   END_VAR
+   
+   IF NOT IS_MAPPED(svPreposition) THEN
+      RETURN;
+   END_IF;
+   
+   WAIT gbEquipmentReady;
+   bChanged := IS_CHANGED(kin.bStartPosReached);
+   WHILE TRUE DO
+      svPreposition := kin.bStartPosReached;
+      WAIT bChanged;
+      bChanged := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE SignalWaitingTrackingPos() PRIVATE
+  MAINRUN();
+  kin.bWaitingTrackingPos := TRUE;
+  kin.RcuInterfaceToProcess.SwitchNeedlesWaitPaintPos(FALSE);
+END_ROUTINE
+
+ROUTINE ReadBCUCfg(kin: TRcuKinematic) PRIVATE
+   VAR
+      s           : STRING;
+      iFileHandle : DINT;
+      iReadValue  : TDataVariant;
+      Ini         : TRcuReadCfg;
+      error       : BOOL;
+   END_VAR
+   
+   // read Tracking startposition from BCU.cfg
+   WAIT gbRcHandleOk;
+   IF NOT IS_MAPPED(SysTimerSet) THEN // Workaround
+      SysTimerSet := MAPX("TC/Timer/SysTimerSet");
+   END_IF;
+   Sleep(100);
+   
+   IF IS_MAPPED(svTrackingStartPos) THEN
+      rStartPositionBCU := svTrackingStartPos;
+   ELSE
+      IF giSysBaseHdl <> 0 THEN
+         IF CatalogReadString(giSysBaseHdl, "applPath", s, TRUE) THEN
+            s := s + "application\control\BCU" + STR(gyiNrBcu[kin.kinListInx]) + "\cfg\BCU.cfg";
+         ELSE
+            s := "C:\Control\application\control\BCU" + STR(gyiNrBcu[kin.kinListInx]) + "\cfg\BCU.cfg";
+         END_IF;
+         iFileHandle := Ini.OpenIniFile(s);
+         IF iFileHandle <> -1 THEN
+            IF Ini.CopyIniGroupToMemory(iFileHandle, "StationData") THEN
+               iReadValue.dataType := eTypeReal;
+               IF Ini.GetIniValue("StationData", "TRACKINGSTARTPOSITION", iReadValue) THEN
+                  kin.DebugPrint(eTraceProcess, "Read value from BCU.cfg for TRACKINGSTARTPOSITION: " + STR(iReadValue.dataReal));
+                  rStartPositionBCU := iReadValue.dataReal;
+               ELSE
+                  kin.DebugPrint(eTraceTracking, "Read value from BCU.cfg for TRACKINGSTARTPOSITION with Error ");
+                  error := TRUE;
+               END_IF;
+            ELSE
+               kin.DebugPrint(eTraceTracking, "Read value from BCU.cfg for TRACKINGSTARTPOSITION with Error ");
+               error := TRUE;
+            END_IF;
+         ELSE
+            kin.DebugPrint(eTraceTracking, "Read value from BCU.cfg for TRACKINGSTARTPOSITION with Error ");
+            error := TRUE;
+         END_IF;
+         Ini.CloseIniFile(iFileHandle); //BIT 19.04.07
+      ELSE
+         kin.DebugPrint(eTraceTracking, "Read value from BCU.cfg for TRACKINGSTARTPOSITION with Error ");
+         error := TRUE;
+      END_IF;
+      IF error THEN
+         RcuSetMessageOnce(RcuTracking_ErrTrackingStartPos, kin.kinListInx, 1, 0, "RcuTracking.ReadBCUCfg");
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+ROUTINE RELEASE()
+   bFlagConveyorStop := FALSE;   
+   ConveyorStopPosition := 0.0;
+   bInclinePosSet := FALSE;
+   bInclineActive := FALSE;
+   indexConvTab := 0;
+END_ROUTINE
+
+
+ROUTINE DELETE()
+    
+   //BIT 23.10.07 on bootup-errors kin is not mapped
+   IF IS_MAPPED(kin) THEN 
+      s := kin.kinematic.mName + ".TrackingFrame";
+   SwoRemoveVariable(s);
+   END_IF;
+
+END_ROUTINE

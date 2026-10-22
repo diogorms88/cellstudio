@@ -1,0 +1,346 @@
+;=======================================================
+;       GSD-File based on EN50170 (Profibus DP)
+;=======================================================
+; Filename : TRCKFF2A.GSD -  Revision 1.04.00
+;-------------------------------------------------------
+; Device   : busstop (R) Station SDPL-0404D-x00x
+;-------------------------------------------------------
+; Vendor   : Hans Turck GmbH & Co. KG
+;-------------------------------------------------------
+; Protocol : Profibus DP (Slave)
+;-------------------------------------------------------
+; Date     : 30.03.06
+;=======================================================
+;
+;------------------------- DP -------------------------
+;
+#Profibus_DP
+;
+;------------------ PrmText-Definitionen --------------
+;
+PrmText = 1
+Text(0) = "is not active"
+Text(1) = "is active"
+EndPrmText
+
+PrmText = 3                                
+Text(0) = "manual Reset"
+Text(1) = "automatic Reset"
+EndPrmText
+
+PrmText = 11
+Text(0) = "INTEL"
+Text(1) = "MOTOROLA"
+EndPrmText
+		  
+PrmText = 12
+Text(0) = "Synchron"
+Text(1) = "FreeRun"
+EndPrmText
+
+PrmText = 13
+Text(0) = "IL-Cycle stopped"
+Text(1) = "IL-outputs to 0"
+Text(2) = "IL-outputs remain equal"
+EndPrmText
+
+PrmText = 14
+Text(0) = "leave DataExchange"
+Text(1) = "DP-inputs to 0"
+Text(2) = "DP-inputs remain equal"
+EndPrmText
+
+;
+;------------- ExtUserPrmData-Definitionen --------------
+;
+ExtUserPrmData = 1 "DPV1-Services (Class 1)"
+Bit(7) 0 0-1
+Prm_Text_Ref = 1
+EndExtUserPrmData
+
+ExtUserPrmData = 7 "IP-Modul diagnosis"
+Bit(1) 0 0-1
+Prm_Text_Ref = 1
+EndExtUserPrmData
+
+ExtUserPrmData = 3 "Behaviour on IP-Link-Error"           
+Bit(0) 1 0-1                                                
+Prm_Text_Ref = 3                                            
+EndExtUserPrmData
+
+ExtUserPrmData = 11 "Data-Format"
+Bit(3) 1 0-1
+Prm_Text_Ref = 11
+EndExtUserPrmData
+
+ExtUserPrmData = 12 "Updating of process image"
+Bit(6) 1 0-1
+Prm_Text_Ref = 12
+EndExtUserPrmData
+
+ExtUserPrmData = 13 "Reaction on DP-Error"
+BitArea(0-1) 0 0-2
+Prm_Text_Ref = 13
+EndExtUserPrmData
+
+ExtUserPrmData = 14 "IP-Link-Error-Reaction"
+BitArea(2-3) 0 0-2
+Prm_Text_Ref = 14
+EndExtUserPrmData
+
+ExtUserPrmData = 87 "SDPL-0404D-xxxx BYTE-Align"
+Bit(5) 0 0-1
+Prm_Text_Ref = 1
+EndExtUserPrmData
+
+;
+;---------------------- DP-General ---------------------
+;
+GSD_Revision = 2
+Vendor_Name = "Hans Turck GmbH & Co. KG"
+Model_Name = "SDPL-0404D-x00x"
+Revision = "Revision 1.04.00"
+Ident_Number = 0xFF2A
+Protocol_Ident = 0
+Station_Type = 0
+FMS_supp = 0
+Hardware_Release = "08"
+Software_Release = "B3"
+
+9.6_supp = 1
+19.2_supp = 1
+93.75_supp = 1
+187.5_supp = 1
+500_supp = 1
+1.5M_supp = 1
+3M_supp = 1
+6M_supp = 1
+12M_supp = 1
+MaxTsdr_9.6 = 60
+MaxTsdr_19.2 = 60
+MaxTsdr_93.75 = 60
+MaxTsdr_187.5 = 60
+MaxTsdr_500 = 100
+MaxTsdr_1.5M = 150
+MaxTsdr_3M = 250
+MaxTsdr_6M = 350
+MaxTsdr_12M = 550
+Redundancy = 0
+Repeater_Ctrl_Sig = 0
+24V_Pins = 0
+
+Implementation_Type = "SPC3"
+Bitmap_Device = "SDPLWL-n"
+Bitmap_Diag = "SDPLWL-d"
+Bitmap_SF = "SDPLWL-s"
+;
+;-------------------- DP-Slave -----------------------
+;
+Freeze_Mode_supp = 1
+Sync_Mode_supp = 1
+Auto_Baud_supp = 1
+Set_Slave_Add_supp = 0
+Min_Slave_Intervall = 1
+Modular_Station = 1
+Max_Module = 64
+Max_Input_Len = 128
+Max_Output_Len = 128
+Max_Data_Len = 256
+
+Fail_Safe = 1
+Max_Diag_Data_Len = 64
+Modul_Offset = 0
+Slave_Family = 3@TURCK@piconet
+;
+;---------------------- DPV1 -------------------------
+;
+DPV1_Slave = 1
+C1_Read_Write_supp = 1
+C1_Max_Data_Len = 48
+C1_Response_Timeout = 1000
+C2_Read_Write_supp = 1
+C2_Max_Data_Len = 48
+C2_Response_Timeout = 1000
+C2_Max_Count_Channels = 1
+Max_Initiate_PDU_Length = 52
+;
+;------------------- UserPrmData ---------------------
+;
+Max_User_Prm_Data_Len = 57
+
+Ext_User_Prm_Data_Const(0) = 0x00
+Ext_User_Prm_Data_Ref(0) = 1
+Ext_User_Prm_Data_Const(1) = 0x00
+Ext_User_Prm_Data_Const(2) = 0x08
+Ext_User_Prm_Data_Const(3) = 0x00
+Ext_User_Prm_Data_Const(4) = 0x00
+Ext_User_Prm_Data_Const(5) = 0x00
+Ext_User_Prm_Data_Const(6) = 0x00
+Ext_User_Prm_Data_Const(7) = 0x40
+Ext_User_Prm_Data_Ref(7) = 7
+Ext_User_Prm_Data_Ref(7) = 3
+Ext_User_Prm_Data_Const(8) = 0x00
+Ext_User_Prm_Data_Const(9) = 0x23
+Ext_User_Prm_Data_Ref(9) = 11
+Ext_User_Prm_Data_Ref(9) = 12
+Ext_User_Prm_Data_Const(10) = 0x00
+Ext_User_Prm_Data_Ref(10) = 13
+Ext_User_Prm_Data_Ref(10) = 14
+Ext_User_Prm_Data_Ref(10) = 87
+Ext_User_Prm_Data_Const(11) = 0x40
+Ext_User_Prm_Data_Const(12) = 0x00
+Ext_User_Prm_Data_Const(13) = 0x00,0x00
+;
+;-------------------- Modules ------------------------
+;
+Module = "SNNE-0202D-0003" 0xB4,0xB4          
+90
+EndModule
+Module = "SNNE-0002D-000x" 0xB2,0xB2            
+92
+EndModule
+Module = "CPV1x-GE-IP8 16Out" 0x60             
+95
+EndModule
+Module = "CPV1x-GE-IP8 24In/24Out" 0xB2         
+96
+EndModule
+Module = "SNNE-0016D-0001 16Out/0In" 0xA1
+99
+EndModule
+Module = "SNNE-0016D-0001 24Out/24In" 0xB2
+158
+EndModule
+Module = "SNNE-40A-000x" 0x50,0x50,0x50,0x50        
+97
+EndModule
+Module = "SNNE-40A-000x 4x24 Bit In-/Out" 0xB2,0xB2,0xB2,0xB2         
+98
+EndModule
+Module = "SNNE-04A-000x" 0x60,0x60,0x60,0x60               
+101
+EndModule
+Module = "SNNE-04A-000x 4x24 Bit In-/Out" 0xB2,0xB2,0xB2,0xB2         
+102
+EndModule
+Module = "SNNE-10S-0005" 0x93             
+105
+EndModule
+Module = "SNNE-10S-0005 40 Bit In-/Out" 0xB4                
+106
+EndModule
+Module = "SNNE-10S-0001" 0xB5                                 
+108
+EndModule
+Module = "SNNE-10S-000x" 0xB5                                 
+110
+EndModule
+Module = "8 Bit digital inputs" 0x10
+111
+EndModule
+Module = "16 Bit digital inputs" 0x11
+112
+EndModule
+Module = "24 Bit digital inputs" 0x12
+113
+EndModule
+Module = "32 Bit digital inputs" 0x13
+114
+EndModule
+Module = "40 Bit digital inputs" 0x14
+115
+EndModule
+Module = "48 Bit digital inputs" 0x15
+116
+EndModule
+Module = "56 Bit digital inputs" 0x16
+117
+EndModule
+Module = "64 Bit digital inputs" 0x17
+118
+EndModule
+Module = "72 Bit digital inputs" 0x18
+119
+EndModule
+Module = "80 Bit digital inputs" 0x19
+120
+EndModule
+Module = "88 Bit digital inputs" 0x1A
+121
+EndModule
+Module = "96 Bit digital inputs" 0x1B
+122
+EndModule
+Module = "104 Bit digital inputs" 0x1C
+123
+EndModule
+Module = "112 Bit digital inputs" 0x1D
+124
+EndModule
+Module = "120 Bit digital inputs" 0x1E
+125
+EndModule
+Module = "128 Bit digital inputs" 0x1F
+126
+EndModule
+Module = "8 Bit digital outputs" 0x20
+128
+EndModule
+Module = "16 Bit digital outputs" 0x21
+129
+EndModule
+Module = "24 Bit digital outputs" 0x22
+130
+EndModule
+Module = "32 Bit digital outputs" 0x23
+131
+EndModule
+Module = "40 Bit digital outputs" 0x24
+132
+EndModule
+Module = "48 Bit digital outputs" 0x25
+133
+EndModule
+Module = "56 Bit digital outputs" 0x26
+134
+EndModule
+Module = "64 Bit digital outputs" 0x27
+135
+EndModule
+Module = "72 Bit digital outputs" 0x28
+136
+EndModule
+Module = "80 Bit digital outputs" 0x29
+137
+EndModule
+Module = "88 Bit digital outputs" 0x2A
+138
+EndModule
+Module = "96 Bit digital outputs" 0x2B
+139
+EndModule
+Module = "104 Bit digital outputs" 0x2C
+140
+EndModule
+Module = "112 Bit digital outputs" 0x2D
+141
+EndModule
+Module = "120 Bit digital outputs" 0x2E
+142
+EndModule
+Module = "128 Bit digital outputs" 0x2F
+143
+EndModule
+
+
+
+
+
+
+
+
+
+
+
+
+

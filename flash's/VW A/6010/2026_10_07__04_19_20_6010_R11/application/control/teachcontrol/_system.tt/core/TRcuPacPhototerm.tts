@@ -1,0 +1,1183 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Poppe                                                       *
+*   E-Mail      : dirk.poppe@durr.com                                         *
+*                                                                             *
+*   Modul       : TRcuPacPhototerm.ttp                                        *
+*   Description : Interface class for Phototerm PTP Online                    *
+*-----------------------------------------------------------------------------*)
+
+CONSTANT PRIVATE
+   cTimeoutOrderNewMeasSeq : INT := 4000;
+   cTimeoutOrderAck        : INT := 1000;
+   cSequenceTime           : INT := 1000;   //timeout for Sequence feedback 1000ms = 1sec
+   cTrgSignalTime          : INT :=  350;   //after this time Triggersignal is reset 350ms
+   
+   
+//---------------------------------------------------------------------------------------------------
+//-----------------  Hardware-Endpoint to Fieldbus-Master Phototerm  --------------------------------
+//---------------------------------------------------------------------------------------------------
+   
+//--------------------------------------------------------------------------   
+//                 Inputs
+//--------------------------------------------------------------------------   
+   cHWI_mPTPSoftwareReady  : STRING := "HWI_mASoftwareReady";
+   cHWI_mPTPReadyForOrder  : STRING := "HWI_mAReadyForOrder";
+   cHWI_mPTPErrorBit0      : STRING := "HWI_mAErrorCodeBit0";
+   cHWI_mPTPErrorBit1      : STRING := "HWI_mAErrorCodeBit1";
+   cHWI_mPTPErrorBit2      : STRING := "HWI_mAErrorCodeBit2";
+   cHWI_mPTPErrorBit3      : STRING := "HWI_mAErrorCodeBit3";
+   cHWI_mPTPErrorBit4      : STRING := "HWI_mAErrorCodeBit4";
+   cHWI_mPTPCsvFileWritten : STRING := "HWI_mACSVFileWritten";
+   cSLI_mPTPInStandbyMode  : STRING := "SLI_mLaserStandby";
+   cSLI_mPTPInEmissionMode : STRING := "SLI_mLaserOn";
+   
+//--------------------------------------------------------------------------   
+//                 Outputs
+//--------------------------------------------------------------------------   
+   cHWO_mPTPTokenBit1         : STRING := "HWO_mATokenBit1";
+   cHWO_mPTPTokenBit2         : STRING := "HWO_mATokenBit2";
+   cHWO_mPTPTokenBit3         : STRING := "HWO_mATokenBit3";
+   cHWO_mPTPPaintCodeBit0     : STRING := "HWO_mAPaintCodeBit0";
+   cHWO_mPTPPaintCodeBit1     : STRING := "HWO_mAPaintCodeBit1";
+   cHWO_mPTPPaintCodeBit2     : STRING := "HWO_mAPaintCodeBit2";
+   cHWO_mPTPPaintCodeBit3     : STRING := "HWO_mAPaintCodeBit3";
+   cHWO_mPTPPaintCodeBit4     : STRING := "HWO_mAPaintCodeBit4";
+   cHWO_mPTPPaintCodeBit5     : STRING := "HWO_mAPaintCodeBit5";
+   cHWO_mPTPPaintCodeBit6     : STRING := "HWO_mAPaintCodeBit6";
+   cHWO_mPTPPaintCodeBit7     : STRING := "HWO_mAPaintCodeBit7";
+   cHWO_mPTPReleaseSingleMeas : STRING := "HWO_mARelSingMeasuring";
+   cHWO_mPTPNewMeasSeq        : STRING := "HWO_mANewMeasuring";
+   cHWO_mPTPLaserOn           : STRING := "HWO_mALaserRestart";
+END_CONSTANT
+
+TYPE PRIVATE
+   TRcuPacPhototermOrder : (eNoOrder, eLaserRestartLaserOn, eStartNewMeasSequence, eStartSingleMeasurement);
+
+   tsPhototermDataIn : STRUCT
+      bPTPSoftwareReady  : TInOutBool;
+      bPTPReadyForOrder  : TInOutBool;
+      bPTPErrorBit0      : TInOutBool;
+      bPTPErrorBit1      : TInOutBool;
+      bPTPErrorBit2      : TInOutBool;
+      bPTPErrorBit3      : TInOutBool;
+      bPTPErrorBit4      : TInOutBool;
+      bPTPCsvFileWritten : TInOutBool;
+      bPTPInStandbyMode  : TInOutBool;
+      bPTPInEmissionMode : TInOutBool;
+   END_STRUCT;
+   
+   tsPhototermDataOut : STRUCT
+      bPTPTokenBit1         : TInOutBool;
+      bPTPTokenBit2         : TInOutBool;
+      bPTPTokenBit3         : TInOutBool;
+      bPTPPaintCodeBit0     : TInOutBool;
+      bPTPPaintCodeBit1     : TInOutBool;
+      bPTPPaintCodeBit2     : TInOutBool;
+      bPTPPaintCodeBit3     : TInOutBool;
+      bPTPPaintCodeBit4     : TInOutBool;
+      bPTPPaintCodeBit5     : TInOutBool;
+      bPTPPaintCodeBit6     : TInOutBool;
+      bPTPPaintCodeBit7     : TInOutBool;
+      bPTPReleaseSingleMeas : TInOutBool;
+      bPTPNewMeasSeq        : TInOutBool;
+      bPTPLaserOn	          : TInOutBool;
+   END_STRUCT;  
+
+   tsPhototermHMIDataIn : STRUCT
+      bPTPSoftwareReady  : TInOutBool;
+      bPTPReadyForOrder  : TInOutBool;
+      iPTPError          : TInOutWord;
+      bPTPCsvFileWritten : TInOutBool;
+      bPTPInStandbyMode  : TInOutBool;
+      bPTPInEmissionMode : TInOutBool;
+      iPTPThickness      : TInOutWord;
+   END_STRUCT;
+   
+   tsPhototermHMIDataOut : STRUCT
+      iPTPToken             : TInOutWord;
+      iPTPPaintCode         : TInOutWord;
+      bPTPReleaseSingleMeas : TInOutBool;
+      bPTPNewMeasSeq        : TInOutBool;
+      bPTPLaserOn	          : TInOutBool;
+   END_STRUCT;  
+   
+   tsPhototermData : STRUCT
+      In  : tsPhototermDataIn;
+      Out : tsPhototermDataOut;
+   END_STRUCT;
+
+   tsPhototermHMIData : STRUCT
+      In  : tsPhototermHMIDataIn;
+      Out : tsPhototermHMIDataOut;
+   END_STRUCT;
+END_TYPE
+
+VAR
+   bCfgDataRead          : BOOL;
+
+   bSingleMeasStarted : BOOL;
+   bPTPSwReady        : BOOL;
+   bPTPReadyForOrder  : BOOL;
+   bPTPCsvFileWritten : BOOL;
+   bPTPInEmissionMode : BOOL;
+   bPTPInStandbyMode  : BOOL;
+   bErrorPending      : BOOL;
+   iErrorNo           : INT;
+   FilmThickness      : TRcuPacPhototermAnalogValue;
+   
+   Order              : TRcuPacPhototermOrder;
+END_VAR
+
+VAR PRIVATE
+   myRobot         : MAPTO TRcuRobot;
+   myPaintChecker  : MAPTO TRcuPaintChecker;
+   instId          : DINT;    // instance identification number
+
+   iToken          : INT;
+   
+   ActualMeasPoint : MAPTO TRcuPacMeasurePoint;
+   
+   Signals         : tsPhototermData;   
+   HMISignals      : tsPhototermHMIData;
+   
+   bMappingOk      : BOOL;
+   bSimulateDevice : BOOL;
+END_VAR
+
+//------------------------------------------------------------------------
+// Read configuration and map PB
+//------------------------------------------------------------------------
+ROUTINE ReadConfig(locRobot : TRcuRobot) 
+                  : BOOL
+   VAR
+      bError          : BOOL := TRUE;
+      iCatalogHdl     : DINT;    // handle of the Configuration directory
+      iTemp           : DINT;
+      s               : STRING;
+   END_VAR
+    
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   myPaintChecker := MAP(locRobot.paintChecker);
+   
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuPacPhototerm_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuPacPhototerm.ReadConfig");
+      RETURN TRUE;
+   END_IF; 
+      
+   //read robotcontrol.cfg
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "PaintChecker", iCatalogHdl) THEN
+      IF NOT CatalogReadIntRange(iCatalogHdl, "SimulateDevice", iTemp, 0, 1, FALSE) THEN
+         bSimulateDevice := FALSE;
+      ELSE
+         bSimulateDevice := (iTemp=1);
+      END_IF;
+      
+      IF bSimulateDevice THEN
+         myRobot.DebugPrint(eTracePaintChecker,  
+                            "PAC PTP: Phototerm PS Online in Simulation: Inputs are copied from HMI interface -----");
+      END_IF;
+
+      IF (myPaintChecker.type = eRcuPaintCheckerPhototerm)  THEN
+          //Map In-/Out-Signals from PB-Master
+          MapPhototermSignalsPB(myRobot.kinListInx);
+          
+          //Map In/Out signals from IEC
+          MapPhototermSignalsIEC(myRobot.kinListInx);
+          
+          
+          bError := NOT bMappingOk OR FilmThickness.ReadConfig(myRobot);
+      END_IF;
+   END_IF;
+   
+   IF bError THEN 
+      myRobot.DebugPrint(eTracePaintChecker,  "PAC PTP: Boot-up Phototerm PS Online failed");
+      
+      RcuSetMessageOnce(TRcuPacPhototerm_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        2, 
+                        instId, 
+                        "TRcuPacPhototerm.ReadConfig");
+
+      RETURN bError;
+   ELSE
+      bCfgDataRead := TRUE;
+   END_IF;
+ 
+   RETURN bError;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE InitPaintCheckerPhototerm()
+
+   IF NOT bCfgDataRead THEN
+      RcuSetMessageOnce(TRcuPacPhototerm_ErrReadConfig, 
+                        myRobot.kinListInx, 
+                        3, 
+                        instId, 
+                        "TRcuPacPhototerm.InitPaintCheckerPhototerm");
+      RETURN;
+   END_IF;
+   
+   WAIT myRobot.initKinComplete;
+   
+   START ObserveErrorBits();
+   START ObserveInputBits();
+   START ObserveOutputs();
+   START ObserveLaserOn();
+   START ObserveOrder();
+   
+   IF FilmThickness.Config.bEnabled THEN
+      START FilmThickness.Init();
+   END_IF;
+   
+   IF bSimulateDevice THEN
+      RcuSetMessageOnce(TRcuPacPhototerm_InfoInSimMode, 
+                        myRobot.kinListInx, 
+                        1, 
+                        instId, 
+                        "TRcuPacPhototerm.InitPaintCheckerPhototerm");
+      START ObserveInputsFromHMI();
+   END_IF;
+   
+   myRobot.DebugPrint(eTracePaintChecker,  "PAC PTP: Boot-up Phototerm PS Online finished");
+     
+   RETURN;
+END_ROUTINE
+
+ROUTINE MapPhototermSignalsIEC(CONST iRobot : DINT) 
+                              PRIVATE
+   bMappingOk := TRUE;
+     
+   MapAndCheckBool(iRobot, HMISignals.In.bPTPSoftwareReady,  cSV_bPacFromPTPSoftwareReady[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.In.bPTPReadyForOrder,  cSV_bPacFromPTPReadyForOrder[iRobot]);
+   MapAndCheckWord(iRobot, HMISignals.In.iPTPError,          cSV_iPacFromPTPErrorNo[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.In.bPTPCsvFileWritten, cSV_bPacFromPTPCsvFileWritten[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.In.bPTPInStandbyMode,  cSV_bPacFromPTPInStandbyMode[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.In.bPTPInEmissionMode, cSV_bPacFromPTPInEmissionMode[iRobot]);
+   MapAndCheckWord(iRobot, HMISignals.In.iPTPThickness,      cSV_iPacFromPTPFilmThickness[iRobot]);
+    
+   MapAndCheckWord(iRobot, HMISignals.Out.iPTPToken,             cSV_iPacToPTPToken[iRobot]);
+   MapAndCheckWord(iRobot, HMISignals.Out.iPTPPaintCode,         cSV_iPacToPTPPaintCode[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.Out.bPTPReleaseSingleMeas, cSV_bPacToPTPReleaseSingleMeas[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.Out.bPTPNewMeasSeq,        cSV_bPacToPTPNewMeasSeq[iRobot]);
+   MapAndCheckBool(iRobot, HMISignals.Out.bPTPLaserOn,           cSV_bPacToPTPLaserOn[iRobot]);
+
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPaintChecker.MapPhototermSignalsIEC");
+   END_IF;   
+END_ROUTINE
+
+ROUTINE MapPhototermSignalsPB(CONST iRobot : DINT) 
+                             PRIVATE
+   bMappingOk := TRUE;
+     
+   MapAndCheckBool(iRobot, Signals.In.bPTPSoftwareReady,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPSoftwareReady);
+   MapAndCheckBool(iRobot, Signals.In.bPTPReadyForOrder,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPReadyForOrder);
+   MapAndCheckBool(iRobot, Signals.In.bPTPErrorBit0,      "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPErrorBit0);
+   MapAndCheckBool(iRobot, Signals.In.bPTPErrorBit1,      "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPErrorBit1);
+   MapAndCheckBool(iRobot, Signals.In.bPTPErrorBit2,      "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPErrorBit2);
+   MapAndCheckBool(iRobot, Signals.In.bPTPErrorBit3,      "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPErrorBit3);
+   MapAndCheckBool(iRobot, Signals.In.bPTPErrorBit4,      "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPErrorBit4);
+   MapAndCheckBool(iRobot, Signals.In.bPTPCsvFileWritten, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWI_mPTPCsvFileWritten);
+   MapAndCheckBool(iRobot, Signals.In.bPTPInStandbyMode,  "RCU" + STR(gyiNrRcu[iRobot]) + "." + cSLI_mPTPInStandbyMode);
+   MapAndCheckBool(iRobot, Signals.In.bPTPInEmissionMode, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cSLI_mPTPInEmissionMode);
+    
+   MapAndCheckBool(iRobot, Signals.Out.bPTPTokenBit1,         "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPTokenBit1);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPTokenBit2,         "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPTokenBit2);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPTokenBit3,         "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPTokenBit3);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit0,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit0);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit1,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit1);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit2,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit2);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit3,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit3);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit4,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit4);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit5,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit5);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit6,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit6);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPPaintCodeBit7,     "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPPaintCodeBit7);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPReleaseSingleMeas, "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPReleaseSingleMeas);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPNewMeasSeq,        "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPNewMeasSeq);
+   MapAndCheckBool(iRobot, Signals.Out.bPTPLaserOn,           "RCU" + STR(gyiNrRcu[iRobot]) + "." + cHWO_mPTPLaserOn);
+
+   IF NOT bMappingOk THEN
+      gbBootupError := TRUE;
+      RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPacPhototerm.MapPhototermSignalsPB");
+   END_IF;   
+END_ROUTINE
+
+ROUTINE MapAndCheckBool(CONST iRobot : DINT; 
+                        bMapVar : TInOutBool; 
+                        sSvVarName : STRING) 
+                       PRIVATE
+
+    bMapVar.svBool := MAPX(sSvVarName);    
+    IF NOT IS_MAPPED(bMapVar.svBool) THEN
+       bMappingOk := FALSE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMapInputBit, 
+                         myRobot.kinListInx, 
+                         1, 
+                         0, 
+                         "TRcuPaintChecker.MapAndCheckBool", 
+                         sSvVarName);
+    END_IF;  
+END_ROUTINE
+
+ROUTINE MapAndCheckWord(CONST iRobot : DINT; 
+                        bOutput : TInOutWord; 
+                        sSvVarName : STRING) 
+                       PRIVATE
+
+    bOutput.svWord := MAPX(sSvVarName);    
+    IF NOT IS_MAPPED(bOutput.svWord) THEN
+       bMappingOk := FALSE;
+       RcuSetMessageOnce(RcuFieldbusSlave_ErrMapOutWord, 
+                         myRobot.kinListInx, 
+                         1, 
+                         0, 
+                         "TRcuPaintChecker.MapAndCheckWordOut", 
+                         sSvVarName);
+    END_IF;  
+
+END_ROUTINE
+
+ROUTINE ResetOnProgStart()
+    IF Signals.Out.bPTPNewMeasSeq.svBool THEN
+       Signals.Out.bPTPNewMeasSeq.svBool := FALSE;
+       myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Signal 'NewMeasSeq' is reset on program start.");
+   END_IF;
+    
+    IF Signals.Out.bPTPReleaseSingleMeas.svBool THEN
+       Signals.Out.bPTPReleaseSingleMeas.svBool := FALSE;
+       myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Signal 'ReleaseSingleMeas' is set on program start.");
+    END_IF;    
+END_ROUTINE
+
+ROUTINE InitNewMeasSequence()   
+   IF bPTPReadyForOrder AND NOT bErrorPending THEN
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: New measurement sequence is started");
+      SendTokenToPTP();
+      SendPaintCodeToPTP();
+   
+      Order := eStartNewMeasSequence;
+   ELSE
+      RcuSetMessageOnce(TRcuPacPhototerm_NotReady4MeasS, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPacPhototerm.IniNewMeasSequence");
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP Error: New measurement sequence is started and errors are pending or PTP is not ready");
+   END_IF;   
+END_ROUTINE
+
+ROUTINE StopMeasSequence()
+   IF Signals.Out.bPTPNewMeasSeq.svBool THEN
+     myRobot.DebugPrint(eTracePaintChecker, 
+                        "PAC PTP: New measurement sequence is stopped");
+     SetNewMeasSequenceToPTP(FALSE);
+   ELSE
+      RcuSetMessageOnce(TRcuPacPhototerm_WarStopNoStart, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPacPhototerm.StopMeasSequence");
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: New measurement sequence is stopped but a sequence was not started");
+   END_IF;
+END_ROUTINE
+
+ROUTINE ObserveErrorBits() 
+                        PRIVATE
+   VAR
+      bChgErrorBit0 : BOOL;
+      bChgErrorBit1 : BOOL;
+      bChgErrorBit2 : BOOL;
+      bChgErrorBit3 : BOOL;
+      bChgErrorBit4 : BOOL;
+      ident         : DINT;
+   END_VAR 
+ 
+   bChgErrorBit0 := IS_CHANGED(Signals.In.bPTPErrorBit0.svBool);
+   bChgErrorBit1 := IS_CHANGED(Signals.In.bPTPErrorBit1.svBool);
+   bChgErrorBit2 := IS_CHANGED(Signals.In.bPTPErrorBit2.svBool);
+   bChgErrorBit3 := IS_CHANGED(Signals.In.bPTPErrorBit3.svBool);
+   bChgErrorBit4 := IS_CHANGED(Signals.In.bPTPErrorBit4.svBool);
+
+   WHILE TRUE DO
+      IF NOT(Signals.In.bPTPErrorBit0.svBool OR 
+             Signals.In.bPTPErrorBit1.svBool OR
+             Signals.In.bPTPErrorBit2.svBool OR
+             Signals.In.bPTPErrorBit3.svBool OR
+             Signals.In.bPTPErrorBit4.svBool) THEN
+         bErrorPending := FALSE;
+         iErrorNo := 0;         
+      ELSE
+         iErrorNo := 0;         
+         IF Signals.In.bPTPErrorBit4.svBool THEN
+            iErrorNo := iErrorNo + INT(Expt(2, 4));
+         END_IF;         
+         IF Signals.In.bPTPErrorBit3.svBool THEN
+            iErrorNo := iErrorNo + INT(Expt(2, 3));
+         END_IF;
+         IF Signals.In.bPTPErrorBit2.svBool THEN
+            iErrorNo := iErrorNo + INT(Expt(2, 2));
+         END_IF;
+         IF Signals.In.bPTPErrorBit1.svBool THEN
+            iErrorNo := iErrorNo + INT(Expt(2, 1));
+         END_IF;
+         IF Signals.In.bPTPErrorBit0.svBool THEN
+            iErrorNo := iErrorNo + INT(Expt(2, 0));
+         END_IF;
+         
+         HMISignals.In.iPTPError.svWord := iErrorNo;
+         
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Phototerm error number was set to " + STR(iErrorNo));
+                               
+         bErrorPending := TRUE;
+
+         ident := 0;    
+         CASE iErrorNo OF
+             9:   ident := TRcuPacPhototerm_PTPErr09;
+            10:   ident := TRcuPacPhototerm_PTPErr10;
+            15:   ident := TRcuPacPhototerm_PTPErr15;
+            18:   ident := TRcuPacPhototerm_PTPErr18;
+            19:   ident := TRcuPacPhototerm_PTPErr19;
+            20:   ident := TRcuPacPhototerm_PTPErr20;
+            22:   ident := TRcuPacPhototerm_PTPErr22;
+            23:   ident := TRcuPacPhototerm_PTPErr23;
+            24:   ident := TRcuPacPhototerm_PTPErr24;
+            25:   ident := TRcuPacPhototerm_PTPErr25;
+            26:   ident := TRcuPacPhototerm_PTPErr26;
+            27:   ident := TRcuPacPhototerm_PTPErr27;
+         ELSE
+            ident := TRcuPacPhototerm_PTPErrUnknown;
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Unknown error number received from Phototerm PS Online: " + STR(iErrorNo));                
+         END_CASE;
+         
+         IF ident > 0 THEN 
+            RcuSetMessageOnce(ident, 
+                              myRobot.kinListInx, 
+                              1, 
+                              0, 
+                              "TRcuPacPhototerm.ObserveErrorBits");                       
+         END_IF;
+      END_IF;
+      
+      WAIT bChgErrorBit0 OR bChgErrorBit1 OR bChgErrorBit2 OR bChgErrorBit3 OR bChgErrorBit4;
+      bChgErrorBit0 := FALSE;
+      bChgErrorBit1 := FALSE;
+      bChgErrorBit2 := FALSE;
+      bChgErrorBit3 := FALSE;
+      bChgErrorBit4 := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveOutputs() PRIVATE
+   VAR
+      bChgTokenBit1         : BOOL;
+      bChgTokenBit2         : BOOL;
+      bChgTokenBit3         : BOOL;
+      bChgPaintCodeBit0     : BOOL;
+      bChgPaintCodeBit1     : BOOL;
+      bChgPaintCodeBit2     : BOOL;
+      bChgPaintCodeBit3     : BOOL;
+      bChgPaintCodeBit4     : BOOL;
+      bChgReleaseSingleMeas : BOOL;
+      bChgNewMeasSeq        : BOOL;
+      bChgLaserOn	          : BOOL;
+      iTmp                  : INT;
+   END_VAR 
+ 
+   bChgTokenBit1         := IS_CHANGED(Signals.Out.bPTPTokenBit1.svBool);
+   bChgTokenBit2         := IS_CHANGED(Signals.Out.bPTPTokenBit2.svBool);
+   bChgTokenBit3         := IS_CHANGED(Signals.Out.bPTPTokenBit3.svBool);
+   bChgPaintCodeBit0     := IS_CHANGED(Signals.Out.bPTPPaintCodeBit0.svBool);
+   bChgPaintCodeBit1     := IS_CHANGED(Signals.Out.bPTPPaintCodeBit1.svBool);
+   bChgPaintCodeBit2     := IS_CHANGED(Signals.Out.bPTPPaintCodeBit2.svBool);
+   bChgPaintCodeBit3     := IS_CHANGED(Signals.Out.bPTPPaintCodeBit3.svBool);
+   bChgPaintCodeBit4     := IS_CHANGED(Signals.Out.bPTPPaintCodeBit4.svBool);
+   bChgReleaseSingleMeas := IS_CHANGED(Signals.Out.bPTPReleaseSingleMeas.svBool);
+   bChgNewMeasSeq        := IS_CHANGED(Signals.Out.bPTPNewMeasSeq.svBool);
+   bChgLaserOn           := IS_CHANGED(Signals.Out.bPTPLaserOn.svBool);
+
+   WHILE TRUE DO
+      WAIT bChgTokenBit1 OR  bChgTokenBit2 OR  bChgTokenBit3 OR
+           bChgPaintCodeBit0 OR bChgPaintCodeBit1 OR bChgPaintCodeBit2 OR bChgPaintCodeBit3 OR bChgPaintCodeBit4 OR
+           bChgReleaseSingleMeas OR
+           bChgNewMeasSeq OR
+           bChgLaserOn;
+      
+      IF bChgTokenBit1 OR  bChgTokenBit2 OR  bChgTokenBit3 THEN
+         iTmp := 0;         
+         IF Signals.Out.bPTPTokenBit3.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 2));
+         END_IF;
+         IF Signals.Out.bPTPTokenBit2.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 1));
+         END_IF;
+         IF Signals.Out.bPTPTokenBit1.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 0));
+         END_IF;
+ 
+         HMISignals.Out.iPTPToken.svWord := iTmp;
+         bChgTokenBit1 := FALSE;
+         bChgTokenBit2 := FALSE;
+         bChgTokenBit3 := FALSE;
+      END_IF;
+
+      IF bChgPaintCodeBit0 OR bChgPaintCodeBit1 OR bChgPaintCodeBit2 OR bChgPaintCodeBit3 OR bChgPaintCodeBit4 THEN
+         iTmp := 0;         
+         IF Signals.Out.bPTPPaintCodeBit4.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 4));
+         END_IF;
+         IF Signals.Out.bPTPPaintCodeBit3.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 3));
+         END_IF;
+         IF Signals.Out.bPTPPaintCodeBit2.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 2));
+         END_IF;
+         IF Signals.Out.bPTPPaintCodeBit1.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 1));
+         END_IF;
+         IF Signals.Out.bPTPPaintCodeBit0.svBool THEN
+            iTmp := iTmp + INT(Expt(2, 0));
+         END_IF;
+
+         HMISignals.Out.iPTPPaintCode.svWord := iTmp;
+         bChgPaintCodeBit0 := FALSE;
+         bChgPaintCodeBit1 := FALSE;
+         bChgPaintCodeBit2 := FALSE;
+         bChgPaintCodeBit3 := FALSE;
+         bChgPaintCodeBit4 := FALSE;
+      END_IF;
+
+      IF bChgReleaseSingleMeas THEN
+         HMISignals.Out.bPTPReleaseSingleMeas.svBool := Signals.Out.bPTPReleaseSingleMeas.svBool;
+         bChgReleaseSingleMeas := FALSE;
+      END_IF;
+
+      IF bChgNewMeasSeq THEN
+         HMISignals.Out.bPTPNewMeasSeq.svBool := Signals.Out.bPTPNewMeasSeq.svBool;
+         bChgNewMeasSeq := FALSE;
+      END_IF;
+
+      IF bChgLaserOn THEN
+         HMISignals.Out.bPTPLaserOn.svBool := Signals.Out.bPTPLaserOn.svBool;
+         bChgLaserOn := FALSE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE OnSoftwareReadyChanged()
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Signal 'SoftwareReady' is changed from " + STR(bPTPSwReady) + 
+                            " to " + STR(Signals.In.bPTPSoftwareReady.svBool));
+         bPTPSwReady := Signals.In.bPTPSoftwareReady.svBool;
+
+         HMISignals.In.bPTPSoftwareReady.svBool := Signals.In.bPTPSoftwareReady.svBool;
+
+         IF bPTPSwReady THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm PS Online software is ready");
+         ELSE
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm PS Online software is not ready");
+   //###         RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+   //###                           1, 0, "TRcuPaintChecker.ObservePhototerm", STR(cSequenceTime), "Automatic");
+         END_IF;
+END_ROUTINE
+      
+ROUTINE OnReadyForOrderChanged()
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Signal 'ReadyForOrder' is changed from " + STR(bPTPReadyForOrder) + 
+                            " to " + STR(Signals.In.bPTPReadyForOrder.svBool));
+         
+         IF bSingleMeasStarted THEN
+             IF bPTPReadyForOrder AND Signals.In.bPTPReadyForOrder.svBool THEN
+                 bSingleMeasStarted := FALSE;          
+             END_IF;
+         END_IF;
+
+         bPTPReadyForOrder := Signals.In.bPTPReadyForOrder.svBool;
+
+         HMISignals.In.bPTPReadyForOrder.svBool := Signals.In.bPTPReadyForOrder.svBool;
+         
+         IF bPTPReadyForOrder THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm PS Online is ready for order");
+         ELSE            
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm PS Online is not ready for order");
+         END_IF;         
+END_ROUTINE
+
+ROUTINE OnStandbyModeChanged()
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Signal 'StandbyMode' is changed from " + STR(bPTPInStandbyMode) + 
+                            " to " + STR(Signals.In.bPTPInStandbyMode.svBool));
+         
+         bPTPInStandbyMode := Signals.In.bPTPInStandbyMode.svBool;
+
+         HMISignals.In.bPTPInStandbyMode.svBool := Signals.In.bPTPInStandbyMode.svBool;
+END_ROUTINE
+
+ROUTINE OnEmissionModeChanged()
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Signal 'EmissionMode' is changed from " + STR(bPTPInEmissionMode) + 
+                            " to " + STR(Signals.In.bPTPInEmissionMode.svBool));
+         
+         bPTPInEmissionMode := Signals.In.bPTPInEmissionMode.svBool;
+
+         HMISignals.In.bPTPInEmissionMode.svBool := Signals.In.bPTPInEmissionMode.svBool;
+END_ROUTINE
+
+ROUTINE OnCsvFileWrittenChanged()
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Signal 'CsvFileWritten' is changed from " + STR(bPTPCsvFileWritten) + 
+                            " to " + STR(Signals.In.bPTPCsvFileWritten.svBool));
+         bPTPCsvFileWritten := Signals.In.bPTPCsvFileWritten.svBool;
+
+         HMISignals.In.bPTPCsvFileWritten.svBool := Signals.In.bPTPCsvFileWritten.svBool;
+
+   IF bPTPCsvFileWritten THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm PS Online csv file is written");
+         ELSE            
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm PS Online csv file is reseted");
+         END_IF;
+END_ROUTINE
+
+ROUTINE ObserveInputBits() PRIVATE
+   VAR
+      bChgSwReady        : BOOL;
+      bChgReadyForOrder  : BOOL;
+      bChgStandbyMode    : BOOL;
+      bChgEmissionMode   : BOOL;
+      bChgCsvFileWritten : BOOL;
+   END_VAR 
+ 
+   OnSoftwareReadyChanged();
+   OnReadyForOrderChanged();
+   OnStandbyModeChanged();
+   OnEmissionModeChanged();
+   OnCsvFileWrittenChanged();
+   
+   bChgSwReady        := IS_CHANGED(Signals.In.bPTPSoftwareReady.svBool);
+   bChgReadyForOrder  := IS_CHANGED(Signals.In.bPTPReadyForOrder.svBool);
+   bChgStandbyMode    := IS_CHANGED(Signals.In.bPTPInStandbyMode.svBool);
+   bChgEmissionMode   := IS_CHANGED(Signals.In.bPTPInEmissionMode.svBool);
+   bChgCsvFileWritten := IS_CHANGED(Signals.In.bPTPCsvFileWritten.svBool);
+
+   WHILE TRUE DO
+      WAIT bChgSwReady OR 
+           bChgReadyForOrder OR 
+           bChgCsvFileWritten OR
+           bChgStandbyMode OR
+           bChgEmissionMode;
+      
+      IF bChgSwReady THEN
+         OnSoftwareReadyChanged();
+         bChgSwReady := FALSE;
+      END_IF;
+      
+      IF bChgReadyForOrder THEN
+         OnReadyForOrderChanged();
+         bChgReadyForOrder := FALSE;         
+      END_IF;
+
+      IF bChgStandbyMode THEN
+         OnStandbyModeChanged();
+         bChgStandbyMode := FALSE;         
+      END_IF;
+
+      IF bChgEmissionMode THEN
+         OnEmissionModeChanged();
+         bChgEmissionMode := FALSE;         
+      END_IF;
+
+      IF bChgCsvFileWritten THEN
+         OnCsvFileWrittenChanged();
+         bChgCsvFileWritten := FALSE;   
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveInputsFromHMI()
+   VAR
+      bChgSwReady        : BOOL;
+      bChgReadyForOrder  : BOOL;
+      bChgCsvFileWritten : BOOL;
+      bChgError          : BOOL;
+      bChgStandbyMode    : BOOL;
+      bChgEmissionMode   : BOOL;
+      bChgThickness      : BOOL;
+   END_VAR 
+ 
+   bChgSwReady        := IS_CHANGED(HMISignals.In.bPTPSoftwareReady.svBool);
+   bChgReadyForOrder  := IS_CHANGED(HMISignals.In.bPTPReadyForOrder.svBool);
+   bChgCsvFileWritten := IS_CHANGED(HMISignals.In.bPTPCsvFileWritten.svBool);
+   bChgError          := IS_CHANGED(HMISignals.In.iPTPError.svWord);
+   bChgStandbyMode    := IS_CHANGED(HMISignals.In.bPTPInStandbyMode.svBool);
+   bChgEmissionMode   := IS_CHANGED(HMISignals.In.bPTPInEmissionMode.svBool);
+   bChgThickness      := IS_CHANGED(HMISignals.In.iPTPThickness.svWord);
+
+   WHILE TRUE DO
+      WAIT bChgSwReady OR 
+           bChgReadyForOrder OR 
+           bChgCsvFileWritten OR
+           bChgError OR 
+           bChgThickness OR 
+           bChgStandbyMode OR
+           bChgEmissionMode;
+      
+      IF bChgSwReady THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Simulation : Phototerm Signal 'SoftwareReady' is changed from " + STR(Signals.In.bPTPSoftwareReady.svBool) + 
+                            " to " + STR(HMISignals.In.bPTPSoftwareReady.svBool));
+         bChgSwReady := FALSE;
+
+         Signals.In.bPTPSoftwareReady.svBool := HMISignals.In.bPTPSoftwareReady.svBool;
+      END_IF;
+      
+      IF bChgReadyForOrder THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Simulation : Phototerm Signal 'ReadyForOrder' is changed from " + STR(Signals.In.bPTPReadyForOrder.svBool) + 
+                            " to " + STR(HMISignals.In.bPTPReadyForOrder.svBool));
+         
+         bChgReadyForOrder := FALSE;         
+
+         Signals.In.bPTPReadyForOrder.svBool := HMISignals.In.bPTPReadyForOrder.svBool;
+      END_IF;
+
+      IF bChgCsvFileWritten THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Simulation : Phototerm Signal 'CsvFileWritten' is changed from " + STR(Signals.In.bPTPCsvFileWritten.svBool) + 
+                            " to " + STR(HMISignals.In.bPTPCsvFileWritten.svBool));
+         bChgCsvFileWritten := FALSE;   
+
+         Signals.In.bPTPCsvFileWritten.svBool := HMISignals.In.bPTPCsvFileWritten.svBool;
+      END_IF;
+      
+      IF bChgStandbyMode THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Simulation : Phototerm Signal 'StandbyMode' is changed from " + STR(Signals.In.bPTPInStandbyMode.svBool) + 
+                            " to " + STR(HMISignals.In.bPTPInStandbyMode.svBool));
+         bChgStandbyMode := FALSE;   
+
+         Signals.In.bPTPInStandbyMode.svBool := HMISignals.In.bPTPInStandbyMode.svBool;
+      END_IF;
+      
+      
+      IF bChgEmissionMode THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Simulation : Phototerm Signal 'EmissionMode' is changed from " + STR(Signals.In.bPTPInEmissionMode.svBool) + 
+                            " to " + STR(HMISignals.In.bPTPInEmissionMode.svBool));
+         bChgEmissionMode := FALSE;   
+
+         Signals.In.bPTPInEmissionMode.svBool := HMISignals.In.bPTPInEmissionMode.svBool;
+      END_IF;
+
+      IF bChgError THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Simulation : Phototerm Signal 'Error' is changed to " + STR(HMISignals.In.iPTPError.svWord));
+         bChgError := FALSE;   
+
+         Signals.In.bPTPErrorBit0.svBool := (HMISignals.In.iPTPError.svWord AND cgiMaskBit0) = cgiMaskBit0;
+         Signals.In.bPTPErrorBit1.svBool := (HMISignals.In.iPTPError.svWord AND cgiMaskBit1) = cgiMaskBit1;
+         Signals.In.bPTPErrorBit2.svBool := (HMISignals.In.iPTPError.svWord AND cgiMaskBit2) = cgiMaskBit2;
+         Signals.In.bPTPErrorBit3.svBool := (HMISignals.In.iPTPError.svWord AND cgiMaskBit3) = cgiMaskBit3;
+         Signals.In.bPTPErrorBit4.svBool := (HMISignals.In.iPTPError.svWord AND cgiMaskBit4) = cgiMaskBit4;
+      END_IF;
+
+      IF bChgThickness THEN
+         IF FilmThickness.Config.bEnabled THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP Simulation : Phototerm Signal 'Thickness' is changed to " + STR(HMISignals.In.iPTPThickness.svWord));
+            bChgThickness := FALSE;   
+
+            FilmThickness.iRawValue.svWord := HMISignals.In.iPTPThickness.svWord;
+         END_IF;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE ObserveLaserOn() PRIVATE
+   VAR
+      bChgStandbyMode       : BOOL;
+      bChgEmissionMode      : BOOL;
+      bChgReadyForOrder     : BOOL;
+      bTimeOut              : BOOL;
+   END_VAR
+  
+   WAIT gbBootupFinished;
+  
+   Signals.Out.bPTPLaserOn.svBool := FALSE;
+
+   bChgStandbyMode   := IS_CHANGED(Signals.In.bPTPInStandbyMode.svBool);
+   bChgEmissionMode  := IS_CHANGED(Signals.In.bPTPInEmissionMode.svBool);
+   bChgReadyForOrder := IS_CHANGED(Signals.In.bPTPReadyForOrder.svBool);
+   
+   WHILE TRUE DO
+      WAIT bChgStandbyMode OR 
+           bChgEmissionMode OR
+           bChgReadyForOrder;
+      
+      IF bChgStandbyMode THEN 
+         IF Signals.In.bPTPInStandbyMode.svBool THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm in Standby Mode (Raising edge detected)"); 
+
+            RestartLaser();
+         END_IF;
+      END_IF;
+      
+      IF bChgEmissionMode THEN
+         IF Signals.In.bPTPInEmissionMode.svBool THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Phototerm in Emission Mode (Raising edge detected)"); 
+         END_IF;
+      END_IF;
+            
+      IF bChgReadyForOrder THEN
+         IF Signals.In.bPTPReadyForOrder.svBool  THEN
+            IF Signals.In.bPTPInStandbyMode.svBool AND
+               NOT Signals.In.bPTPInEmissionMode.svBool THEN
+               RestartLaser();
+            END_IF;
+         END_IF;
+      END_IF;
+      
+      IF bChgEmissionMode OR bChgStandbyMode THEN
+         IF Signals.In.bPTPInEmissionMode.svBool THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Measurement device is in Emission Mode"); 
+         ELSIF Signals.In.bPTPInStandbyMode.svBool THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Measurement device is in Stanbdby Mode"); 
+         ELSE
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Measurement device is Off"); 
+         END_IF;
+      END_IF;
+      
+      bChgReadyForOrder := FALSE;
+      bChgEmissionMode  := FALSE;
+      bChgStandbyMode   := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE RestartLaser() PRIVATE
+   VAR
+      bTimeOut              : BOOL;
+   END_VAR
+   
+   // Wait 1000 ms (Length of laser reset strobe
+   bTimeOut := FALSE;
+   SysTimerSet(cSequenceTime, bTimeOut);
+   WAIT bTimeOut;
+
+   IF Signals.In.bPTPReadyForOrder.svBool THEN
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Set signal 'Laser restart/Laser on'"); 
+      Signals.Out.bPTPLaserOn.svBool := TRUE;
+
+      bTimeOut := FALSE;
+      SysTimerSet(cSequenceTime, bTimeOut);
+      WAIT bTimeOut OR NOT Signals.In.bPTPReadyForOrder.svBool;
+
+      IF bTimeOut THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Order 'Laser restart/Laser on' was not detected!"); 
+      ELSE
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Order 'Laser restart/Laser on' was detected!"); 
+      END_IF;
+
+      bTimeOut := FALSE;
+      SysTimerSet(cTrgSignalTime, bTimeOut);
+      WAIT bTimeOut;
+
+      Signals.Out.bPTPLaserOn.svBool := FALSE;
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Reset signal 'Laser restart/Laser on'"); 
+   END_IF;            
+END_ROUTINE
+
+ROUTINE ObserveOrder() PRIVATE
+   VAR
+      bChgOrder : BOOL;
+   END_VAR
+
+   bChgOrder   := IS_CHANGED(Order);
+
+   WHILE TRUE DO
+      WAIT bChgOrder;
+      bChgOrder := FALSE;
+
+      CASE Order OF
+         eNoOrder: // Do nothing
+         eLaserRestartLaserOn:
+            Order := eNoOrder;
+
+         eStartNewMeasSequence:
+            myRobot.WaitMcMicroCycles(1);
+   
+            SetNewMeasSequenceToPTP(TRUE);
+            Order := eNoOrder;
+
+         eStartSingleMeasurement:
+            SetNewSingleMeasToPTP();            
+            Order := eNoOrder;      
+      
+      END_CASE;
+   END_WHILE;
+END_ROUTINE
+   
+ROUTINE SetNewSingleMeasToPTP() PRIVATE
+   VAR
+      bTimeOut : BOOL;
+      iTime    : DINT;
+   END_VAR
+   
+   Signals.Out.bPTPReleaseSingleMeas.svBool := TRUE;
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: Set 'ReleaseSingleMeas' signal to " + STR(Signals.Out.bPTPReleaseSingleMeas.svBool)); 
+
+   // Wait for falling edge of 'ReadyForOrder' signal   
+   bTimeOut := FALSE;
+   SysTimerSet(cTrgSignalTime, bTimeOut);
+   WAIT bTimeOut OR NOT Signals.In.bPTPReadyForOrder.svBool;
+   iTime := SysTimerClear(bTimeOut);
+   
+   IF NOT bTimeOut AND NOT Signals.In.bPTPReadyForOrder.svBool THEN
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Order 'SingleMeasurement' was recognized"); 
+
+      // Reset strobe after 350 ms 
+      IF cTrgSignalTime-iTime > 0  THEN
+        bTimeOut := FALSE;
+        SysTimerSet(cTrgSignalTime-iTime, bTimeOut);
+        WAIT bTimeOut;
+      END_IF;
+
+      Signals.Out.bPTPReleaseSingleMeas.svBool := FALSE;                            
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Set 'ReleaseSingleMeas' signal to " + STR(Signals.Out.bPTPReleaseSingleMeas.svBool)); 
+                
+      // Wait for raising edge of 'ReadyForOrder' signal
+      bTimeOut := FALSE;
+      SysTimerSet(cTimeoutOrderNewMeasSeq, bTimeOut);
+      WAIT bTimeOut OR Signals.In.bPTPReadyForOrder.svBool;
+
+      IF NOT bTimeOut AND Signals.In.bPTPReadyForOrder.svBool THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Order 'SingleMeasurement' was finished with error number : " + STR(iErrorNo)); 
+
+         IF FilmThickness.Config.bEnabled THEN
+            IF IS_MAPPED(ActualMeasPoint) THEN
+               myPaintChecker.measureData.SetAndCheckFilmThickness(ActualMeasPoint, 
+                                                                   FilmThickness.GetValue());
+            END_IF;            
+         END_IF;
+         
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Signal 'ReadyForOrder' = TRUE" ); 
+      ELSE
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Order 'SingleMeasurement' was finished with timeout"); 
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Timeout on waiting for raising edge of signal 'ReadyForOrder'");          
+
+         IF FilmThickness.Config.bEnabled THEN
+            IF IS_MAPPED(ActualMeasPoint) THEN
+               myPaintChecker.measureData.SetAndCheckFilmThickness(ActualMeasPoint, 
+                                                                   cPacFilmThicknessNotValid);
+            END_IF;            
+         END_IF;                             
+      END_IF;          
+   ELSE
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Order 'SingleMeasurement' was not recognized"); 
+
+      IF FilmThickness.Config.bEnabled THEN
+         IF IS_MAPPED(ActualMeasPoint) THEN
+            myPaintChecker.measureData.SetAndCheckFilmThickness(ActualMeasPoint, 
+                                                                cPacFilmThicknessNotValid);
+         END_IF;            
+      END_IF;                             
+                         
+      Signals.Out.bPTPReleaseSingleMeas.svBool := FALSE;                            
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP: Set 'ReleaseSingleMeas' signal to " + STR(Signals.Out.bPTPReleaseSingleMeas.svBool)); 
+   END_IF;
+END_ROUTINE
+   
+ROUTINE SetNewMeasSequenceToPTP(start : BOOL) 
+                               PRIVATE
+   VAR
+      bTimeOut : BOOL;
+   END_VAR
+  
+   Signals.Out.bPTPNewMeasSeq.svBool := start AND NOT bErrorPending;
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: Set 'NewMeasurementSeries' signal to " + STR(Signals.Out.bPTPNewMeasSeq.svBool)); 
+
+   IF Signals.Out.bPTPNewMeasSeq.svBool THEN
+      // Wait for falling edge of 'ReadyForOrder' signal
+      SysTimerSet(cTimeoutOrderAck, bTimeOut);
+      WAIT bTimeOut OR NOT Signals.In.bPTPReadyForOrder.svBool;
+     
+      IF NOT bTimeOut AND NOT Signals.In.bPTPReadyForOrder.svBool THEN
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Order 'NewMeasurementSeries' was recognized"); 
+
+         // Wait for raising edge of 'ReadyForOrder' signal
+         SysTimerSet(cTimeoutOrderNewMeasSeq, bTimeOut);
+         WAIT bTimeOut OR Signals.In.bPTPReadyForOrder.svBool;
+ 
+         IF NOT bTimeOut AND Signals.In.bPTPReadyForOrder.svBool THEN
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Order 'NewMeasurementSeries' was finished with error number : " + STR(iErrorNo)); 
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Signal 'ReadyForOrder' = TRUE" ); 
+         ELSE
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Order 'NewMeasurementSeries' was finished with timeout"); 
+            myRobot.DebugPrint(eTracePaintChecker, 
+                               "PAC PTP: Timeout on waiting for raising edge of signal 'ReadyForOrder'");          
+         END_IF;
+      ELSE
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: Order 'NewMeasurementSeries' was not recognized"); 
+
+         Signals.Out.bPTPNewMeasSeq.svBool := FALSE;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+ROUTINE SendTokenToPTP() PRIVATE
+   IF iToken < 7 THEN
+      iToken := iToken + 1;
+   ELSE
+      iToken := 1;
+   END_IF;
+
+   myPaintChecker.measureData.iToken := iToken;
+
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: Token is set to " + STR(iToken));
+
+   Signals.Out.bPTPTokenBit1.svBool := (iToken AND cgiMaskBit0) = cgiMaskBit0;
+   Signals.Out.bPTPTokenBit2.svBool := (iToken AND cgiMaskBit1) = cgiMaskBit1;
+   Signals.Out.bPTPTokenBit3.svBool := (iToken AND cgiMaskBit2) = cgiMaskBit2;
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'TokenBit1' is set to " + STR(Signals.Out.bPTPTokenBit1.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'TokenBit2' is set to " + STR(Signals.Out.bPTPTokenBit2.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'TokenBit3' is set to " + STR(Signals.Out.bPTPTokenBit3.svBool));
+END_ROUTINE
+
+ROUTINE SendPaintCodeToPTP() PRIVATE
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: PaintCode is set to " + STR(myPaintChecker.measureData.iColorGroup));
+
+   Signals.Out.bPTPPaintCodeBit0.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit0) = cgiMaskBit0;
+   Signals.Out.bPTPPaintCodeBit1.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit1) = cgiMaskBit1;
+   Signals.Out.bPTPPaintCodeBit2.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit2) = cgiMaskBit2;
+   Signals.Out.bPTPPaintCodeBit3.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit3) = cgiMaskBit3;
+   Signals.Out.bPTPPaintCodeBit4.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit4) = cgiMaskBit4;
+   Signals.Out.bPTPPaintCodeBit5.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit5) = cgiMaskBit5;
+   Signals.Out.bPTPPaintCodeBit6.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit6) = cgiMaskBit6;
+   Signals.Out.bPTPPaintCodeBit7.svBool := (myPaintChecker.measureData.iColorGroup AND cgiMaskBit7) = cgiMaskBit7;
+
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit0' is set to " + STR(Signals.Out.bPTPPaintCodeBit0.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit1' is set to " + STR(Signals.Out.bPTPPaintCodeBit1.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit2' is set to " + STR(Signals.Out.bPTPPaintCodeBit2.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit3' is set to " + STR(Signals.Out.bPTPPaintCodeBit3.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit4' is set to " + STR(Signals.Out.bPTPPaintCodeBit4.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit5' is set to " + STR(Signals.Out.bPTPPaintCodeBit5.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit6' is set to " + STR(Signals.Out.bPTPPaintCodeBit6.svBool));
+   myRobot.DebugPrint(eTracePaintChecker, 
+                      "PAC PTP: 'PaintCodeBit7' is set to " + STR(Signals.Out.bPTPPaintCodeBit7.svBool));
+
+END_ROUTINE
+
+ROUTINE SignalGunOn(point : TRcuPacMeasurePoint)
+   IF bPTPReadyForOrder THEN
+      IF Signals.Out.bPTPNewMeasSeq.svBool THEN
+         point.bDeviceNotReady:=FALSE;
+         point.rFilmThickness  := cPacFilmThicknessNotValid;
+         
+         IF FilmThickness.Config.bEnabled THEN
+            ActualMeasPoint := MAP(point);
+         END_IF;
+         
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP: New single measurement started");
+      
+         Order := eStartSingleMeasurement;
+      ELSE
+         myRobot.DebugPrint(eTracePaintChecker, 
+                            "PAC PTP Error: No measurement series started and a single measurement start");
+         RcuSetMessageOnce(TRcuPacPhototerm_WarMeasNoStart, 
+                           myRobot.kinListInx, 
+                           1, 
+                           0, 
+                           "TRcuPacPhototerm.SignalGunOn");
+      END_IF;
+   ELSE
+      point.bDeviceNotReady:=TRUE;
+                           
+
+      IF FilmThickness.Config.bEnabled THEN
+         myPaintChecker.measureData.SetAndCheckFilmThickness(point, 
+                                                             cPacFilmThicknessNotValid);
+      END_IF;                             
+                           
+      myRobot.DebugPrint(eTracePaintChecker, 
+                         "PAC PTP Error: New single measurement is started and errors are pending or PTP is not ready");
+      RcuSetMessageOnce(TRcuPacPhototerm_NotReady4SnglM, 
+                        myRobot.kinListInx, 
+                        1, 
+                        0, 
+                        "TRcuPacPhototerm.SignalGunOn");
+   END_IF;
+END_ROUTINE

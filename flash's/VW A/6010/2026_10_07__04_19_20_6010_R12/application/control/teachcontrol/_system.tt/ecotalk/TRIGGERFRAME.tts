@@ -1,0 +1,207 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2003 Dürr Systems GmbH APT                                 *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Date         26.10.2004                                                  *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       TRIGGERFRAME.tts                                            *
+*    Description: TRIGGERFRAME like EcoTalk                                   *
+*                                                                             *
+*-----------------------------------------------------------------------------
+* 20.01.05 nmr: Changes to give the possibility to move towards the triggerpositions
+* 05.10.05 BIT: Added trigger Start color change
+* 27.02.06 BMA: new computation of the trigger when the triggerframe is changed
+*)
+NAME TRIGGERFRAME; { prefix="trigger" }
+INHERIT TRcuTrigger;
+
+USER;
+
+TYPE GLOBAL USER        //If Enumeration does not start with 0 it causes problems in Teachview
+   GUNONOFF : (GunOn, GunOff);
+   //FCB: Special VW Anchieta AirBlast, increase number of guns from 4 to 5
+   GUNNO          : (GUN1, GUN2, GUN3, GUN4, GUN5);
+// 09.04.2010 KOC: Tame of Commands moved to EcotalkVariables.ttp 
+//   COMMAND  : (EndOfBody, DoSoftPurge, TurningMaskOn, TurningMaskOff, BlowingAirOn, BlowingAirOff,
+//               VisionTrigger, LastVisionTrigger);
+END_TYPE
+
+VAR USER
+   Coord : COORDTYPE := Object;
+   Nx    : REAL;
+   Ny    : REAL;
+   Nz    : REAL;
+   Dist  : REAL;
+END_VAR
+
+
+ROUTINE TriggerGun(elem : TRcuKinListElem; Number : GUNNO; Command : GUNONOFF; 
+                   point : POINT)
+
+   gunNumber := Number + 1;
+   CASE Command OF
+      GunOn  : state := eGunOn;
+      GunOff : state := eGunOff;
+   ELSE
+      ;
+   END_CASE;
+   UpdatePosData(point, elem.kin); // update data after reteaching the point or changing the triggerframe
+   IF state = eGunOn THEN
+      AddJobToList(eTriggerGunOn, elem.kin, point);
+      elem.kin.bGunOffReached:= FALSE;
+      elem.kin.DebugPrint(eTraceTracking, "ROUTINE gun: bGunOffReached:= FALSE"); // debugprint
+   ELSIF state = eGunOff THEN
+      AddJobToList(eTriggerGunOff, elem.kin, point);
+      elem.kin.bGunOffReached:= TRUE;
+      elem.kin.DebugPrint(eTraceTracking, "ROUTINE gun: bGunOffReached:= TRUE"); // debugprint
+   ELSE
+      RcuSetMessageOnce(TRcuProgPath_ErrGunStatWg, elem.kin.kinListInx, 1, instId, 
+         "TriggerGun", GetName(), STR(state), INSTANCE_NAME());
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE TriggerSetBrush(elem : TRcuKinListElem; Number : GUNNO; Brush : DINT; 
+                        point : POINT)
+
+   gunNumber := Number + 1;
+   brushNumber := Brush;
+   UpdatePosData(point, elem.kin); // update data after reteaching the point or changing the triggerframe
+   AddJobToList(eTriggerBrush, elem.kin, point);  
+END_ROUTINE
+
+         
+ROUTINE TriggerMultiGun(elem : TRcuKinListElem; guns : GUNS; point : POINT)
+
+  iMultiGun := 16#0000;
+  IF (guns.N1 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 0) THEN 
+     iMultiGun := iMultiGun OR cgiMaskBit0;
+  END_IF;  
+  IF (guns.N2 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 1) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit1;
+  END_IF;
+  IF (guns.N3 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 2) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit2;
+  END_IF;
+  IF (guns.N4 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 3) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit3;
+  END_IF;
+  IF (guns.N5 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 4) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit4;
+  END_IF;
+  IF (guns.N6 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 5) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit5;
+  END_IF;
+  IF (guns.N7 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 6) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit6;
+  END_IF;
+  IF (guns.N8 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 7) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit7;
+  END_IF;
+  IF (guns.N9 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 8) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit8;
+  END_IF;
+  IF (guns.N10 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 9) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit9;
+  END_IF;
+  IF (guns.N11 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 10) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit10;
+  END_IF;
+  IF (guns.N12 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 11) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit11;
+  END_IF;
+  IF (guns.N13 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 12) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit12;
+  END_IF;
+  IF (guns.N14 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 13) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit13;
+  END_IF;
+  IF (guns.N15 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 14) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit14;
+  END_IF;
+  IF (guns.N16 = GunOn) AND (elem.kin.nrNeedlesMultiGun > 15) THEN
+     iMultiGun := iMultiGun OR cgiMaskBit15;
+  END_IF;
+  PRINT("MULTIGUN=" + STR(iMultiGun));
+  UpdatePosData(point, elem.kin); // update data after reteaching the point or changing the triggerframe
+  IF (iMultiGun <> 16#0000) THEN
+     AddJobToList(eTriggerGunOn, elem.kin, point);
+     elem.kin.bGunOffReached:= FALSE;
+     elem.kin.DebugPrint(eTraceTracking, "ROUTINE gun: bGunOffReached:= FALSE"); // debugprint
+  ELSE
+     AddJobToList(eTriggerGunOff, elem.kin, point);
+     elem.kin.bGunOffReached:= TRUE;
+     elem.kin.DebugPrint(eTraceTracking, "ROUTINE gun: bGunOffReached:= TRUE"); // debugprint
+  END_IF;
+          
+END_ROUTINE         
+         
+//BIT 05.10.05 trigger to tell the IEC-process a command
+ROUTINE TriggerProcessCommand(elem : TRcuKinListElem; Command : COMMAND; point : POINT)
+   
+   command := Command;
+   UpdatePosData(point, elem.kin); // update data after reteaching the point or changing the triggerframe
+
+   IF ((command = COMMAND(VisionTrigger)) OR (command = COMMAND(LastVisionTrigger)))THEN
+      AddJobToList(eTriggerVision, elem.kin, point); 
+   ELSE  
+      AddJobToList(eTriggerProcess, elem.kin, point); 
+   END_IF;
+   
+   // error for invalid process comand number is set in TRcuInterfaceToProcess
+   // RcuSetMessageOnce(TRcuProgPath_ErrProcessCmd, elem.kin.kinListInx, 1, instId, "TriggerProcessCommand", 
+   //    GetName(), STR(command), INSTANCE_NAME());
+         
+END_ROUTINE
+
+
+ROUTINE TriggerBkAction(elem : TRcuKinListElem; point : POINT; PointNr : INT)
+   
+   pointNumber := PointNr;
+   UpdatePosData(point, elem.kin); // update data after reteaching the point or changing the triggerframe
+   AddJobToList(eTriggerBkAction, elem.kin, point);  
+END_ROUTINE
+
+ROUTINE TriggerZAction(elem : TRcuKinListElem; point : POINT; PointNr : INT; type : MP_TYPE)
+   
+   pointNumber := PointNr;
+   mpType := type;
+   UpdatePosData(point, elem.kin); // update data after reteaching the point or changing the triggerframe
+   AddJobToList(eTriggerZAction, elem.kin, point);  
+END_ROUTINE
+
+ROUTINE AddJobToList(CONST type : TRcuTriggerType; kin : TRcuKinematic; 
+   CONST point : POINT) PRIVATE
+  VAR
+   pos : TRcuPositionCart;
+  END_VAR
+
+   IF kin.triggersAsPathPositions THEN
+      kin.DebugPrint(eTraceTrigger, "Trigger not active - move to trigger position (" + GetName() + ")");
+      kin.progPath.isTriggerSegment := TRUE;
+      point.GetCartPos(pos, kin); // create position from original point
+      Move(kin.progPath, pos);
+   ELSE
+      // Enter lJobID in triggerlist
+      // the triggerlist is used by the next call of AppendSegment
+      kin.progPath.AddJobToList(SELF, type);
+   END_IF;
+END_ROUTINE
+     
+
+ROUTINE UpdatePosData(CONST point : POINT; CONST kin : TRcuKinematic) PRIVATE
+   SetTcpDataValid(FALSE);
+   point.GetCartPos(SELF, kin);
+   pointFrame := frame;
+END_ROUTINE
+

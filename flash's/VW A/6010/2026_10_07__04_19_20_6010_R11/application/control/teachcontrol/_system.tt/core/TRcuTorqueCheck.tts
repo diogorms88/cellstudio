@@ -1,0 +1,669 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author      : Schöll                                                      *
+*   E-Mail      : Bjoern.Schoell@durr.com                                     *
+*                                                                             *
+*   Modul       : TRcuTorqueCheck.tts                                         *
+*   Description : controlling functions which use drive torques               *
+*-----------------------------------------------------------------------------*
+* 
+*)
+
+TYPE
+   TOrders : STRUCT
+      maxCheck   : TMaxCheck;
+      minCheck   : TMinCheck;
+      partDetect : TPartDetect;
+   END_STRUCT;
+   
+   TMaxCheck : STRUCT
+      maxBoundary     : REAL;
+      bDoMaxCheck     : BOOL;
+      onlyMonitoring  : BOOL;
+   END_STRUCT;
+   
+   TMinCheck : STRUCT
+      minBoundary     : REAL;
+      bDoMinCheck     : BOOL;
+      onlyMonitoring  : BOOL;
+   END_STRUCT;
+   
+   TPartDetect : STRUCT
+      partBoundary    : REAL;
+      detectDirection : REAL;
+      bDoPartDetect   : BOOL;
+      onlyMonitoring  : BOOL;
+   END_STRUCT;
+   
+   TUserData : STRUCT
+      order          : STRING;
+      axis           : INT;
+      lastValue      : REAL;
+      minValue       : REAL;
+      maxValue       : REAL;
+      boundery       : REAL;
+      onlyMonitoring : DINT;
+   END_STRUCT;
+END_TYPE
+
+VAR
+   enableMinMaxCheck           : BOOL;
+   enablePartDetection         : BOOL;
+   showUserPage                : BOOL;
+   myRobot                     : MAPTO TRcuRobot;
+   orders                      : ARRAY [1..9] OF TOrders;
+   actTorque                   : ARRAY [1..9] OF REAL;
+   deactivateTCFromTV          : BOOL;
+   deactivateTCFromTVInv       : BOOL;
+   deactivateTCFromEPS         : MAPTO BOOL;
+   deactivateTCFromEPSResponse : MAPTO BOOL;
+   simDeacTCFromEPS            : BOOL;
+   preUserData                 : ARRAY [1..20] OF TUserData;
+   userData                    : ARRAY [1..20] OF MAPTO TUserData;
+   userLineCnt                 : INT := 1;
+   measuringActive             : BOOL;
+   bBackwardMovementAllowed    : BOOL := TRUE;
+END_VAR
+
+
+ROUTINE init(locRobot : TRcuRobot)
+   VAR
+      handle : DINT;
+      str    : STRING;
+      value  : DINT;
+      i      : INT;
+   END_VAR
+   
+   myRobot := MAP(locRobot);
+   
+   // read catalog
+   str := "KINEMATIC:" + STR(myRobot.kinListInx) + ".TorqueCheck";
+   IF CatalogGetHandleRelative(giRcBaseHdl, str, handle) THEN
+      IF CatalogReadInt(handle, "enableMinMaxCheck", value, TRUE) THEN
+         IF (value=1) THEN
+            enableMinMaxCheck := TRUE;
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(TRcuTorqueCheck_WarUncomplConf, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.init");
+      END_IF;
+      IF CatalogReadInt(handle, "enablePartDetection", value, TRUE) THEN
+         IF (value=1) THEN
+            enablePartDetection := TRUE;
+         END_IF;
+      ELSE
+         RcuSetMessageOnce(TRcuTorqueCheck_WarUncomplConf, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.init");
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(TRcuTorqueCheck_WarUncomplConf, myRobot.kinListInx, 3, 0, "TRcuTorqueCheck.init");
+   END_IF;
+   
+   IF (enableMinMaxCheck OR enablePartDetection) THEN
+      showUserPage := TRUE;
+      // map system variables
+      deactivateTCFromEPS := MAPX(cSV_EPSDeactivateTorqueCheck[myRobot.kinListInx]);
+      IF NOT IS_MAPPED(deactivateTCFromEPS) THEN
+         RcuSetMessageOnce(TRcuTorqueCheck_WarIFEpsNotMap, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.init", cSV_EPSDeactivateTorqueCheck[myRobot.kinListInx]);
+         deactivateTCFromEPS := MAP(simDeacTCFromEPS);
+      END_IF;
+      deactivateTCFromEPSResponse := MAPX(cSV_EPSDeactivateTorqueCheckRes[myRobot.kinListInx]);
+      IF NOT IS_MAPPED(deactivateTCFromEPSResponse) THEN
+         RcuSetMessageOnce(TRcuTorqueCheck_WarIFEpsNotMap, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.init", cSV_EPSDeactivateTorqueCheckRes[myRobot.kinListInx]);
+         deactivateTCFromEPSResponse := MAP(simDeacTCFromEPS);
+      END_IF;
+      
+      // start co routines
+      FOR i:=1 TO myRobot.nrOfJoints DO
+         START ObserveMaxLim(i);
+         START ObserveMinLim(i);
+         START PartDetection(i);
+         START GetActValue(i);
+         START GenerateUserLine(ObserveMaxLimit, i);
+         START GenerateUserLine(ObserveMinLimit, i);
+         START GenerateUserLine(PartDetectPosDir, i);
+         START GenerateUserLine(PartDetectNegDir, i);
+      END_FOR;
+      START SetInactiveFromTVorEPS();
+      START ReOrganizeUserData();
+      START AbortObservation();
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE MacroStartStopMaxCheck(axis : INT; value : REAL; activate : BOOL; onlyMonitoring : BOOL)
+   
+   // PreRun
+   IF NOT enableMinMaxCheck THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrUncomplConf, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.MacroStartStopMaxCheck");
+      RETURN;
+   ELSIF myRobot.fieldbusIn.IgnorePartControl.svBool THEN // ghost
+      RETURN;
+   ELSIF (axis < 1) OR (axis > myRobot.nrOfJoints) THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrWrongAxisNr, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.MacroStartStopMaxCheck");
+      RETURN;
+   ELSIF (value < (-myRobot.drive[axis-1].driveMaxTorque)) OR (value > myRobot.drive[axis-1].driveMaxTorque) THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrWrongBound, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.MacroStartStopMaxCheck");
+      RETURN;
+   END_IF;
+   
+   // MainRun
+   MAINRUN();
+   deactivateTCFromEPS := FALSE;
+   deactivateTCFromEPSResponse := FALSE;
+   deactivateTCFromTV := FALSE;
+   // switch on observation
+   IF activate THEN
+      myRobot.StoreHandlerBackPos(); // move back position
+      IF orders[axis].maxCheck.bDoMaxCheck THEN // already active, set only new boundary
+         //RcuResetMessage(TRcuTorqueCheck_InfNewBound, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.MacroStartStopMaxCheck", "ObserveMaxLimit");
+         myRobot.DebugPrint(eTraceRcuHandler, "TorqueCheck: New limit value for torque check - ObserveMaxLimit");
+         orders[axis].maxCheck.maxBoundary := value; // set new boundary
+      ELSE
+         orders[axis].maxCheck.maxBoundary := value; // set boundary
+         orders[axis].maxCheck.bDoMaxCheck := TRUE; // activate it
+      END_IF;
+      orders[axis].maxCheck.onlyMonitoring := onlyMonitoring;
+   // turn off observation
+   ELSE
+      orders[axis].maxCheck.bDoMaxCheck := FALSE; // deactivate it
+      bBackwardMovementAllowed := TRUE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE MacroStartStopMinCheck(axis : INT; value : REAL; activate : BOOL; onlyMonitoring : BOOL)
+   
+   // PreRun
+   IF NOT enableMinMaxCheck THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrUncomplConf, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.MacroStartStopMinCheck");
+      RETURN;
+   ELSIF myRobot.fieldbusIn.IgnorePartControl.svBool THEN // ghost
+      RETURN;
+   ELSIF (axis < 1) OR (axis > myRobot.nrOfJoints) THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrWrongAxisNr, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.MacroStartStopMinCheck");
+      RETURN;
+   ELSIF (value < (-myRobot.drive[axis-1].driveMaxTorque)) OR (value > myRobot.drive[axis-1].driveMaxTorque) THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrWrongBound, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.MacroStartStopMinCheck");
+      RETURN;
+   END_IF;
+   
+   // MainRun
+   MAINRUN();
+   deactivateTCFromEPS := FALSE;
+   deactivateTCFromEPSResponse := FALSE;
+   deactivateTCFromTV := FALSE;
+   // switch on observation
+   IF activate THEN
+      myRobot.StoreHandlerBackPos(); // move back position
+      IF orders[axis].minCheck.bDoMinCheck THEN // already active, set only new boundary
+         //RcuResetMessage(TRcuTorqueCheck_InfNewBound, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.MacroStartStopMinCheck", "ObserveMinLimit");
+         myRobot.DebugPrint(eTraceRcuHandler, "TorqueCheck: New limit value for torque check - ObserveMinLimit");
+         orders[axis].minCheck.minBoundary := value; // set new boundary
+      ELSE
+         orders[axis].minCheck.minBoundary := value; // set boundary
+         orders[axis].minCheck.bDoMinCheck := TRUE; // activate it
+      END_IF;
+      orders[axis].minCheck.onlyMonitoring := onlyMonitoring;
+   // turn off observation
+   ELSE
+      orders[axis].minCheck.bDoMinCheck := FALSE; // deactivate it
+      bBackwardMovementAllowed := TRUE;
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE MacroStartStopPartDetect(direction : INT; axis : INT; value : REAL; activate : BOOL; onlyMonitoring : BOOL)
+   
+   // PreRun
+   IF NOT enablePartDetection THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrUncomplConf, myRobot.kinListInx, 3, 0, "TRcuTorqueCheck.MacroStartStopPartDetect");
+      RETURN;
+   ELSIF myRobot.fieldbusIn.IgnorePartControl.svBool THEN // ghost
+      RETURN;
+   ELSIF (axis < 1) OR (axis > myRobot.nrOfJoints) THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrWrongAxisNr, myRobot.kinListInx, 3, 0, "TRcuTorqueCheck.MacroStartStopPartDetect");
+      RETURN;
+   ELSIF (value < (-myRobot.drive[axis-1].driveMaxTorque)) OR (value > myRobot.drive[axis-1].driveMaxTorque) THEN
+      RcuSetMessageOnce(TRcuTorqueCheck_ErrWrongBound, myRobot.kinListInx, 3, 0, "TRcuTorqueCheck.MacroStartStopPartDetect");
+      RETURN;
+   END_IF;
+   
+   // MainRun
+   MAINRUN();
+   deactivateTCFromEPS := FALSE;
+   deactivateTCFromEPSResponse := FALSE;
+   deactivateTCFromTV := FALSE;
+   // switch on detection
+   IF activate THEN
+      IF orders[axis].partDetect.bDoPartDetect THEN // already active
+         RcuResetMessage(TRcuTorqueCheck_WarPartDetActiv, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.MacroStartStopPartDetect");
+         RETURN;
+      ELSE
+         orders[axis].partDetect.partBoundary := value; // set boundary
+         orders[axis].partDetect.detectDirection := direction; // set direction
+         orders[axis].partDetect.bDoPartDetect := TRUE; // activate it
+      END_IF;
+      orders[axis].partDetect.onlyMonitoring := onlyMonitoring;
+   // turn off detection
+   ELSE
+      orders[axis].partDetect.bDoPartDetect := FALSE; // deactivate it
+   END_IF;
+   
+END_ROUTINE
+
+
+ROUTINE ObserveMaxLim(VAR_IN axis : INT) PRIVATE
+   VAR
+      sleepTime : DINT;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT orders[axis].maxCheck.bDoMaxCheck AND measuringActive;
+      IF NOT orders[axis].maxCheck.onlyMonitoring THEN
+         WHILE orders[axis].maxCheck.bDoMaxCheck DO
+            IF (actTorque[axis] > orders[axis].maxCheck.maxBoundary) THEN
+               myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+               RcuSetMessageOnce(TRcuTorqueCheck_ErrMaxLimReach, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.ObserveMaxLim");
+               WAIT NOT myRobot.svMotionAllowed;
+               WAIT myRobot.svMotionAllowed;
+               IF orders[axis].maxCheck.bDoMaxCheck THEN
+                  // backward movement
+                  CASE myRobot.mainModeMgr.mode OF
+                     ciT1:   IF bBackwardMovementAllowed THEN
+                                WAIT myRobot.updateActive;
+                                myRobot.SetMovementDirection(eDirBack);
+                             END_IF;
+                     ciT2:   IF bBackwardMovementAllowed THEN
+                                WAIT myRobot.updateActive;
+                                myRobot.SetMovementDirection(eDirBack);
+                             END_IF;
+                     ciAuto: IF bBackwardMovementAllowed THEN
+                                myRobot.bHandlerDoBackwardMove := TRUE; // order to AutoControl move back!
+                                myRobot.bHandlerAbortBackMove := FALSE; // init error flag
+                                myRobot.bHandlerBlockContinue := FALSE;
+                                WAIT NOT myRobot.bHandlerDoBackwardMove OR myRobot.bHandlerAbortBackMove;
+                                IF myRobot.bHandlerAbortBackMove THEN
+                                   myRobot.bHandlerDoBackwardMove := FALSE;
+                                   RcuSetMessageOnce(TRcuTorqueCheck_ErrBackMoveFail, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.ObserveMaxLim");
+                                END_IF;
+                             END_IF;
+
+                  END_CASE;
+               END_IF;
+               WAIT myRobot.movementDirection = eDirNormal;
+               bBackwardMovementAllowed := FALSE;
+               myRobot.progPath.PathAccel(500, 500);
+               WAIT myRobot.selectingFlow.running;
+               Sleep(20); // otherwise pathPos on progPath isn´t saved
+               RcuSetMessageOnce(TRcuTorqueCheck_ErrDoSightCheck, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.ObserveMaxLim");
+               WAIT NOT myRobot.svMotionAllowed;
+               WAIT myRobot.svMotionAllowed;
+               WAIT myRobot.selectingFlow.running;
+               sleepTime := DINT (myRobot.RcuInterfaceToProcess.delayRobotDrives*1000);
+               Sleep(sleepTime); // wait for robot movement to continue check
+               IF NOT myRobot.isNotMovingOnPath THEN
+                  bBackwardMovementAllowed := TRUE;
+               END_IF;
+            END_IF;
+            IF NOT myRobot.isNotMovingOnPath THEN
+                  bBackwardMovementAllowed := TRUE;
+            END_IF;            
+            myRobot.WaitMcMicroCycles(1);
+         END_WHILE;
+      END_IF;
+      myRobot.WaitMcMicroCycles(1);
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE ObserveMinLim(VAR_IN axis : INT) PRIVATE
+   VAR
+      sleepTime : DINT;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT orders[axis].minCheck.bDoMinCheck AND measuringActive;
+      IF NOT orders[axis].minCheck.onlyMonitoring THEN
+         WHILE orders[axis].minCheck.bDoMinCheck DO
+            IF (actTorque[axis] < orders[axis].minCheck.minBoundary) THEN
+               myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+               RcuSetMessageOnce(TRcuTorqueCheck_ErrMinLimReach, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.ObserveMinLim");
+               WAIT NOT myRobot.svMotionAllowed;
+               WAIT myRobot.svMotionAllowed;
+               // backward movement
+               IF orders[axis].minCheck.bDoMinCheck THEN
+                  CASE myRobot.mainModeMgr.mode OF
+                     ciT1:   IF bBackwardMovementAllowed THEN
+                                WAIT myRobot.updateActive;
+                                myRobot.SetMovementDirection(eDirBack);
+                             END_IF;
+                     ciT2:   IF bBackwardMovementAllowed THEN
+                                WAIT myRobot.updateActive;
+                                myRobot.SetMovementDirection(eDirBack);
+                             END_IF;
+                     ciAuto: IF bBackwardMovementAllowed THEN
+                                myRobot.bHandlerDoBackwardMove := TRUE; // order to AutoControl move back!
+                                myRobot.bHandlerAbortBackMove := FALSE; // init error flag
+                                myRobot.bHandlerBlockContinue := FALSE;
+                                WAIT NOT myRobot.bHandlerDoBackwardMove OR myRobot.bHandlerAbortBackMove;
+                                IF myRobot.bHandlerAbortBackMove THEN
+                                   myRobot.bHandlerDoBackwardMove := FALSE;
+                                   RcuSetMessageOnce(TRcuTorqueCheck_ErrBackMoveFail, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.ObserveMinLim");
+                                END_IF;
+                             END_IF;
+                  END_CASE;
+               END_IF;
+               WAIT myRobot.movementDirection = eDirNormal;
+               bBackwardMovementAllowed := FALSE;
+               myRobot.progPath.PathAccel(500, 500);
+               WAIT myRobot.selectingFlow.running;
+               Sleep(20); // otherwise pathPos on progPath isn´t saved
+               RcuSetMessageOnce(TRcuTorqueCheck_ErrDoSightCheck, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.ObserveMinLim");
+               WAIT NOT myRobot.svMotionAllowed;
+               WAIT myRobot.svMotionAllowed;
+               WAIT myRobot.selectingFlow.running;
+               sleepTime := DINT (myRobot.RcuInterfaceToProcess.delayRobotDrives*1000);
+               Sleep(sleepTime); // wait for robot movement to continue check
+               IF NOT myRobot.isNotMovingOnPath THEN
+                  bBackwardMovementAllowed := TRUE;
+               END_IF;
+            END_IF;
+            IF NOT myRobot.isNotMovingOnPath THEN
+                  bBackwardMovementAllowed := TRUE;
+            END_IF;            
+            myRobot.WaitMcMicroCycles(1);
+         END_WHILE;
+      END_IF;
+      myRobot.WaitMcMicroCycles(1);
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE PartDetection(VAR_IN axis : INT) PRIVATE
+   VAR
+      posCompare : REAL;
+      negCompare : REAL;
+   END_VAR
+   
+   WHILE TRUE DO
+      WAIT orders[axis].partDetect.bDoPartDetect AND measuringActive;
+      posCompare := actTorque[axis];
+      IF NOT orders[axis].partDetect.onlyMonitoring THEN
+         WHILE orders[axis].partDetect.bDoPartDetect DO
+            IF (orders[axis].partDetect.detectDirection > 0) THEN
+               IF (actTorque[axis] > posCompare) THEN
+                  posCompare := actTorque[axis];
+               END_IF;
+            ELSIF (orders[axis].partDetect.detectDirection < 0) THEN
+               IF (actTorque[axis] < posCompare) THEN
+                  posCompare := actTorque[axis];
+               END_IF;
+            END_IF;
+            myRobot.WaitMcMicroCycles(1);
+         END_WHILE;
+         IF NOT (deactivateTCFromEPS OR deactivateTCFromTV) THEN
+            IF (orders[axis].partDetect.detectDirection > 0) THEN
+               IF (posCompare < orders[axis].partDetect.partBoundary) THEN
+                  WHILE NOT (deactivateTCFromEPS OR deactivateTCFromTV) DO
+                     myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+                     RcuSetMessageOnce(TRcuTorqueCheck_ErrPartNotFound, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.PartDetection");
+                     WAIT NOT myRobot.svMotionAllowed;
+                     WAIT myRobot.svMotionAllowed;
+                  END_WHILE;
+               END_IF;
+            ELSIF (orders[axis].partDetect.detectDirection < 0) THEN
+               IF (posCompare > orders[axis].partDetect.partBoundary) THEN
+                  WHILE NOT (deactivateTCFromEPS OR deactivateTCFromTV) DO
+                     myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+                     RcuSetMessageOnce(TRcuTorqueCheck_ErrPartNotFound, myRobot.kinListInx, 2, 0, "TRcuTorqueCheck.PartDetection");
+                     WAIT NOT myRobot.svMotionAllowed;
+                     WAIT myRobot.svMotionAllowed;
+                  END_WHILE;
+               END_IF;
+            END_IF;
+         END_IF;
+      END_IF;
+      myRobot.WaitMcMicroCycles(1);
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE GetActValue(VAR_IN axis : INT) PRIVATE
+   
+   WHILE TRUE DO
+      WAIT (orders[axis].minCheck.bDoMinCheck OR orders[axis].maxCheck.bDoMaxCheck OR orders[axis].partDetect.bDoPartDetect);
+      WHILE (orders[axis].minCheck.bDoMinCheck OR orders[axis].maxCheck.bDoMaxCheck OR orders[axis].partDetect.bDoPartDetect) DO
+         actTorque[axis] := myRobot.actDrives.mActTorque[axis-1];
+         measuringActive := TRUE;
+         myRobot.WaitMcMicroCycles(1);
+      END_WHILE;
+      measuringActive := FALSE;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE SetInactiveFromTVorEPS()
+   VAR
+      chgTV  : BOOL;
+      chgEPS : BOOL;
+      i      : INT;
+   END_VAR
+   
+   chgEPS := IS_CHANGED(deactivateTCFromEPS);
+   chgTV := IS_CHANGED(deactivateTCFromTV);
+   deactivateTCFromTVInv := NOT deactivateTCFromTV;
+   WHILE TRUE DO
+      WAIT (chgEPS OR chgTV);
+      chgEPS := FALSE;
+      chgTV := FALSE;
+      IF (deactivateTCFromEPS OR deactivateTCFromTV) THEN
+         bBackwardMovementAllowed := TRUE;
+         // stop current observations until next makro call
+         FOR i:=1 TO myRobot.nrOfJoints DO
+            orders[i].maxCheck.bDoMaxCheck := FALSE;
+            orders[i].minCheck.bDoMinCheck := FALSE;
+            orders[i].partDetect.bDoPartDetect := FALSE;
+         END_FOR;
+         RcuResetMessage(TRcuTorqueCheck_WarTCDeact, myRobot.kinListInx, 1, 0, "TRcuTorqueCheck.SetInactiveFromTVorEPS");
+      END_IF;
+      deactivateTCFromTVInv := NOT deactivateTCFromTV;
+      deactivateTCFromEPSResponse := deactivateTCFromEPS;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE GenerateUserLine(order : TORQUEORDER; VAR_IN axis : INT)
+   VAR
+      minValue       : REAL;
+      maxValue       : REAL;
+      boundary       : REAL;
+      onlyMonitoring : BOOL;
+      userLine       : INT;
+   END_VAR
+   
+   WHILE TRUE DO
+      CASE order OF
+         ObserveMaxLimit:
+            WAIT orders[axis].maxCheck.bDoMaxCheck;
+         ObserveMinLimit:
+            WAIT orders[axis].minCheck.bDoMinCheck;
+         PartDetectPosDir:
+            WAIT orders[axis].partDetect.bDoPartDetect AND (orders[axis].partDetect.detectDirection > 0);
+         PartDetectNegDir:
+            WAIT orders[axis].partDetect.bDoPartDetect AND (orders[axis].partDetect.detectDirection < 0);
+      END_CASE;
+      
+      LOCK;
+      userLine := userLineCnt;
+      userLineCnt := userLineCnt + 1;
+      IF (userLineCnt > 20) THEN
+         userLineCnt := 1;
+      END_IF;
+      UNLOCK;
+      
+      WAIT measuringActive;
+      preUserData[userLine].axis := axis;
+      CASE order OF
+         ObserveMaxLimit:
+            preUserData[userLine].order := "MaxLimit";
+            preUserData[userLine].boundery := orders[axis].maxCheck.maxBoundary;
+            IF orders[axis].maxCheck.onlyMonitoring THEN
+               preUserData[userLine].onlyMonitoring := 1;
+            ELSE
+               preUserData[userLine].onlyMonitoring := 0;
+            END_IF;
+            maxValue := actTorque[axis];
+            minValue := actTorque[axis];
+            WHILE orders[axis].maxCheck.bDoMaxCheck DO
+               preUserData[userLine].lastValue := actTorque[axis];
+               IF (actTorque[axis] > maxValue) THEN
+                  maxValue := actTorque[axis];
+               END_IF;
+               IF (actTorque[axis] < minValue) THEN
+                  minValue := actTorque[axis];
+               END_IF;
+               myRobot.WaitMcMicroCycles(1);
+            END_WHILE;
+            preUserData[userLine].maxValue := maxValue;
+            preUserData[userLine].minValue := minValue;
+         ObserveMinLimit:
+            preUserData[userLine].order := "MinLimit";
+            preUserData[userLine].boundery := orders[axis].minCheck.minBoundary;
+            IF orders[axis].minCheck.onlyMonitoring THEN
+               preUserData[userLine].onlyMonitoring := 1;
+            ELSE
+               preUserData[userLine].onlyMonitoring := 0;
+            END_IF;
+            maxValue := actTorque[axis];
+            minValue := actTorque[axis];
+            WHILE orders[axis].minCheck.bDoMinCheck DO
+               preUserData[userLine].lastValue := actTorque[axis];
+               IF (actTorque[axis] > maxValue) THEN
+                  maxValue := actTorque[axis];
+               END_IF;
+               IF (actTorque[axis] < minValue) THEN
+                  minValue := actTorque[axis];
+               END_IF;
+               myRobot.WaitMcMicroCycles(1);
+            END_WHILE;
+            preUserData[userLine].maxValue := maxValue;
+            preUserData[userLine].minValue := minValue;
+         PartDetectPosDir:
+            preUserData[userLine].order := "PartDetPos";
+            preUserData[userLine].boundery := orders[axis].partDetect.partBoundary;
+            IF orders[axis].partDetect.onlyMonitoring THEN
+               preUserData[userLine].onlyMonitoring := 1;
+            ELSE
+               preUserData[userLine].onlyMonitoring := 0;
+            END_IF;
+            maxValue := actTorque[axis];
+            minValue := actTorque[axis];
+            WHILE orders[axis].partDetect.bDoPartDetect DO
+               preUserData[userLine].lastValue := actTorque[axis];
+               IF (actTorque[axis] > maxValue) THEN
+                  maxValue := actTorque[axis];
+               END_IF;
+               IF (actTorque[axis] < minValue) THEN
+                  minValue := actTorque[axis];
+               END_IF;
+               myRobot.WaitMcMicroCycles(1);
+            END_WHILE;
+            preUserData[userLine].maxValue := maxValue;
+            preUserData[userLine].minValue := minValue;
+         PartDetectNegDir:
+            preUserData[userLine].order := "PartDetNeg";
+            preUserData[userLine].boundery := orders[axis].partDetect.partBoundary;
+            IF orders[axis].partDetect.onlyMonitoring THEN
+               preUserData[userLine].onlyMonitoring := 1;
+            ELSE
+               preUserData[userLine].onlyMonitoring := 0;
+            END_IF;
+            maxValue := actTorque[axis];
+            minValue := actTorque[axis];
+            WHILE orders[axis].partDetect.bDoPartDetect DO
+               preUserData[userLine].lastValue := actTorque[axis];
+               IF (actTorque[axis] > maxValue) THEN
+                  maxValue := actTorque[axis];
+               END_IF;
+               IF (actTorque[axis] < minValue) THEN
+                  minValue := actTorque[axis];
+               END_IF;
+               myRobot.WaitMcMicroCycles(1);
+            END_WHILE;
+            preUserData[userLine].maxValue := maxValue;
+            preUserData[userLine].minValue := minValue;
+      END_CASE;
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE ReOrganizeUserData()
+   VAR
+      chgULCnt : BOOL;
+      i        : INT;
+      j        : INT;
+      userLine : INT;
+   END_VAR
+   
+   chgULCnt := IS_CHANGED(userLineCnt);
+   WHILE TRUE DO
+      WAIT chgULCnt;
+      userLine := userLineCnt;
+      chgULCnt := FALSE;
+      j := 1;
+      i := userLine - 1;
+      WHILE (i >= 1) DO
+         userData[j] := MAP(preUserData[i]);
+         j := j+1;
+         i := i-1;
+      END_WHILE;
+      i := 20;
+      WHILE (i >= userLine) DO
+         userData[j] := MAP(preUserData[i]);
+         j := j+1;
+         i := i-1;
+      END_WHILE;
+      myRobot.WaitMcMicroCycles(5);
+   END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE AbortObservation()
+   VAR
+      i            : INT;
+      chgProgState : BOOL;
+   END_VAR
+   
+   chgProgState := IS_CHANGED(myRobot.autoControl.dExecHandle);
+   WHILE TRUE DO
+      WAIT chgProgState;
+      chgProgState := FALSE;
+      IF (myRobot.autoControl.dExecHandle = 0) THEN
+         FOR i:=1 TO myRobot.nrOfJoints DO
+            orders[i].maxCheck.bDoMaxCheck := FALSE;
+            orders[i].minCheck.bDoMinCheck := FALSE;
+            orders[i].partDetect.bDoPartDetect := FALSE;
+            bBackwardMovementAllowed := TRUE;            
+         END_FOR;
+      END_IF;
+   END_WHILE;
+   
+END_ROUTINE

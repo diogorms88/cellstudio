@@ -1,0 +1,1652 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuVisionPLC.tts                                               *
+*   Description: Functionality for ISRA, VMT etc.                             *
+*-----------------------------------------------------------------------------*
+*   
+* 30.11.05 BMA: WAIT MAIN_RUN replaced by MAINRUN()
+* 01.02.06 BIT: Changes for teachmode - get data from PLC or teachview in T1/T2 
+* 05.11.07 BIT: Redesign
+*)
+
+
+// Schnittstelle zu SPS
+
+
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+VAR
+  iLoggerNumber         : INT;     // token for logger
+END_VAR
+
+//-----------------------------------------------------------------------------
+//   Observe the Inputs from PLC everytime 
+//-----------------------------------------------------------------------------
+ROUTINE GetVisionDataPLC(locRobot : TRcuRobot) : BOOL
+   
+   myRobot := MAP(locRobot);
+   myVision := MAP(locRobot.vision);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuVision_ErrMappKin, myRobot.kinListInx, 2, instId, "TRcuVisionPLC.GetVisionDataPLC");
+      RETURN TRUE;
+   END_IF;
+   IF NOT ReadConfig() THEN
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 3, instId, "TRcuVisionPLC.GetVisionDataPLC");
+      RETURN TRUE;
+   END_IF;
+   IF subSystemType = eOff THEN
+      RETURN TRUE;
+   END_IF;
+   IF NOT myRobot.bFieldbusSlaveReady THEN
+      RcuSetMessageOnce(TRcuVision_ErrFieldbus, myRobot.kinListInx, 1, instId, "TRcuVisionPLC.GetVisionDataPLC");
+      RETURN TRUE;
+   END_IF;
+   IF myVision.tVisionAbsolute.bTrigPicture OR myVision.tVisionRelative.bTrigPicture THEN
+      bOutPicTrigger := MAPX(cHW_OutVisionTrigger[myRobot.kinListInx]);
+      IF NOT IS_MAPPED(bOutPicTrigger) THEN // Fehlermeldung ersetzen!!!!
+         RcuSetMessageOnce(TRcuVision_ErrPicTrigOutput, myRobot.kinListInx, 
+                       4, instId, "TRcuVisionPLC.GetVisionDataPLC", cHW_OutVisionTrigger[myRobot.kinListInx]);
+         RETURN TRUE;
+      END_IF;
+   END_IF;
+   
+   CASE subSystemType OF
+      eAbsolute:  START ObservePlcInterface();
+      eAbsRel:    START ObservePlcInterface();
+   END_CASE; 
+   START ObserveExternalControl();
+   IF myVision.bUseEStopVisionSystem THEN
+      START ObserveEStop();
+   END_IF;
+   RETURN FALSE;
+END_ROUTINE
+
+
+(*********************************************************************************
+                          EcoTalk
+*********************************************************************************)
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - vision system is read and the object transformation is computed
+//-----------------------------------------------------------------------------
+ROUTINE MacroReceiveVisionData(VAR_IN bRelative : BOOL; iRetVal : VISION_STATE) : BOOL
+VAR
+   zeroobject : TMcuFrame;
+   sLogText   : STRING;
+END_VAR
+
+   IF NOT CheckVisionSystemType(bRelative) THEN
+      iRetVal := Failure;
+      RETURN FALSE;
+   END_IF;
+   
+   IF NOT ReceiveVisionData(bRelative, iRetVal) THEN
+      RETURN FALSE;
+   END_IF;
+   
+   zeroobject.mFrameTyp := eMcuFrameKardan;          
+   
+   IF NOT bRelative THEN
+      RcuRefSysSetKardan(myRobot.RcuRefSystemVisionRel, InternalObject, myRobot.RcuRefSystemVisionAbs, FALSE, "VisionRel");
+      myRobot.homing.StoreRefSystemVision(TRUE, InternalObject);
+      //delete "IsraRel"   Isra --> object no displacement
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroobject, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroobject);
+      IF myVision.bShiftA7Enable THEN
+         IF myVision.iShiftA7Direction = 1 THEN
+            myVision.rShiftA7Value := InternalObject.mPos.mValues[0] * myVision.rShiftA7Sign;
+         ELSIF myVision.iShiftA7Direction = 2 THEN
+            myVision.rShiftA7Value := InternalObject.mPos.mValues[1] * myVision.rShiftA7Sign;
+         END_IF;
+         sLogText := "MacroReceiveVisionData Absolute - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+         myVision.rShiftA7Abs := myVision.rShiftA7Value;
+      END_IF;
+   ELSE
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, InternalObject, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, InternalObject);
+      IF myVision.bShiftA7Enable THEN
+         IF myVision.iShiftA7Direction = 1 THEN
+            myVision.rShiftA7Value := myVision.rShiftA7Abs + InternalObject.mPos.mValues[0] * myVision.rShiftA7Sign;
+         ELSIF myVision.iShiftA7Direction = 2 THEN
+            myVision.rShiftA7Value := myVision.rShiftA7Abs + InternalObject.mPos.mValues[1] * myVision.rShiftA7Sign;
+         END_IF;
+         sLogText := "MacroReceiveVisionData Relative - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      END_IF;
+   END_IF;
+   
+   myVision.CalcActualObject();
+   
+   //store values to SAVE-VAR only in sim, if data is 
+   //send by PLC the Interface Routine does it.
+   IF (bUseInterfInSim AND gbRcuSimulateStationPLC) OR NOT myRobot.mainModeMgr.externControl THEN
+      myVision.SaveDataGlobalFrame(InternalObject, bRelative);
+   END_IF;   
+                 
+   //robot stops at second RECEIVE; Additional SetOrder Macro is necessray to reset interface
+   //myVision.bCameraAbsDataOk := FALSE;
+   
+   myVision.bCameraRelDataOk := FALSE;
+   IF IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) THEN
+      myRobot.fieldbusOut.byPathNr.svByte := 0;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE  // MacroReceiveVisionData
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - vision system is read and the object transformation is computed
+//-----------------------------------------------------------------------------
+ROUTINE MacroReceivePartShift(frame : FRAMESHIFT; Setpos : REAL; frametype : TVisionSubSystemType; iRetVal : VISION_STATE) : BOOL
+VAR
+   zeroobject : TMcuFrame;
+   calcobject : TMcuFrame;
+   sLogText   : STRING;
+END_VAR
+
+   IF NOT CheckVisionSystemType((frametype = Relative)) THEN
+      iRetVal := Failure;
+      RETURN FALSE;
+   END_IF;
+   
+   IF NOT ReceiveVisionData((frametype = Relative), iRetVal) THEN
+      RETURN FALSE;
+   END_IF;
+   
+   CalcDoorAngleTrafo(frame, Setpos, InternalObject.mOri.mValues[2], calcobject);
+   
+   zeroobject.mFrameTyp := eMcuFrameKardan;          
+   
+   IF NOT (frametype = Relative) THEN
+      RcuRefSysSetKardan(myRobot.RcuRefSystemVisionRel, calcobject, myRobot.RcuRefSystemVisionAbs, FALSE, "VisionRel");
+      myRobot.homing.StoreRefSystemVision(TRUE, calcobject);
+      //delete "IsraRel"   Isra --> object no displacement
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroobject, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroobject);
+   ELSE
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, calcobject, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, calcobject);
+   END_IF;
+   
+   myVision.CalcActualObject();
+   
+   //store values to SAVE-VAR only in sim, if data is 
+   //send by PLC the Interface Routine does it.
+   IF (bUseInterfInSim AND gbRcuSimulateStationPLC) OR NOT myRobot.mainModeMgr.externControl THEN
+      myVision.SaveDataGlobalFrame(calcobject, (frametype = Relative));
+   END_IF;   
+                 
+   //robot stops at second RECEIVE; Additional SetOrder Macro is necessray to reset interface
+   //myVision.bCameraAbsDataOk := FALSE;
+   
+   myVision.bCameraRelDataOk := FALSE;
+   IF IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) THEN
+      myRobot.fieldbusOut.byPathNr.svByte := 0;
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE  // MacroReceivePartShift
+
+//
+//
+// frame : FRAMESHIFT   ... Z-Vektor des Frames ist die Achse, um die das Teil dreht
+// Setpos : REAL        ... Sollwinkel aus dem Makro
+// Visionpos : REAL     ... Drehwinkeldifferenz
+// calcobject : TMcuFrame ... berechnete Transformation
+
+ROUTINE CalcDoorAngleTrafo(frame : FRAMESHIFT; Setpos : REAL; Visionpos : REAL; calcobject : TMcuFrame)
+VAR
+   h1           : REAL; // Hilfsvariable
+   PartFrame    : OBJECT;  // Frame der Drehachse (Türscharnier)
+   ObjectFrame  : OBJECT;  // Objekt ale Ergebnis der Türwinkelberechnung
+   Phi          : REAL;
+   Ori          : TMcuMatrix3;
+   Pos          : TMcuVector3;
+   PartHomMat   : HomogenMatrix;
+   U            : TMcuVector3;
+   Alpha        : REAL; // Winkel fuer Hilfsdrehungen
+   Beta         : REAL; 
+   T_A          : HomogenMatrix;
+   T_Min_A      : HomogenMatrix;
+   T_S          : HomogenMatrix;
+   T_Min_S      : HomogenMatrix;
+   Rx_Min_Alpha : HomogenMatrix;
+   Ry_Min_Beta  : HomogenMatrix;
+   Rz_Theta     : HomogenMatrix;
+   Rz_Epsilon   : HomogenMatrix;
+   Ry_Beta      : HomogenMatrix;
+   Rx_Alpha     : HomogenMatrix;
+   H_Mat        : HomogenMatrix; // Zwischenergebnis
+   A            : TMcuVector3;
+   A_Min        : TMcuVector3;
+   Rz_Phi       : HomogenMatrix;
+   T_Phi        : HomogenMatrix;
+END_VAR
+   
+   // Scharnierachse der Tuer
+   PartFrame.X_mm := frame.X_mm;
+   PartFrame.Y_mm := frame.Y_mm;
+   PartFrame.Z_mm := frame.Z_mm;
+   PartFrame.A_deg := frame.A_deg;
+   PartFrame.B_deg := frame.B_deg;
+   PartFrame.C_deg := frame.C_deg;
+   
+   Phi             := Visionpos; // Drehwinkeldifferenz in Grad
+   Phi             := Phi/180.0*gcPi;  
+ 
+   Compute_kardan_tcp(Ori, Pos, PartFrame);
+   CopyMatrix32HomMat(PartHomMat, Ori); // Drehmatrix
+   CopyVector32HomMat(PartHomMat, Pos); // Verschiebevektor
+   // letzte Zeile der homogenen Matrix belegen
+   PartHomMat[3][0] := 0.0;
+   PartHomMat[3][1] := 0.0;
+   PartHomMat[3][2] := 0.0;
+   PartHomMat[3][3] := 1.0;   
+   PrintHomMat("Drehachse als homogene Matrix", PartHomMat);
+   
+   A.mValues[0] := PartHomMat[0][3];
+   A.mValues[1] := PartHomMat[1][3];
+   A.mValues[2] := PartHomMat[2][3];
+   
+   // Z-Vektor der Drehmatrix ist per Definition die Achse der "Tuer". Ist bereits  normiert
+   U.mValues[0] := PartHomMat[0][2];
+   U.mValues[1] := PartHomMat[1][2];
+   U.mValues[2] := PartHomMat[2][2];
+   myRobot.DebugPrint(eTraceVision, "Drehachse X = " + STR(U.mValues[0]) + " Y = " + STR(U.mValues[1]) + " Z = " + STR(U.mValues[2]));
+   Alpha := ArcTan2(U.mValues[1] , U.mValues[2]);
+   myRobot.DebugPrint(eTraceVision, "Alpha (ArcTan2) = "+STR(Alpha*180.0/gcPi));
+
+   Sqrt(U.mValues[2]*U.mValues[2] + U.mValues[1]*U.mValues[1], h1);
+   Beta := ArcTan2(-U.mValues[0] , h1);
+   myRobot.DebugPrint(eTraceVision, "Beta = (ArcTan2) "+STR(Beta*180.0/gcPi));
+   
+   // Berechnung der Transformationsmatrix T(Phi)
+   SetTransMatrix(A, T_A);
+   A_Min.mValues[0] := -A.mValues[0];
+   A_Min.mValues[1] := -A.mValues[1];
+   A_Min.mValues[2] := -A.mValues[2];
+   SetTransMatrix(A_Min, T_Min_A);
+   SetRotXMatrix(-Alpha, Rx_Min_Alpha);
+   SetRotYMatrix(-Beta, Ry_Min_Beta);
+   SetRotZMatrix(Phi, Rz_Phi);
+   SetRotYMatrix(Beta, Ry_Beta);
+   SetRotXMatrix(Alpha, Rx_Alpha);
+
+   MultiplyHomMat(H_Mat, Rx_Alpha, T_Min_A);
+   MultiplyHomMat(H_Mat, Ry_Beta, H_Mat);
+   MultiplyHomMat(H_Mat, Rz_Phi, H_Mat);
+   MultiplyHomMat(H_Mat, Ry_Min_Beta, H_Mat);
+   MultiplyHomMat(H_Mat, Rx_Min_Alpha, H_Mat);
+   MultiplyHomMat(T_Phi, T_A, H_Mat);
+   PrintHomMat("Ergebnis Transformation", T_Phi);
+   
+   // Homogene Matrix in Frame umwandeln
+   CopyHomMat2Matrix3(Ori, T_Phi);
+   CopyHomMat2Vector3(Pos, T_Phi);
+   Compute_tcp_kardan(Ori, Pos, 0, ObjectFrame);
+   PrintObject("Objektverschiebung :", ObjectFrame);
+   
+   calcobject.mFrameTyp := eMcuFrameKardan;
+   calcobject.mPos.mValues[0] := ObjectFrame.X_mm;
+   calcobject.mPos.mValues[1] := ObjectFrame.Y_mm;
+   calcobject.mPos.mValues[2] := ObjectFrame.Z_mm;
+   calcobject.mOri.mValues[0] := ObjectFrame.A_deg;
+   calcobject.mOri.mValues[1] := ObjectFrame.B_deg;
+   calcobject.mOri.mValues[2] := ObjectFrame.C_deg;
+      
+END_ROUTINE
+
+ROUTINE PrintHomMat(CONST Text : STRING; mat : HomogenMatrix) PRIVATE
+   myRobot.DebugPrint(eTraceVision, Text);
+   myRobot.DebugPrint(eTraceVision, STR(mat[0][0]) + " " + STR(mat[0][1]) + " " + STR(mat[0][2]) + " " + STR(mat[0][3]));
+   myRobot.DebugPrint(eTraceVision, STR(mat[1][0]) + " " + STR(mat[1][1]) + " " + STR(mat[1][2]) + " " + STR(mat[1][3]));
+   myRobot.DebugPrint(eTraceVision, STR(mat[2][0]) + " " + STR(mat[2][1]) + " " + STR(mat[2][2]) + " " + STR(mat[2][3]));
+   myRobot.DebugPrint(eTraceVision, STR(mat[3][0]) + " " + STR(mat[3][1]) + " " + STR(mat[3][2]) + " " + STR(mat[3][3]));
+END_ROUTINE
+
+
+ROUTINE PrintObject(CONST Text : STRING; kard : OBJECT) PRIVATE
+   myRobot.DebugPrint(eTraceVision, Text);
+   myRobot.DebugPrint(eTraceVision, "X = " + STR(kard.X_mm));
+   myRobot.DebugPrint(eTraceVision, "Y = " + STR(kard.Y_mm));
+   myRobot.DebugPrint(eTraceVision, "Z = " + STR(kard.Z_mm));
+   myRobot.DebugPrint(eTraceVision, "A = " + STR(kard.A_deg));
+   myRobot.DebugPrint(eTraceVision, "B = " + STR(kard.B_deg));
+   myRobot.DebugPrint(eTraceVision, "C = " + STR(kard.C_deg));
+END_ROUTINE
+
+
+
+
+//------------------------------------------------------------------------
+// ROUTINE requests the vision data from PLC 
+// and copies the displacement values to TMcuFrame InternalObject 
+//------------------------------------------------------------------------
+ROUTINE ReceiveVisionData(VAR_IN i_bRelative : BOOL; iRetVal : VISION_STATE) : BOOL
+VAR
+   
+END_VAR 
+   
+   InternalObject.mFrameTyp     := eMcuFrameKardan;           // ISRA-values are Kardan
+   
+   // simulated PLC and no interface, so take save-var values
+   IF (NOT bUseInterfInSim) AND (gbRcuSimulateStationPLC OR gbFBSSActive) THEN
+      ResetOrderObject();
+      IF NOT i_bRelative THEN
+         IF myVision.bRetainAvailable THEN
+            InternalObject := myVision.VisionAbsRetain;
+         ELSE
+            InternalObject := myVision.VisionAbsSave;
+         END_IF;
+         myVision.bDataAbsSetByUser                := FALSE;
+         myVision.bDataAbsSetByCamera              := TRUE;
+      ELSE   
+         IF myVision.bRetainAvailable THEN
+            InternalObject := myVision.VisionRelRetain;
+         ELSE
+            InternalObject := myVision.VisionRelSave;
+         END_IF;
+         myVision.bDataRelSetByUser                := FALSE;
+         myVision.bDataRelSetByCamera              := TRUE;
+      END_IF;   
+      iRetVal := DataOk;
+      myRobot.dataRecorder.RecVisionData(i_bRelative, TRUE, InternalObject);
+      
+   // simulated PLC   
+   ELSIF gbRcuSimulateStationPLC THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Request for new data is set"); 
+      
+      // absolute displacement
+      IF NOT i_bRelative THEN
+         IF IS_MAPPED(myRobot.fieldbusOut.MeasureRelative.svBool) THEN
+            myRobot.fieldbusOut.MeasureRelative.svBool := FALSE;
+         END_IF;
+         bInDataRelative := FALSE;
+         myRobot.fieldbusOut.ReqVisionData.svBool := TRUE;
+         IF myVision.bUseExtendedInterface THEN
+            WAIT myVision.bCameraAbsDataOk OR myVision.bUserAbsDataOk OR 
+                 myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+         ELSE    
+            WAIT myVision.bCameraAbsDataOk OR myVision.bUserAbsDataOk OR myRobot.fieldbusIn.GoDirectHome.svBool;
+         END_IF;   
+         IF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - GoDirectHome received from PLC");
+            ResetOrderObject();
+            iRetVal := GoHome;
+            RETURN FALSE;  
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.DoRemeasure.svBool THEN  
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - DoRemeasure received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait DoRemeasure is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+            iRetVal := Remeasure;
+            RETURN FALSE;  
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.Continue.svBool THEN  
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - Continue received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Continue is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+            iRetVal := Continue;
+            RETURN FALSE;
+         END_IF;
+         IF myVision.bCameraAbsDataOk THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data from Camera");
+            InternalObject.mPos.mValues[0] := myVision.objectCamAbsData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectCamAbsData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectCamAbsData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectCamAbsData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectCamAbsData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectCamAbsData.mOri.mValues[2];
+            myVision.bDataAbsSetByUser                := FALSE;
+            myVision.bDataAbsSetByCamera              := TRUE;
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data from Teachview");
+            InternalObject.mPos.mValues[0] := myVision.objectUserAbsData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectUserAbsData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectUserAbsData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectUserAbsData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectUserAbsData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectUserAbsData.mOri.mValues[2];      
+            myVision.bDataAbsSetByUser                := TRUE;
+            myVision.bDataAbsSetByCamera              := FALSE;
+         END_IF;
+         iRetVal := DataOk;
+         myRobot.dataRecorder.RecVisionData(i_bRelative, TRUE, InternalObject);
+         
+      // relative displacement
+      ELSE
+         myRobot.fieldbusOut.MeasureRelative.svBool := TRUE;
+         bInDataRelative := TRUE;
+         myRobot.fieldbusOut.ReqVisionData.svBool := TRUE;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Rel data from Camera");
+         IF NOT (myVision.bUserAbsDataOk OR myVision.bCameraAbsDataOk) THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - No Abs data from Camera to calc Rel Data");
+            //no abs data available for relative calculation, teachprog maybe wrong 1. RECEIVE(Vision) 2. RECEIVE(VisionRel)
+            RcuSetMessageOnce(TRcuVision_ErrNoAbsForRel, myRobot.kinListInx, 2, instId, "TRcuVisionPLC.ReceiveVisionData");
+            //only possiblity to go home, because PLC doesn't know that we need abs data - request for rel data already set
+            WAIT myRobot.fieldbusIn.GoDirectHome.svBool;
+         END_IF;
+         IF myVision.bUseExtendedInterface THEN
+            WAIT myVision.bCameraRelDataOk OR myVision.bUserRelDataOk OR 
+                 myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+         ELSE   
+            WAIT myVision.bCameraRelDataOk OR myVision.bUserRelDataOk OR myRobot.fieldbusIn.GoDirectHome.svBool;
+         END_IF;   
+         IF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - GoDirectHome received from PLC");
+            ResetOrderObject();
+            iRetVal := GoHome;
+            RETURN FALSE;
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.DoRemeasure.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - DoRemeasure received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait DoRemeasure is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+            iRetVal := Remeasure;
+            RETURN FALSE;         
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.Continue.svBool THEN  
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - Continue received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Continue is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+            iRetVal := Continue;
+            RETURN FALSE;     
+         END_IF;
+         IF myVision.bCameraRelDataOk THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data from Camera");
+            InternalObject.mPos.mValues[0] := myVision.objectCamRelData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectCamRelData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectCamRelData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectCamRelData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectCamRelData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectCamRelData.mOri.mValues[2];
+            myVision.bDataRelSetByUser                := FALSE;
+            myVision.bDataRelSetByCamera              := TRUE;
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data from Teachview");
+            InternalObject.mPos.mValues[0] := myVision.objectUserRelData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectUserRelData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectUserRelData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectUserRelData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectUserRelData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectUserRelData.mOri.mValues[2];     
+            myVision.bDataRelSetByUser                := TRUE;
+            myVision.bDataRelSetByCamera              := FALSE;
+         END_IF;
+         iRetVal := DataOk;
+         myRobot.dataRecorder.RecVisionData(i_bRelative, TRUE, InternalObject);
+      END_IF;
+      ResetOrderObject();
+
+   // automatic mode
+   ELSIF myRobot.mainModeMgr.externControl THEN   
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Request for new data is set"); 
+      
+      // absolute displacement
+      IF NOT i_bRelative THEN
+         IF IS_MAPPED(myRobot.fieldbusOut.MeasureRelative.svBool) THEN
+            myRobot.fieldbusOut.MeasureRelative.svBool := FALSE;
+         END_IF;
+         bInDataRelative := FALSE;
+         myRobot.fieldbusOut.ReqVisionData.svBool := TRUE;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Abs data from Camera");
+         IF myVision.bUseExtendedInterface THEN
+            WAIT myVision.bCameraAbsDataOk OR 
+                 myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+         ELSE    
+            WAIT myVision.bCameraAbsDataOk OR myRobot.fieldbusIn.GoDirectHome.svBool;
+         END_IF;   
+         IF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - GoDirectHome received from PLC");
+            ResetOrderObject();
+            iRetVal := GoHome;
+            RETURN FALSE;  
+        ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.DoRemeasure.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - DoRemeasure received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait DoRemeasure is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+            iRetVal := Remeasure;
+            RETURN FALSE;  
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.Continue.svBool THEN  
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - Continue received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Continue is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+            iRetVal := Continue;
+            RETURN FALSE;
+         END_IF;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData) - Got Abs data from Camera");
+         InternalObject.mPos.mValues[0] := myVision.objectCamAbsData.mPos.mValues[0];
+         InternalObject.mPos.mValues[1] := myVision.objectCamAbsData.mPos.mValues[1];
+         InternalObject.mPos.mValues[2] := myVision.objectCamAbsData.mPos.mValues[2];
+         InternalObject.mOri.mValues[0] := myVision.objectCamAbsData.mOri.mValues[0];
+         InternalObject.mOri.mValues[1] := myVision.objectCamAbsData.mOri.mValues[1];
+         InternalObject.mOri.mValues[2] := myVision.objectCamAbsData.mOri.mValues[2];
+         myVision.bDataAbsSetByUser                := FALSE;
+         myVision.bDataAbsSetByCamera              := TRUE;
+         iRetVal := DataOk;
+      // relative displacement
+      ELSE
+         myRobot.fieldbusOut.MeasureRelative.svBool := TRUE;
+         bInDataRelative := TRUE;
+         myRobot.fieldbusOut.ReqVisionData.svBool := TRUE;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Rel data from Camera");
+         IF NOT myVision.bCameraAbsDataOk THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - No Abs data from Camera to calc Rel Data");
+            //no abs data available for relative calculation, teachprog maybe wrong 1. RECEIVE(Vision) 2. RECEIVE(VisionRel)
+            RcuSetMessageOnce(TRcuVision_ErrNoAbsForRel, myRobot.kinListInx, 2, instId, "TRcuVisionPLC.ReceiveVisionData");
+            //only possiblity to go home, because PLC doesn't know that we need abs data - request for rel data already set
+            WAIT myRobot.fieldbusIn.GoDirectHome.svBool;
+         END_IF;
+         IF myVision.bUseExtendedInterface THEN
+            WAIT myVision.bCameraRelDataOk OR 
+                 myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+         ELSE   
+            WAIT myVision.bCameraRelDataOk OR myRobot.fieldbusIn.GoDirectHome.svBool;
+         END_IF;   
+         IF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - GoDirectHome received from PLC");
+            ResetOrderObject();
+            iRetVal := GoHome;
+            RETURN FALSE;
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.DoRemeasure.svBool THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - DoRemeasure received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait DoRemeasure is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+            iRetVal := Remeasure;
+            RETURN FALSE;         
+         ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.Continue.svBool THEN  
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - Continue received from PLC");
+            ResetOrderObject();
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Continue is reset by PLC");
+            WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+            iRetVal := Continue;
+            RETURN FALSE;        
+         END_IF;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Got Rel data from Camera");
+         InternalObject.mPos.mValues[0] := myVision.objectCamRelData.mPos.mValues[0];
+         InternalObject.mPos.mValues[1] := myVision.objectCamRelData.mPos.mValues[1];
+         InternalObject.mPos.mValues[2] := myVision.objectCamRelData.mPos.mValues[2];
+         InternalObject.mOri.mValues[0] := myVision.objectCamRelData.mOri.mValues[0];
+         InternalObject.mOri.mValues[1] := myVision.objectCamRelData.mOri.mValues[1];
+         InternalObject.mOri.mValues[2] := myVision.objectCamRelData.mOri.mValues[2];
+         myVision.bDataRelSetByUser                := FALSE;
+         myVision.bDataRelSetByCamera              := TRUE;
+         iRetVal := DataOk;
+      END_IF;
+      ResetOrderObject();
+   
+   //  manual mode (T1, T2)  
+   ELSE   
+      // absolute displacement
+      IF NOT i_bRelative THEN
+         IF IS_MAPPED(myRobot.fieldbusOut.MeasureRelative.svBool) THEN
+            myRobot.fieldbusOut.MeasureRelative.svBool := FALSE;
+         END_IF;
+         bInDataRelative := FALSE;
+         myRobot.fieldbusOut.ReqVisionData.svBool := TRUE;
+         IF myVision.tVisionAbsolute.bMultiObject THEN
+            IF myVision.bUseExtendedInterface THEN
+                WAIT myVision.bCameraAbsDataOk OR myVision.bUserAbsDataOk OR 
+                     myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+            ELSE   
+                WAIT myVision.bCameraAbsDataOk OR myVision.bUserAbsDataOk OR myRobot.fieldbusIn.GoDirectHome.svBool;
+            END_IF;
+            IF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - GoDirectHome received from PLC");
+               ResetOrderObject();
+               iRetVal := GoHome;
+               RETURN FALSE;  
+            ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.DoRemeasure.svBool THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - DoRemeasure received from PLC");
+               ResetOrderObject();
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait DoRemeasure is reset by PLC");
+               WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+               iRetVal := Remeasure;
+               RETURN FALSE;  
+            ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.Continue.svBool THEN  
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Abs data - Continue received from PLC");
+               ResetOrderObject();
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Continue is reset by PLC");
+               WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+               iRetVal := Continue;
+               RETURN FALSE;
+            ELSIF myVision.bCameraAbsDataOk AND NOT myVision.bUserAbsDataOk THEN  //user input wins
+               myVision.bDataAbsSetByUser                := FALSE;
+               myVision.bDataAbsSetByCamera              := TRUE;
+            ELSE
+               myVision.bDataAbsSetByUser                := TRUE;
+               myVision.bDataAbsSetByCamera              := FALSE;
+            END_IF;  
+         ELSE
+            IF myRobot.gluingRobot THEN
+               myVision.bUserAbsDataOk := FALSE; 
+            END_IF;
+            WAIT myVision.bUserAbsDataOk;
+            myVision.bDataAbsSetByUser                := TRUE;
+            myVision.bDataAbsSetByCamera              := FALSE;
+         END_IF;
+      
+      // relative displacement
+      ELSE
+         myRobot.fieldbusOut.MeasureRelative.svBool := TRUE;
+         bInDataRelative := TRUE;
+         myRobot.fieldbusOut.ReqVisionData.svBool := TRUE;
+         IF myVision.tVisionRelative.bMultiObject THEN
+            IF myVision.bUseExtendedInterface THEN
+               WAIT myVision.bCameraRelDataOk OR myVision.bUserRelDataOk OR 
+                    myRobot.fieldbusIn.GoDirectHome.svBool OR myRobot.fieldbusIn.DoRemeasure.svBool OR myRobot.fieldbusIn.Continue.svBool;
+            ELSE   
+               WAIT myVision.bCameraRelDataOk OR myVision.bUserRelDataOk OR myRobot.fieldbusIn.GoDirectHome.svBool;
+            END_IF;
+            IF myRobot.fieldbusIn.GoDirectHome.svBool THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - GoDirectHome received from PLC");
+               ResetOrderObject();
+               iRetVal := GoHome;
+               RETURN FALSE;
+            ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.DoRemeasure.svBool THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - DoRemeasure received from PLC");
+               ResetOrderObject();
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait DoRemeasure is reset by PLC");
+               WAIT NOT myRobot.fieldbusIn.DoRemeasure.svBool;
+               iRetVal := Remeasure;
+               RETURN FALSE;         
+            ELSIF myVision.bUseExtendedInterface AND myRobot.fieldbusIn.Continue.svBool THEN  
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Rel data - Continue received from PLC");
+               ResetOrderObject();
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Wait Continue is reset by PLC");
+               WAIT NOT myRobot.fieldbusIn.Continue.svBool;
+               iRetVal := Continue;
+               RETURN FALSE;        
+            ELSIF NOT myVision.bCameraAbsDataOk AND NOT myVision.bUserAbsDataOk THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - No Abs data from User to calc Rel Data");
+               ResetOrderObject();
+               WAIT FALSE;
+            ELSIF myVision.bCameraRelDataOk AND NOT myVision.bUserRelDataOk THEN  //user input wins
+
+
+               myVision.bDataRelSetByUser                := FALSE;
+               myVision.bDataRelSetByCamera              := TRUE;
+            ELSE
+               myVision.bDataRelSetByUser                := TRUE;
+               myVision.bDataRelSetByCamera              := FALSE;
+            END_IF;
+         ELSE
+            WAIT myVision.bUserRelDataOk;
+            IF NOT myVision.bUserAbsDataOk THEN
+               myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - No Abs data from User to calc Rel Data");
+               RcuSetMessageOnce(TRcuVision_ErrNoAbsForRel, myRobot.kinListInx, 1, instId, "TRcuVisionPLC.ReceiveVisionData");
+               WAIT FALSE;
+            END_IF;
+            myVision.bDataRelSetByUser                := TRUE;
+            myVision.bDataRelSetByCamera              := FALSE;
+         END_IF;
+      END_IF;
+      
+      ResetOrderObject();
+      // absolute displacement
+      IF NOT i_bRelative THEN
+         IF myVision.tVisionAbsolute.bMultiObject AND myVision.bDataAbsSetByCamera THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData) - Got Abs data from Camera");
+            InternalObject.mPos.mValues[0] := myVision.objectCamAbsData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectCamAbsData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectCamAbsData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectCamAbsData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectCamAbsData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectCamAbsData.mOri.mValues[2];
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Got Abs data from Teachview");
+            InternalObject.mPos.mValues[0] := myVision.objectUserAbsData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectUserAbsData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectUserAbsData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectUserAbsData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectUserAbsData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectUserAbsData.mOri.mValues[2];
+         END_IF;
+      // relative displacement
+      ELSE
+         IF myVision.tVisionAbsolute.bMultiObject AND myVision.bDataRelSetByCamera THEN
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Got Rel data from Camera");
+            InternalObject.mPos.mValues[0] := myVision.objectCamRelData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectCamRelData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectCamRelData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectCamRelData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectCamRelData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectCamRelData.mOri.mValues[2];
+         ELSE
+            myRobot.logger.SetLoggerStep(iLoggerNumber, "ReceiveVisionData - Got Rel data from Teachview");
+            InternalObject.mPos.mValues[0] := myVision.objectUserRelData.mPos.mValues[0];
+            InternalObject.mPos.mValues[1] := myVision.objectUserRelData.mPos.mValues[1];
+            InternalObject.mPos.mValues[2] := myVision.objectUserRelData.mPos.mValues[2];
+            InternalObject.mOri.mValues[0] := myVision.objectUserRelData.mOri.mValues[0];
+            InternalObject.mOri.mValues[1] := myVision.objectUserRelData.mOri.mValues[1];
+            InternalObject.mOri.mValues[2] := myVision.objectUserRelData.mOri.mValues[2];
+         END_IF;
+      END_IF;
+      iRetVal := DataOk;
+   END_IF;
+
+   RETURN TRUE;
+END_ROUTINE  // ROUTINE ReceiveVisionData(VAR_IN i_bRelative : BOOL) : BOOL
+
+
+//************************************************************************************
+//************************************************************************************
+ROUTINE CalcObjDisplacement(VAR_IN i_VisionSubSystemType : TVisionSubSystemType;
+                            i_Org                        : OBJECT;                      
+                            i_Result                     : OBJECT;
+                            iRetVal                      : VISION_STATE) : BOOL
+
+   IF NOT CheckVisionSystemType(i_VisionSubSystemType = Relative) THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Wrong vision system type");
+      iRetVal := Failure;
+      RETURN FALSE;
+   END_IF;
+
+   IF ReceiveVisionData(i_VisionSubSystemType = Relative, iRetVal) THEN 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "CalcObjDisplacement");
+      RcuCalcObject(myRobot, i_Org, InternalObject, i_Result);
+      
+      //store values to SAVE-VAR only in sim, if data is 
+      //send by PLC the Interface Routine does it.
+      IF (bUseInterfInSim AND gbRcuSimulateStationPLC) OR NOT myRobot.mainModeMgr.externControl THEN
+         myVision.SaveDataGlobalFrame(InternalObject, i_VisionSubSystemType = Relative);
+      END_IF;                    
+      
+      //robot stops at second RECEIVE
+      myVision.bCameraAbsDataOk := FALSE;
+      myVision.bCameraRelDataOk := FALSE;
+      
+      IF IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) THEN
+         myRobot.fieldbusOut.byPathNr.svByte := 0;
+      END_IF;
+      
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+   RETURN FALSE;
+END_ROUTINE
+
+
+ROUTINE CalcToolDisplacement(VAR_IN i_VisionSubSystemType : TVisionSubSystemType;
+                             i_Org                        : TOOL;                      
+                             i_Result                     : TOOL;
+                             iRetVal                      : VISION_STATE) : BOOL
+    
+   IF NOT CheckVisionSystemType(i_VisionSubSystemType = Relative) THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Wrong vision system type");
+      iRetVal := Failure;
+      RETURN FALSE;
+   END_IF;
+   
+   IF ReceiveVisionData(i_VisionSubSystemType = Relative, iRetVal) THEN  
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "CalcToolDisplacement");    
+      RcuCalcTool(myRobot, i_Org, InternalObject, i_Result);
+      
+      //store values to SAVE-VAR only in sim, if data is 
+      //send by PLC the Interface Routine does it.
+      IF (bUseInterfInSim AND gbRcuSimulateStationPLC) OR NOT myRobot.mainModeMgr.externControl THEN
+         myVision.SaveDataGlobalFrame(InternalObject, i_VisionSubSystemType = Relative);
+      END_IF;                    
+      
+      //robot stops at second RECEIVE
+      myVision.bCameraAbsDataOk := FALSE;
+      myVision.bCameraRelDataOk := FALSE;
+      
+      IF IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) THEN
+         myRobot.fieldbusOut.byPathNr.svByte := 0;
+      END_IF;
+      
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+                     
+   RETURN FALSE;
+END_ROUTINE     
+  
+  
+ROUTINE CalcPointDisplacement(VAR_IN i_VisionSubSystemType : TVisionSubSystemType;
+                              i_Org                        : POINT;                      
+                              i_Result                     : POINT;
+                              iRetVal                      : VISION_STATE) : BOOL
+
+VAR
+   OrgFrame : TMcuFrame;
+   NewFrame : TMcuFrame;
+END_VAR
+
+   IF NOT CheckVisionSystemType(i_VisionSubSystemType = Relative) THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Wrong vision system type");
+      iRetVal := Failure;
+      RETURN FALSE;
+   END_IF;
+
+   IF i_Org.Coord <> Object THEN
+      STOPPOINT();
+      myRobot.DebugPrint(eTraceVision, "Parameter i_Org = " + i_Org.GetName() + " ist kein Objektpunkt");
+      RcuSetMessageOnce(TRcuObjMeasure_ErrObjPoint, myRobot.kinListInx, 7, instId, "TRcuVisionPLC.CalcPointDisplacement", "2", i_Org.GetName(), "CALC_DISPLACED_POINT");
+      myRobot.ErrorReaction(TRUE);
+      RETURN FALSE;
+   END_IF;
+
+   IF ReceiveVisionData(i_VisionSubSystemType = Relative, iRetVal) THEN 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "CalcPointDisplacement");
+      
+      OrgFrame.mFrameTyp := eMcuFrameKardan;
+      OrgFrame.mPos.mValues[0] := i_Org.A;
+      OrgFrame.mPos.mValues[1] := i_Org.B;
+      OrgFrame.mPos.mValues[2] := i_Org.C;
+      OrgFrame.mOri.mValues[0] := i_Org.D;
+      OrgFrame.mOri.mValues[1] := i_Org.E;
+      OrgFrame.mOri.mValues[2] := i_Org.F;              
+
+      McuMultiplyFrames(NewFrame, OrgFrame, InternalObject);
+      
+      i_Result := i_Org;
+      i_Result.A  := NewFrame.mPos.mValues[0];
+      i_Result.B  := NewFrame.mPos.mValues[1];
+      i_Result.C  := NewFrame.mPos.mValues[2];
+      i_Result.D  := NewFrame.mOri.mValues[0];
+      i_Result.E  := NewFrame.mOri.mValues[1];
+      i_Result.F  := NewFrame.mOri.mValues[2];
+            
+      //robot stops at second RECEIVE
+      myVision.bCameraAbsDataOk := FALSE;
+      myVision.bCameraRelDataOk := FALSE;
+      
+      IF IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) THEN
+         myRobot.fieldbusOut.byPathNr.svByte := 0;
+      END_IF;
+      
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+   
+   RETURN FALSE;
+END_ROUTINE
+
+                     
+//------------------------------------------------------------------------
+// Check if a valid vision system type is given
+//------------------------------------------------------------------------                       
+ROUTINE CheckVisionSystemType(VAR_IN i_bRelative : BOOL) : BOOL
+   
+   IF (i_bRelative AND ((subSystemType <> eAbsRel) 
+      OR NOT (IS_MAPPED(myRobot.fieldbusOut.MeasureRelative.svBool)))) THEN
+      
+      RcuSetMessageOnce(TRcuVision_ErrRelativ, myRobot.kinListInx, 1, instId, "TRcuVisionPLC.CheckVisionSystemType");
+      RETURN FALSE;
+   ELSE 
+      RETURN TRUE;
+   END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Teachprog selects a program and waits until start of measuring
+//------------------------------------------------------------------------
+ROUTINE MacroStartProgram(progNumber : INT; OPTIONAL frametype : TVisionSubSystemType)
+ VAR
+   zeroObj   : TMcuFrame;
+   sLogText  : STRING;
+   bResetAbs : BOOL;
+   bResetRel : BOOL;
+ END_VAR  
+ 
+   MAINRUN();
+   IF NOT IS_USED(frametype) THEN
+      bResetAbs := FALSE;
+      bResetRel := TRUE;
+   ELSIF (frametype = Absolute) THEN //when absolute displacement is deleted --> also relative has to be deleted
+      bResetAbs := TRUE;
+      bResetRel := TRUE;
+   ELSIF (frametype = Relative) THEN
+      bResetAbs := FALSE;
+      bResetRel := TRUE;
+   END_IF; 
+   //delete absolute displacement
+   IF bResetAbs THEN
+      zeroObj.mFrameTyp := eMcuFrameKardan; //delete "IsraAbs"   IsraAbs --> IsraRel no displacement
+      RcuRefSysSetKardan(myRobot.RcuRefSystemVisionRel, zeroObj, myRobot.RcuRefSystemVisionAbs, FALSE, "VisionRel");
+      myRobot.homing.StoreRefSystemVision(TRUE, zeroObj);
+      //delete "IsraRel"   IsraRel --> object no displacement
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroObj, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroObj);
+      IF myVision.bShiftA7Enable THEN
+         myVision.rShiftA7Abs   := 0.0;
+         myVision.rShiftA7Value := 0.0;
+         sLogText := "MacroSetOrder Absolute - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      END_IF;
+      myVision.CalcActualObject();
+   END_IF;
+   //delete relative displacement
+   IF bResetRel THEN
+      zeroObj.mFrameTyp := eMcuFrameKardan;  //delete "IsraRel"   IsraRel --> object no displacement
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroObj, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroObj);
+      IF myVision.bShiftA7Enable THEN
+         myVision.rShiftA7Value := myVision.rShiftA7Abs;
+         sLogText := "MacroStartProgram Relative - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      END_IF;
+      myVision.CalcActualObject();
+   END_IF;
+   
+   sLogText := "MacroStartProgram "+STR(progNumber);
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+   IF (progNumber >= 0) THEN
+      IF NOT IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) OR
+         NOT IS_MAPPED(myRobot.fieldbusOut.StartMeasure.svBool) OR
+         NOT IS_MAPPED(myRobot.fieldbusIn.AckStartMeasure.svBool) THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Not all variables for Start Programm mapped");
+         bInDataRelative := FALSE; //?????
+         RETURN;
+      END_IF;
+      myRobot.fieldbusOut.byPathNr.svByte := progNumber;    
+      bInDataRelative := (NOT IS_USED(frametype)) OR (IS_USED(frametype) AND (frametype = Relative));
+      IF IS_MAPPED(myRobot.fieldbusOut.MeasureRelative.svBool) THEN
+         myRobot.fieldbusOut.MeasureRelative.svBool := bInDataRelative;
+      END_IF;     
+      myRobot.fieldbusOut.StartMeasure.svBool := TRUE;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroStartProgram: Wait for AckStartMeasure from PLC");  
+      WAIT myRobot.fieldbusIn.AckStartMeasure.svBool OR ((gbRcuSimulateStationPLC OR gbFBSSActive) AND NOT bUseInterfInSim);
+      myRobot.fieldbusOut.StartMeasure.svBool := FALSE;
+      myRobot.fieldbusOut.byPathNr.svByte := 0;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroStartProgram: Got AckStartMeasure, wait start is FALSE");
+      WAIT (NOT myRobot.fieldbusIn.AckStartMeasure.svBool) OR ((gbRcuSimulateStationPLC OR gbFBSSActive) AND NOT bUseInterfInSim);
+   END_IF;
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - request an object by sending the number to PLC
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOrder(CONST  inOrder : DINT; OPTIONAL frametype : TVisionSubSystemType)
+VAR
+   I          : SINT := 0;
+   sLogText   : STRING;
+   zeroobject : TMcuFrame;
+END_VAR 
+
+   IF NOT IS_USED(frametype) THEN
+      IF (inOrder < 1) OR (inOrder > 18) THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Invalid Macro parameter");
+         RETURN;
+      ELSIF (inOrder <= 8) AND NOT myVision.tVisionAbsolute.bMultiObject THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Multi object Vision Absolute is not activated");
+         RcuSetMessageOnce(TRcuVision_ErrMultiObj, myRobot.kinListInx, 5, instId, "TRcuVisionPLC.MacroSetOrder");
+         RETURN;
+      ELSIF (inOrder > 8) AND (inOrder <= 16) AND NOT myVision.tVisionRelative.bMultiObject THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Multi object Vision Relative is not activated");
+         RcuSetMessageOnce(TRcuVision_ErrMultiObj, myRobot.kinListInx, 6, instId, "TRcuVisionPLC.MacroSetOrder");
+         RETURN;
+      END_IF;
+   ELSE
+      IF ((inOrder < 1) OR (inOrder > 200)) AND (inOrder <> 255) THEN
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Invalid Macro parameter");
+         RETURN;
+      END_IF;
+   END_IF;
+   
+   ResetOrderObject();
+   IF NOT IS_USED(frametype) THEN
+      IF (inOrder <= 8) OR (inOrder = 17) THEN
+         myVision.bDataAbsSetByUser   := FALSE;
+         myVision.bUserAbsDataOk      := FALSE;
+         myVision.bDataAbsSetByCamera := FALSE;
+         myVision.bCameraAbsDataOk    := FALSE;
+      ELSIF (inOrder <= 16) OR (inOrder = 18) THEN
+         myVision.bDataRelSetByUser   := FALSE;
+         myVision.bUserRelDataOk      := FALSE;
+         myVision.bDataRelSetByCamera := FALSE;
+         myVision.bCameraRelDataOk    := FALSE;
+      END_IF;
+   ELSIF (frametype = Absolute) THEN
+      myVision.bDataAbsSetByUser   := FALSE;
+      myVision.bUserAbsDataOk      := FALSE;
+      myVision.bDataAbsSetByCamera := FALSE;
+      myVision.bCameraAbsDataOk    := FALSE;
+   ELSIF (frametype = Relative) THEN
+      myVision.bDataRelSetByUser   := FALSE;
+      myVision.bUserRelDataOk      := FALSE;
+      myVision.bDataRelSetByCamera := FALSE;
+      myVision.bCameraRelDataOk    := FALSE;
+   END_IF;
+   
+   IF ((inOrder <= 16) AND NOT IS_USED(frametype)) OR ((inOrder <= 200) AND IS_USED(frametype)) THEN
+      //MainRun
+      MAINRUN();
+      //Set new order to PLC
+      IF IS_MAPPED(myRobot.fieldbusOut.byOrderValuesNr.svByte) THEN
+         myRobot.fieldbusOut.byOrderValuesNr.svByte := BYTE(inOrder);
+         sLogText := "MacroSetOrder - Request of data set No." + STR(inOrder);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      ELSE
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - Request of data not MAPPED");
+      END_IF; 
+   //delete abs and rel data
+   ELSIF ((inOrder = 17) AND NOT IS_USED(frametype)) OR ((inOrder = 255) AND IS_USED(frametype) AND (frametype = Absolute)) THEN
+      //MainRun
+      MAINRUN();
+      //delete "IsraAbs"   IsraAbs --> IsraRel no displacement
+      zeroobject.mFrameTyp := eMcuFrameKardan;
+      RcuRefSysSetKardan(myRobot.RcuRefSystemVisionRel, zeroobject, myRobot.RcuRefSystemVisionAbs, FALSE, "VisionRel");
+      myRobot.homing.StoreRefSystemVision(TRUE, zeroobject);
+      //delete "IsraRel"   IsraRel --> object no displacement
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroobject, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroobject);
+      IF myVision.bShiftA7Enable THEN
+         myVision.rShiftA7Abs   := 0.0;
+         myVision.rShiftA7Value := 0.0;
+         sLogText := "MacroSetOrder Absolute - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      END_IF;
+      START CalcActObjInMainRun();
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - ResetVisionDataAbs");
+   //delete rel data  
+   ELSIF ((inOrder = 18) AND NOT IS_USED(frametype)) OR ((inOrder = 255) AND IS_USED(frametype) AND (frametype = Relative)) THEN
+      //MainRun
+      MAINRUN();
+      //delete "IsraRel"   IsraRel --> object no displacement
+      zeroobject.mFrameTyp := eMcuFrameKardan;
+      RcuRefSysSetKardan(myRobot.RcuRefSystemObject, zeroobject, myRobot.RcuRefSystemVisionRel, FALSE, "Object");
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroobject);
+      IF myVision.bShiftA7Enable THEN
+         myVision.rShiftA7Value := myVision.rShiftA7Abs;
+         sLogText := "MacroSetOrder Relative - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+         myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+      END_IF;
+      START CalcActObjInMainRun();
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetOrder - ResetVisionDataRel");
+   END_IF; 
+   
+END_ROUTINE
+
+ROUTINE CalcActObjInMainRun()
+   MAINRUN();
+   myVision.CalcActualObject(); 
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  Tell the PLC that robot is in measure position / last position **********
+//----------------------------------------------------------------------------- 
+ROUTINE MacroSetMeasurePos(bLastPos : BOOL)
+
+   IF (myVision.tVisionAbsolute.tCameraType = eCamRobot) OR (myVision.tVisionRelative.tCameraType = eCamRobot) THEN
+      MAINRUN();  //wait for mainrun
+      IF myRobot.mainModeMgr.externControl THEN
+         // ?? bVisionReadyRel := FALSE;         //reset data only in auto, to use the given values in manual
+      END_IF;
+      IF NOT bLastPos THEN
+         myRobot.fieldbusOut.RobInCamPos.svBool     := TRUE;
+         myRobot.fieldbusOut.RobInLastCamPos.svBool := FALSE;    
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Robot in position for measuring");
+      ELSE
+         myRobot.fieldbusOut.RobInCamPos.svBool     := FALSE;
+         myRobot.fieldbusOut.RobInLastCamPos.svBool := TRUE;
+         myRobot.logger.SetLoggerStep(iLoggerNumber, "Robot in position for last measuring");
+      END_IF;
+   ELSE
+      myRobot.DebugPrint(eTraceVision, "MacroSetMeasurePos is not working - wrong CamType");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetMeasurePos is not working - wrong CamType");
+   END_IF;
+   
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  Wait until ISRA gives the release for next measure position **************
+//----------------------------------------------------------------------------- 
+ROUTINE MacroReceiveNextCamPos() : BOOL
+    
+   IF (myVision.tVisionAbsolute.tCameraType = eCamRobot) OR (myVision.tVisionRelative.tCameraType = eCamRobot) THEN
+      STOPPOINT();  //wait for mainrun 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting for release GoNextCamPos from PLC");
+      WAIT myRobot.fieldbusIn.GoNextCamPos.svBool OR ((gbRcuSimulateStationPLC OR gbFBSSActive) AND NOT bUseInterfInSim);
+      myRobot.fieldbusOut.RobInCamPos.svBool     := FALSE;
+      myRobot.fieldbusOut.RobInLastCamPos.svBool := FALSE;
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Waiting until GoNextCamPos is reset");
+      WAIT NOT myRobot.fieldbusIn.GoNextCamPos.svBool;
+      RETURN TRUE;
+   ELSE
+      myRobot.DebugPrint(eTraceVision, "MacroReceiveNextCamPos is not working - wrong CamType");
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroReceiveNextCamPos is not working - wrong CamType");   
+      RETURN FALSE;
+   END_IF;
+   
+   RETURN TRUE;
+   
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  Tell the PLC that robot is in measure position PosNr, wait for Release from
+//  PLC to leave the position
+//----------------------------------------------------------------------------- 
+ROUTINE MacroSetCamPos(PosNr : BYTE)
+VAR
+   str : STRING;
+END_VAR
+
+   STOPPOINT();  //wait for mainrun
+   IF (NOT bUseInterfInSim) AND gbRcuSimulateStationPLC THEN
+      RETURN; //nothing to do in simulated PLC
+   END_IF;
+   
+   IF IS_MAPPED(myRobot.fieldbusOut.byOrderValuesNr.svByte) AND 
+      IS_MAPPED(myRobot.fieldbusOut.RobInCamPos.svBool)     AND
+      IS_MAPPED(myRobot.fieldbusOut.byOrderValuesNr.svByte) THEN
+      myRobot.fieldbusOut.byOrderValuesNr.svByte := PosNr;
+      myRobot.fieldbusOut.RobInCamPos.svBool := TRUE;
+      myRobot.fieldbusOut.RobInLastCamPos.svBool := FALSE;
+      str := "Robot in position " + STR(PosNr) + " for measuring";
+      myRobot.logger.SetLoggerStep(iLoggerNumber, str);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "waiting for release of next measure position");
+      WAIT myRobot.fieldbusIn.GoNextCamPos.svBool;
+      myRobot.fieldbusOut.RobInCamPos.svBool := FALSE;
+      myRobot.fieldbusOut.byOrderValuesNr.svByte := 0;     
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "waiting until PLC has reset release next measure pos");
+      WAIT NOT myRobot.fieldbusIn.GoNextCamPos.svBool;
+   ELSE
+      RcuSetMessageOnce(TRcuVision_ErrFieldbus, myRobot.kinListInx, 2, instId, "TRcuVisionPLC.MacroSetCamPos");
+      RETURN;
+   END_IF;
+   
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - calculate this for teachview
+//-----------------------------------------------------------------------------
+ROUTINE SetActualObject(inObject : OBJECT)
+ VAR
+  zeroObject : OBJECT;
+ END_VAR
+  
+  myVision.tTeachInObject := inObject;
+(*
+  IF myVision.bCameraAbsDataOk OR myVision.bUserAbsDataOk THEN
+     myVision.CalcActualObject(myVision.tVisionDataAbs, FALSE);
+  ELSE
+     myVision.CalcActualObject(zeroObject, FALSE);
+  END_IF;
+*)
+  myVision.CalcActualObject();
+(*
+  IF subSystemType = eAbsRel THEN
+     IF myVision.bCameraRelDataOk OR myVision.bUserRelDataOk THEN
+        myVision.CalcActualObject(myVision.tVisionDataRel, TRUE);
+     ELSE
+        myVision.CalcActualObject(zeroObject, TRUE);
+     END_IF;
+  END_IF;
+*)
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+// set a trigger-signal to ISRA to take a picture set from EcoTalk
+//-----------------------------------------------------------------------------
+ROUTINE SignalVisionCommand(commandData        : TMcuUserData; 
+                            pos                : TRcuTrigger;
+                            posInvalid         : BOOL; 
+                            VAR_IN triggerIdx  : DINT)
+VAR
+   command          : DINT;
+   bMRTriggerSignal : BOOL;
+   bTimeOut         : BOOL;
+   sTriggerName     : STRING;
+   sLogText         : STRING;
+END_VAR
+  
+   command         := commandData.mDataInt[3];
+   SwoRaiseEvent(eScopeSignalVision, "SignalVision");
+      
+   IF NOT IS_MAPPED(bOutPicTrigger) THEN
+     RcuSetMessageOnce(TRcuVision_ErrPicTrigOutput, myRobot.kinListInx, 
+                       3, instId, "TRcuVisionPLC.SignalVisionCommand", cHW_OutVisionTrigger[myRobot.kinListInx]);
+     RETURN;
+   END_IF;
+   IF NOT(myVision.tVisionAbsolute.bTrigPicture OR myVision.tVisionRelative.bTrigPicture) THEN
+     RcuSetMessageOnce(TRcuVision_ErrPicTrigRgs, myRobot.kinListInx, 
+                       3, instId, "TRcuVisionPLC.SignalVisionCommand");
+     RETURN;
+   END_IF;
+   // signal to vision
+   IF bOutPicTrigger THEN
+      RcuSetMessageOnce(TRcuVision_ErrPicTrigTooFast, myRobot.kinListInx, 3, instId, "TRcuVisionPLC.SignalVisionCommand");
+     RETURN;
+   END_IF;
+   
+   PRINT("TCP-PosZ " + STR(myRobot.readBackVals.mCartPos.mValues[2]));
+   bTimeOut         := FALSE;
+   bOutPicTrigger   := TRUE;     //Set Output to FrameGrabber
+   SysTimerSet(cTrgSignalTime, bTimeOut);
+   WAIT bTimeOut;
+   bOutPicTrigger := FALSE;   //Reset Output to FrameGrabber
+   sTriggerName := pos.GetName();
+   sLogText := "PictureTrigger set: " + sTriggerName;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+
+END_ROUTINE
+
+
+(************************************************************************
+* Constants
+*)
+CONSTANT PRIVATE   
+   cTrgSignalTime   : INT  :=    40;   //after this time Triggersignal is reset 40ms
+END_CONSTANT
+
+(*******************************************************************************
+* private members
+*)
+TYPE PRIVATE
+   TSubSystemType       : (eOff, eAbsolute, eAbsRel, eMax);
+   
+   TVisionInfo :
+   STRUCT
+      tCameraType     : TCameraSystemType;
+      rScaling_X      : REAL := 0.1;
+      rScaling_Y      : REAL := 0.1;
+      rScaling_Z      : REAL := 0.1;
+      rScaling_A      : REAL := 0.001;
+      rScaling_B      : REAL := 0.001;
+      rScaling_C      : REAL := 0.001;
+      rLinLimit       : REAL := 50;
+      rRotLimit       : REAL :=  5;
+      bMultiObject    : BOOL;
+      bTrigPicture    : BOOL;
+   END_STRUCT;
+END_TYPE
+
+VAR PRIVATE
+   //config
+   instId                : DINT;             // instance identification number
+   myRobot               : MAPTO TRcuRobot;
+   myVision              : MAPTO TRcuVision;
+   subSystemType         : TSubSystemType;   //type of Visionsystem
+   bUseInterfInSim       : BOOL;             //take values interface in sim
+   bOutPicTrigger        : MAPTO BOOL;       //HW-Output  - ISRA-FrameGrabber
+
+   //debug bis Eingang angelegt
+   bInDataRelative       : BOOL;
+   
+   InternalObject     : TMcuFrame;   // Data from outside (Fieldbus, PHG, etc.) are copied to internal structure
+END_VAR
+
+
+//-----------------------------------------------------------------------------
+//  ObservePlcInterface  
+//-----------------------------------------------------------------------------
+ROUTINE ObservePlcInterface() PRIVATE
+ 
+   IF gbRcuSimulateStationPLC THEN
+      WAIT myRobot.simulatePlc.bMappingReady;
+   END_IF; 
+ 
+  //lower outputs
+  myRobot.fieldbusOut.BadVisionData.svBool := FALSE;
+  myRobot.fieldbusOut.AckVisionData.svBool := FALSE;
+  myVision.bCameraAbsDataOk := FALSE;
+  myVision.bCameraRelDataOk := FALSE;
+  ResetOrderObject();
+  
+  WHILE TRUE DO
+    myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Wait new vision data");   
+    WAIT myRobot.fieldbusIn.StrobeVisionData.svBool OR myRobot.fieldbusIn.VisionDataInvalid.svBool;    
+    // new data from vision-system
+    IF (myRobot.fieldbusIn.StrobeVisionData.svBool AND NOT myRobot.fieldbusIn.VisionDataInvalid.svBool) THEN
+       // absolute data
+       IF NOT bInDataRelative THEN
+          myVision.bCameraAbsDataOk := FALSE;
+          myVision.bCameraRelDataOk := FALSE;
+          myVision.bDataAbsSetByUser   := FALSE;
+          myVision.bDataAbsSetByCamera := FALSE;
+          myVision.objectCamAbsData.mFrameTyp := eMcuFrameKardan;
+          myVision.objectCamAbsData.mPos.mValues[0] := myRobot.fieldbusIn.VisionDisplaceX.svWord * myVision.tVisionAbsolute.rScaling_X; // X
+          myVision.objectCamAbsData.mPos.mValues[1] := myRobot.fieldbusIn.VisionDisplaceY.svWord * myVision.tVisionAbsolute.rScaling_Y; // Y
+          myVision.objectCamAbsData.mPos.mValues[2] := myRobot.fieldbusIn.VisionDisplaceZ.svWord * myVision.tVisionAbsolute.rScaling_Z; // Z
+          myVision.objectCamAbsData.mOri.mValues[0] := myRobot.fieldbusIn.VisionDisplaceA.svWord * myVision.tVisionAbsolute.rScaling_A; // A
+          myVision.objectCamAbsData.mOri.mValues[1] := myRobot.fieldbusIn.VisionDisplaceB.svWord * myVision.tVisionAbsolute.rScaling_B; // B
+          myVision.objectCamAbsData.mOri.mValues[2] := myRobot.fieldbusIn.VisionDisplaceC.svWord * myVision.tVisionAbsolute.rScaling_C; // C
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Strobe vision abs data");
+          IF NOT myVision.CheckDataRange(myVision.objectCamAbsData, bInDataRelative) THEN
+             myVision.SetVisionDataToTeachview(myVision.objectCamAbsData, bInDataRelative);
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Abs data out of range");
+             myRobot.fieldbusOut.BadVisionData.svBool := TRUE;
+             myRobot.fieldbusOut.AckVisionData.svBool := FALSE;
+             myRobot.dataRecorder.RecVisionData(bInDataRelative, FALSE, myVision.objectCamAbsData);
+          ELSE    
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Abs data checked successful");
+             ResetOrderObject();
+             myRobot.fieldbusOut.ReqVisionData.svBool := FALSE;
+             myVision.bCameraAbsDataOk := TRUE;
+             myVision.SaveDataGlobalFrame(myVision.objectCamAbsData, bInDataRelative);
+             myVision.SetVisionDataToTeachview(myVision.objectCamAbsData, bInDataRelative);
+             myRobot.fieldbusOut.BadVisionData.svBool := FALSE;
+             myRobot.fieldbusOut.AckVisionData.svBool := TRUE;
+             myRobot.dataRecorder.RecVisionData(bInDataRelative, TRUE, myVision.objectCamAbsData);
+          END_IF;
+       // relative data
+       ELSE
+          myVision.bCameraRelDataOk := FALSE;
+          myVision.bDataAbsSetByUser   := FALSE;
+          myVision.bDataRelSetByCamera := FALSE;
+          myVision.objectCamRelData.mFrameTyp := eMcuFrameKardan;
+          myVision.objectCamRelData.mPos.mValues[0] := myRobot.fieldbusIn.VisionDisplaceX.svWord * myVision.tVisionRelative.rScaling_X; // X
+          myVision.objectCamRelData.mPos.mValues[1] := myRobot.fieldbusIn.VisionDisplaceY.svWord * myVision.tVisionRelative.rScaling_Y; // Y
+          myVision.objectCamRelData.mPos.mValues[2] := myRobot.fieldbusIn.VisionDisplaceZ.svWord * myVision.tVisionRelative.rScaling_Z; // Z
+          myVision.objectCamRelData.mOri.mValues[0] := myRobot.fieldbusIn.VisionDisplaceA.svWord * myVision.tVisionRelative.rScaling_A; // A
+          myVision.objectCamRelData.mOri.mValues[1] := myRobot.fieldbusIn.VisionDisplaceB.svWord * myVision.tVisionRelative.rScaling_B; // B
+          myVision.objectCamRelData.mOri.mValues[2] := myRobot.fieldbusIn.VisionDisplaceC.svWord * myVision.tVisionRelative.rScaling_C; // C
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Strobe vision rel data");
+          IF NOT myVision.CheckDataRange(myVision.objectCamRelData, bInDataRelative) THEN
+             myVision.SetVisionDataToTeachview(myVision.objectCamRelData, bInDataRelative);
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Rel data out of range");
+             myRobot.fieldbusOut.BadVisionData.svBool := TRUE;
+             myRobot.fieldbusOut.AckVisionData.svBool := FALSE;
+             myRobot.dataRecorder.RecVisionData(bInDataRelative, FALSE, myVision.objectCamRelData);
+          ELSE    
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Rel data checked successful");
+             ResetOrderObject();
+             myRobot.fieldbusOut.ReqVisionData.svBool := FALSE;
+             myVision.bCameraRelDataOk := TRUE;
+             myVision.SaveDataGlobalFrame(myVision.objectCamRelData, bInDataRelative);
+             myVision.SetVisionDataToTeachview(myVision.objectCamRelData, bInDataRelative);
+             myRobot.fieldbusOut.BadVisionData.svBool := FALSE;
+             myRobot.fieldbusOut.AckVisionData.svBool := TRUE;
+             myRobot.dataRecorder.RecVisionData(bInDataRelative, TRUE, myVision.objectCamRelData);
+          END_IF;
+       END_IF;
+       
+    //PLC resets the data	
+    ELSIF (NOT myRobot.fieldbusIn.StrobeVisionData.svBool AND myRobot.fieldbusIn.VisionDataInvalid.svBool) THEN
+       // absolute data
+       IF NOT bInDataRelative THEN
+          myVision.bCameraAbsDataOk := FALSE;
+          myVision.bCameraRelDataOk := FALSE;
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Abs data reset");
+       // relative data
+       ELSE
+          myVision.bCameraRelDataOk := FALSE;
+          myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Rel data reset");    
+       END_IF;
+       myRobot.fieldbusOut.BadVisionData.svBool := FALSE;
+       myRobot.fieldbusOut.AckVisionData.svBool := TRUE;
+      
+     //PLC has raised both Inputs => Error 
+    ELSIF (myRobot.fieldbusIn.StrobeVisionData.svBool AND myRobot.fieldbusIn.VisionDataInvalid.svBool) THEN
+       RcuSetMessageOnce(TRcuVision_ErrInvStrobe, myRobot.kinListInx, 1, instId, "TRcuVisionPLC.ObservePlcInterface");
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Strobe and Reset were set");
+    END_IF;
+    
+    //wait until PLC has finished handshake
+    myRobot.logger.SetLoggerStep(iLoggerNumber, "ObservePlcInterface - Wait till strobe is lowered");
+    WAIT (NOT myRobot.fieldbusIn.StrobeVisionData.svBool) AND (NOT myRobot.fieldbusIn.VisionDataInvalid.svBool);
+    myRobot.fieldbusOut.BadVisionData.svBool := FALSE;
+    myRobot.fieldbusOut.AckVisionData.svBool := FALSE;
+  END_WHILE;   
+      
+END_ROUTINE  // ObservePlcInterface
+
+//-----------------------------------------------------------------------------
+//  read values from the catalog  
+//-----------------------------------------------------------------------------
+ROUTINE ReadConfig() : BOOL PRIVATE
+  VAR
+    iCatalogHdl  : DINT;
+    iTemp        : DINT;
+  END_VAR
+  
+  instId := RcuGetInstanceId(); //instance identification number (for alarms)
+  iLoggerNumber  := myRobot.logger.ActivateLogger("TRcuVisionPLC", myRobot);
+  // read out catalog
+  IF NOT CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision", iCatalogHdl) THEN
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "Error reading catalog-values");
+     RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 1, instId, "TRcuVisionPLC.ReadConfig");
+     RETURN FALSE;
+  ELSE
+     IF NOT myVision.bUseExtendedInterface THEN
+        //SubType of Visionsystem
+        IF NOT CatalogReadIntRange(iCatalogHdl, "SubTypeOfVisionSystem", iTemp, eOff, (eMax-1), TRUE) THEN
+           subSystemType := eAbsolute;  //use absolute as default
+        ELSE
+           subSystemType := TSubSystemType(iTemp);
+        END_IF;
+     ELSE
+        subSystemType := eAbsRel;
+     END_IF;
+     
+     IF subSystemType > eOff THEN
+        IF CatalogReadIntRange(iCatalogHdl, "UseInterfaceInSim", iTemp, 0, 1, TRUE) THEN
+           bUseInterfInSim := (iTemp = 1);
+        END_IF;
+        IF NOT CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision.Absolute", iCatalogHdl) THEN
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Error reading catalog-values");
+           RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 4, instId, "TRcuVisionPLC.ReadConfig", "[RC.KINEMATIC:x.Vision.Absolute]", "[RC.KINEMATIC:x.Vision.Absolute]");
+           RETURN FALSE;
+        ELSE
+           //scaling and limits are read in by TRcuVision.tss
+           iTemp := 0;
+           IF CatalogReadIntRange(iCatalogHdl, "MultiObject", iTemp, 0, 1, TRUE) THEN
+              myVision.tVisionAbsolute.bMultiObject := (iTemp = 1) OR myVision.bUseExtendedInterface;
+           ELSIF myVision.bUseExtendedInterface THEN
+              myVision.tVisionAbsolute.bMultiObject := TRUE;
+           END_IF;
+           iTemp := 0;
+           IF CatalogReadIntRange(iCatalogHdl, "TriggeredPicture", iTemp, 0, 1, NOT myVision.bUseExtendedInterface) THEN
+              myVision.tVisionAbsolute.bTrigPicture := (iTemp = 1);
+           END_IF;
+           IF NOT myVision.bUseExtendedInterface THEN
+              iTemp := 0;
+              IF CatalogReadIntRange(iCatalogHdl, "TypeOfCameraSystem", iTemp, 0, 2, TRUE) THEN
+                 myVision.tVisionAbsolute.tCameraType := TCameraSystemType(iTemp);
+              END_IF;
+           ELSE
+              myVision.tVisionAbsolute.tCameraType := eCamRobot;
+           END_IF;
+        END_IF;
+     
+        IF subSystemType > eAbsolute THEN
+           IF NOT CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision.Relative", iCatalogHdl) THEN
+              myRobot.logger.SetLoggerStep(iLoggerNumber, "Error reading catalog-values");
+              RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 5, instId, "TRcuVisionPLC.ReadConfig", "[RC.KINEMATIC:x.Vision.Relative]", "[RC.KINEMATIC:x.Vision.Relative]");
+              RETURN FALSE;
+           ELSE
+              CatalogReadRealRange(iCatalogHdl, "LinearLimit", myVision.tVisionRelative.rLinLimit , 0.0, 100.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "RotationLimit", myVision.tVisionRelative.rRotLimit , 0.0, 10.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "ScalingFactor_X", myVision.tVisionRelative.rScaling_X , 0.0, 1.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "ScalingFactor_Y", myVision.tVisionRelative.rScaling_Y , 0.0, 1.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "ScalingFactor_Z", myVision.tVisionRelative.rScaling_Z , 0.0, 1.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "ScalingFactor_A", myVision.tVisionRelative.rScaling_A , 0.0, 1.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "ScalingFactor_B", myVision.tVisionRelative.rScaling_B , 0.0, 1.0, FALSE);
+              CatalogReadRealRange(iCatalogHdl, "ScalingFactor_C", myVision.tVisionRelative.rScaling_C , 0.0, 1.0, FALSE);
+              iTemp := 0;
+              IF CatalogReadIntRange(iCatalogHdl, "MultiObject", iTemp, 0, 1, TRUE) THEN
+                 myVision.tVisionRelative.bMultiObject := (iTemp = 1) OR myVision.bUseExtendedInterface;
+              ELSIF myVision.bUseExtendedInterface THEN
+                 myVision.tVisionRelative.bMultiObject := TRUE;
+              END_IF;
+              iTemp := 0;
+              IF CatalogReadIntRange(iCatalogHdl, "TriggeredPicture", iTemp, 0, 1, NOT myVision.bUseExtendedInterface) THEN
+                 myVision.tVisionRelative.bTrigPicture := (iTemp = 1);
+              END_IF;
+              IF NOT myVision.bUseExtendedInterface THEN
+                 iTemp := 0;
+                 IF CatalogReadIntRange(iCatalogHdl, "TypeOfCameraSystem", iTemp, 0, 2, TRUE) THEN
+                    myVision.tVisionRelative.tCameraType := TCameraSystemType(iTemp);
+                 END_IF;
+              ELSE
+                 myVision.tVisionRelative.tCameraType := eCamRobot;
+              END_IF;   
+              myVision.bShowVisionRelUserPage := TRUE;
+           END_IF;
+        END_IF;
+     ELSE
+        RcuSetMessageOnce(TRcuVision_ErrConfig, myRobot.kinListInx, 6, instId, "TRcuVisionPLC.ReadConfig", "SubTypeOfVisionSystem", "[RC.KINEMATIC:x.Vision]");
+        RETURN FALSE;
+     END_IF;
+     
+     CASE subSystemType OF
+       eOff:       myRobot.logger.SetLoggerStep(iLoggerNumber, "Visionsystem is switched off"); 
+       eAbsolute:  myRobot.logger.SetLoggerStep(iLoggerNumber, "Cfg Data read for Vision-System with absolute measurement");
+       eAbsRel:    myRobot.logger.SetLoggerStep(iLoggerNumber, "Cfg Data read for Vision-System with absolute and relative measurement");
+     END_CASE; 
+  END_IF;
+  RETURN TRUE;
+  
+END_ROUTINE  // ReadConfig
+
+//-----------------------------------------------------------------------------
+//  reset outputs to PLC with order for object-nr or request of new data
+//-----------------------------------------------------------------------------
+ROUTINE ResetOrderObject() PRIVATE
+
+   myRobot.fieldbusOut.ReqVisionData.svBool := FALSE;
+   
+   IF IS_MAPPED(myRobot.fieldbusOut.byOrderValuesNr.svByte) THEN
+      myRobot.fieldbusOut.byOrderValuesNr.svByte := 0;
+   END_IF;
+ 
+   IF IS_MAPPED(myRobot.fieldbusOut.byPathNr.svByte) THEN
+      myRobot.fieldbusOut.byPathNr.svByte := 0;
+   END_IF;
+   
+   IF IS_MAPPED(myRobot.fieldbusOut.StartMeasure.svBool) THEN
+      myRobot.fieldbusOut.StartMeasure.svBool := FALSE;
+   END_IF;
+   
+   IF IS_MAPPED(myRobot.fieldbusOut.RobInCamPos.svBool) THEN
+      myRobot.fieldbusOut.RobInCamPos.svBool := FALSE;
+   END_IF;
+  
+   IF IS_MAPPED(myRobot.fieldbusOut.RobInLastCamPos.svBool) THEN
+      myRobot.fieldbusOut.RobInLastCamPos.svBool := FALSE;
+   END_IF;
+   
+   IF IS_MAPPED(myRobot.fieldbusOut.MeasureRelative.svBool) THEN
+      myRobot.fieldbusOut.MeasureRelative.svBool := FALSE;
+   END_IF;
+   
+   IF IS_MAPPED(bOutPicTrigger) THEN
+      bOutPicTrigger := FALSE;
+   END_IF;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "ResetOrderObject: Reset all requests PLC"); 
+   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------
+//  change of external control, so init all markers 
+//-----------------------------------------------------------------------------
+ROUTINE ObserveExternalControl() PRIVATE
+ VAR
+   bChgCtrl   : BOOL;
+   zeroObject : TMcuFrame;
+   locObject  : OBJECT;
+ END_VAR
+  
+   IF gbRcuSimulateStationPLC THEN
+      WAIT myRobot.simulatePlc.bMappingReady;
+   END_IF;
+
+  bChgCtrl := IS_CHANGED(myRobot.mainModeMgr.externControl);
+  WHILE TRUE DO
+    IF myRobot.mainModeMgr.externControl THEN
+       myVision.bCameraAbsDataOk    := FALSE;       //RECEIVE Macro is now waiting for new data from PLC
+       myVision.bDataAbsSetByCamera := FALSE;
+       myVision.bCameraRelDataOk    := FALSE;
+       myVision.bDataRelSetByCamera := FALSE;
+       myVision.bUserAbsDataOk      := FALSE;        //RECEIVE Macro is now waiting for new data from User
+       myVision.bDataAbsSetByUser   := FALSE;
+       myVision.bUserRelDataOk      := FALSE;
+       myVision.bDataRelSetByUser   := FALSE;        //delete values from userpage
+       myVision.SetVisionDataToTeachview(zeroObject, FALSE); 
+       myVision.SetVisionDataToTeachview(zeroObject, TRUE);
+(*
+       myVision.CalcActualObject(locObject, FALSE);
+       myVision.CalcActualObject(locObject, TRUE);
+*)
+       myVision.CalcActualObject();
+       ResetOrderObject();                 //delete all orders to PLC
+    ELSE
+       myVision.bUserAbsDataOk      := FALSE;       //RECEIVE Macro is now waiting for new data from User
+       myVision.bDataAbsSetByUser   := FALSE;
+       myVision.bUserRelDataOk      := FALSE;
+       myVision.bDataRelSetByUser   := FALSE;
+       ResetOrderObject();                 //Delete all orders to PLC
+    END_IF;
+    WAIT bChgCtrl;
+    bChgCtrl := FALSE;
+  END_WHILE; 
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------
+//  vision system sends EStop signal used for door angle observation
+//-----------------------------------------------------------------------------
+ROUTINE ObserveEStop() PRIVATE
+
+  WAIT gbBootupFinished;
+  WHILE TRUE DO
+     WAIT (NOT myRobot.fieldbusIn.EStopVision.svBool) AND (myRobot.mainModeMgr.mode <> ciT1) AND (NOT gbRcuSimulateStationPLC);
+     RcuSetMessageOnce(TRcuVision_ErrEStop, myRobot.kinListInx, 1, 0, "TRcuVisionPLC.ObserveEStop");
+     // avoid cyclic override-factor switching
+     IF (myRobot.motionMode <> eRcuMMgrModeStop) AND (myRobot.motionMode <> eRcuMMgrModeStopJoints) THEN
+        McuSetTimeOverrideFactor(myRobot.kinematicMcuId, myRobot.emergencyTimeOverrideFactor);  //set maximum override
+        DebugPrint(eTraceCommon, "TimeOverrideFactor 19 : " + STR(myRobot.emergencyTimeOverrideFactor));  
+        myRobot.SetMotionMode(eRcuMMgrModeStop); // stop on path
+        WAIT myRobot.isNotMovingOnPath;          // wait until movement has stopped
+        WAIT NOT myRobot.updateActive;          
+        McuSetTimeOverrideFactor(myRobot.kinematicMcuId, myRobot.defaultTimeOverrideFactor);
+        DebugPrint(eTraceCommon, "TimeOverrideFactor 20 : " + STR(myRobot.defaultTimeOverrideFactor)); //restore default override
+     END_IF;   
+     myRobot.WaitMcMicroCycles(2);
+  END_WHILE;
+
+END_ROUTINE
+
+(*------------------------------------------------------------------------------
+* systemroutines
+*)
+
+ROUTINE RELEASE()
+   
+   IF IS_MAPPED(myRobot) THEN
+      IF myRobot.mainModeMgr.externControl AND NOT myRobot.bReleaseBlockedByHandler THEN
+        IF NOT myRobot.RcuInterfaceToBCU.bFixposActive THEN
+           myVision.bCameraAbsDataOk := FALSE;  //RECEIVE Macro is now waiting for new data
+           myVision.bCameraRelDataOk := FALSE;
+        END_IF;
+        ResetOrderObject();         //Delete all orders to PLC
+        bInDataRelative := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "RELEASE externControl - init system");
+      ELSIF NOT myRobot.mainModeMgr.externControl THEN
+        ResetOrderObject();         //Delete all orders to PLC
+        bInDataRelative := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "RELEASE Teachmode - init system");   
+      ELSE
+       DebugPrint(eTraceCommon, "TRcuVisionPLC.RELEASE: FORCE TRACKING");
+      END_IF;
+   END_IF;
+END_ROUTINE
+

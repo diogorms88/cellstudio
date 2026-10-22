@@ -1,0 +1,467 @@
+(*-----------------------------------------------------------------------------            
+*    K2-System Robot Control Unit                                             *            
+*                                                                             *            
+*    Dürr Systems GmbH APT                                                    *            
+*    Rosenstr. 39                                                             *            
+*    74321 Bietigheim-Bissingen                                               *            
+*    Germany                                                                  *            
+*                                                                             *            
+*    Copyright (C) 2014 Dürr Systems GmbH APT                                 *            
+*    All rights reserved.                                                     *            
+*                                                                             *            
+*                                                                             *            
+*    Author :     Bauder                                                      *            
+*    E-Mail:      Manfred.Bauder@durr.com                                     *            
+*                                                                             *            
+*    Modul:       FWMcuCompatibility                                          *            
+*    Description: Types and Variables if FW without Smooth functionality      *
+*                 is used  (vor MCU Version 6.28)                             *
+*-----------------------------------------------------------------------------            
+*-----------------------------------------------------------------------------            
+*)                        
+
+
+TYPE GLOBAL
+   TRcuDriveValuesExt: STRUCT
+      mValidLen: DINT;
+      mPos: TMcuJointVector;
+      mTorque: TMcuJointVector;
+      mFinalTorque: TMcuJointVector;
+      mActTorque: TMcuJointVector;
+      mUpdateCounterDrives: DINT;
+      mMicroIPState: TRcuMicroIPState;
+      mMicroIPPathPos: TRcuPathPos;
+   END_STRUCT;
+   
+   TRcuMicroIPState: (
+      eRcuMicroIPStateNormal,
+      eRcuMicroIPStateStopping,
+      eRcuMicroIPStateFrozen
+   );
+   
+   TRcuPathPos: STRUCT
+      mPathID: TMcuDbObjID;
+      mSegmentID: TMcuDbObjID;
+      mSegParam: REAL;
+   END_STRUCT;
+END_TYPE
+
+
+TYPE GLOBAL
+
+
+   TMcuSmoothGeometry: STRUCT
+      mSmoothFactor: REAL;
+      mHasPathVelCompensation: BOOL;
+   END_STRUCT;
+
+
+   TMcuIPPosition: STRUCT
+      mPosType: TMcuIPPosType;
+      mJoints: TMcuVector;
+      mFrame: TMcuFrame;
+   END_STRUCT;
+
+
+   TMcuIPPosType: (
+      eMcuIPPosInvalid := 0,
+      eMcuIPPosJoints,
+      eMcuIPPosCart,
+      eMcuIPPosMixed
+   );
+
+   TMcuIPPosErrorType: (
+      eMcuIPPosOK,
+      eMcuIPPosWrongParams,
+      eMcuIPPosSegmentNotValid,
+      eMcuIPPosSegmentNotCalculated,
+      eMcuIPPosProfilesNotCalculated,
+      eMcuIPPosTargetNotReachable
+   );
+
+
+   TMcuIPCalcType: (
+      eMcuIPCalcNormal,
+      eMcuIPCalcOriginal
+   );
+
+
+END_TYPE
+
+VAR GLOBAL
+   gbSmoothAvailable : BOOL := FALSE;
+   gbActCartJointsAvailable : BOOL := TRUE;
+   gbGuardsAvailable : BOOL := FALSE;
+END_VAR
+
+ROUTINE SetSmoothInSegHdl(lSegHdl : TMcuSegHdl; lSmooth : TMcuSmoothGeometry) GLOBAL
+   //   lSegHdl.mSmoothGeometry := lSmooth;
+   RETURN;
+END_ROUTINE
+
+
+ROUTINE GetActCartValJoints (CONST kin : TRcuKinematic; CONST iAxNr : INT) : REAL GLOBAL
+   RETURN kin.actCartVals.mJoints.mPos[iAxNr];
+END_ROUTINE
+
+
+ROUTINE  McuGetInterpolationPosition(IPPosition: TMcuIPPosition; ErrorReason: TMcuIPPosErrorType; CONST PathPos: TMcuPathPos; CONST IPPosCalcType: TMcuIPCalcType): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+
+
+
+CONSTANT GLOBAL
+   cRcuMaxRobotAdditionalPositions : DINT := 1;
+END_CONSTANT 
+
+TYPE GLOBAL
+   ADD_POSITIONS               : ARRAY[cRcuMaxRobotAdditionalPositions] OF REAL;
+   ADD_POS_DYN                 : ARRAY[cRcuMaxRobotAdditionalPositions] OF TMcuSubDyn;
+   MAPTO_ADD_POSITIONS         : ARRAY[cRcuMaxRobotAdditionalPositions] OF MAPTO REAL;
+   
+   ADD_POSITIONS_ROB_ARR       : ARRAY [cgiRcuMaxKinematics] OF ADD_POSITIONS;
+   MAPTO_ADD_POSITIONS_ROB_ARR : ARRAY [cgiRcuMaxKinematics] OF MAPTO_ADD_POSITIONS;
+END_TYPE
+
+
+VAR GLOBAL
+   actAdditionalPosRobArr   : MAPTO_ADD_POSITIONS_ROB_ARR;
+   actIOAdditionalPosRobArr : MAPTO_ADD_POSITIONS_ROB_ARR;
+END_VAR
+
+(*
+// In TMcuPosCart den Wert val für den zusaetzlicher Freiheitsgrad des 7-Achs-Roboter (PaintArm7VWrist)
+// setzen
+ROUTINE SetAdditionalPos(CONST val : ADD_POSITIONS; pos : TMcuPosCart; CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+   pos.mAdditionalPos.mValidLen := kin.kinematic.mNrOfRobotAdditionalPositions;
+   FOR i := 0 TO kin.kinematic.mNrOfRobotAdditionalPositions - 1 DO
+      pos.mAdditionalPos.mValues[i] := val[i];
+   END_FOR;
+END_ROUTINE
+
+// Gibt den Wert des zusaetzlichen Freiheitsgrads in pos für den 7-Achs-Roboter (PaintArm7VWrist)
+// in der Variablen val zurück
+ROUTINE GetAdditionalPos(val : ADD_POSITIONS; CONST pos : TMcuPosCart; CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+   FOR i := 0 TO kin.kinematic.mNrOfRobotAdditionalPositions - 1 DO
+      val[i] := pos.mAdditionalPos.mValues[i];
+   END_FOR;
+END_ROUTINE
+
+// Gibt den aktuellen Wert des zusaetzlichen Freiheitsgrads für den 7-Achs-Roboter (PaintArm7VWrist)
+// in der Variablen val zurück
+ROUTINE GetActAdditionalPos(val : ADD_POSITIONS; CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+   FOR i := 0 TO kin.kinematic.mNrOfRobotAdditionalPositions - 1 DO
+      val[i] := kin.actCartVals.mAdditionalPos.mPos[i];
+   END_FOR;
+END_ROUTINE
+
+// Mappt die Variable actAdditionalPosRobArr auf den aktuellen Wert des zusaetzlichen Freiheitsgrads für den 7-Achs-Roboter (PaintArm7VWrist)
+// Für die angegebene Kinematik 
+ROUTINE MapAdditionalPos(CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+   j : DINT;
+END_VAR
+
+   j := kin.kinListInx;
+   FOR i := 0 TO kin.kinematic.mNrOfRobotAdditionalPositions - 1 DO
+      actAdditionalPosRobArr[j][i] := MAP(kin.actCartVals.mAdditionalPos.mPos[i]);
+      actIOAdditionalPosRobArr[j][i] := MAP(kin.IOWorldPos.mAdditionalPos.mValues[i]);
+   END_FOR;
+END_ROUTINE
+
+// Gibt die Dynamikwerte des zusaetzlichen Freiheitsgrads für den 7-Achs-Roboter (PaintArm7VWrist)
+// zurück
+ROUTINE GetAdditionalPosDyn(CONST kin : TRcuKinematic; dyn : ADD_POS_DYN; ReducedVel : ADD_POSITIONS) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+   FOR i := 0 TO kin.kinematic.mNrOfRobotAdditionalPositions - 1 DO
+      dyn[i] := kin.kinematic.mAdditionalPosData[i].mDynLimits;
+      ReducedVel[i] := kin.kinematic.mAdditionalPosData[i].mReducedVelocity;
+   END_FOR;
+   
+END_ROUTINE
+
+ROUTINE IsPaintArm7VWrist(CONST kin : TRcuKinematic) : BOOL GLOBAL
+   RETURN kin.kinematic.mRobotTyp = eMcuPaintArm7VWrist;
+END_ROUTINE
+
+ROUTINE NrOfRobotAdditionalPositions(CONST kin : TRcuKinematic) : DINT GLOBAL
+   RETURN kin.kinematic.mNrOfRobotAdditionalPositions;
+END_ROUTINE
+*)
+
+// bei FW ohne 7-Achs-Kinematik
+
+
+// zusaetzlicher Freiheitsgrad für 7-Achs-Roboter (PaintArm7VWrist)
+ROUTINE SetAdditionalPos(CONST val : ADD_POSITIONS; pos : TMcuPosCart; CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+   RETURN;
+   
+END_ROUTINE
+
+// Gibt den Wert des zusaetzlichen Freiheitsgrads in pos für den 7-Achs-Roboter (PaintArm7VWrist)
+// in der Variablen val zurück
+ROUTINE GetAdditionalPos(val : ADD_POSITIONS; CONST pos : TMcuPosCart; CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+END_ROUTINE
+
+// Gibt den aktuellen Wert des zusaetzlichen Freiheitsgrads für den 7-Achs-Roboter (PaintArm7VWrist)
+// in der Variablen val zurück
+ROUTINE GetActAdditionalPos(val : ADD_POSITIONS; CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+
+END_ROUTINE
+
+// Mappt die Variable actAdditionalPosRobArr auf den aktuellen Wert des zusaetzlichen Freiheitsgrads für den 7-Achs-Roboter (PaintArm7VWrist)
+// Für die angegebene Kinematik 
+ROUTINE MapAdditionalPos(CONST kin : TRcuKinematic) GLOBAL
+VAR
+   i : DINT;
+   j : DINT;
+END_VAR
+
+END_ROUTINE
+
+// Gibt die Dynamikwerte des zusaetzlichen Freiheitsgrads für den 7-Achs-Roboter (PaintArm7VWrist)
+// zurück
+ROUTINE GetAdditionalPosDyn(CONST kin : TRcuKinematic; dyn : ADD_POS_DYN; ReducedVel : ADD_POSITIONS) GLOBAL
+VAR
+   i : DINT;
+END_VAR
+   
+END_ROUTINE
+
+ROUTINE IsPaintArm7VWrist(CONST kin : TRcuKinematic) : BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE NrOfRobotAdditionalPositions(CONST kin : TRcuKinematic) : DINT GLOBAL
+   RETURN 0;
+END_ROUTINE
+
+//------------------------------------------------------------------------------------------------------
+//
+// New Limiter 
+//
+ROUTINE SetCartDynInArea(CONST kin : TRcuKinematic; area : TMcuArea; objIdVector: TMcuDbObjIDVec) GLOBAL
+//   area.mDbObjActiveAtViolation := objIdVector;
+END_ROUTINE
+
+ROUTINE SetGuardSelectionInArea(CONST kin : TRcuKinematic; area : TMcuArea; GuardSelection: TMcuAreaGuardSelection) GLOBAL
+//   area.mGuardSelection := GuardSelection;
+END_ROUTINE
+
+
+ROUTINE PrintMonitoringVelocity(kin : TRcuKinematic) GLOBAL
+//   kin.DebugPrint(eTraceAreaJob, "Velocity Limit = " + STR(kin.Monitoring.mCartesianDynamic.mLimits.mDynLimits[eMcuCartPosVel].mNamedRegions[eMcuKinRegionTCP]));
+//   kin.WaitMcMainCycles(1);
+//   kin.DebugPrint(eTraceAreaJob, "Velocity Limit = " + STR(kin.Monitoring.mCartesianDynamic.mLimits.mDynLimits[eMcuCartPosVel].mNamedRegions[eMcuKinRegionTCP]));   
+END_ROUTINE
+
+
+CONSTANT GLOBAL
+   cMcuDbObjVecLen: DINT := 16;
+   cMcuMaxGuardPoints: DINT := 32;
+   cMcuMaxGuardPositions: DINT := 64;   
+END_CONSTANT
+
+TYPE GLOBAL
+   TMcuDbObjIDInfo: STRUCT
+      mObjID: TMcuDbObjID;
+      mContainingObjID: TMcuDbObjID;
+   END_STRUCT;
+
+   TMcuVecBool: STRUCT
+      mValidLen: DINT;
+      mValues: ARRAY [cMcuMaxJ] OF BOOL;
+   END_STRUCT;
+
+   TMcuDbObjIDVec: STRUCT
+      mValidLen: DINT;
+      mDbObjIDs: ARRAY [cMcuDbObjVecLen] OF TMcuDbObjID;
+   END_STRUCT;
+
+   TMcuGuardMode: (
+      eMcuGuardInactive,
+      eMcuGuardPosition,
+      eMcuGuardVelocity,
+      eMcuGuardPosAndVel,
+      eMcuMaxGuardMode
+   );
+
+   TMcuGuardLocation: (
+      eMcuGuardTCP,
+      eMcuGuardElbow,
+      eMcuGuardFlange,
+      eMcuGuardJointFrame,
+      eMcuGuardToolStart,
+      eMcuGuardToolEnd,
+      eMcuMaxGuardLocation
+   );
+
+   TMcuGuardOrigin: (
+      eMcuGuardUser,
+      eMcuGuardTool,
+      eMcuGuardWorkpiece
+   );
+
+   TMcuCartDynamicType: (
+      eMcuCartPosVel,
+      eMcuCartOriVel,
+      eMcuMaxCartDynamicType
+   );
+
+   TMcuGuardPoint: STRUCT
+      mGuardMode: TMcuGuardMode;
+      mGuardLocation: TMcuGuardLocation;
+      mJointNr: DINT;
+      mGuardPoint: TMcuFrame;
+      mGuardName: TMcuStringShort;
+   END_STRUCT;
+
+   TMcuGuardPoints: STRUCT
+      mName: TMcuString;
+      mDBObjTyp: TMcuDBObjTyp;
+      mUserData: TMcuUserData;
+      mNrOfGuardPoints: DINT;
+      mGuardPoints: ARRAY [cMcuMaxGuardPoints] OF TMcuGuardPoint;
+   END_STRUCT;
+   
+   TMcuGuardCheckInfo: STRUCT
+      mGuardMode: TMcuGuardMode;
+      mGuardLocation: TMcuGuardLocation;
+      mJointNr: DINT;
+      mGuardOrigin: TMcuGuardOrigin;
+   END_STRUCT;
+
+   TMcuGuardObjectInfo: STRUCT
+      mGuardIdx: DINT;
+      mGuardObject: TMcuDbObjIDInfo;
+   END_STRUCT;
+
+   TMcuGuardPosition: STRUCT
+      mCheckInfo: TMcuGuardCheckInfo;
+      mObjectInfo: TMcuGuardObjectInfo;
+      mPosition: TMcuFrame;
+   END_STRUCT;
+
+   TMcuGuardPositions: STRUCT
+      mValidLen: DINT;
+      mGuardPositions: ARRAY [cMcuMaxGuardPositions] OF TMcuGuardPosition;
+   END_STRUCT;
+   
+   TMcuCartDynamicLimits: STRUCT
+      mName: TMcuString;
+      mDBObjTyp: TMcuDBObjTyp;
+      mUserData: TMcuUserData;
+      mKinematicID: TMcuDbObjID;
+      mDynamicType: TMcuCartDynamicType;
+      mLimit: REAL;
+   END_STRUCT;
+   
+   TMcuGuardModeSelection: (
+      eMcuAllGuards,
+      eMcuOnlyPosGuards,
+      eMcuOnlyPosAndVelGuards
+   );
+
+   TMcuKinematicRegionDef: (
+      eMcuFullKinematic,
+      eMcuSelectedKinRegions
+   );
+
+   TMcuNamedKinematicRegion: (
+      eMcuKinRegionTCP,
+      eMcuKinRegionFlange,
+      eMcuKinRegionElbow,
+      eMcuKinRegionTool,
+      eMcuKinRegionWorkpiece,
+      eMcuMaxNamedKinRegions
+   );
+
+   TMcuKinematicRegions: STRUCT
+      mKinRegionDef: TMcuKinematicRegionDef;
+      mNamedRegions: ARRAY [eMcuMaxNamedKinRegions] OF BOOL;
+      mJointRegions: TMcuVecBool;
+   END_STRUCT;
+
+   TMcuAreaGuardSelection: STRUCT
+      mGuardModes: TMcuGuardModeSelection;
+      mGuardRegions: TMcuKinematicRegions;
+   END_STRUCT;
+
+   TMcuWSMCollectiveState: STRUCT
+      mWorkSpaceState: TMcuWSMState;
+      mBlockedSpaceState: TMcuWSMState;
+      mWillLeaveWorkSpace: BOOL;
+      mWillEnterBlockedSpace: BOOL;
+      mReportedAreaID: TMcuDbObjID;
+      mReportedKinematicPartIdx: DINT;
+   END_STRUCT;
+
+   TMcuCartesianWorkspaceMonitoring: STRUCT
+      mState: TMcuWSMCollectiveState;
+   END_STRUCT;
+
+   TMcuJointsWorkspaceMonitoring: STRUCT
+      mState: TMcuWSMCollectiveState;
+   END_STRUCT;
+
+   TMcuKinematicMonitoring: STRUCT
+      mCartesianSpace: TMcuCartesianWorkspaceMonitoring;
+      mJointsSpace: TMcuJointsWorkspaceMonitoring;
+   END_STRUCT;
+
+END_TYPE    
+
+ROUTINE McuReadGuardPoints(CONST guardPointsID: TMcuDbObjID; guardPointsData: TMcuGuardPoints): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+ 
+
+ROUTINE McuCalcGuardPositions(CONST kinID: TMcuDbObjID; CONST posMainJoints: TMcuVector; CONST posAuxJoints: TMcuVector; 
+                              CONST toolID: TMcuDbObjID; CONST guardPointsID: TMcuDbObjID; guardPositions: TMcuGuardPositions; 
+                              OPTIONAL robotTransformErrors: TMcuTrafoError; OPTIONAL nrOfActiveGuardPositions: DINT): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+                              
+ROUTINE McuSetStartGuardPoints(CONST kinID: TMcuDbObjID; CONST guardPointsID: TMcuDbObjID): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE McuCreateCartDynamicLimits(dynLimID: TMcuDbObjID; CONST cartDynLimits: TMcuCartDynamicLimits): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+
+ROUTINE McuActivateMonitoring(CONST objId: TMcuDbObjID; CONST activate: BOOL): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE
+   
+ROUTINE McuCreateGuardPoints(guardPointsID: TMcuDbObjID; CONST guardPointsData: TMcuGuardPoints): BOOL GLOBAL
+   RETURN FALSE;
+END_ROUTINE

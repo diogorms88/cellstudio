@@ -1,0 +1,96 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 21.11.2016  | KLCH   | First release
+
+Imports Common
+
+Parameter Option1 Option2 Option3 Option4 Option5 Option12 Option14 Option15 Option18 Option20 Option21 Option26 Option27 MaterialValve1 NumberOfMainNeedles NozzleExchanger Circulation OptionGun OptionShotMeter HelpGun1 ElectricalVersion
+
+Call Main_Option18
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_Option18
+	Call Option18_ResetAll
+
+	SelectCase Option18
+		Case No_CleaningSystem
+		Case CleaningSystem_PurgeWaterManual
+			Call Option18_PurgeWaterManual
+		Case CleaningSystem_PurgeWaterAuto
+			Call Option18_PurgeWaterManual
+			Call Option18_PurgeWaterAuto
+		CaseElse
+			Message Cleaning system not supported !! (Main_Option18)
+	EndSelect
+Return
+
+SubRoutine Option18_ResetAll
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+		Delete
+		Message Check configuration of fixpos and time program groups!! (Option18_ResetAll)
+	Endif
+Return
+
+SubRoutine Option18_PurgeWaterManual
+	SelectNode RPC1.R11.PCU1
+	Call Common_AddChannel_WaterQuench
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+	Call Common_AddDevice_YBL1_Sealing
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+	Call Common_AddDevice_BSW1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+	Call Common_AddDevice_AManagerSW1
+	SelectNode RPC1.R11.PCU1
+	SelectNode RPC1.R11
+	SelectTab [Fixpositions]
+	//*********** set prefix *******************************
+	FixposPrefix R
+	//*********** Activate standard fixpositions ***********
+	FixposEnabled InBox 1
+	FixposEnabled AboveBox 1
+	FixposEnabled BlowOutHN1 1
+	//*********** Set property "Used in TP" ****************
+	FixposUsedInTP InBox 1
+	FixposUsedInTP AboveBox 1
+	FixposUsedInTP BlowOutHN1 1
+	SelectNode RPC1.R11.PCU1
+	SelectTab [TimeprogramGroups]
+	//*** Activate time program groups and set "used"/"unused" in reset channel state for states "aborted" and "ready" ***
+	// time program group 7 (CleanAtomizer)
+	ActivateTimeProgramGroup 7 1
+	SetResetStateAborted 7 unused
+	SetResetStateReady 7 unused
+	//*********** Set cfg parameter ****************
+	SelectNode RPC1.R11.BCU1
+	// Select tab cfg parameter
+	SelectTab [CfgParameter]
+	SelectCfg BCU1.StationData.AdditionalStartFixPos
+	OptionalUsed 1
+	Value 74
+Return
+
+SubRoutine Option18_PurgeWaterAuto
+	// Additional settings to Option18_PurgeWaterManual
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+	Call Common_AddDevice_YSWVR1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+	Call Common_AddDevice_YSWVV1
+	SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].WaterQuench
+	Call Common_AddDevice_BSW2
+	SelectNode RPC1.R11.PCU1
+	SelectTab [CfgParameter]
+	//************* Enable cfg group ********************
+	// Enable optional cfg group
+	SelectCfg PCU1.WaterQuench
+	OptionalUsed 1
+	SelectCfg PCU1.WaterQuench.FillingLevelIni
+	OptionalUsed 1
+	Value "BSW1"
+	SelectCfg PCU1.WaterQuench.OverFlowIni
+	OptionalUsed 1
+	Value "BSW2"
+Return

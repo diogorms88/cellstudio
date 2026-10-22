@@ -1,0 +1,96 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2003 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : RcuHoldToRun.ttp
+*  First Author : pen
+*  Date         : 14.7.2003
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  General management of the hold-to-run state. Is set according to the current
+*  mainmode of the focused kinematic.
+*------------------------------------------------------------------------------
+*)
+
+
+(*******************************************************************************
+* private members
+*)
+
+// reacts on changes of the focused kinematic and on changes of the holdToRun
+// flag of the focused kinematic
+ROUTINE HoldToRunMgr() PRIVATE
+   VAR
+      focusChg : BOOL;
+      flagChg : BOOL;
+   END_VAR
+
+   // indicator for new focused kinematic
+   focusChg := IS_CHANGED(gbRcuFocusFlipFlop);
+
+   // wait for kinematic in focus
+   IF NOT IS_MAPPED(gRcuFocusedKinematic) THEN
+      WAIT focusChg;
+      focusChg := FALSE;
+   END_IF;
+
+   // indicator for changes of the holdToRun flag
+   flagChg := IS_CHANGED(gRcuFocusedKinematic.mainModeMgr.holdToRun);
+
+   WHILE TRUE DO
+      // set current hold-to-run mode
+      //SetHoldToRunMode(gRcuFocusedKinematic.mainModeMgr.holdToRun);
+      START ObserveHoldToRun(gRcuFocusedKinematic.mainModeMgr.holdToRun) PRIO 0;
+
+      // wait for change of the holdToRun flag or the kinematic in focus
+      WAIT flagChg OR focusChg;
+
+      STOP ObserveHoldToRun;
+      
+      IF focusChg THEN
+         focusChg := FALSE;
+         flagChg := IS_CHANGED(gRcuFocusedKinematic.mainModeMgr.holdToRun);
+      ELSE
+         flagChg := FALSE;
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+
+// observes the start-key and stops the programs when releasing the key
+ROUTINE ObserveHoldToRun(holdToRun : BOOL) PRIVATE
+   
+   IF NOT holdToRun THEN
+      RETURN;
+   END_IF;
+   IF NOT IS_MAPPED(RcuTeachPendantControl.keyProgStart) THEN
+      RcuSetMessageOnce(RcuHoldToRun_ErrKeyNotMapped, gRcuFocusedKinematic.kinListInx, 1, 0, "RcuHoldToRun.ObserveHoldToRun", "Start");
+      RETURN;
+   END_IF;
+   WHILE TRUE DO
+      WAIT RcuTeachPendantControl.keyProgStart OR gRcuFocusedKinematic.selectingFlow.running;
+      WAIT NOT RcuTeachPendantControl.keyProgStart;
+      gRcuFocusedKinematic.DebugPrint(eTraceCommon, "Start-key released - interrupting program");
+      InterruptProg(0);
+      WAIT NOT gRcuFocusedKinematic.selectingFlow.running;
+      gRcuFocusedKinematic.DebugPrint(eTraceCommon, "Start-key released - program interrupted");
+   END_WHILE;
+END_ROUTINE
+
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+
+   // achieve defined initial state
+   SetHoldToRunMode(FALSE);
+
+   // start the Hold-To-Run manager
+   START HoldToRunMgr();
+END_ROUTINE
+

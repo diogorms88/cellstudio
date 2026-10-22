@@ -1,0 +1,398 @@
+(*
+Version     | ReleaseDate | Respon | Changes
+---------------------------------------------------------------------------------------------------
+V2_01.00.00 | 2016-10-18  | STL    | First release
+*)
+
+IMPORT_OVER_LISTFILE
+ F_Version_String
+, cCatRootVersion
+, cCatPathVersion
+, tsGenSysCfg
+, AB_Initiator_T001
+, AB_MainValve_T001
+, AB_Initiator_T005
+, tsReleases
+, FB_SetMessagePCU
+, tsPCU
+, FB_TON
+
+END_IMPORT
+
+FUNCTION_BLOCK FB_Interlocks_AirSupply #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ SV_sGeneralSystemCfg : tsGenSysCfg;
+END_VAR
+
+VAR_EXTERNAL
+ abBLV1 : AB_Initiator_T001 (* Initiator  *);
+ abYLV1 : AB_MainValve_T001 (* Valve  *);
+ abYLV2 : AB_MainValve_T001 (* Valve  *);
+ abBHD1 : AB_Initiator_T005 (* Initiator  *);
+ GV_sReleases : tsReleases;
+ fbSetMessagePCU : FB_SetMessagePCU;
+ GV_sPCU : tsPCU;
+END_VAR
+
+VAR
+ fbWaitTime1 : FB_TON;
+ fbWaitTime2 : FB_TON;
+ mInitDone : BOOL;
+END_VAR
+
+VAR CONSTANT
+ zMyName : STRING(23) := 'FB_Interlocks_AirSupply';
+ zVersion : STRING(15) := 'V2_01.00.00';
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF NOT mInitDone THEN
+  // Set version info to catalog
+  mInitDone := F_Version_String(i_zRoot    := cCatRootVersion,
+                                i_zPath    := cCatPathVersion,
+                                i_zName    := zMyName,
+                                i_zVersion := zVersion);
+END_IF;
+
+//-------------------------------------------------------------------------------------------------
+// Interlocks of initiators
+//-------------------------------------------------------------------------------------------------
+
+//-------------Interlocks of AirSupplyValve LV1 -----------------------------
+//Set error when YLV1 is open and BLV1 is still FALSE after 5 seconds
+//Start count time
+
+fbWaitTime1(IN := (abYLV1.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+                   NOT GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].mInterlock),
+            PT := t#5000ms);
+
+IF (fbWaitTime1.Q                               AND
+    NOT abBLV1.fGetDevAct_ActValue_Debounced()) THEN
+  
+  fbSetMessagePCU(i_iIdent         := cFB_Interlocks_HV1,
+                  i_iMsgCount      := 1,
+                  i_iDeviceNr      := cMainValve_YLV1,
+                  i_zLocation      := zMyName,
+                  i_zParam1        := GV_sPCU.Devices.sMainValves.y[cMainValve_YLV1].zName,
+                  i_zParam2        := GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].zName,
+                  i_zParam3        := '',
+                  i_iChannelNumber := GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].iChannelNr);
+  
+ELSE
+  
+  GV_sPCU.Devices.sMainValves.y[cMainValve_YLV1].mInterlock := FALSE;
+  
+END_IF;
+
+GV_sReleases.sReleases.Internal.ReleaseAirSupply := (abYLV1.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+                                                    (abBLV1.fGetDevAct_ActValue_Debounced() OR GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].mInterlock));
+
+//If booster on robot is used: set error when BLV1 is TRUE and BHD1 is still FALSE after 2 seconds
+//Start count time
+
+//fbWaitTime2(IN := (abYLV1.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+//                   abBLV1.fGetDevAct_ActValue_Debounced()               AND
+//                   NOT GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].mInterlock),
+//            PT := t#2000ms);
+//
+//If second separate air supply is used: set error when YLV2 is open and BHD1 is still FALSE after 5 seconds
+//Start count time
+
+fbWaitTime2(IN := (abYLV2.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+                   NOT GV_sPCU.Devices.sInitiators.y[cInitiator_BHD1].mInterlock),
+            PT := t#5000ms);
+
+IF (fbWaitTime2.Q                              AND
+    NOT SV_sGeneralSystemCfg.mSimulateProcess) THEN
+  
+  IF NOT abBHD1.fGetDevAct_NoFault_Debounced() THEN
+    fbSetMessagePCU(i_iIdent         := cFB_Interlocks_BoosterOverPres,
+                    i_iMsgCount      := 0,
+                    i_iDeviceNr      := cInitiator_BHD1,
+                    i_zLocation      := zMyName,
+                    i_zParam1        := abBHD1.fGet_DeviceName(),
+                    i_zParam2        := BOOL_TO_STRING(abBHD1.fGetDevAct_NoFault_Debounced()),
+                    i_zParam3        := BOOL_TO_STRING(abBHD1.fGetDevAct_InRange_Debounced()),
+                    i_iChannelNumber := cIndex_AirSupply);      
+  ELSIF NOT abBHD1.fGetDevAct_InRange_Debounced() THEN
+    fbSetMessagePCU(i_iIdent         := cFB_Interlocks_BoosterUnderPres,
+                    i_iMsgCount      := 0,
+                    i_iDeviceNr      := cInitiator_BHD1,
+                    i_zLocation      := zMyName,
+                    i_zParam1        := abBHD1.fGet_DeviceName(),
+                    i_zParam2        := BOOL_TO_STRING(abBHD1.fGetDevAct_NoFault_Debounced()),
+                    i_zParam3        := BOOL_TO_STRING(abBHD1.fGetDevAct_InRange_Debounced()),
+                    i_iChannelNumber := cIndex_AirSupply);
+  END_IF;
+  
+ELSE
+  
+  //If booster on robot is used
+  GV_sPCU.Devices.sMainValves.y[cMainValve_YLV1].mInterlock := FALSE;
+  
+  //If second separate air supply is used
+  GV_sPCU.Devices.sMainValves.y[cMainValve_YLV2].mInterlock := FALSE;
+  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 145 @Pou 25 
+@@@BEG_Comment@@@
+Version     | ReleaseDate | Respon | Changes
+---------------------------------------------------------------------------------------------------
+V2_01.00.00 | 2016-10-18  | STL    | First release
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(16)F_Version_String @RT(0) @T @T @DERIVED 0 @F @RT(15)FUNCTION : BOOL @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(15)cCatRootVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(5)"IEC" @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCatPathVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(14)"VersionInfos" @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(23)FB_Interlocks_AirSupply @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(20)SV_sGeneralSystemCfg @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsGenSysCfg @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)abBLV1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_Initiator_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(10)Initiator  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abYLV1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_MainValve_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(6)Valve  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abYLV2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_MainValve_T001 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(6)Valve  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(6)abBHD1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)AB_Initiator_T005 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(10)Initiator  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)GV_sReleases @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsReleases @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(15)fbSetMessagePCU @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)FB_SetMessagePCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(7)GV_sPCU @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(5)tsPCU @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(11)fbWaitTime1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FB_TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbWaitTime2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FB_TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)zMyName @RT(0) @T @F @DT @RT(10)STRING(23) @RT(0) @T @T @STRING 0 @F @RT(2)23 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(25)'FB_Interlocks_AirSupply' @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(8)zVersion @RT(0) @T @F @DT @RT(10)STRING(15) @RT(0) @T @T @STRING 0 @F @RT(2)15 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(13)'V2_01.00.00' @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(9)mInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(89)
+IF NOT mInitDone THEN
+  // Set version info to catalog
+  mInitDone := F_Version_String(i_zRoot    := cCatRootVersion,
+                                i_zPath    := cCatPathVersion,
+                                i_zName    := zMyName,
+                                i_zVersion := zVersion);
+END_IF;
+
+//-------------------------------------------------------------------------------------------------
+// Interlocks of initiators
+//-------------------------------------------------------------------------------------------------
+
+//-------------Interlocks of AirSupplyValve LV1 -----------------------------
+//Set error when YLV1 is open and BLV1 is still FALSE after 5 seconds
+//Start count time
+
+fbWaitTime1(IN := (abYLV1.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+                   NOT GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].mInterlock),
+            PT := t#5000ms);
+
+IF (fbWaitTime1.Q                               AND
+    NOT abBLV1.fGetDevAct_ActValue_Debounced()) THEN
+  
+  fbSetMessagePCU(i_iIdent         := cFB_Interlocks_HV1,
+                  i_iMsgCount      := 1,
+                  i_iDeviceNr      := cMainValve_YLV1,
+                  i_zLocation      := zMyName,
+                  i_zParam1        := GV_sPCU.Devices.sMainValves.y[cMainValve_YLV1].zName,
+                  i_zParam2        := GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].zName,
+                  i_zParam3        := '',
+                  i_iChannelNumber := GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].iChannelNr);
+  
+ELSE
+  
+  GV_sPCU.Devices.sMainValves.y[cMainValve_YLV1].mInterlock := FALSE;
+  
+END_IF;
+
+GV_sReleases.sReleases.Internal.ReleaseAirSupply := (abYLV1.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+                                                    (abBLV1.fGetDevAct_ActValue_Debounced() OR GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].mInterlock));
+
+//If booster on robot is used: set error when BLV1 is TRUE and BHD1 is still FALSE after 2 seconds
+//Start count time
+
+//fbWaitTime2(IN := (abYLV1.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+//                   abBLV1.fGetDevAct_ActValue_Debounced()               AND
+//                   NOT GV_sPCU.Devices.sInitiators.y[cInitiator_BLV1].mInterlock),
+//            PT := t#2000ms);
+//
+//If second separate air supply is used: set error when YLV2 is open and BHD1 is still FALSE after 5 seconds
+//Start count time
+
+fbWaitTime2(IN := (abYLV2.fGetDevSet_Set(i_nSignalNode := nReleasesOut) AND
+                   NOT GV_sPCU.Devices.sInitiators.y[cInitiator_BHD1].mInterlock),
+            PT := t#5000ms);
+
+IF (fbWaitTime2.Q                              AND
+    NOT SV_sGeneralSystemCfg.mSimulateProcess) THEN
+  
+  IF NOT abBHD1.fGetDevAct_NoFault_Debounced() THEN
+    fbSetMessagePCU(i_iIdent         := cFB_Interlocks_BoosterOverPres,
+                    i_iMsgCount      := 0,
+                    i_iDeviceNr      := cInitiator_BHD1,
+                    i_zLocation      := zMyName,
+                    i_zParam1        := abBHD1.fGet_DeviceName(),
+                    i_zParam2        := BOOL_TO_STRING(abBHD1.fGetDevAct_NoFault_Debounced()),
+                    i_zParam3        := BOOL_TO_STRING(abBHD1.fGetDevAct_InRange_Debounced()),
+                    i_iChannelNumber := cIndex_AirSupply);      
+  ELSIF NOT abBHD1.fGetDevAct_InRange_Debounced() THEN
+    fbSetMessagePCU(i_iIdent         := cFB_Interlocks_BoosterUnderPres,
+                    i_iMsgCount      := 0,
+                    i_iDeviceNr      := cInitiator_BHD1,
+                    i_zLocation      := zMyName,
+                    i_zParam1        := abBHD1.fGet_DeviceName(),
+                    i_zParam2        := BOOL_TO_STRING(abBHD1.fGetDevAct_NoFault_Debounced()),
+                    i_zParam3        := BOOL_TO_STRING(abBHD1.fGetDevAct_InRange_Debounced()),
+                    i_iChannelNumber := cIndex_AirSupply);
+  END_IF;
+  
+ELSE
+  
+  //If booster on robot is used
+  GV_sPCU.Devices.sMainValves.y[cMainValve_YLV1].mInterlock := FALSE;
+  
+  //If second separate air supply is used
+  GV_sPCU.Devices.sMainValves.y[cMainValve_YLV2].mInterlock := FALSE;
+  
+END_IF;
+
+@END_Body 
+
+@END_Contents 

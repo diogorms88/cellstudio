@@ -1,0 +1,50 @@
+RSELECT("R21")
+  //
+  SETTOOL(TOOL_ZERO)
+  SETOBJECT( BASE_ZERO  )
+  //
+  ACC( A3500  )
+  VEL( V200  )
+  OVERLAP( FINE_0  )
+  //
+  PTP( RHOME  )
+  //**************STARTPOINT**************
+  PTP( RZEROPOSITION  )
+  //Set variable InBrakePosition high
+  SET_BOOL_SYSTEMVAR( RCUx ,"PosGrindInBrake" ,High ,NoResetAtProgEnd  )
+  //
+  //********older RPC labels; before April 2014********
+  //reduce speed for GrindIn
+  VEL( V50  )
+  //
+  //
+  //********for new RPC labels; April 2014 and newer********
+  IF GET_BOOL_SYSTEMVAR(RCUx, "SV_mBrakeCheckLowSpeed", High) THEN
+    //reduce speed for GrindIn
+    VEL( V25  )
+    //
+  END_IF
+  //
+  LOOP 5 DO //required for RPC-2
+    //**********REFRESH STARTPOINT**********
+    PTP( RZEROPOSITION  )
+    //
+    //Start BrakeTest A6
+    SET_MOTION_STATE( GrindBrake ,Joint6 ,MainRun  )
+    //
+    //**********IMPORTANT******************
+    //MOVE AXIS6 120° FROM STARTPOINT
+    PTP( RGRINDINA6  )
+    MAINRUN()
+  END_LOOP //required for RPC-2
+  //
+  VEL( V200  )
+  //**********BACK TO STARTPOINT**********
+  PTP( RZEROPOSITION  )
+  //
+  //Set variable InBrakePosition low
+  SET_BOOL_SYSTEMVAR( RCUx ,"PosGrindInBrake" ,Low ,NoResetAtProgEnd  )
+  //
+  PTP( RHOME  )
+  //
+RDESELECT("R21")

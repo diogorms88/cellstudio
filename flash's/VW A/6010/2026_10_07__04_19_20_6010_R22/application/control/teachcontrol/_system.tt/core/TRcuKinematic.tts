@@ -1,0 +1,4415 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2001 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : TRcuKinematic.tts
+*  First Author : pen
+*  Date         : 15.11.2001
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  Representation of a Kinematic
+*------------------------------------------------------------------------------
+* 19.08.04 nmr: added useSingleOvr to choose between one common override and 
+*               two separate overrides for jogging and automatic
+* 28.08.04 nmr: No need to generate MCU-Errors because the Mcu generates them
+* 19.09.04 nmr: check position after each stop and set corresponding
+*               SWLimit-Variables for TeachView
+* 22.10.04 BMA: Generate an Alarm in the INTERRUPT-Routine, if someone press 
+*               stop-button on TeachPendant in mode automatic extern. This INTERRUPT-Routine
+*               will be called direct from TeachControl if stop-button is 
+*               pressed. Without this alarm the stopped program would immediatly
+*               continued through function ObserveContinue in RcuAutoControl
+* 20.01.05 nmr: Set a starttool on start of interpolator (so positiondisplay has
+*               correct valiues before first movement starts),
+*               Consideration coordinatesystem for Mcu-actualvalues, 
+*               flag triggersAsPathPositions to define if the triggers will be used 
+*               as positions or trigger-jobs
+* 16.02.05 nmr: Extension for GoldenRepos, possibility to use new config-
+*               notation [Rcu.Kinematics.KINEMATIC:X]
+*               Possibility to record motionMode and mmgrState with Kemroscope
+* 24.03.05 nmr: If execute McuStopMove() during tracking, not axis will be stopped,
+*               instead movement will be stopped on path, thats requires
+*               modifications in two waitconditions
+* 25.03.05 nmr: Tracking after McuStopMove(): its not allowed to reposition on an 
+*               emptye path, because tracking will be stopped then.
+* 29.03.05 nmr: User-Icons for showing move direction added
+* 20.04.05 BMA: In function RELEASE referenzsystem for tracking is setting back
+* 25.04.05 nmr: Save last pathvelocity before braking into new variable 
+*               progPath.speedBeforeInterrupt
+* 13.05.05 nmr: always repositioning if McuIsKinNearPathPos is false 
+*               (displace flag reposRequired)
+* 24.08.05 nmr: several bugfixes concerning golden repos and backward movemnent
+* 26.08.05 nmr: bugfix concerning backward movemnent
+* 08.09.05 nmr: changes for Teachview 2.14, new routine WaitMcCycles to wait 
+*               a defined number of MC-cycles
+* 21.09.05 nmr: Deactivating triggers (e.g. handling triggers like normal
+*               positions) only possible in step-mode
+* 03.10.05 nmr: improvements concerning backward movement
+* 02.12.05 BMA: new variables added for tracking and motion buffer
+*               modifications in the RELEASE-Routine 
+* 20.01.06 BMA: Actual TCP Position and actual Object to Systemvariables
+* 02.11.06 BMA: routine ObserveProgActive moved from RcuInterfaceToBCU
+*               to TRcuKinematic
+* 03.11.06 BMA: Semaphore for the coordinate system for actCartVals
+*)
+
+
+(*******************************************************************************
+* globals
+*)
+
+TYPE GLOBAL
+   // Enumeration of the requests to the Motionmanager (Motionmodes)
+   TRcuMotionMode : (eRcuMMgrModeStopJoints, eRcuMMgrModeStop, eRcuMMgrModeAuto,
+      eRcuMMgrModeJog, eRcuMMgrModeStopEmergency);
+
+   // Enumeration of the execution states of the Motionmanager
+   TRcuMMgrExecState : (eRcuMMgrStateStoppingJoints, eRcuMMgrStateStoppedJoints,
+                     eRcuMMgrStateAutoBegin, eRcuMMgrStateAutoActive,
+                     eRcuMMgrStateAutoEnd, eRcuMMgrStateAutoFinished,
+                     eRcuMMgrStateJogBegin, eRcuMMgrStateJogActive,
+                     eRcuMMgrStateJogEnd, eRcuMMgrStateJogFinished);
+
+   // Enumeration of the different coordinate-systems
+   TRcuCoordSystem : (eRcuCoordJoints, eRcuCoordCart, eRcuCoordMixed,
+                      eRcuCoordToolCart, eRcuCoordToolMixed, eRcuCoordObject, eRcuCoordObjectMixed); //@? eRcuCoordCartExt, eRcuCoordCartToolExt
+   
+   TRcuMovementDirection : (eDirNormal, eDirBack, eDirRepos, eDirReposContinue);
+
+   TReposState : (eReposStateInactive, eReposStateBegin, eReposStateInit, eReposStateActive, 
+                  eReposStateEnd, eReposStateFinished);
+         
+   TRcuMotionBuffer : STRUCT
+      mcuMotionBuffer    : TMcuMotionBuffer;
+      motionBufId        : TMcuDbObjID;  // ID of the MCU motion buffer
+      lastSegHdl         : TMcuSegHdl;   // Segment Handler of the last segment in the MB
+      lastPosId          : TMcuDbObjID;  // ID of the endposition of the last segment in the MB
+      // startSegHdl, startPosId, startDyn are only valid and are only used for the
+      // motion buffer beginning after the END_SIDE_STEP command
+      startSegHdl        : TMcuSegHdl;   // Segment handler of the segment from last position
+                                         // in the SideStepCont MB to the first position
+                                         // behind END_SIDE_STEP
+      startPosId         : TMcuDbObjID;  // ID of the first position behind END_SIDE_STEP
+      startDyn           : TMcuDynamic;  // Dynamic which belongs to the startSegHdl
+      iCmdCounter        : INT; // number of segments in motionbuffer
+      bMotionBufferEmpty : BOOL := TRUE;
+      bCheckMotionBuffer : BOOL;
+      bPathReachable     : BOOL; // flag path in motion buffer is reachable
+      bRelease           : BOOL; // flag that motionbuffer is released;
+   END_STRUCT;
+   
+   TRcuProgTimeTable : STRUCT
+      Level              : INT;
+      ProgName           : STRING;
+      Time               : REAL;
+   END_STRUCT;
+   TRcuTimeTable : STRUCT
+      ProjectName   : STRING;
+      ProjectTime   : REAL;
+      ProgramTime   : REAL;
+      ProgTimeTable : ARRAY[cgiTimeTableSize] OF TRcuProgTimeTable; 
+   END_STRUCT;
+   
+   TRcuExternalTool: STRUCT
+      mRefChainOfJointsID: TMcuDbObjID;
+   END_STRUCT;
+   
+   TRcuPda : STRUCT
+     bActive       : BOOL;
+     yActModulName : ARRAY[12] OF MAPTO BYTE; 
+     yAxisSetPos   : ARRAY[8] OF MAPTO INT;
+     yAxisActPos   : ARRAY[8] OF MAPTO INT;
+     // Extensions MB Rastatt 01-03-2016
+     bActiveExt    : BOOL;
+     bSercosError  : MAPTO BOOL;
+     bDrivesReady  : MAPTO BOOL;
+     bDrivesBB     : MAPTO BOOL;
+     iTCPVeloAbs   : MAPTO INT;
+     iTCPVeloProg  : MAPTO INT;
+     iTCPCartPosX  : MAPTO INT;
+     iTCPCartPosY  : MAPTO INT;
+     iTCPCartPosZ  : MAPTO INT;
+     
+   END_STRUCT;
+   
+   TRcuEcoTalkVarList : STRUCT
+     ySysVarNameReset   : ARRAY[cgiSizeEcoTalkVarList] OF STRING;
+     ySysVarNameNoReset : ARRAY[cgiSizeEcoTalkVarList] OF STRING;
+   END_STRUCT;
+
+   TPositionRetain : STRUCT
+      jointPos : ARRAY[9] OF REAL;
+      bValid                : BOOL;
+   END_STRUCT;
+   
+END_TYPE
+
+
+(*******************************************************************************
+* members
+*)
+
+VAR
+   (*$$$$$* motionstep *$$$$$*)
+   motionStepMode : TMotionStep;
+   // Id of the kinematic
+   kinematicMcuId : TMcuDbObjID;
+   
+   // data describing the kinematic
+   kinematic : TMcuKinematic;
+   
+   //BIT 19.06.05
+   fixpos    : TRcuFixpos;
+   
+   bOnlineCorr : BOOL;
+   vision    : TRcuVision;
+   //BIT 12.10.05
+   stromag   : TRcuStromag;
+   //BIT 03.02.06
+   ecoscreen : TRcuEps;
+   //BIT  21.09.06
+   logger        : TRcuLogger;
+   //BIT 22.09.06
+   handler    : TRcuHandler;
+   //BIT 4.12.06
+   driveTool  : TRcuDriveTool;
+   //BIT 16.09.2011
+   loggerDrive : TRcuLoggerDrive;
+   //BIT  24.04.17
+   dataRecorder : TRcuDataRecorder;
+   
+   // actual values
+   actExecData       : MAPTO TMcuStateValues;
+   actJoints         : MAPTO TMcuJointValues;
+   //actAuxJoints : MAPTO TMcuJointValues;
+   actDrives         : MAPTO TMcuDriveValues;
+   //actAuxDrives : MAPTO TMcuDriveValues;
+   actCartVals       : MAPTO TMcuCartValues;
+   readBackVals      : MAPTO TMcuReadBackVals;
+   readBackObjectPos  : TMcuFrame;
+   actElbowVals      : MAPTO TMcuFrame;
+   gripperVectors    : MAPTO TMcuGripperVectors;
+   Monitoring        : MAPTO TMcuKinematicMonitoring;
+   isNotMovingOnPath : BOOL;
+   isStopped         : BOOL;
+   
+   actObjectPos : TMcuPosCart;
+   actExtToolPos     : TMcuPosCart;
+   
+   nrOfDrives      : DINT;
+   nrOfMainDrives  : DINT;
+   nrOfAuxDrives   : DINT;
+   nrOfMainJoints  : DINT;
+   nrOfBaseJoints  : DINT;
+   nrOfWristJoints : DINT;
+   nrOfAuxJoints   : DINT;
+   nrOfJoints      : DINT;
+   nrDosingDrives  : DINT;
+   nrAllDrives     : DINT;
+   nrMaxMainJoints : DINT;
+
+   rActProgVelocity: REAL; // Actual programmed Pathvelocity
+   bBeforeFirstMove : BOOL; // Before the first move rActProgVelocity must
+                            // be set immediately in the prerun
+   // Motionmode
+   motionMode : TRcuMotionMode;
+
+   // Motionmanager execution state
+   mmgrState : TRcuMMgrExecState;
+   // Repos execution state
+   reposState : TReposState;
+
+   //Handlertool set's the order to move backward
+   bHandlerDoBackwardMove  : BOOL;
+   bHandlerAbortBackMove   : BOOL;
+   bHandlerBlockContinue   : BOOL;
+   saveHandlerBackPos      : BOOL;
+   
+   // paths
+   noPath    : TRcuPath;
+   progPath  : TRcuProgPath;
+   reposPath : TRcuReposPath;
+   jogPath   : TRcuJogPath;
+
+   // factor to reduce the deceleration in the stopjoints mode
+   stopJointsDeceFactor : REAL;
+
+   // the following data are only important in the inherited type TRcuRobot, but
+   // only TRcuKinematic is accessible for paths and motion commands
+   allDrivesReferenced : BOOL; // indicates whether all drives are referenced
+   allDrivesSimulated  : BOOL; // all drives are simulated
+   allDriveParamValid  : BOOL; // paramters of all drives are valid 
+   allSlavesValidS3       : BOOL; // hardware endpoints of all drives are valid at sercos3 bus
+   
+   updateActive : BOOL; // indicates whether set values for drives are being written
+   
+   // use the same override for jogging and automatic
+   useSingleOvr : BOOL;
+   // time-override setting for all modes except eRcuMMgrModeJog
+   override : DINT;  // override in promille
+   // factor to reduce the acceleration/deceleration when stopping or changing override
+   defaultTimeOverrideFactor   : REAL;
+   interruptTimeOverrideFactor : REAL;
+   emergencyTimeOverrideFactor : REAL;
+
+   // information about the program which selected this kinematic
+   selectingFlow : TSelectingFlow;
+
+   // mainmode manager
+   mainModeMgr : TRcuMainModeMgr;
+
+   // velocity limits for reduced speed
+   veloLimits : TMcuVeloLimits;
+
+   // Memories of HtControl unit
+   TeachPendantMemories : TRcuTeachPendantMemories;
+
+   // kinematic defaults, only needed for controlled releasing
+   defaultDynMcuId : TMcuDbObjID;
+   defaultOvlMcuId : TMcuDbObjID;
+   defaultAcceRampMcuId : TMcuDbObjID;
+   defaultDeceRampMcuId : TMcuDbObjID;
+
+   // Tool set for the kinematic
+   kinToolMcuId : TMcuDbObjID;
+   // Gripper set for the kinematic
+   kinGripperMcuId : TMcuDbObjID;
+
+   // indicates whether grippers are defined in the flange system or in the
+   // tool system
+   flangeGripper : BOOL;
+
+   // require interrupt upon the next attempt to change to the automatic-mode
+   stopRequired : BOOL;
+   
+   // no stopMove upon interrupt (e.g. SetInstructionPointer when repositioning)
+   noStopAtInterrupt : BOOL;
+   
+   // no Continue in AutoControl
+   SetPcWithoutStopActive : BOOL;
+   
+   // instance identification number (for errors)
+   instId : DINT;
+
+   // index in the global list of kinematics
+   kinListInx : DINT;
+   
+   // default dynamic as configured in the catalog
+   cfgDyn : TMcuDynamic;
+   initKinComplete : BOOL;   
+   robotName : STRING;
+   subDirName : STRING;
+
+   // triggers should be used as normal path-positions
+   triggersAsPathPositions : BOOL;
+   
+   movementDirection : TRcuMovementDirection;
+
+   // Tracking
+   tracking : TRcuTracking;
+   
+   // Linetracking configured
+   lineTracking : BOOL;
+   
+   // Railtracking configured
+   railTracking : BOOL;
+   // Railtracking activated
+   railTrackingActive : BOOL; // can be switched off by SETTRACKINGMODE
+   railAxisNr   : DINT;
+   signOfRail   : REAL;
+   
+   inbound  : REAL;
+   outbound : REAL;
+   
+   trackingActive : BOOL;
+   trackingPos    : REAL; // set by userpage for teach in
+   trackingPosSet : BOOL;
+   bReleaseBlockedByHandler : BOOL;
+   
+   // ID of JointsOffset object. Used with railtracking
+   offsetID: TMcuDbObjID;
+   railAxisVector : MAPTO TMcuVector;
+   
+   // motionbuffers
+   motionBuffer : ARRAY[cgiNrMotionBuffer] OF TRcuMotionBuffer;
+
+   bNewTracking          : BOOL; // new Tracking without old macros
+   bAppendToMotionBuffer : BOOL;
+   bGunOffReached        : BOOL; // automatic detection of end of path
+   bManualStopPos        : BOOL; // activation of manual
+   bCheckStartMove       : BOOL;
+   iActMotionBuffer      : INT;
+   
+   // SECTION
+   iBufBeforeActSection  : INT;  // index in motionBuffer before actual section
+   iBufSideStepWait      : INT;  // index in motionBuffer for wait position
+   iBufSideStepCont      : INT;  // index in motionBuffer for continue after wait position
+   iBufActSection        : INT;  // index in motionBuffer for actual section
+   iBufNextSideStepWait  : INT;  // index in motionBuffer for next wait position
+   bFirstSection         : BOOL; // flag that this is the first SECTION after normal path
+   bSectionActive        : BOOL; // flag signaling execution between SECTION and END_SECTION
+   bBehindSection        : BOOL; // flag that END_SECTION was reached but no move
+                                 // behind the END_SECTION
+   bEndSection           : BOOL; // END_SECTION was reached
+   bBehindSideStep       : BOOL; // END_SIDE_STEP executed
+
+   bJogConveyor          : BOOL;
+   bStartPosReached      : BOOL; // Wait conveyor position reached
+   
+   rcCatHdl : DINT; // handle of the base directory for the kinematic
+   mcCatHdl : DINT; // handle of the base directory for the kinematic
+   
+   HandlerBackPosSegId  : TMcuDbObjID;
+   HandlerBackPosSegPar : REAL;
+   bSetOrderFlag        : BOOL;
+
+   // cartesian data
+   // number of the cartesian components
+   nrOfCartComps : DINT;
+   // fade in bits for the cartesian components
+   cartCompMask : DINT;
+   // name of the cartesian components
+   cartCompName : ARRAY [6] OF String8 := ("X","Y","Z","A","B","C");
+
+   progNameKin : STRING [128];
+  
+   // true for kinematics with all 6 degrees of freedom, false otherwise (e.g. 5-axes handling)
+   allDegreesOfFreedom : BOOL; 
+   
+   iSubSelectLevels : DINT;
+   mainRunSubSelectLevel : DINT;
+   
+   iTimer : ARRAY[cgiMaxSelectLevels] OF LINT;
+   
+   actObject      : TMcuFrame;
+   actTool        : TMcuFrame;
+   actExtTool     : TMcuFrame;
+   extTool        : TRcuExternalTool;
+   extToolActive  : BOOL;
+   lastUseExtTool : BOOL;
+   
+   bUseJointLimForCartSeg : BOOL;
+   bMotionActive : BOOL;
+   bRobotMoving  : BOOL;
+   bInPreposition: BOOL;
+   bWaitingTrackingPos : BOOL;
+   bToolOrObjChanged: BOOL;
+   bNoContinue   : BOOL; 
+   ActShift              : SSHIFT;
+   ActMRShift            : SSHIFT;
+   ActShiftExt           : SSHIFT_EXT;
+   ActMRShiftExt         : SSHIFT_EXT;
+   bEnableShiftExt       : BOOL;
+   RcuEmergencyStop      : TEmergencyStop;
+   RcuInterfaceToProcess : TRcuInterfaceToProcess;
+   RcuInterfaceToBCU     : TRcuInterfaceToBCU;
+   autoControl           : TRcuAutoControl;
+   RcuTypeList           : TRcuTypeList;
+   // interface to safety controller
+   interfaceToSCP        : TRcuInterfaceToSCP;
+   
+   VirtualWall           : ARRAY [16] OF TRcuWorkingArea;
+   VirtualWallMonitor    : MAPTO TMcuMonitoringA;
+   VirtualWallHdlName    : TMcuString;
+   bAnyVirtualWallActive : BOOL;
+   nrOfWallBlocks        : INT;
+   VirtualWallSafeCfg    : TVirtualWallSafeCfg;
+   
+   VelocityZone          : ARRAY [16] OF TRcuVelocityZone;
+   nrOfVelocityZones     : INT;
+   rGlobalVelLim         : REAL;
+   cartDynLimitID        : TMcuDbObjID;
+
+   ToolMeasure           : TRcuToolMeasure;
+   
+   RcuRefSystemObject           : TRcuReferenceSystem;
+   RcuRefSystemVisionAbs        : TRcuReferenceSystem;
+   RcuRefSystemVisionRel        : TRcuReferenceSystem;
+   RcuRefSystemSensor           : TRcuReferenceSystem;
+   RcuRefSystemConveyor         : TRcuReferenceSystem;
+   RcuRefSystemConveyorPostLink : TRcuReferenceSystem;
+   RcuRefSystemFixTool          : TRcuReferenceSystem;
+      
+   IOMainDrives : TMcuVector;
+   IOAuxDrives  : TMcuVector;
+   IOMainJoints : TMcuPosJoints;
+   IOAuxJoints  : TMcuVector;
+   IOWorldPos   : TMcuPosCart;
+   IOObjectPos  : TMcuPosCart;
+   IOExtToolPos : TMcuPosCart;
+   
+   actObjectSystem : TMcuDbObjID;
+   isObjectActive  : BOOL;
+   refSysName      : String32;
+   actObjectName   : String32 := "no object";
+   iObjectDeclare  : DINT;
+   actToolName     : String32 := "no tool";
+   actExtToolName  : String32 := "no external tool";
+   iToolDeclare    : DINT;
+ 
+   //The gripper is used in TRcuPath.AppendSegmentWithJobSet. The Segment-Handler
+   //gives the gripperID in McuAppendSegment to the MCU
+   gripper          : TMcuGripperA;
+   gripperDataValid : BOOL;
+   
+   //The guard is used in TRcuPath.AppendSegmentWithJobSet. The Segment-Handler
+   //gives the gripperID(!) in McuAppendSegment to the MCU. The guard replaces
+   //the gripper if CartDynamicLimits are used
+   guards           : TMcuGuardPoints;
+   guardsDataValid  : BOOL;
+   
+   bHasProcess          : BOOL;
+   bRcuAnyErrorPending  : BOOL;
+   svMotionAllowed      : MAPTO BOOL;  // no error which stops the motion is present
+   TimeTable            : ARRAY[cgiTimeTableBody] OF TRcuTimeTable;
+   hasAxisFilter        : BOOL;
+   orderOfAxisFilter    : DINT;
+   timeConstAxisFilter  : REAL;
+   indexBody            : SINT;
+   // this member is TRUE in instances of TRcuRobot, decides whether the Mcu-
+   // Interpolator is initially running or not
+   isRobot : BOOL;
+   
+   gluing    : TRcuGluing;
+   sfa       : TRcuSFA;
+   
+   paintChecker : TRcuPaintChecker;
+   objMeasure   : TRcuObjMeasure;
+   
+   rSearchSlowOverride  : REAL := 1.0;
+   homing       : TRcuHoming;
+   pdaData      : TRcuPda;
+   ecoTalkVarListBool : TRcuEcoTalkVarList;
+   ecoTalkVarListInt : TRcuEcoTalkVarList;
+   
+   bEmptyProgPath        : BOOL; // is TRUE between Programstart and first move
+                                 // and between end of handler module and next move
+   bGoldenReposInterrupt : BOOL; // error during golden repos
+   bGoldenReposContinue  : BOOL; // continue golden repos
+   bGoldenTracking       : BOOL; // golden repos and tracking and mConveyorRelease mapped
+                                 // means golden repos in tracking
+   bOldPosAfterRestart   : BOOL; // in simulation only: robot starts in the same position 
+                                 // as it had before shutting down
+   sv_PositionRetain     : MAPTO TPositionRetain; // retain data for axis positions 
+   oldRetainPosition     : TPositionRetain; // axis position read from retain data once
+                                            // at bootup
+   bOldRetainPosValid    : BOOL; // restored axis positions are valid
+   stackHdl              : DINT;
+   progName              : STRING; 
+   lineNr                : DINT;
+   bEnableSpline         : BOOL;
+   
+   stopMicroIPAvailable  : INT;
+   stopMicroIPActive     : BOOL;
+   deceFactorStopMicroIP : REAL  := 1.0;
+   jerkFactorStopMicroIP : REAL  := 0.2;
+   lastJerkFactor        : REAL;
+   RcuStopMoveFast       : ROUTINE(CONST kinID: TMcuDbObjID; CONST deceFactor: REAL; OPTIONAL CONST jerkFactor: REAL) : BOOL;
+   actDrivesExt          : MAPTO TRcuDriveValuesExt;
+   //DVD gluing
+   bEnableDvdGluing      : BOOL;
+   nrNeedlesMultiGun     : SINT;
+   nozzleChange          : TRcuNozzleChange;
+   gapForPannelJogging   : SINT;
+   ghostNoMotion         : TGhostNoMotion;
+END_VAR
+
+
+// External request for a certain Motionmode. Allow motion mode changes only
+// when the update is active
+ROUTINE SetMotionMode(rqu : TRcuMotionMode)
+
+   IF chgModeAllowed THEN
+      motionRequest := rqu;
+   END_IF;
+END_ROUTINE
+
+(*$$$$$* motionstep *$$$$$*)
+ROUTINE SetMotionStepMode(mode : TMotionStep)
+
+   motionStepMode := mode;
+END_ROUTINE
+
+// Set a certain time-override factor
+// timeOverrideFactor is set according to the configured joint-acceleration and
+// the target override
+ROUTINE SetTimeOverride(VAR_IN x : REAL) : BOOL
+   VAR
+      factor : REAL; // time-override factor
+   END_VAR
+
+   IF (x < 0.0) OR (x > 1.0) THEN
+      RcuSetMessageOnce(TRcuKinematic_WarOverrOutOfR, kinListInx, 1, instId, "TRcuKinematic.SetTimeOverride", robotName);
+      RETURN FALSE;
+   END_IF;
+   override := 1000 * x; // register the new override, in promille
+   IF motionMode <> eRcuMMgrModeJog THEN
+      // set the new override if not in jogmode
+      factor := x * progPath.cfgDyn.mJoint.mAcce;
+      IF factor > 1.0 THEN
+         factor := 1.0;
+      ELSIF factor < 0.005 THEN
+         factor := 0.005;
+      END_IF;
+      // McuSetTimeOverrideFactor(kinematicMcuId, factor);
+      McuSetTimeOverride(kinematicMcuId, x*rSearchSlowOverride);
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+(*
+// Set a certain velocity-override factor
+ROUTINE SetVeloOverride(x : REAL) : BOOL
+   IF (x < 0.0) OR (x > 1.0) THEN
+      RcuSetMessageOnce(TRcuKinematic_WarOverrOutOfR, kinListInx, 2, instId, "TRcuKinematic.SetVeloOverride", robotName);
+      RETURN FALSE;
+   END_IF;
+   McuSetVeloOverride(kinematicMcuId, x);
+   RETURN TRUE;
+END_ROUTINE
+*)
+
+// starts the Observation of the fullSpeed flag in the mainmodemanager with
+// corresponding restrictions to the dynamic-limits
+ROUTINE StartVeloControl()
+
+   IF veloControlActive THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrKinRepStrtVelo, kinListInx, 1, instId, "TRcuKinematic.StartVeloControl", robotName);
+      RETURN;
+   END_IF;
+   START VeloControl();
+END_ROUTINE
+
+
+// react to the occurrence of an error
+ROUTINE ErrorReaction(bNoCont : BOOL)
+   VAR
+      hdl      : DINT;
+      progName : STRING;
+      lineNr   : DINT;
+      progHdl  : DINT;
+   END_VAR
+
+   hdl := GetProgHdl();
+   IF hdl = mmgrFlowId THEN // Error in the motionmanager itself
+      // try to obtain stopped joints
+      SetMotionMode(eRcuMMgrModeStopJoints);
+      // don't return
+      WAIT FALSE;
+   ELSE // error in a separate Flow, just interrupt it
+//      InterruptProgSelf();
+      IF bNoCont THEN
+//         bNoContinue:=TRUE;
+         preventRestoreActSettings := TRUE;
+         StoreUserProgCallStack(actCallStack);
+         restoreCallStack := TRUE;
+         progPath.restartActCommand := TRUE;
+      END_IF;
+      InterruptProgSelf();
+   END_IF;
+END_ROUTINE
+
+
+// default Mcu Data, only needed for controlled releasing. CAUTION: the presented
+// Mcu-objects will be released when the kinematic is deleted @?
+ROUTINE SetDefault(dynId : TMcuDbObjID; ovlId : TMcuDbObjID; toolId : TMcuDbObjID; 
+   acceRampId : TMcuDbObjID; deceRampId : TMcuDbObjID)
+
+   defaultDynMcuId := dynId;
+   defaultOvlMcuId := ovlId;
+   kinToolMcuId := toolId;
+   actToolName  := "no tool";
+   iToolDeclare := 0;
+   defaultAcceRampMcuId := acceRampId;
+   defaultDeceRampMcuId := deceRampId;
+END_ROUTINE
+
+
+// bring this kinematic into focus
+ROUTINE Focus()
+   gRcuFocusedKinematic := MAP(SELF);
+   gRcuFocusedRobot     := MAP (PaintRobot[kinListInx]);
+   gbRcuFocusFlipFlop := NOT gbRcuFocusFlipFlop;
+END_ROUTINE
+
+
+// method for selecting the kinematic and launching errors when the kinematic
+// was already selected
+ROUTINE Select()
+   VAR
+      sName : STRING;
+      sNameOther : STRING;
+      sNameThis  : STRING;
+      iLine : DINT;
+      iHdl  : DINT;
+   END_VAR
+
+   iHdl := GetProgHdl();
+   IF selectingFlow.flowId <> iHdl THEN
+      // not selected by this flow
+      WHILE selectingFlow.lock DO
+         IF GetFlowState(selectingFlow.flowId) <> eFlowInvalid THEN
+         // locked by another flow
+         GetNameFromProgHdl(selectingFlow.flowId, sNameOther);
+         GetNameFromProgHdl(iHdl, sNameThis);
+         RcuSetMessageOnce(TRcuKinematic_ErrKinSelect, kinListInx, 1, instId,
+                           "TRcuKinematic.Select", robotName, sNameOther, sNameThis);
+         InterruptProgSelf();
+         WAIT TRUE;
+         ELSE
+            DebugPrint(eTraceMotionModesFine, "SelectingFlow has not released kinematic, but flow #" + STR(selectingFlow.flowId) + " does not exist any more.");
+            selectingFlow.present  := FALSE;
+            selectingFlow.running  := FALSE;
+            selectingFlow.starting := FALSE;
+            selectingFlow.flowId   := 0;
+            selectingFlow.lock     := FALSE;
+            SetMovementDirection(eDirNormal);
+         END_IF;
+      END_WHILE;
+      // lock immediately
+      selectingFlow.lock     := TRUE; // criterium for already selected
+      selectingFlow.starting := TRUE;
+      selectingFlow.flowId   := iHdl;
+      GetStepModeSignal(iHdl, selectingFlow.isStepping);
+   END_IF;
+   // select kinematic, now possible without delay
+   SELECT SELF;
+   START UpdateProgInfo();
+END_ROUTINE
+
+
+// require interrupt upon the next attempt to change to the automatic-mode
+ROUTINE SetStopRequest(CONST b : BOOL)
+   
+   stopRequired := b;
+END_ROUTINE
+
+
+// set direction of movement
+ROUTINE SetMovementDirection(dir : TRcuMovementDirection) : BOOL
+
+   IF movementDirection = dir THEN // nothing to change
+      RETURN TRUE;
+   END_IF;
+   IF (dir = eDirRepos) AND (movementDirection = eDirBack) THEN
+      DebugPrint(eTraceGoldenRepos, "Direction: GoldenRepos not possible while moving backward");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN FALSE;
+   END_IF;
+   IF (dir = eDirReposContinue) AND (movementDirection <> eDirRepos) THEN
+      DebugPrint(eTraceGoldenRepos, "Direction: Continue GoldenRepos not possible");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN FALSE;
+   END_IF;
+   movementDirection := dir;
+   IF dir = eDirBack THEN
+      backwardMovement := TRUE;
+      IF bGoldenTracking THEN 
+         RcuInterfaceToBCU.mConveyorRelease := TRUE;
+      END_IF;
+      goldenRepos := FALSE;
+      //reposPath.reposState := eReposStateBegin;
+      gRcData.userIcon[eIconDirection] := eIconDirectionBackward;
+      IF bHandlerDoBackwardMove THEN      //BIT 7.8.05
+         DebugPrint(eTraceBackward, "Direction: Backward movement activated from handler");
+         IF NOT StartMoveBackward() THEN
+            DebugPrint(eTraceRcuHandler, "bHandlerAbortBackMove von 1 ");
+            bHandlerAbortBackMove  := TRUE;
+            bHandlerDoBackwardMove := FALSE;            
+            RETURN FALSE;
+         ELSE
+            RETURN TRUE;
+         END_IF;
+      ELSE
+         DebugPrint(eTraceBackward, "Direction: Backward movement activated");
+         RETURN StartMoveBackward();
+      END_IF;
+   ELSIF dir = eDirRepos THEN
+      backwardMovement := FALSE;
+      DebugPrint(eTraceGoldenRepos, "Repos: GoldenRepos activated");
+      RETURN StartGoldenRepos(); // returns when goldenRepos has finished
+   ELSIF dir = eDirReposContinue THEN
+      backwardMovement := FALSE;
+      DebugPrint(eTraceGoldenRepos, "Repos: GoldenRepos continued");
+      RETURN ContinueGoldenRepos(); // returns when goldenRepos has finished
+   ELSE
+      backwardMovement := FALSE;
+      goldenRepos := FALSE;
+      IF bGoldenTracking THEN 
+         RcuInterfaceToBCU.mConveyorRelease := TRUE;
+      END_IF;
+      //reposPath.reposState := eReposStateFinished;
+      //reposPath.SavePathPos();
+      gRcData.userIcon[eIconDirection] := eIconDirectionNormal;
+      DebugPrint(eTraceBackward, "Direction: Foreward movement activated");
+      IF reposState = eReposStateEnd THEN
+         DebugPrint(eTraceMotionModesFine, "ProgPath: Restore and NO clear");
+         restoreActSettingsWithoutClear := TRUE;
+         restoreActSettings             := FALSE;
+      ELSIF reposState = eReposStateFinished THEN
+         DebugPrint(eTraceMotionModesFine, "ProgPath: NO Restore and NO clear");
+         restoreActSettingsWithoutClear := FALSE;
+         restoreActSettings             := FALSE;
+      ELSE
+         DebugPrint(eTraceMotionModesFine, "ProgPath: Restore and clear");
+         restoreActSettingsWithoutClear := FALSE;
+         restoreActSettings             := TRUE;
+      END_IF;
+
+      //progPath.RebuildPath(reposPath.pathPosMcuId);
+      RETURN TRUE;
+   END_IF;
+END_ROUTINE
+
+
+// set an initial override, start project observation if necessary
+ROUTINE SetInitOverride(VAR_IN x : REAL) : BOOL
+
+   IF (x < 0.0) OR (x > 1.0) THEN
+      RcuSetMessageOnce(TRcuKinematic_WarOverrOutOfR, kinListInx, 3, instId, "TRcuKinematic.SetInitOverride", robotName);
+      RETURN FALSE;
+   END_IF;
+   initOverride := 1000 * x;
+   IF gbRcuRevivingOverride AND NOT projectObsActive THEN
+      START ProjectObservation();
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+
+// set a start tool in mainrun for this kinematic
+ROUTINE SetStartToolInMR(kinematicMcuId : TMcuDbObjID; kinToolMcuId : TMcuDbObjID; kinGripperMcuId : TMcuDbObjID)
+VAR
+   locKinToolMcuId : TMcuDbObjID;
+   locKinGripperMcuId : TMcuDbObjID;
+END_VAR
+
+   locKinToolMcuId := kinToolMcuId;
+   locKinGripperMcuId := kinGripperMcuId;
+   WAIT MAIN_RUN;
+   McuSetStartTool(kinematicMcuId, locKinToolMcuId);
+   IF gbGuardsAvailable THEN
+      McuSetStartGuardPoints(kinematicMcuId, locKinGripperMcuId);
+   ELSE  
+      McuSetStartGripper(kinematicMcuId, locKinGripperMcuId);
+   END_IF;
+   
+END_ROUTINE
+
+
+// set toolname in mainrun for this kinematic
+ROUTINE SetToolNameInMR(name : STRING)
+VAR
+   dotCharNr : DINT;
+END_VAR
+
+   WAIT MAIN_RUN;
+   dotCharNr := StrFind(name, ".");
+   IF dotCharNr > 0 THEN
+      //local
+      iToolDeclare := 1;
+      actToolName  := StrDelete(name, dotCharNr, 0); // clear program name from project name + "."
+   ELSE
+      //global
+      iToolDeclare := 2;
+      actToolName  := name;
+   END_IF; 
+END_ROUTINE
+
+// set toolname in mainrun for this kinematic
+ROUTINE SetToolForDataRecorderInMR(tool : TMcuTransformation) PRIVATE
+   WAIT MAIN_RUN;
+   dataRecorder.RecTool(tool.mName, tool.mFrame);
+END_ROUTINE
+
+
+// set a tool-Id for this kinematic
+// use in flow
+ROUTINE SetToolId(CONST id : TMcuDbObjID)
+VAR
+   trsf : TMcuTransformation;
+END_VAR
+
+   // pass to lower level
+   progPath.SetToolIdDefault(id);
+   reposPath.SetToolIdDefault(id);
+   jogPath.SetToolIdDefault(id);
+   // only at changes
+   IF id <> kinToolMcuId THEN
+      // release current kinToolMcuId if apppropriate
+      IF kinToolMcuId <> 0 THEN
+         McuReleaseDbObj(kinToolMcuId);
+         DebugPrint(eTraceMotionModesFine, "SetToolId McuReleaseDbObj ID = " + STR(kinToolMcuId));
+      END_IF;
+      // register new Id
+      kinToolMcuId := id;
+      
+      McuReadTrsf(kinToolMcuId, trsf);
+      DebugPrint(eTraceMotionModesFine, "SetToolId ID = " + STR(kinToolMcuId) + " name = " + trsf.mName);
+      
+      START SetStartToolInMR(kinematicMcuId, kinToolMcuId, kinGripperMcuId);
+      // set a start tool to make sure the position is correct before the first move
+      // McuSetStartTool(kinematicMcuId, kinToolMcuId);
+      // McuSetStartGripper(kinematicMcuId, kinGripperMcuId);
+   ELSE
+      McuReadTrsf(kinToolMcuId, trsf);
+   END_IF;
+   START SetToolForDataRecorderInMR(trsf);
+END_ROUTINE
+
+
+// set a tool-Id for this kinematic 
+// internal use
+ROUTINE SetToolIdIntern(CONST id : TMcuDbObjID)
+VAR
+   trsf : TMcuTransformation;
+   dotCharNr : DINT;
+END_VAR
+
+   // pass to lower level
+   progPath.SetToolIdDefault(id);
+   reposPath.SetToolIdDefault(id);
+   jogPath.SetToolIdDefault(id);
+   // only at changes
+   IF id <> kinToolMcuId THEN
+      // release current kinToolMcuId if apppropriate
+      IF kinToolMcuId <> 0 THEN
+         McuReleaseDbObj(kinToolMcuId);
+         DebugPrint(eTraceMotionModesFine, "SetToolIdIntern McuReleaseDbObj ID = " + STR(kinToolMcuId));
+      END_IF;
+      // register new Id
+      kinToolMcuId := id;
+      
+      McuReadTrsf(kinToolMcuId, trsf);
+      DebugPrint(eTraceMotionModesFine, "SetToolIdIntern ID = " + STR(kinToolMcuId) + " name = " + trsf.mName);
+      dotCharNr := StrFind(trsf.mName, ".");
+      IF dotCharNr > 0 THEN
+         //local
+         iToolDeclare := 1;
+         actToolName  := StrDelete(trsf.mName, dotCharNr, 0); // clear program name from project name + "."
+      ELSE
+         //global
+         iToolDeclare := 2;
+         actToolName  := trsf.mName;
+      END_IF; 
+      // START SetStartToolInMR(kinematicMcuId, kinToolMcuId, kinGripperMcuId);
+      // set a start tool to make sure the position is correct before the first move
+      McuSetStartTool(kinematicMcuId, kinToolMcuId);
+      IF gbGuardsAvailable THEN
+         McuSetStartGuardPoints(kinematicMcuId, kinGripperMcuId);
+      ELSE  
+         McuSetStartGripper(kinematicMcuId, kinGripperMcuId);
+      END_IF;
+   ELSE
+      McuReadTrsf(kinToolMcuId, trsf);   
+   END_IF;
+   dataRecorder.RecTool(trsf.mName, trsf.mFrame);
+END_ROUTINE
+
+
+(*******************************************************************************
+* technology commands
+*******************************************************************************)
+
+// set a tool for this kinematic
+ROUTINE Tool(name : STRING; frame : TMcuFrame)
+   VAR
+      trsfNew : TMcuTransformation;
+      trsfOld : TMcuTransformation;
+      id : TMcuDbObjID;
+   END_VAR
+
+   IF frame.mFrameTyp <> gMcuFrameTyp THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrWrgFrameType, kinListInx, 1, instId, "TRcuKinematic.Tool", robotName);
+      RETURN;
+   END_IF;
+
+   IF kinToolMcuId <> 0 THEN
+      McuReadTrsf(kinToolMcuId, trsfOld);
+      IF (trsfOld.mFrame = frame) AND (name = trsfOld.mName) THEN
+         DebugPrint(eTraceMotionModesFine, "SETTTOL ignored: New Tool '" + name + "' = Old Tool");
+         RETURN;
+      END_IF;
+   END_IF;
+
+   // create frame
+   trsfNew.mDBObjTyp := eMcuPermanent;
+   trsfNew.mFrame := frame;
+   trsfNew.mRefSysID := McuGetOpenEndTrsfID();
+   trsfNew.mName := name; // set name - this name is shown in statusreport
+   McuCreateTrsf(id, trsfNew);
+   actTool := frame;
+
+   START SetToolNameInMR(name);
+  
+   IF selectingFlow.isStepping THEN
+      progPath.setToolInStepMode := TRUE;
+   END_IF;
+   
+   // set as tool
+   SetToolId(id);
+   bToolOrObjChanged := TRUE;
+END_ROUTINE
+
+
+// set a fixed tool for this kinematic: axis in external chain
+ROUTINE FixTool(ToolNr: DINT)
+   VAR
+      id : TMcuDbObjID;
+      dotCharNr : DINT;
+      b : BOOL;
+      zeroFrame : TMcuFrame;
+      name : STRING;
+   END_VAR
+
+
+   STOPPOINT();
+
+   id := McuGetChainOfJointsTrsfID(kinematicMcuId, ToolNr);
+   actExtToolName := "FixedTool";
+   name := actExtToolName;
+   
+   extTool.mRefChainOfJointsID := id;
+   actExtTool := zeroFrame;
+   
+   // reset object
+   zeroFrame.mFrameTyp := eMcuFrameKardan;
+   SetObject(name, zeroFrame);
+   extToolActive := TRUE;
+   DebugPrint(eTraceExtTool, "External tool activated");
+END_ROUTINE
+
+
+
+// set a external tool for this kinematic
+ROUTINE ExtTool(name : STRING; frame : TMcuFrame)
+   VAR
+      id : TMcuDbObjID;
+      dotCharNr : DINT;
+      b : BOOL;
+   END_VAR
+
+   IF frame.mFrameTyp <> gMcuFrameTyp THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrWrgFrameType, kinListInx, 2, instId, "TRcuKinematic.ExtTool", robotName);
+      RETURN;
+   END_IF;
+
+   STOPPOINT();
+
+   // create frame
+   extTool.mRefChainOfJointsID := 0;
+   actExtTool := frame;
+
+   dotCharNr := StrFind(name, ".");
+   IF dotCharNr > 0 THEN
+      //local
+      iToolDeclare := 1;
+      actExtToolName  := StrDelete(name, dotCharNr, 0); // clear program name from project name + "."
+   ELSE
+      //global
+      iToolDeclare := 2;
+      actExtToolName  := name;
+   END_IF; 
+   name := actExtToolName;
+  
+   SetObject(name, actExtTool);
+   extToolActive := TRUE;
+   DebugPrint(eTraceExtTool, "External tool activated");
+END_ROUTINE
+
+
+// set a object for this kinematic
+ROUTINE SetObject(name : STRING; frame : TMcuFrame)
+   VAR
+      trsf : TMcuTransformation;
+      id : DINT;
+      dotCharNr : DINT;
+      object : TMcuFrame;
+      zeroFrame : TMcuFrame;
+   END_VAR
+
+   IF extToolActive THEN
+      STOPPOINT();
+      extToolActive := FALSE;
+      // reset ext. tool
+      zeroFrame.mFrameTyp := eMcuFrameKardan;
+      extTool.mRefChainOfJointsID := 0;
+      actExtTool := zeroFrame;
+      IF jogPath.jogSystem = eJogCoordExtTool THEN
+         jogPath.SetJogSystem(eJogCoordTCP);
+      END_IF;
+      DebugPrint(eTraceExtTool, "External tool deactivated");
+   END_IF;
+   
+   IF frame.mFrameTyp <> gMcuFrameTyp THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrWrgFrameType, kinListInx, 1, instId, "TRcuKinematic.SetObject", robotName);
+      RETURN;
+   END_IF;
+   
+   dotCharNr := StrFind(name, ".");
+   IF dotCharNr > 0 THEN
+      //local
+      iObjectDeclare := 1;
+      actObjectName  := StrDelete(name, dotCharNr, 0); // clear program name from project name + "."
+   ELSE
+      //global
+      iObjectDeclare := 2;
+      actObjectName  := name;
+   END_IF; 
+   IF frame = actObject THEN
+      DebugPrint(eTraceMotionModesFine, "SetObject (" + actObjectName + ") with identical values. SETOBJECT ignored");
+      DebugPrint(eTraceMotionModesFine, "[" + RealToStr(frame.mPos.mValues[0], 6) + " " + RealToStr(frame.mPos.mValues[1], 6) + " " + RealToStr(frame.mPos.mValues[2],6) + "] " +
+                                       " [" + RealToStr(frame.mOri.mValues[0], 6) + " " + RealToStr(frame.mOri.mValues[1], 6) + " " + RealToStr(frame.mOri.mValues[2],6) + "]");
+      RETURN;
+   ELSE
+      DebugPrint(eTraceMotionModesFine, "SetObject (" + actObjectName + ") with new values. SETOBJECT executed");
+      DebugPrint(eTraceMotionModesFine, "[" + RealToStr(frame.mPos.mValues[0], 6) + " " + RealToStr(frame.mPos.mValues[1], 6) + " " + RealToStr(frame.mPos.mValues[2],6) + "] " +
+                                       " [" + RealToStr(frame.mOri.mValues[0], 6) + " " + RealToStr(frame.mOri.mValues[1], 6) + " " + RealToStr(frame.mOri.mValues[2],6) + "]");
+   END_IF;
+   STOPPOINT();
+   actObject := frame;
+   dataRecorder.RecObject(name, frame); 
+     
+   bToolOrObjChanged := TRUE;
+   IF lineTracking THEN
+      RcuRefSysSet(RcuRefSystemVisionAbs, frame, RcuRefSystemConveyorPostLink, FALSE, name);
+   ELSE
+      RcuRefSysSet(RcuRefSystemVisionAbs, frame, eRcuRefSystemWorld, FALSE, name);
+   END_IF;
+//   RcuRefSysSet(RcuRefSystemVisionRel, object, RcuRefSystemVisionAbs, FALSE, "VisionRel");
+   IF bOnlineCorr THEN
+      RcuRefSysSet(RcuRefSystemSensor, object, RcuRefSystemVisionRel, TRUE, "Sensor"); // TRUE = tracking
+      homing.StoreRefSystemVision(FALSE, object);
+      RcuRefSysActivate(RcuRefSystemSensor);
+   END_IF;
+
+END_ROUTINE
+
+
+// assign TRUE to clearProgPath, if motionRequest is Auto then restart auto-mode
+ROUTINE Clear()
+
+   clearProgPath := TRUE;
+   RestartProgPath();
+END_ROUTINE
+
+
+// assign TRUE to resetProgPath, if motionRequest is Auto then restart auto-mode
+ROUTINE Reset()
+
+   resetProgPath := TRUE;
+   RestartProgPath();
+END_ROUTINE
+
+
+// sets the actual programmed pathvelocity in the mainrun
+ROUTINE SetVelocityInMainRun(v : REAL)
+
+   WAIT MAIN_RUN;
+   rActProgVelocity := v;
+END_ROUTINE
+
+ROUTINE ObserveSourceLineInMR() PRIVATE
+VAR
+   bChgStackHdl : BOOL;
+END_VAR
+
+   bChgStackHdl := IS_CHANGED(stackHdl);
+   WHILE TRUE DO
+      WAIT bChgStackHdl;
+      bChgStackHdl := FALSE;
+      IF stackHdl <> 0 THEN
+         ecoscreen.sourceInfo := GetSource(stackHdl, progName, lineNr);
+      ELSE
+         ecoscreen.sourceInfo := "";
+      END_IF;
+   END_WHILE;
+END_ROUTINE
+
+ROUTINE GetSource(Hdl : DINT; progName : STRING; lineNr   : DINT) : STRING PRIVATE
+VAR
+   stmtKind : TStmtKind;
+   text     : STRING;
+   param    : STRING;
+   prgText  : STRING;
+END_VAR
+   
+      GetStatementInfo(Hdl, stmtKind, text, param);
+      prgText := progName + " : " + STR(lineNr) + " " + text + "(" + param + ")";
+      RETURN prgText;
+END_ROUTINE
+
+
+
+// !! array-order has changed with TC 3.00
+ROUTINE UpdateProgInfo(OPTIONAL CONST noWait : BOOL; OPTIONAL CONST stackInfo : TUserProgStackInfo)
+   VAR
+      info : TUserProgStackInfo;
+      sourceLine : STRING;
+      progStr : STRING;
+      dotCharNr : DINT;
+      dotFound : BOOL;
+      cancel : BOOL;
+      hdl        : DINT;      
+   END_VAR
+   
+   IF homing.bSimulateModule THEN
+      RETURN;
+   END_IF;
+   
+   IF NOT (IS_USED(noWait) AND noWait) THEN
+      // signal for cancelling all open commands
+      cancel := IS_CHANGED(progPath.cancelFlipFlop);
+      WAIT MAIN_RUN OR cancel;
+      IF cancel THEN
+         RETURN;
+      END_IF;
+   END_IF;
+   IF IS_USED(stackInfo) THEN
+      info := stackInfo;
+   ELSE
+      // get the whole program path
+      IF NOT GetUserProgCallStackInfo(0, info) THEN
+         DebugPrint(eTraceMotionModesFine, "GetUserProgCallStackInfo for actual program-position failed");
+         iCntMinorError := iCntMinorError + 1;
+         RETURN;
+      END_IF;
+   END_IF;
+   dotCharNr := StrFind(info.progNames[info.depth-1], ".");
+   dotFound := dotCharNr > 0;
+   IF dotFound THEN // "." found --> TC>=2.96
+      progStr := StrDelete(info.progNames[info.depth-1], dotCharNr, 0); // clear program name from project name + "."
+      dotCharNr := StrFind(progStr, ".");
+      dotFound := dotCharNr > 0;
+      IF dotFound THEN // "." found --> TC>=2.96
+         progStr := StrDelete(progStr, dotCharNr, 0); // clear program name from project name + "."
+      END_IF;
+   ELSE // no "." found --> TC<2.96
+      progStr := info.progNames[0];
+   END_IF;
+   IF info.depth = 1 THEN
+      progStr := info.progNames[0];
+   ELSIF info.depth = 2 THEN
+      progStr := info.progNames[0] + "." + progStr;
+   ELSIF info.depth > 2 THEN
+      progStr := info.progNames[0] + ".." + progStr;
+   END_IF;
+   IF NOT dotFound AND (ProjectName <> "_system") AND (ProjectName <> "_global") THEN
+      progNameKin := ProjectName + "." + progStr;
+   ELSE
+      progNameKin := progStr;
+   END_IF;
+   ecoscreen.ProgInfo := info;
+   
+   // Test
+   
+   homing.callStack := info;
+   IF GetUserProgInfo (progName, lineNr, hdl) THEN
+      homing.hdl := hdl;
+   END_IF;
+   StoreUserProgCallStack(stackHdl);
+   
+   IF handler.bJobRunning THEN
+      IF handler.mainProg <> info.progNames[info.depth-1] THEN
+         homing.sHandlerModule := info.progNames[info.depth-1];
+      END_IF;
+   ELSE
+      IF ((info.depth-1) = homing.iModuleLevel) THEN
+         homing.sActModuleName := info.progNames[info.depth-1];
+      END_IF;
+   END_IF;
+   
+   IF IS_MAPPED(homing.sv_Homing) THEN
+      IF NOT homing.bShutDownPending THEN
+         homing.sv_Homing.callStack := info;
+         IF handler.bJobRunning THEN
+            IF handler.mainProg <> info.progNames[info.depth-1] THEN
+               homing.sv_Homing.sHandlerModule := info.progNames[info.depth-1];
+            END_IF;
+         ELSE
+            IF ((info.depth-1) = homing.iModuleLevel) THEN
+               homing.sv_Homing.sActModuleName := info.progNames[info.depth-1];
+            END_IF;
+         END_IF;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE WaitMcMainCycles(cycles : DINT)
+VAR
+   iStartCnt : DINT;
+   iEndCnt : DINT;
+END_VAR
+
+   IF cycles < 0 THEN // avoid "wait forever"
+      RETURN;
+   END_IF;
+   iStartCnt := actExecData.mUpdateCounterMain;
+   iEndCnt := iStartCnt + cycles;
+   // bugfix!
+   // mUpdateCounter has no standard DINT-overflow, its value ranges only from 0 to 21700
+   IF iEndCnt > cgiMaxMcUpdCnt THEN
+      iEndCnt := iEndCnt - (cgiMaxMcUpdCnt + 1);
+      WAIT actExecData.mUpdateCounterMain < iStartCnt; // wait for overflow first
+      WAIT actExecData.mUpdateCounterMain >= iEndCnt;  // normal wait
+   ELSE
+      WAIT (actExecData.mUpdateCounterMain >= iEndCnt) OR // normal wait
+         (actExecData.mUpdateCounterMain < iStartCnt); // overflow and missed cycles
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE WaitMcMicroCycles(cycles : DINT)
+VAR
+   iStartCnt : DINT;
+   iEndCnt : DINT;
+END_VAR
+
+   IF cycles < 0 THEN // avoid "wait forever"
+      RETURN;
+   END_IF;
+   iStartCnt := actDrives.mUpdateCounterDrives;
+   iEndCnt := iStartCnt + cycles;
+   // bugfix!
+   // mUpdateCounter has no standard DINT-overflow, its value ranges only from 0 to 21700
+   IF iEndCnt > cgiMaxMcUpdCnt THEN
+      iEndCnt := iEndCnt - (cgiMaxMcUpdCnt + 1);
+      WAIT actDrives.mUpdateCounterDrives < iStartCnt; // wait for overflow first
+      WAIT actDrives.mUpdateCounterDrives >= iEndCnt;  // normal wait
+   ELSE
+      WAIT (actDrives.mUpdateCounterDrives >= iEndCnt) OR // normal wait
+         (actDrives.mUpdateCounterDrives < iStartCnt); // overflow and missed cycles
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE StoreHandlerBackPos()
+   
+   HandlerBackPosSegId  := actExecData.mActSegmentID;
+   HandlerBackPosSegPar := actExecData.mActSegParam;
+END_ROUTINE
+
+
+
+
+(*******************************************************************************
+* private members
+*)
+
+TYPE PRIVATE
+   TSelectingFlow : STRUCT
+      // used for reservation purposes
+      lock : BOOL;
+      // indicates whether a flow selected successfully
+      present : BOOL;
+      // indicates whether the selecting Flow is running or interrupted
+      running : BOOL;
+      // gives the execution-handle of the selecting flow
+      flowId : DINT;
+      // indicates whether the selecting Flow is in step-mode or not
+      isStepping : BOOL; 
+      // indicates the state between lock and running
+      starting : BOOL;
+   END_STRUCT;
+   TVirtualWall_Safety : STRUCT
+      bUseSafeConfiguration : BOOL; //Fuction is enabled in IEC enginnering file
+      bRetainInCatalog      : BOOL; //Retain values have been written to catalog (Bootup)
+      bReloadCatalog        : BOOL; //Reload values from catalog (Download 3D-OnSite)
+   END_STRUCT;
+   TVirtualWallSafeCfg : STRUCT
+      svSafety              : MAPTO TVirtualWall_Safety; //interface between IEC <--> TC
+      svMapped              : BOOL;                      //interface IEC <--> TC mapped
+      bEnableSafety         : BOOL;                      //
+      dChecksumFromEps      : MAPTO DINT;                //checksum which operator has entered in EcoScreen 
+      dChecksumToEps        : MAPTO DINT;                //checksum which is requested
+      bChecksumErrorToEps   : MAPTO BOOL;                //checksum isn't valid to EcoScreen
+      bEpsMapped            : BOOL;                      //interface HMI <--> TC mapped
+      Checksum              : DINT;                      //generated checksum of values from RCUx_Safety.cfg 
+   END_STRUCT;
+   TGhostNoMotion : STRUCT
+     bSetStartPos      : BOOL;
+     bActiveInSim      : BOOL;
+     bSwitchingDrives  : BOOL;
+     jointsBeforeStart : TMcuVector;
+   END_STRUCT; 
+END_TYPE
+
+VAR PRIVATE
+   // reset the progpath on the next change to automatic-mode, used by RESERVE,
+   // restore default values
+   resetProgPath : BOOL;
+
+   // clear the progpath on the next change to automatic-mode, used by Clear,
+   // do not restore default values
+   clearProgPath : BOOL;
+
+   // read settings for progPath from Mcu-actual values upon the next change to
+   // stop-mode, clear progPath upon next change to automatic-mode
+   preventRestoreActSettings : BOOL;
+   restoreActSettings : BOOL;
+   restoreActSettingsWithoutClear : BOOL;
+   noReadMcuActSettings : BOOL;
+   // Motionrequest
+   motionRequest : TRcuMotionMode;
+
+   // change of the internal request
+   motionRquChg : BOOL;
+   
+   directionChg      : BOOL;
+   wasBackwardMoving : BOOL;
+   
+   // Call of SetMotionMode allowed
+   chgModeAllowed : BOOL;
+
+   // the execution-handle of the Motion-Manager, i.e. the handle of the NEW-Routine
+   mmgrFlowId : DINT;
+
+   // is set TRUE when the velocity control is active
+   veloControlActive : BOOL;
+
+   // Id of the overlapobject used as kinematic-default, is needed e.g. when
+   // cartesian overlapping is rejected @? sollte weg!
+   noOvlMcuId : TMcuDbObjID;
+   dummyDynMcuId : TMcuDbObjID; // id of the dynamic dummy needed for noOvlMcuId
+   dummyRampMcuId : TMcuDbObjID; // id of the ramp dummy needed for dummyDynMcuId
+
+   // indicates whether stopping is required after the next repos
+   reposStopRequired : BOOL;
+
+   // initial override setting, in promille
+   initOverride : DINT;
+
+   // is set TRUE when the project observation is active
+   projectObsActive : BOOL;
+   
+   reposSegId   : TMcuDbObjID;
+   segParam     : REAL;
+
+   // indicates activated backward movement
+   backwardMovement : BOOL;
+   // golden repos activated
+   goldenRepos : BOOL; 
+   
+   noInterrupt : BOOL;
+   
+   bRestartProgPathFlag : BOOL;
+   
+   actCallStack : DINT;
+   restoreCallStack : BOOL;
+  
+   indexTimeTable : DINT;
+   
+   bActivateFromBranch : BOOL;
+   
+   sProgramNameMainRun : STRING;
+   iLineNumberMainRun : DINT;
+   sProgramNamePreRun : STRING;
+   iLineNumberPreRun : DINT;
+END_VAR
+
+
+// activate goldenRepos
+ROUTINE StartGoldenRepos() : BOOL PRIVATE
+VAR
+   finished : BOOL;
+END_VAR
+
+   IF NOT selectingFlow.present OR selectingFlow.running OR goldenRepos THEN
+      DebugPrint(eTraceGoldenRepos, "Starting of goldenRepos not possible (e.g. selecting flow not present)");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN FALSE;
+   END_IF;
+   reposState := eReposStateBegin;
+   gRcData.userIcon[eIconDirection] := eIconDirectionGoldenRepos;
+   goldenRepos := TRUE;
+   RcuInterfaceToProcess.CloseAllNeedles(goldenRepos);
+   // start CONTINUE() for selected kinematic, there a motionMode is requested to handle goldenRepos
+   ContinueProgSignal(selectingFlow.flowId, finished);
+   //DebugPrint(eTraceGoldenRepos, "wait for finished-signal von ContinueProgSignal");
+   WAIT (finished AND NOT goldenRepos) OR bGoldenReposInterrupt; 
+   // wait until CONTINUE() of kinematic has finished 
+   // and goldenRepos has been reseted - this is done by motionManager 
+   IF NOT bGoldenReposInterrupt THEN
+   gRcData.userIcon[eIconDirection] := eIconDirectionNormal;
+   END_IF;
+   //DebugPrint(eTraceGoldenRepos, "finished-signal von ContinueProgSignal");
+   RETURN TRUE;
+END_ROUTINE
+
+// continue goldenRepos
+ROUTINE ContinueGoldenRepos() : BOOL PRIVATE
+VAR
+   finished : BOOL;
+END_VAR
+
+   IF NOT selectingFlow.present OR selectingFlow.running THEN
+      DebugPrint(eTraceGoldenRepos, "Continuing of goldenRepos not possible (e.g. selecting flow not present)");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN FALSE;
+   END_IF;
+   IF (reposState <> eReposStateActive) AND (reposState <> eReposStateBegin) AND (reposState <> eReposStateInit) THEN
+      DebugPrint(eTraceGoldenRepos, "Continuing of goldenRepos not possible reposState <> eReposStateActive, eReposStateBegin, eReposStateInit");
+      iCntMinorError := iCntMinorError + 1;
+      RETURN FALSE;
+   END_IF;
+   gRcData.userIcon[eIconDirection] := eIconDirectionGoldenRepos;
+   goldenRepos := TRUE;
+   RcuInterfaceToProcess.CloseAllNeedles(goldenRepos);
+   // start CONTINUE() for selected kinematic, there a motionMode is requested to handle goldenRepos
+   ContinueProgSignal(selectingFlow.flowId, finished);
+   //DebugPrint(eTraceGoldenRepos, "wait for finished-signal von ContinueProgSignal");
+   WAIT (finished AND NOT goldenRepos) OR bGoldenReposInterrupt; 
+   // wait until CONTINUE() of kinematic has finished 
+   // and goldenRepos has been reseted - this is done by motionManager
+   IF NOT bGoldenReposInterrupt THEN
+      gRcData.userIcon[eIconDirection] := eIconDirectionNormal;
+   ELSE
+      movementDirection := eDirRepos;
+   END_IF;
+   //DebugPrint(eTraceGoldenRepos, "finished-signal von ContinueProgSignal");
+   RETURN TRUE;
+END_ROUTINE
+
+// activate backward movement
+ROUTINE StartMoveBackward() : BOOL
+  VAR
+   finished : BOOL;
+  END_VAR
+  
+   IF NOT selectingFlow.present OR selectingFlow.running OR goldenRepos THEN
+      RETURN FALSE;
+   END_IF;
+  
+  IF ContinueProgSignal(selectingFlow.flowId, finished) THEN
+     IF bHandlerDoBackwardMove THEN      //BIT 7.8.05
+        DebugPrint(eTraceBackward, "Direction: Backward movement started from handler");
+     ELSE
+        DebugPrint(eTraceBackward, "Direction: Backward movement started");
+     END_IF;
+  ELSE
+     DebugPrint(eTraceBackward, "Direction: Starting of Backward movement failed");
+     iCntMinorError := iCntMinorError + 1;
+     RETURN FALSE;
+  END_IF;
+  WAIT finished;
+  RETURN TRUE;
+  
+END_ROUTINE
+
+// SetPathPos including waiting for success
+ROUTINE RcuSetPathPos(path : TRcuPath) : BOOL
+   VAR
+      actPathChg : BOOL;
+      actPath    : STRING;
+      newPath    : STRING;
+      timeOut    : BOOL;
+      timeForPathChange : DINT;
+      debugTimer : BOOL;
+   END_VAR
+
+   actPathChg := IS_CHANGED(actExecData.mActPathID);
+   IF TraceLevel(eTraceEquipment) THEN
+      IF actExecData.mActPathID = progPath.pathMcuId THEN
+         actPath := "progPath";
+      ELSIF actExecData.mActPathID = reposPath.pathMcuId THEN
+         actPath := "reposPath";
+      ELSIF actExecData.mActPathID = jogPath.pathMcuId THEN
+         actPath := "jogPath";
+      ELSIF actExecData.mActPathID = noPath.pathMcuId THEN
+         actPath := "noPath";
+      ELSE
+         actPath := "invalidPath (" + STR(actExecData.mActPathID) + ")";
+      END_IF;
+      IF path.pathMcuId = progPath.pathMcuId THEN
+         newPath := "progPath";
+      ELSIF path.pathMcuId = reposPath.pathMcuId THEN
+         newPath := "reposPath";
+      ELSIF path.pathMcuId = jogPath.pathMcuId THEN
+         newPath := "jogPath";
+      ELSIF path.pathMcuId = noPath.pathMcuId THEN
+         newPath := "noPath";
+      ELSE
+         newPath := "invalidPath";
+      END_IF;
+      DebugPrint(eTraceEquipment, "Set Mcu on " + newPath + " (Mcu is on " + actPath + ")"); 
+      //RcuPrintPosition(path.pathPosMcuId);
+      //RcuPrintActPos(SELF);
+   END_IF;
+   IF NOT McuSetPathPos(kinematicMcuId, path.pathPosMcuId) THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 1, instId, 
+         "TRcuKinematic.RcuSetPathPos", robotName, "McuSetPathPos");
+      RETURN FALSE;
+   END_IF;
+   timeOut := FALSE;
+   SysTimerSet(1000, timeOut);
+   WHILE actExecData.mActPathID <> path.pathMcuId DO
+      DebugPrint(eTraceEquipment, "actPathId: " + STR(actExecData.mActPathID) + ", targetPathId: " + STR(path.pathMcuId));
+      debugTimer := FALSE;
+      SysTimerSet(8, debugTimer);
+      WAIT actPathChg OR timeOut OR debugTimer;
+      IF timeOut THEN         
+         DebugPrint(eTraceEquipment, "actPathId: " + STR(actExecData.mActPathID) + ", targetPathId: " + STR(path.pathMcuId));
+         RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 1, instId, 
+            "TRcuKinematic.RcuSetPathPos", robotName, "McuSetPathPos_timeout");
+         RETURN FALSE;
+      END_IF;
+      actPathChg := FALSE;
+   END_WHILE;
+   timeForPathChange := 1000 - SysTimerClear(timeOut);
+   DebugPrint(eTraceEquipment, "actPathId: " + STR(actExecData.mActPathID) + ", targetPathId: " + STR(path.pathMcuId));
+   DebugPrint(eTraceEquipment, "SetPathPos ok (" + STR(timeForPathChange) + ")");
+   RETURN TRUE;
+END_ROUTINE
+
+
+ROUTINE RcuRestartMcu() : BOOL PRIVATE
+
+   DebugPrint(eTraceCommon, "McuRestart.....");
+   WaitMcMainCycles(1);
+   IF NOT McuRestart(kinematicMcuId) THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 2, instId, "TRcuKinematic.RcuRestartMcu", robotName, "McuRestart");
+      RETURN FALSE;
+   END_IF;
+   WaitMcMainCycles(1);
+   // a successfull start sets the ready-flag
+   WAIT actExecData.mIsReady;
+
+   // setting onto a path resets the error-flag
+   IF NOT RcuSetPathPos(noPath) THEN
+      RETURN FALSE;
+   END_IF;
+
+   // set a start tool to make sure the position is correct before the first move
+   McuSetStartTool(kinematicMcuId, kinToolMcuId);
+   IF gbGuardsAvailable THEN
+      McuSetStartGuardPoints(kinematicMcuId, kinGripperMcuId);
+   ELSE  
+      McuSetStartGripper(kinematicMcuId, kinGripperMcuId);
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+ROUTINE SetStartGripperAndStartTool()
+   McuSetStartTool(kinematicMcuId, kinToolMcuId);
+   IF gbGuardsAvailable THEN
+      McuSetStartGuardPoints(kinematicMcuId, kinGripperMcuId);
+   ELSE  
+      McuSetStartGripper(kinematicMcuId, kinGripperMcuId);   
+   END_IF;
+END_ROUTINE
+
+// StartInterpolator including waiting for success
+ROUTINE RcuStartInterpolator(newMainDrives : TMcuVector; newAuxDrives : TMcuVector) : BOOL PRIVATE
+
+   IF NOT McuStartInterpolator(kinematicMcuId, newMainDrives, newAuxDrives) THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 2, instId, "TRcuKinematic.RcuStartInterpolator", robotName, "McuStartInterpolator");
+      RETURN FALSE;
+   END_IF;
+   // a successfull start sets the ready-flag
+   WAIT actExecData.mIsReady;
+
+   // setting onto a path resets the error-flag
+   IF NOT RcuSetPathPos(noPath) THEN
+      RETURN FALSE;
+   END_IF;
+
+   // set a start tool to make sure the position is correct before the first move
+   McuSetStartTool(kinematicMcuId, kinToolMcuId);
+   IF gbGuardsAvailable THEN
+      McuSetStartGuardPoints(kinematicMcuId, kinGripperMcuId);
+   ELSE  
+      McuSetStartGripper(kinematicMcuId, kinGripperMcuId);
+   END_IF;
+   RETURN TRUE;
+END_ROUTINE
+
+// StopInterpolator including waiting for success
+ROUTINE RcuStopInterpolator() : BOOL PRIVATE
+
+   DebugPrint(eTraceInterfaceBCU,"RcuStopInterpolator: START");
+   IF NOT McuStopInterpolator(kinematicMcuId) THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 3, instId, "TRcuKinematic.RcuStopInterpolator", robotName, "McuStopInterpolator");
+      RETURN FALSE;
+   END_IF;
+   // a successfull stop resets the ready-flag
+   DebugPrint(eTraceInterfaceBCU,"RcuStopInterpolator: WAIT NOT actExecData.mIsReady");
+   WAIT NOT actExecData.mIsReady;
+   DebugPrint(eTraceInterfaceBCU,"RcuStopInterpolator: END");
+   RETURN TRUE;
+END_ROUTINE
+
+
+// Motionmanager
+ROUTINE MotionManager() PRIVATE
+   
+   WAIT gbBootupFinished;
+   WHILE TRUE DO
+      WAIT motionRquChg;
+      motionRquChg := FALSE;
+      IF NOT IS_FINISHED THEN
+         // DebugPrint(eTraceReposDebug, "---------- interrupt MotionModeRequest");
+         STOP MotionModeRequest;
+      END_IF;
+      START MotionModeRequest(motionRequest);
+   END_WHILE;
+END_ROUTINE
+
+
+// Try to achieve the requested MotionMode
+ROUTINE MotionModeRequest(rqu : TRcuMotionMode) PRIVATE
+   VAR
+      locRqu       : TRcuMotionMode;
+      deceFactor   : REAL;
+      ovr          : REAL;
+      prevSegId    : TMcuDbObjID;
+      newPathPosId : TMcuDbObjID;
+      goldenReposRequested : BOOL;
+      goldenReposRequired : BOOL;
+      // indicates whether repositioning is required upon the next change to
+      // the automatic-mode (because of e.g. jogging)
+      isNear       : BOOL;
+      noBackwardPath : BOOL;
+      i              : INT;
+      allDrivesSlow  : BOOL;
+   END_VAR
+   
+   locRqu := rqu; // local copy of the request
+   //PRINT("motionmode: "+STR(locRqu));
+   // check mainmodemanager outputs
+   IF (locRqu = eRcuMMgrModeAuto) THEN
+      IF NOT mainModeMgr.automatic THEN
+         RcuSetMessageOnce(TRcuKinematic_WarAutoModeReject, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+         stopRequired := FALSE;
+         IF movementDirection = eDirRepos THEN
+            SetMovementDirection(eDirNormal);
+         END_IF;           
+         SetMotionMode(eRcuMMgrModeStop);
+         RETURN;
+      ELSE
+         // activate condition control
+         START ConditionCtrl(mainModeMgr.automatic, locRqu);
+      END_IF;
+   END_IF;
+   
+   IF (locRqu = eRcuMMgrModeJog) THEN
+      IF NOT mainModeMgr.jogging THEN
+         RcuSetMessageOnce(TRcuKinematic_WarJogModeReject, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+         SetMotionMode(eRcuMMgrModeStop);
+         RETURN;
+      ELSE
+         // activate condition control
+         START ConditionCtrl(mainModeMgr.jogging, locRqu);
+      END_IF;
+   END_IF;
+   
+   //DebugPrint(eTraceReposDebug, "MotionModeRequest 1: locRqu = "+STR(locRqu)+" mmgrState ="+STR(mmgrState));
+   // Treatment of the StopJoints-request
+   IF locRqu = eRcuMMgrModeStopJoints THEN
+      IF (mmgrState = eRcuMMgrStateAutoActive) OR (mmgrState = eRcuMMgrStateAutoEnd) THEN
+         progPath.SavePathPosBeforeBrake();
+         progPath.SavePathPos();
+         IF movementDirection <> eDirNormal THEN
+            reposPath.SavePathPos();
+         END_IF;
+      END_IF;
+      deceFactor := stopJointsDeceFactor;
+      IF (deceFactor < 0.0) OR (deceFactor >= 1.0) THEN
+         deceFactor := 0.0;
+         stopJointsDeceFactor := 0.0;
+      END_IF;
+      // the condition avoids calling a Mcu function with stopped interpolator
+      IF NOT isStopped THEN
+         IF NOT RcuEmergencyStop.stop THEN
+            McuSetTimeOverrideFactor(kinematicMcuId, emergencyTimeOverrideFactor);
+            DebugPrint(eTraceCommon, "TimeOverrideFactor 1 : " + STR(emergencyTimeOverrideFactor));
+         ELSE
+            McuSetTimeOverrideFactor(kinematicMcuId, interruptTimeOverrideFactor);
+            DebugPrint(eTraceCommon, "TimeOverrideFactor 2 : " + STR(interruptTimeOverrideFactor));
+         END_IF;
+         IF NOT McuStopJoints(kinematicMcuId, deceFactor)THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx,  4, instId, "TRcuKinematic.MotionModeRequest", robotName, "McuStopJoints");
+            ErrorReaction(FALSE);
+         END_IF;
+      END_IF;
+      stopJointsDeceFactor := deceFactor;
+      mmgrState := eRcuMMgrStateStoppingJoints;
+      
+      IF NOT noInterrupt THEN
+         InterruptFlow();
+      END_IF;
+      McuSetTimeOverrideFactor(kinematicMcuId, defaultTimeOverrideFactor);
+      DebugPrint(eTraceCommon, "TimeOverrideFactor 3 : " + STR(defaultTimeOverrideFactor));
+      WAIT isStopped;
+      mmgrState := eRcuMMgrStateStoppedJoints;
+      motionMode := eRcuMMgrModeStopJoints;
+      CheckActJoints();
+      RETURN;
+   END_IF;
+   
+   // Treatment of restarting on the ProgPath without full Stop
+   IF (locRqu = eRcuMMgrModeAuto) AND ((mmgrState = eRcuMMgrStateAutoEnd) OR
+         (mmgrState = eRcuMMgrStateAutoActive)) AND NOT resetProgPath AND
+         NOT restoreActSettings AND NOT clearProgPath AND NOT goldenRepos THEN
+      IF goldenRepos THEN 
+         // restart without full-stop during goldenRepos is not possible
+         // could be checked in outer if, but for further investigation it's done here
+         DebugPrint(eTraceGoldenRepos, "Repos: GoldenRepos error - No full stop !?");
+         iCntMinorError := iCntMinorError + 1;
+      ELSE
+         (*$$$$$* motionstep *$$$$$*)
+         IF (motionStepMode <> eMotionStepInactive) 
+            AND (motionStepMode <> eMotionStepInterpreter) THEN
+            PRINT("MotionStep active");
+            START MoveToNextTarget();
+         ELSIF NOT McuMove(kinematicMcuId) THEN;
+            RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 5, instId, "TRcuKinematic.MotionModeRequest", robotName, "McuMove");
+            ErrorReaction(FALSE);
+         END_IF;
+         mmgrState := eRcuMMgrStateAutoActive;
+         motionMode := eRcuMMgrModeAuto;
+         IF selectingFlow.present AND NOT selectingFlow.running THEN
+            ContinueProg(selectingFlow.flowId);
+         END_IF;
+         RETURN;
+      END_IF;
+   END_IF;
+   
+   // Otherwise first achieve a finished-state or the stoppedjoints-state
+   //DebugPrint(eTraceReposDebug, "MotionModeRequest 2: locRqu = "+STR(locRqu)+" mmgrState ="+STR(mmgrState));
+   CASE mmgrState OF
+   eRcuMMgrStateStoppedJoints:
+      // nothing to do
+   eRcuMMgrStateAutoFinished, eRcuMMgrStateJogFinished:
+      // nothing to do
+   eRcuMMgrStateStoppingJoints:
+      WAIT isStopped;
+      mmgrState := eRcuMMgrStateStoppedJoints;
+      CheckActJoints();
+   ELSE
+      IF mmgrState = eRcuMMgrStateAutoActive THEN
+         progPath.SavePathPosBeforeBrake();
+      END_IF;
+      IF NOT RcuEmergencyStop.stop THEN
+         McuSetTimeOverrideFactor(kinematicMcuId, emergencyTimeOverrideFactor);
+         DebugPrint(eTraceCommon, "TimeOverrideFactor 4 : " + STR(emergencyTimeOverrideFactor));
+      ELSE
+         McuSetTimeOverrideFactor(kinematicMcuId, interruptTimeOverrideFactor);
+         DebugPrint(eTraceCommon, "TimeOverrideFactor 5 : " + STR(interruptTimeOverrideFactor));
+      END_IF;
+      IF locRqu = eRcuMMgrModeStopEmergency THEN
+         allDrivesSlow := TRUE;
+         FOR i := 0 TO kinematic.mNrOfJoints - 1 DO
+            IF rAbs(PaintRobot[kinListInx].drive[i].setValueVelo) > PaintRobot[kinListInx].drive[i].maxSpeedLowJerk THEN
+               allDrivesSlow := FALSE;
+            END_IF;
+         END_FOR;
+         IF allDrivesSlow THEN
+            jerkFactorStopMicroIP := 0.2;
+         ELSE
+            jerkFactorStopMicroIP := 1.0;
+         END_IF;
+      ELSE
+         jerkFactorStopMicroIP := 0.2;
+      END_IF;
+      IF ((NOT PaintRobot[kinListInx].autoControl.bPLCRelease) OR (NOT svMotionAllowed)
+         OR (NOT RcuEmergencyStop.stop)) AND (stopMicroIPAvailable = 1)
+      THEN
+         IF NOT stopMicroIPActive OR (lastJerkFactor < jerkFactorStopMicroIP) THEN
+            IF NOT RcuStopMoveFast(kinematicMcuId, deceFactorStopMicroIP, jerkFactorStopMicroIP) THEN
+               RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 6, instId, "TRcuKinematic.MotionModeRequest", robotName, "McuStopMicroIP");
+               ErrorReaction(FALSE);
+            ELSE
+               stopMicroIPActive := TRUE;
+               lastJerkFactor := jerkFactorStopMicroIP;
+               DebugPrint(eTraceAutoControl, "*** McuStopMicroIP ***");
+               DebugPrint(eTraceAutoControl, "Jerk factor = " + STR(jerkFactorStopMicroIP));
+            END_IF;
+         END_IF;
+      ELSE
+         IF NOT McuStopMove(kinematicMcuId) THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 7, instId, "TRcuKinematic.MotionModeRequest", robotName, "McuStopMove");
+            ErrorReaction(FALSE);
+         ELSE
+            DebugPrint(eTraceCommon, "*** McuStopMove ***");
+         END_IF;
+      END_IF;
+      CASE mmgrState OF
+      eRcuMMgrStateAutoActive:
+         mmgrState := eRcuMMgrStateAutoEnd;
+         //DebugPrint(eTraceReposDebug, "MotionModeRequest : mmgrState := eRcuMMgrStateAutoEnd");
+      eRcuMMgrStateJogActive:
+         mmgrState := eRcuMMgrStateJogEnd;
+      END_CASE;
+      IF (locRqu <> eRcuMMgrModeAuto) AND NOT restoreActSettings AND
+         NOT resetProgPath AND NOT clearProgPath THEN
+//         InterruptFlow(); // no interrupt when requesting automaticmode or SETPC,
+                          // Reset or Clear
+         IF NOT noInterrupt THEN
+            InterruptFlow();
+         END_IF;
+      END_IF;
+      // when tracking, joints will not be stopped on McuStopMove()
+      WAIT isNotMovingOnPath;
+      McuSetTimeOverrideFactor(kinematicMcuId, defaultTimeOverrideFactor);
+      DebugPrint(eTraceCommon, "TimeOverrideFactor 6 : " + STR(defaultTimeOverrideFactor));
+      CASE mmgrState OF
+      eRcuMMgrStateAutoEnd:
+         progPath.SavePathPos();
+         IF movementDirection <> eDirNormal THEN
+            reposPath.SavePathPos();
+         END_IF;
+         mmgrState := eRcuMMgrStateAutoFinished;
+         //DebugPrint(eTraceReposDebug, "MotionModeRequest : mmgrState := eRcuMMgrStateAutoFinished");
+      eRcuMMgrStateAutoBegin:
+         IF (movementDirection <> eDirNormal) AND NOT reposPath.reposActive THEN
+            // don't save propPath-position when bw-movement is currently interrupted 
+            IF reposState <> eReposStateActive THEN
+               progPath.SavePathPos();
+            END_IF;
+            reposPath.SavePathPos();
+         END_IF;
+         mmgrState := eRcuMMgrStateAutoFinished;
+      eRcuMMgrStateJogBegin, eRcuMMgrStateJogEnd:
+         mmgrState := eRcuMMgrStateJogFinished;
+      END_CASE;
+      CheckActJoints();
+   END_CASE;
+   // clears error flag and allows manipulation of other paths
+   // should not be done here - stops tracking after stopMove
+   //RcuSetPathPos(noPath);
+   // restore override if not requesting jogMode
+   IF locRqu <> eRcuMMgrModeJog THEN
+      ovr := override / 1000.0;
+      McuSetTimeOverride(kinematicMcuId, ovr);
+   END_IF;
+   
+   // Finally treat the request
+   CASE locRqu OF
+   eRcuMMgrModeStop:
+      motionMode := eRcuMMgrModeStop; // nothing to do
+   eRcuMMgrModeAuto:
+      // clears error flag and allows manipulation of other paths
+      RcuSetPathPos(noPath);
+      mmgrState := eRcuMMgrStateAutoFinished;
+      IF directionChg AND wasBackwardMoving AND NOT backwardMovement THEN
+         IF reposState = eReposStateActive THEN // otherwise this is done in rebuildProgPath
+            clearProgPath := TRUE;      
+         (*$$$$$* motionstep *$$$$$*)
+         ELSIF reposState = eReposStateEnd THEN // finishing of backward movement was interrupted (e.g. in rebuildProgPath)
+            clearProgPath := TRUE;  
+         END_IF;
+         //directionChg := FALSE; // Flag wird noch benötigt
+         wasBackwardMoving := FALSE;
+      (*$$$$$* motionstep *$$$$$*)
+      ELSIF wasBackwardMoving AND (reposState = eReposStateEnd) THEN 
+         // finishing of backward movement was interrupted (e.g. in rebuildProgPath)  
+         // clean finish of backward movement has to be done here 
+         directionChg := TRUE;
+         backwardMovement := FALSE;
+         clearProgPath := TRUE;  
+         wasBackwardMoving := FALSE;
+         reposState := eReposStateFinished;
+      END_IF;
+      IF resetProgPath THEN
+         progPath.Reset();
+         reposStopRequired := FALSE;
+         SetMovementDirection(eDirNormal);
+      ELSIF restoreActSettings OR restoreActSettingsWithoutClear THEN
+         IF noReadMcuActSettings THEN
+            DebugPrint(eTraceMotionModesFine, "noReadMcuActSettings = TRUE");
+            noReadMcuActSettings := FALSE;
+         ELSE
+            IF NOT progPath.ReadMcuActSettings() THEN
+               RcuSetMessageOnce(TRcuKinematic_WarReadActSetFail, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+            END_IF;
+         END_IF;
+         IF NOT restoreActSettingsWithoutClear THEN
+            progPath.Clear();
+         END_IF;
+         reposStopRequired := FALSE;
+         SetMovementDirection(eDirNormal);
+      ELSIF clearProgPath THEN
+         reposStopRequired := FALSE;
+         progPath.Clear();
+         SetMovementDirection(eDirNormal);
+      END_IF;
+      resetProgPath := FALSE;
+      restoreActSettings := FALSE;
+      restoreActSettingsWithoutClear := FALSE;
+      preventRestoreActSettings := FALSE;
+      noReadMcuActSettings := FALSE;
+      clearProgPath := FALSE;
+      IF stopRequired THEN
+         // interrupt at stoprequest
+         stopRequired := FALSE;
+         SetMotionMode(eRcuMMgrModeStop);
+         RETURN;
+      END_IF;
+      McuIsKinNearPathPos(kinematicMcuId, progPath.pathPosMcuId, isNear);
+      //RcuPrintPosition(progPath.pathPosMcuId);
+      //RcuPrintActPos(SELF);
+      // start repos or backward movement
+      IF NOT isNear OR (movementDirection <> eDirNormal) OR trackingPosSet THEN
+         mmgrState := eRcuMMgrStateAutoBegin;
+         
+         // move to saved pathpos if necessary
+         IF NOT isNear AND (
+               (movementDirection = eDirNormal) 
+                  OR 
+               ((movementDirection <> eDirNormal) AND (reposState <> eReposStateActive))
+            ) OR trackingPosSet THEN
+            IF trackingPosSet THEN
+               trackingPosSet := FALSE;
+               DebugPrint(eTraceGoldenRepos, "Repos : Trackingpos changed");
+            END_IF;
+            RcuSetPathPos(noPath);
+            reposPath.Reset();
+            RcuSetPathPos(reposPath);
+            IF NOT reposPath.Repos(progPath) THEN
+               ErrorReaction(FALSE);
+               RETURN; 
+            END_IF;
+         END_IF;
+         
+         // move backward on progpath
+         IF movementDirection <> eDirNormal THEN
+            IF directionChg AND backwardMovement THEN
+               progPath.EndMotionCommands();
+               wasBackwardMoving := TRUE;      
+            END_IF;
+            goldenReposRequested := (movementDirection = eDirRepos) OR (movementDirection = eDirReposContinue);
+            directionChg := FALSE;
+            IF (reposState <> eReposStateInit) AND (reposState <> eReposStateActive) THEN
+               reposState := eReposStateInactive;
+               IF NOT reposPath.InitBackwardMovement(reposSegId, segParam, 
+                  goldenReposRequested, goldenReposRequired, noBackwardPath) THEN
+                  IF goldenReposRequested THEN
+                     IF noBackwardPath THEN   //if path to move backward is empty, so move forward without golden repos
+                        reposState := eReposStateFinished;
+                        SetMovementDirection(eDirNormal); //this happens if program started 
+                        goldenRepos := FALSE;             //but still has not collected pathsegments BIT 15.08.07
+                        reposState := eReposStateInactive;//or immediatly after a handler receive_order loop                                  
+                        DebugPrint(eTraceGoldenRepos, "Repos: Backward path is empty, move forward");
+                        IF NOT bEmptyProgPath THEN
+                           DebugPrint(eTraceGoldenRepos, "Repos: ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ  NOT bEmptyProgPath");
+                        (*
+                           ErrorReaction(FALSE);
+                           RETURN;                           
+                        *)
+                        END_IF;
+                     ELSE 
+                        reposState := eReposStateFinished;
+                        SetMovementDirection(eDirNormal);
+                        RcuSetMessageOnce(TRcuKinematic_ErrGoldRepNotPos, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+                        bNoContinue := TRUE;
+                        ErrorReaction(FALSE);
+                        RETURN;
+                     END_IF;
+                  ELSE
+                     IF noBackwardPath THEN
+                        reposState := eReposStateFinished;
+                        SetMovementDirection(eDirNormal); //this happens if program started 
+                        goldenRepos := FALSE;             //but still has not collected pathsegments BIT 15.08.07
+                        reposState := eReposStateInactive;//or immediatly after a handler receive_order loop                                  
+                        DebugPrint(eTraceGoldenRepos, "Repos: Backward path is empty, move forward");
+                        IF NOT bEmptyProgPath THEN
+                           ErrorReaction(FALSE);
+                           RETURN;                           
+                        END_IF;
+                     ELSE
+                        RcuSetMessageOnce(TRcuKinematic_ErrInBckwMoveFail, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+                        bHandlerDoBackwardMove := FALSE;
+                        bHandlerAbortBackMove  := TRUE;
+                        DebugPrint(eTraceRcuHandler, "bHandlerAbortBackMove von 3 ");
+                        RETURN;
+                     END_IF;
+                  END_IF;
+               ELSE
+                  reposState := eReposStateInit;
+               END_IF;
+            ELSE
+               goldenReposRequired := TRUE;
+            END_IF;
+            IF goldenReposRequired THEN
+               RcuSetPathPos(noPath);
+               reposPath.Reset();
+            END_IF;
+            
+            IF goldenReposRequested OR bGoldenReposContinue THEN
+               IF goldenReposRequired THEN
+                  RcuSetPathPos(reposPath); 
+                  iCntReposRequired := iCntReposRequired+1;
+                  IF movementDirection = eDirReposContinue THEN
+                     movementDirection := eDirRepos;
+                  END_IF;
+                  IF NOT reposPath.BackwardMovement(reposSegId, segParam, goldenReposRequested) THEN
+                     goldenRepos := FALSE;
+                     reposState := eReposStateInactive;
+                     RcuSetMessageOnce(TRcuKinematic_ErrBackWMovFail, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+                     ErrorReaction(FALSE);
+                     RETURN; 
+                  END_IF;
+                  bGoldenReposContinue := FALSE;
+               ELSE
+                  iCntReposNotRequired := iCntReposNotRequired+1;
+                  DebugPrint(eTraceGoldenRepos, "Repos: Backward movement not necessary (or impossible)");                  
+                  reposState := eReposStateFinished;
+                  SetMovementDirection(eDirNormal);
+               END_IF;
+            ELSE  // backward movement
+               IF goldenReposRequired THEN
+                  RcuInterfaceToProcess.CloseAllNeedles();
+               ELSE
+                  DebugPrint(eTraceGoldenRepos, "Repos: Backward movement impossible");                  
+               END_IF;
+               IF (reposState = eReposStateInit) AND (HandlerBackPosSegId <> 0) THEN
+                  reposSegId := HandlerBackPosSegId;
+                  segParam   := HandlerBackPosSegPar;
+                  DebugPrint(eTraceBackward, "repos position set by handler " + STR(HandlerBackPosSegId) + ";" + STR(HandlerBackPosSegPar));
+               END_IF;
+               IF goldenReposRequired THEN
+                  RcuSetPathPos(reposPath);
+                  IF NOT reposPath.BackwardMovement(reposSegId, segParam, goldenReposRequested) THEN
+                     SetMovementDirection(eDirNormal);
+                     bHandlerDoBackwardMove := FALSE;
+                     bHandlerAbortBackMove  := TRUE;
+                     DebugPrint(eTraceBackward, "bHandlerAbortBackMove von 4 ");
+                     reposState := eReposStateInactive;
+                     ErrorReaction(FALSE);
+                     RETURN;
+                  END_IF;
+                  //IF bHandlerDoBackwardMove THEN
+                     saveHandlerBackPos := TRUE;
+                  //END_IF;
+                  
+                  bHandlerDoBackwardMove := FALSE;
+                  DebugPrint(eTraceBackward, "Backward move normal beendet von 5 ");
+               END_IF;
+               reposStopRequired := TRUE;
+            END_IF;
+         END_IF;
+
+         IF movementDirection <> eDirNormal THEN 
+            // reposPath.SavePathPos is useless here
+            //reposPath.SavePathPos();
+            IF NOT progPath.RebuildPathSimple() THEN
+                RcuSetMessageOnce(TRcuKinematic_WarRebuildPathF, kinListInx, 1, instId, "TRcuKinematic.MotionModeRequest", robotName);
+            END_IF;
+            reposState := eReposStateEnd;
+            // path modification already done in RebuildPath
+            resetProgPath := FALSE;
+            restoreActSettings := FALSE;
+            restoreActSettingsWithoutClear := FALSE;
+            clearProgPath := FALSE;
+            // clear progPath and reset trigger data
+            //progPath.Clear();            
+            IF movementDirection = eDirRepos THEN
+               progPath.ResetTriggers(); 
+            END_IF;           
+         END_IF;        
+
+         // interrupt after repositioning/backward movement
+         IF reposStopRequired THEN
+            reposStopRequired := FALSE;
+            IF movementDirection = eDirNormal THEN
+               mmgrState := eRcuMMgrStateAutoBegin;
+            END_IF;
+            // when tracking, joints will not be stopped on McuStopMove()
+            WAIT isNotMovingOnPath AND actExecData.mIsOnPathEnd;
+            reposState := eReposStateFinished;
+            SetMovementDirection(eDirNormal);
+            SetMotionMode(eRcuMMgrModeStop);
+            RETURN;
+         END_IF;
+         IF ((movementDirection = eDirRepos) OR (movementDirection = eDirBack)) THEN  //BIT backward-movement
+            reposState := eReposStateFinished;
+            SetMovementDirection(eDirNormal);
+         END_IF;   
+      END_IF;
+      // move on progpath  
+      IF movementDirection = eDirNormal THEN
+         IF directionChg AND NOT backwardMovement THEN
+            reposPath.EndMotionCommands();
+         END_IF;
+         directionChg := FALSE;
+         RcuSetPathPos(progPath);
+         mmgrState := eRcuMMgrStateAutoBegin;
+         (*$$$$$* motionstep *$$$$$*)
+         IF (motionStepMode <> eMotionStepInactive) 
+               AND (motionStepMode <> eMotionStepInterpreter) THEN
+            START MoveToNextTarget();
+         ELSIF NOT McuMove(kinematicMcuId) THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 7, instId, "TRcuKinematic.MotionModeRequest", robotName, "McuMove");
+            ErrorReaction(FALSE);
+         END_IF;
+         mmgrState := eRcuMMgrStateAutoActive;
+         reposState := eReposStateInactive;
+         motionMode := eRcuMMgrModeAuto;
+      END_IF;
+      
+   eRcuMMgrModeJog:
+      // clears error flag and allows manipulation of other paths
+      RcuSetPathPos(noPath);
+      mmgrState := eRcuMMgrStateJogFinished;
+      jogPath.Reset();
+      RcuSetPathPos(jogPath);
+      mmgrState := eRcuMMgrStateJogBegin;
+      IF NOT McuMove(kinematicMcuId) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMcuCallFailed, kinListInx, 8, instId, "TRcuKinematic.MotionModeRequest", robotName, "McuMove");
+         ErrorReaction(FALSE);
+      END_IF;
+      START jogPath.JogMaintainance();
+      mmgrState := eRcuMMgrStateJogActive;
+      motionMode := eRcuMMgrModeJog;
+      // remove override in jogmode
+      McuSetTimeOverride(kinematicMcuId, 1.0);
+
+   END_CASE;
+END_ROUTINE
+
+
+ROUTINE MoveToNextTarget() PRIVATE
+VAR
+   evtHdl : TMcuSyncHdl;
+   flag   : BOOL;
+   ret    : BOOL;
+END_VAR   
+
+   DisconnectVar(flag);
+   evtHdl := InternalHandle(flag);
+//   PRINT("McuMoveToTargetA");
+   ret := McuMoveToTargetA(kinematicMcuId, eMcuPointSegChange, evtHdl);
+   gRcData.userIcon[eIconMotionStep] := eStepSegmentInvIcon;
+//   PRINT("returned " + STR(ret));
+   IF ret THEN
+      WAIT flag;
+      flag := FALSE;
+//      PRINT("... target reached, hdl = " + STR(evtHdl));
+      WaitMcMainCycles(2);
+      gRcData.userIcon[eIconMotionStep] := eStepSegmentIcon;
+      InterruptFlow();
+   END_IF;
+
+END_ROUTINE
+
+
+// check actual joint position against sw-limit-switches
+ROUTINE CheckActJoints() PRIVATE
+
+   // virtual function - only useful for robots
+   RETURN;
+END_ROUTINE
+
+
+// interrupt selectingFlow when necessary (should not be called by the selectingFlow!)
+ROUTINE InterruptFlow() PRIVATE
+
+   IF selectingFlow.present AND selectingFlow.running AND (selectingFlow.flowId <> 0) THEN
+      IF NOT InterruptProg(selectingFlow.flowId) THEN
+         DebugPrint(eTraceMotionModesFine, "InterruptFlow() InterruptProg("+STR(selectingFlow.flowId)+") liefert FALSE");
+         iCntMinorError := iCntMinorError + 1;
+      END_IF;
+      WAIT NOT selectingFlow.running;
+   END_IF;
+END_ROUTINE
+
+
+// switch to stop-mode when the condition vanishes
+ROUTINE ConditionCtrl(condition : BOOL; rquMode : TRcuMotionMode) PRIVATE
+VAR
+   locRquMode : TRcuMotionMode;
+END_VAR;
+   
+   locRquMode := rquMode;
+   WAIT NOT condition;
+   
+   IF motionRequest <> eRcuMMgrModeStopJoints THEN
+      SetMotionMode(eRcuMMgrModeStop);
+   END_IF;
+   
+   IF NOT bRcuAnyErrorPending THEN
+      IF locRquMode = eRcuMMgrModeAuto THEN
+         IF NOT autoControl.bPLCRelease THEN
+            // this error is already set by station plc or scu
+            //RcuSetMessageOnce(TRcuKinematic_ErrKinLostCond1, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+            DebugPrint(eTraceAutoControl, "*** falling edge of movement release by station plc or scu ***");
+         ELSIF NOT updateActive THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrUpdNotActv, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+         ELSIF NOT allDrivesReferenced THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrNotAllDrRef, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_ErrKinLostCond2, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+         END_IF;
+      ELSIF locRquMode = eRcuMMgrModeJog THEN
+         IF NOT autoControl.bPLCRelease THEN
+            // this error is already set by station plc or scu
+            //RcuSetMessageOnce(TRcuKinematic_ErrKinLostCond1, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+            DebugPrint(eTraceAutoControl, "*** falling edge of movement release by station plc or scu ***");
+         ELSIF NOT updateActive THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrUpdNotActv, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_ErrKinLostCond2, kinListInx, 1, instId, "TRcuKinematic.ConditionCtrl", robotName);
+         END_IF;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+// observe the fullSpeed-flag of the mainmodemanager, set maximalvelocities
+// accordingly
+ROUTINE VeloControl() PRIVATE
+   VAR
+      i : DINT;
+   END_VAR
+
+   McuActivateMaxVelocity(kinematicMcuId, FALSE); // initially deactivate
+   veloControlActive := TRUE;
+   WHILE TRUE DO
+      WAIT mainModeMgr.ready AND NOT (mainModeMgr.fullSpeed AND interfaceToSCP.bFullSpeedAllowed);
+      // set reduced speed
+      McuActivateMaxVelocity(kinematicMcuId, TRUE);
+      // stop upon changes
+     SetMotionMode(eRcuMMgrModeStop);
+
+      WAIT NOT mainModeMgr.ready OR (mainModeMgr.fullSpeed AND interfaceToSCP.bFullSpeedAllowed);
+      // set full speed
+      McuActivateMaxVelocity(kinematicMcuId, FALSE);
+      // stop upon changes
+      SetMotionMode(eRcuMMgrModeStop);
+   END_WHILE;
+END_ROUTINE
+
+
+// SetLimits including the necessary stop-interpolator request
+// @? stopinterpolator should be removed!
+// @? ModifyKinematic is only a workaround (scaling down instead of Limiting)
+// At the end SetMaxVelocity should be enough and this should work with limiters
+// and not with precalculation so it can switched on/off
+ROUTINE VeloControlSet(kinDat : TMcuKinematic; veloLim : TMcuVeloLimits) PRIVATE
+   VAR
+      mainJ : TMcuVector;
+      auxJ  : TMcuVector;
+      i     : DINT;
+   END_VAR
+
+   // stop upon changes @? stopjoints because stopinterpolator
+   SetMotionMode(eRcuMMgrModeStopJoints); // @? should replaced with stop (better for e.g. für joggen)
+   WAIT isStopped; // @? if stop then keep in mind stoppedOnPath 
+   // set speed
+   IF updateActive THEN
+      // @? this part should be removed because it bypass the intrinsic routines
+      RcuStopInterpolator();
+      McuModifyKinematic(kinematicMcuId, kinDat);
+      FOR i := 0 TO nrOfMainJoints - 1 DO
+         mainJ.mValues[i] := actDrives.mPos[i];
+      END_FOR;
+      mainJ.mValidLen := nrOfMainDrives;
+      FOR i := nrOfMainJoints TO nrOfJoints - 1 DO
+         auxJ.mValues[i - nrOfMainJoints] := actDrives.mPos[i];
+      END_FOR;
+      auxJ.mValidLen := nrOfDrives - nrOfMainDrives;
+      McuSetPathSpeedLimiterRelAll(kinematicMcuId, 1.0);
+      McuSetPathSpeedLimForwRelAll(kinematicMcuId, 1.0, 1.0);
+      IF NOT RcuRestartMcu() THEN
+        DebugPrint(eTraceCommon, "RcuRestartMcu failed in VeloControlSet()");
+      END_IF;
+      McuSetMaxVelocity(kinematicMcuId, veloLim);
+   ELSE
+      McuModifyKinematic(kinematicMcuId, kinDat);
+      McuSetPathSpeedLimiterRelAll(kinematicMcuId, 1.0);
+      McuSetPathSpeedLimForwRelAll(kinematicMcuId, 1.0, 1.0);
+      McuSetMaxVelocity(kinematicMcuId, veloLim);
+   END_IF;
+END_ROUTINE
+
+
+// bring this kinematic into focus (can be called from the dialogue system)
+ROUTINE FOCUS_KIN(kin : TRcuKinematic) : BOOL PRIVATE
+   Focus();
+   RETURN TRUE;
+END_ROUTINE
+
+
+// listen to errors in pathexecution, react by switching to stopped-joints mode
+// Output an error not needed, because MCU generates them self
+ROUTINE CatchError AT actExecData.mError AND updateActive PRIVATE
+
+   SetMotionMode(eRcuMMgrModeStopJoints);
+END_ROUTINE
+
+
+// end all motioncommands and in Auto-mode trigger a restart
+ROUTINE RestartProgPath() PRIVATE
+
+   progPath.EndMotionCommands();
+   IF motionRequest = eRcuMMgrModeAuto THEN
+      SetMotionMode(eRcuMMgrModeStop);
+      WAIT motionMode = eRcuMMgrModeStop;
+      //WaitForIntValue(motionMode, eRcuMMgrModeStop);
+      SetMotionMode(eRcuMMgrModeAuto);
+      WAIT motionMode = eRcuMMgrModeAuto;
+      //WaitForIntValue(motionMode, eRcuMMgrModeAuto);
+   END_IF;
+END_ROUTINE
+
+// send a simulation-command to all connected drives
+ROUTINE SimulateAllDrives(CONST simulation : BOOL) : BOOL
+
+   // virtual routine needed for TRcuRobot
+   RETURN TRUE;
+END_ROUTINE
+
+// set a gripper-Id for this kinematic, the incoming gripper is defined in the
+// system according to flangeGripper
+ROUTINE SetCustomKinGripperId(CONST id : TMcuDbObjID)
+
+   // pass to lower level
+   progPath.SetCustomGripperIdDefault(id);
+   reposPath.SetCustomGripperIdDefault(id);
+   jogPath.SetCustomGripperIdDefault(id);
+   // only at changes
+   IF id <> kinGripperMcuId THEN
+      // release current kinGripperMcuId if apppropriate
+      IF kinGripperMcuId <> 0 THEN
+         McuReleaseDbObj(kinGripperMcuId);
+      END_IF;
+      // register new Id
+      kinGripperMcuId := id;
+   END_IF;
+END_ROUTINE
+
+
+//@? is needed when cartesian overlapping is rejected
+ROUTINE SetDefaultOverlap() PRIVATE
+   VAR
+      dyn : TMcuDynamic;
+      ovl : TMcuOverlap;
+      ramp : TMcuRamp;
+   END_VAR
+
+   ramp.mRampParam := 0.3333;
+   ramp.mRampParam2 := 0.3333;
+   ramp.mTyp := eMcuTrapez;
+   ramp.mDBObjTyp := eMcuPermanent;
+   ramp.mName := "DummyRamp";
+   McuCreateRamp(dummyRampMcuId, ramp);
+
+   dyn.mCart.mAcce := 8;
+   dyn.mCart.mDece := 8;
+   dyn.mCart.mVelo := 1.5;
+   dyn.mCart.mJerk := 100000;
+
+   dyn.mJoint.mAcce := 0.6;
+   dyn.mJoint.mDece := 0.6;
+   dyn.mJoint.mVelo := 0.6;
+   dyn.mJoint.mJerk := 1;
+
+   dyn.mAcceRamp := dummyRampMcuId;
+   dyn.mDeceRamp := dummyRampMcuId;
+
+   dyn.mTurn.mAcce := 500;
+   dyn.mTurn.mDece := 500;
+   dyn.mTurn.mVelo := 90;
+   dyn.mTurn.mJerk := 1000000;
+   dyn.mDBObjTyp := eMcuPermanent;
+   dyn.mUseJointLimForCartSeg := bUseJointLimForCartSeg;
+   dyn.mName := "DummyOvlDynamic";
+   IF NOT McuCreateDynamic(dummyDynMcuId, dyn) THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrCreateDynFail, kinListInx, 1, instId, "TRcuKinematic.SetDefaultOverlap", robotName);
+   END_IF;
+
+   ovl.mDBObjTyp := eMcuPermanent;
+   ovl.mOvlTyp := eMcuDynOvl;
+   ovl.mOvlDefTyp := eMcuVelo;
+   ovl.mOvlStartPrevSeg := 1.0;
+   ovl.mOvlEndOnThisSeg := 1.0;
+   ovl.mOvlDynamic := dummyDynMcuId;
+   ovl.mName := "KinNoOverlap";
+   McuCreateOverlap(noOvlMcuId, ovl);
+END_ROUTINE
+
+
+// correct dynamicdata according to the MC-configuration @? should be removed if
+// McuModifyKinematic is not any longer in use
+ROUTINE CorrectKinDataSheet(instName : STRING) PRIVATE
+   VAR
+      s : STRING;
+      i : DINT;
+      val : REAL;
+      hdl : DINT;
+   END_VAR
+
+   IF mcCatHdl <> 0 THEN
+      FOR i := 1 TO kinematic.mNrOfJoints DO
+         s := "Joint" + STR(i);
+         IF CatalogGetHandleRelative(mcCatHdl, s, hdl) THEN
+            IF CatalogReadReal(hdl, "maxVelo", val, TRUE) THEN
+               kinematic.mJoints[i-1].mDynLimits.mVelo := val;
+            END_IF;
+         END_IF;
+      END_FOR;
+   END_IF;
+END_ROUTINE
+
+
+// observe loaded projects in order to reset override settings
+ROUTINE ProjectObservation() PRIVATE
+   VAR
+      chg : BOOL; // indicator variable
+   END_VAR
+
+   IF IS_MAPPED(ProjectName) THEN
+      // indicator variable for project changes
+      chg := IS_CHANGED(ProjectName);
+      // register that ProjectObservation is running
+      projectObsActive := TRUE;
+      WHILE TRUE DO
+         WAIT chg;
+         chg := FALSE;
+         IF override <> initOverride THEN
+            SetTimeOverride(initOverride / 1000.0);
+         END_IF;
+      END_WHILE;
+   END_IF;
+END_ROUTINE
+
+
+// react to changes in the object coordinate settings
+ROUTINE ObserveObjectSystem() PRIVATE
+   VAR
+      chgCoord : BOOL; // change in the object coordinate system
+      chgRefSys : BOOL;
+      refSysMcuId : TMcuDbObjID;
+      tmpRefSys: TRcuReferenceSystem;
+   END_VAR
+
+   chgCoord := IS_CHANGED(TeachPendantMemories.selectedObjectSystem);
+   chgRefSys := IS_CHANGED(giRcRefSysValidMask);
+   tmpRefSys := TRcuReferenceSystem(TeachPendantMemories.selectedObjectSystem);
+   IF RcuRefSysGetMcuId(tmpRefSys, refSysMcuId) THEN
+      actObjectSystem := refSysMcuId;
+   ELSE
+      RcuSetMessageOnce(TRcuKinematic_ErrNoRefSysMcuID, kinListInx, 1, instId, "TRcuKinematic.ObserveObjectSystem", robotName, STR(tmpRefSys));
+   END_IF;
+   isObjectActive := TeachPendantMemories.selectedObjectSystem <> eRcuRefSystemWorld;
+   refSysName     := gRcuRefSysNames[TeachPendantMemories.selectedObjectSystem];
+   WHILE TRUE DO
+      WAIT chgCoord OR chgRefSys;
+      
+      IF chgCoord THEN  // system changed         
+         // reset indicator variable
+         chgCoord := FALSE;         
+         IF (giRcRefSysValidMask AND gyBits[TeachPendantMemories.selectedObjectSystem]) <> 0 THEN
+
+            // change jog-object-system
+            tmpRefSys := TRcuReferenceSystem(TeachPendantMemories.selectedObjectSystem);
+            jogPath.SetJogRefSys(tmpRefSys);
+         
+            // change mcuRefSys
+            IF RcuRefSysGetMcuId(tmpRefSys, refSysMcuId) THEN
+               DebugPrint(eTraceCommon, "change object system (selectedObjectSystem has changed): " + STR(actObjectSystem)+"->"+STR(refSysMcuId));
+               actObjectSystem := refSysMcuId;
+            ELSE
+               RcuSetMessageOnce(TRcuKinematic_ErrNoRefSysMcuID, kinListInx, 1, instId, "TRcuKinematic.ObserveObjectSystem", robotName, STR(tmpRefSys));
+            END_IF;
+         ELSE  // new system invalid, reset  to world-system
+            TeachPendantMemories.selectedObjectSystem := DINT(eRcuRefSystemWorld);
+         END_IF;
+      ELSE 
+         // reset indicator variable
+         chgRefSys := FALSE;         
+         // system invalid, reset to world-system
+         IF (giRcRefSysValidMask AND gyBits[TeachPendantMemories.selectedObjectSystem]) <> 0 THEN
+            // change mcuRefSys
+            tmpRefSys := TRcuReferenceSystem(TeachPendantMemories.selectedObjectSystem);
+            IF RcuRefSysGetMcuId(tmpRefSys, refSysMcuId) THEN
+               IF actObjectSystem <> refSysMcuId THEN
+                  DebugPrint(eTraceCommon, "change object system (giRcRefSysValidMask has changed): " + STR(actObjectSystem)+"->"+STR(refSysMcuId));
+                  actObjectSystem := refSysMcuId;
+               END_IF;
+            ELSE
+               RcuSetMessageOnce(TRcuKinematic_ErrNoRefSysMcuID, kinListInx, 1, instId, "TRcuKinematic.ObserveObjectSystem", robotName, STR(tmpRefSys));
+            END_IF;
+         ELSE
+            TeachPendantMemories.selectedObjectSystem := DINT(eRcuRefSystemWorld);
+         END_IF;
+      END_IF;
+      isObjectActive := TeachPendantMemories.selectedObjectSystem <> eRcuRefSystemWorld;
+      refSysName     := gRcuRefSysNames[TeachPendantMemories.selectedObjectSystem];
+    END_WHILE;
+END_ROUTINE
+
+
+// Check the reasons for kinematic not ready and print an errormessage
+ROUTINE CheckKinematicNotReady() PRIVATE
+   IF NOT mainModeMgr.ready THEN
+      IF NOT updateActive THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrUpdNotActv, kinListInx, 1, instId, "TRcuKinematic.CheckKinematicNotReady", robotName);
+      ELSIF bRcuAnyErrorPending THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrAnyErrPend, kinListInx, 1, instId, "TRcuKinematic.CheckKinematicNotReady", robotName);
+      ELSIF NOT PaintRobot[kinListInx].autoControl.bPLCRelease THEN
+          RcuSetMessageOnce(TRcuKinematic_ErrNoReleaseFrPLC, kinListInx, 1, instId, "TRcuKinematic.CheckKinematicNotReady", robotName);
+      END_IF;
+   ELSIF NOT allDrivesReferenced THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrNotAllDrRef, kinListInx, 1, instId, "TRcuKinematic.CheckKinematicNotReady", robotName);
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE SetSelectLevelInMainRun(VAR_IN level : DINT)
+   
+   MAINRUN();
+   mainRunSubSelectLevel := level;
+   //PRINT("MAINRUNLEVEL: "+STR(mainRunSubSelectLevel));
+END_ROUTINE
+
+
+ROUTINE SetStartTimerInMainRun(VAR_IN level : DINT)
+VAR
+   i : DINT;
+END_VAR
+
+   //PRINT("SetStartTimerInMainRun level = " + STR(level));
+   i := level;
+   IF level >= cgiMaxSelectLevels THEN
+      RETURN;
+   END_IF;
+   MAINRUN();
+   //PRINT("SetStartTimerInMainRun level = " + STR(i) + " Timerstart") ;
+   SysTimerGetUs(iTimer[i]);
+END_ROUTINE
+
+
+ROUTINE SetStopTimerInMainRun(VAR_IN level : DINT)
+VAR
+   i : DINT;
+   t1 : LINT;
+   t2 : LINT;
+   progHdl  : DINT;
+   progName : STRING;
+   lineNr   : DINT;
+   r        : REAL;
+   j        : DINT;
+END_VAR
+
+   //get data for current programm
+   //PRINT("SetStopTimerInMainRun level = " + STR(level));
+   i := level;
+   IF level >= cgiMaxSelectLevels THEN
+      RETURN;
+   END_IF;
+   MAINRUN();
+   //PRINT("SetStopTimerInMainRun level = " + STR(i) + " Timerstop") ;
+   SysTimerGetUs(t1);
+   t2 := (t1 - iTimer[i])/1000;
+   progHdl :=GetProgHdl();
+   GetUserProgLine(progHdl, TRUE, progName, lineNr);
+   r := t2;
+   r := r/1000.0;
+   DebugPrint(eTraceCommon, "LAUFZEIT: " + progName + " = " + STR(r));
+   
+   //enter data to list
+   IF i > 0 THEN
+      j := StrFindRight(progName, ".");
+      IF j > 0 THEN
+        TimeTable[indexBody].ProgTimeTable[indexTimeTable].ProgName := StrDelete(progName, j, 1);
+      ELSE
+        TimeTable[indexBody].ProgTimeTable[indexTimeTable].ProgName := progName;       
+      END_IF;
+      TimeTable[indexBody].ProgTimeTable[indexTimeTable].Time := r;
+      TimeTable[indexBody].ProgTimeTable[indexTimeTable].Level := i;
+      indexTimeTable := indexTimeTable + 1;
+      IF indexTimeTable >= cgiTimeTableSize THEN
+         indexTimeTable := 0;
+      END_IF;
+      TimeTable[indexBody].ProgTimeTable[indexTimeTable].Time := 0.0;
+      TimeTable[indexBody].ProgTimeTable[indexTimeTable].ProgName := "";
+      TimeTable[indexBody].ProgTimeTable[indexTimeTable].Level := 0;
+   ELSE  //mainprog - project
+      TimeTable[indexBody].ProjectName := progName;
+      TimeTable[indexBody].ProjectTime := r;
+      FOR j:=0 TO indexTimeTable DO
+         IF TimeTable[indexBody].ProgTimeTable[j].Level = 1 THEN
+            TimeTable[indexBody].ProgramTime := TimeTable[indexBody].ProgramTime + TimeTable[indexBody].ProgTimeTable[j].Time;
+         END_IF;
+      END_FOR;
+   END_IF;
+   
+END_ROUTINE
+
+
+// observe updateActive, if the update is not active
+// actual values for visualisation are provided by rc
+ROUTINE ObserveUpdate() PRIVATE
+
+   WAIT initKinComplete;
+   IOAuxJoints.mValidLen := nrOfAuxJoints;
+   IOMainJoints.mJoints.mValidLen := nrOfMainJoints;
+   IOMainDrives.mValidLen := nrOfMainDrives;
+   IOAuxDrives.mValidLen := nrOfAuxDrives;
+   RcData.MapMcValues(SELF);
+   START UpdateObjectValues() PRIO 3;
+   //PRINT("MC-DATA MAPPED");
+END_ROUTINE
+
+
+ROUTINE ObserveVirtualWallViolations() PRIVATE
+VAR
+   bChgMotionAllowed : BOOL;
+   bChgWSM           : BOOL;
+END_VAR
+   
+   bChgMotionAllowed := IS_CHANGED(svMotionAllowed);
+   bChgWSM := IS_CHANGED(VirtualWallMonitor);
+   WAIT gbBootupFinished;
+   IF IS_MAPPED(VirtualWallMonitor) THEN
+      WHILE TRUE DO
+         IF (VirtualWallMonitor.mBlockedSpaceState = eMcuWSMViolated) OR 
+            (VirtualWallMonitor.mWorkSpaceState = eMcuWSMViolated) THEN
+            IF svMotionAllowed THEN
+               RcuSetMessageOnce(TRcuKinematic_ErrWorkspaceViol, kinListInx, 1, instId, "TRcuKinematic.ObserveVirtualWallViolations");
+            END_IF;
+         ELSIF (VirtualWallMonitor.mBlockedSpaceState = eMcuWSMUnknown) OR 
+            (VirtualWallMonitor.mWorkSpaceState = eMcuWSMUnknown) THEN
+               RcuSetMessageOnce(TRcuKinematic_ErrWorkspaceViol, kinListInx, 2, instId, "TRcuKinematic.ObserveVirtualWallViolations");
+         END_IF;
+         WAIT bChgMotionAllowed OR bChgWSM;
+         bChgMotionAllowed := FALSE;
+         bChgWSM := FALSE;
+      END_WHILE;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE UpdateObjectValues()
+VAR
+   timer    : BOOL;
+   interval : DINT := 50; // update interval [ms]
+   jointPos : TMcuPosJoints;
+   cartPos  : TMcuFrame;
+   mInvPosWorld : TMcuFrame;
+   extToolPos   : TMcuFrame;
+   invExtTool   : TMcuFrame;
+   auxJoints : TMcuVector;
+   b : BOOL;
+   i : DINT;
+END_VAR
+
+   WHILE TRUE DO
+      SysTimerSet(interval, timer);
+      IF kinematic.mForwCoordTrafo AND (actObjectSystem <> 0) THEN
+         // get axis and drive data
+         IF gbRcuUseReadBackVals AND NOT allDrivesSimulated THEN
+            jointPos.mJoints := readBackVals.mJoints.mMainJoints;
+            cartPos.mFrameTyp := gMcuFrameTyp;
+            cartPos.mPos := readBackVals.mCartPos;
+            cartPos.mOri := readBackVals.mCartOri;
+         ELSE
+            FOR i := 0 TO nrOfMainJoints - 1 DO
+               jointPos.mJoints.mValidLen := nrOfMainJoints;
+               jointPos.mJoints.mValues[i] := actJoints.mPos[i];
+            END_FOR;
+            cartPos.mFrameTyp := gMcuFrameTyp;
+            cartPos.mPos := actCartVals.mPos;
+            cartPos.mOri := actCartVals.mOri;
+         END_IF;
+
+         IF gbRcuUseReadBackVals AND NOT allDrivesSimulated THEN
+            auxJoints := readBackVals.mJoints.mAuxJoints;
+         ELSE
+            auxJoints.mValidLen := nrOfAuxJoints;
+            FOR i := 0 TO nrOfAuxJoints - 1 DO
+               auxJoints.mValues[i] := actJoints.mPos[i+nrOfMainJoints];
+            END_FOR;
+         END_IF;
+         // object data
+         IF extToolActive THEN
+            b := McuInvertFrame(mInvPosWorld, cartPos );
+            IF extTool.mRefChainOfJointsID <> 0 THEN               
+               FOR i:=0 TO auxJoints.mValidLen-1 DO
+                  auxJoints.mValues[i] := auxJoints.mValues[i] * gcPi/180; // Grad -> RAD
+               END_FOR;         
+// Test 3              b := McuCalcFrameFromTrsf(
+// Test 2               b := McuExternalToolForwardTrafo(extToolPos, auxJoints, kinExtToolMcuId, kinematicMcuId);
+// Test 3
+               b := McuCalcFrameFromTrsf(extToolPos, auxJoints, extTool.mRefChainOfJointsID,kinematicMcuId);
+               b := McuMultiplyFrames(actObjectPos.mFrame, mInvPosWorld, extToolPos);
+            ELSE
+//               McuForwardTrafoAux(actObjectPos, jointPos, auxJoints, actObjectSystem, kinematicMcuId, kinToolMcuId);
+               b := McuMultiplyFrames(actObjectPos.mFrame, mInvPosWorld, actExtTool);
+            END_IF;
+         ELSE
+            McuForwardTrafoAux(actObjectPos, jointPos, auxJoints, actObjectSystem, kinematicMcuId, kinToolMcuId);
+         END_IF;
+         // external tool data
+         IF extToolActive THEN
+            IF extTool.mRefChainOfJointsID <> 0 THEN               
+               FOR i:=0 TO auxJoints.mValidLen-1 DO
+                  auxJoints.mValues[i] := auxJoints.mValues[i] * gcPi/180; // Grad -> RAD
+               END_FOR;         
+// Test 2               b := McuExternalToolForwardTrafo(extToolPos, auxJoints, kinExtToolMcuId, kinematicMcuId);
+// Test 3
+               b := McuCalcFrameFromTrsf(extToolPos, auxJoints, extTool.mRefChainOfJointsID, kinematicMcuId);
+               b := McuInvertFrame(invExtTool, extToolPos );
+               b := McuMultiplyFrames(actExtToolPos.mFrame, invExtTool, cartPos);
+            ELSE
+               b := McuInvertFrame(invExtTool, actExtTool );
+               b := McuMultiplyFrames(actExtToolPos.mFrame, invExtTool, cartPos);
+            END_IF;
+         END_IF;        
+      END_IF;
+      WAIT timer;
+      timer := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+ROUTINE ObserveProgActive() PRIVATE
+   VAR
+      bChgPresent     : BOOL;
+      bChgLocked      : BOOL;
+      bChgRunning     : BOOL;
+      bChgHandlerJob  : BOOL;
+      bChgMmgrState   : BOOL;
+      bChgHomingRun   : BOOL;
+      bChgStarting    : BOOL;
+  END_VAR
+
+   bChgPresent     := IS_CHANGED(selectingFlow.present);
+   bChgLocked      := IS_CHANGED(selectingFlow.lock);
+   bChgRunning     := IS_CHANGED(selectingFlow.running);
+   bChgHandlerJob  := IS_CHANGED(handler.bJobRunning);
+   bChgMmgrState   := IS_CHANGED(mmgrState);    
+   bChgHomingRun   := IS_CHANGED(homing.bHomingRun);   
+   bChgStarting    := IS_CHANGED(selectingFlow.starting); 
+
+   WHILE TRUE DO
+         IF selectingFlow.lock OR selectingFlow.present THEN
+            IF NOT bMotionActive THEN
+               DebugPrint(eTraceProcess,"MotionActive positive edge");
+            END_IF; 
+            bMotionActive := TRUE;
+         ELSE
+            bRobotMoving := FALSE; // robot cannot be moving
+            IF NOT (handler.isHandler AND handler.bJobRunning) AND NOT homing.bHomingRun THEN
+               IF bMotionActive THEN
+                  DebugPrint(eTraceProcess,"MotionActive negative edge");
+               END_IF;
+               bMotionActive := FALSE;
+            END_IF;
+            IF IS_MAPPED(mDataRecordingRequestedSignalset) AND IS_MAPPED(mActivateDataRecording) THEN
+               mDataRecordingRequestedSignalset :=0;
+               mActivateDataRecording := FALSE;
+            END_IF;
+         END_IF;
+         //(mmgrState <> eRcuMMgrStateAutoBegin) --> used for repos case, open main needle not before repos is finished
+         //                                          while Repos the mmgrState is eRcuMMgrStateAutoBegin
+         //selectingFlow.starting                --> at program start selectingFlow.present is already TRUE but mmgrState is still eRcuMMgrStateAutoBegin. 
+         //                                          bMotionActive is already set but Robotmoving some cycles later --> drop of conveyor release for some cycles.
+         IF (selectingFlow.starting OR selectingFlow.running) AND (mmgrState <> eRcuMMgrStateAutoBegin) THEN
+            bRobotMoving := TRUE;
+         ELSE
+            bRobotMoving := FALSE;
+         END_IF;
+     WAIT bChgPresent OR bChgLocked OR bChgRunning OR bChgHandlerJob OR bChgMmgrState OR bChgHomingRun OR bChgStarting;
+     bChgPresent     := FALSE;
+     bChgLocked      := FALSE;
+     bChgRunning     := FALSE;
+     bChgHandlerJob  := FALSE; 
+     bChgMmgrState   := FALSE;
+     bChgHomingRun   := FALSE;
+     bChgStarting    := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+      
+ROUTINE ObserveMotionAllowed() PRIVATE
+   VAR
+      bChanged : BOOL;
+   END_VAR
+   
+   svMotionAllowed := MAPX(cSV_MotionAllowed[kinListInx]);
+   IF IS_MAPPED(svMotionAllowed) THEN
+      DebugPrint(eTraceProcess, cSV_MotionAllowed[kinListInx] + " is mapped");
+      bChanged := IS_CHANGED(svMotionAllowed);
+      WHILE TRUE DO
+         bRcuAnyErrorPending := NOT svMotionAllowed;
+         WAIT bChanged;
+         bChanged := FALSE;
+      END_WHILE;
+   ELSE
+      RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 1, 0, "TRcuKinematic.ObserveMotionAllowed", cSV_MotionAllowed[kinListInx]);
+      gbBootupError := TRUE;
+   END_IF;
+      
+END_ROUTINE
+
+ROUTINE ObserveRestartProgPath() PRIVATE
+   VAR
+      bChanged : BOOL;
+   flowState : TFlowState;
+   END_VAR
+   
+      bChanged := IS_CHANGED(restoreCallStack);
+      WHILE TRUE DO
+         WAIT bChanged;
+         IF restoreCallStack THEN
+            //RestartProgPath();
+            //Clear();
+            //clearProgPath := TRUE;
+            IF (actCallStack <> 0) AND (selectingFlow.flowId <> 0) THEN
+               flowState := GetFlowState(selectingFlow.flowId);
+               WHILE (flowState <> eFlowInvalid) AND (flowState <> eFlowInterrupted) DO
+                  Sleep(50);
+                  flowState := GetFlowState(selectingFlow.flowId);
+               END_WHILE;
+               IF flowState = eFlowInterrupted THEN
+                  RcuPrintUserProgCallStack(actCallStack,,eTraceEquipment);
+                  RestoreUserProgCallStack(actCallStack);
+               ELSE   
+                  DebugPrint(eTraceCommon, "ObserveRestartProgPath: invalid flow " + STR(selectingFlow.flowId));
+                  iCntMinorError := iCntMinorError + 1;
+               END_IF;
+            ELSE
+               DebugPrint(eTraceCommon, "ObserveRestartProgPath: No callstack or no selecting flow");
+               iCntMinorError := iCntMinorError + 1;
+            END_IF;            
+            restoreCallStack := FALSE;
+         END_IF;
+         bChanged := FALSE;
+      END_WHILE;
+      
+END_ROUTINE
+
+ROUTINE ObserveAppendTooLate() PRIVATE
+VAR
+   bChanged : BOOL;
+   iCount   : INT;
+   iNeedSeg : DINT;
+END_VAR
+   
+   bChanged := IS_CHANGED(actExecData.mUpdateCounterMain);
+   IF giMcKinHdl <> 0 THEN
+      IF NOT CatalogReadInt(giMcKinHdl, "needNextSegPreDelay", iNeedSeg, TRUE) THEN
+         iNeedSeg := -1;
+      END_IF;
+   ELSE
+      RETURN;
+   END_IF;
+   IF iNeedSeg = -1 THEN
+      RETURN; // SPMA off
+   END_IF;
+   WHILE TRUE DO
+      WAIT progPath.tNeedNextSM.mNeedNextSeg AND bActivateFromBranch;
+      bChanged := FALSE;
+      iCount := 0;
+      bActivateFromBranch := FALSE;
+      WHILE progPath.tNeedNextSM.mNeedNextSeg AND selectingFlow.present DO
+         WAIT bChanged;
+         bChanged := FALSE;
+         iCount := iCount + 1;
+      END_WHILE;
+      IF (iCount > iNeedSeg) AND NOT selectingFlow.isStepping AND selectingFlow.present THEN
+         PRINT("");
+         PRINT(" Append segment to MCU too late. Number of cycles = " + STR(iCount));
+         PRINT("");
+      END_IF;
+   END_WHILE;
+      
+END_ROUTINE
+
+// Position (Programmname und Zeilennummer) von Vorlauf und Hauptlauf bei einem Stopp
+// des Ablaufs (selectingFlow.running TRUE -> FALSE) abspeichern. Kann verwendet werden,
+// um zu prüfen, ob Hauptlauf = Vorlauf
+ROUTINE ObservePreMain()
+VAR
+      progHdl  : DINT;
+      bChg : BOOL;
+END_VAR   
+
+   bChg := IS_CHANGED(selectingFlow.running);
+   WHILE TRUE DO
+      WAIT bChg;
+      bChg := FALSE;
+      IF NOT selectingFlow.running AND selectingFlow.present THEN
+         progHdl := selectingFlow.flowId;
+         GetUserProgLine(progHdl, TRUE, sProgramNameMainRun, iLineNumberMainRun);
+         GetUserProgLine(progHdl, FALSE,sProgramNamePreRun, iLineNumberPreRun);
+      END_IF;
+   END_WHILE;
+   
+END_ROUTINE
+
+// no length-limit for traces any more - a full string can be traced
+ROUTINE DebugPrint(CONST traceBit : TTraceLevel; VAR_IN str : STRING)
+   
+   IF (giTraceWord AND gyBits[traceBit]) > 0 THEN
+      PRINT(robotName + ": " + str);  
+   END_IF;
+END_ROUTINE
+
+// returns the name of the instance
+ROUTINE GetName() : STRING
+   RETURN INSTANCE_NAME();
+END_ROUTINE
+
+//copy data to interface for primas
+ROUTINE PdaDataToInterface() PRIVATE
+ VAR
+  i    : DINT;
+  s    : STRING;
+  chg  : BOOL;
+  prog : STRING;
+  proj : STRING;
+  kin  : STRING;
+  locProgInfo : TUserProgStackInfo;
+ END_VAR
+
+  WAIT gbEquipmentReady;
+  IF NOT pdaData.bActive THEN
+     RETURN;
+  ELSE
+     FOR i:=0 TO 11 DO
+         s := cHW_PDAModulname[kinListInx] + STR(i+1);
+         pdaData.yActModulName[i] := MAPX(s);
+         IF NOT IS_MAPPED(pdaData.yActModulName[i]) THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 2, 0, "TRcuKinematic.PdaDataToInterface", s);
+            RETURN;
+         END_IF;
+     END_FOR;
+     FOR i:=0 TO kinematic.mNrOfJoints-1 DO
+         s := cHW_PDAAxisSetPos[kinListInx] + STR(i+1);
+         pdaData.yAxisSetPos[i] := MAPX(s);
+         IF NOT IS_MAPPED(pdaData.yAxisSetPos[i]) THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 3, 0, "TRcuKinematic.PdaDataToInterface", s);
+            RETURN;
+         END_IF;
+         s := cHW_PDAAxisActPos[kinListInx] + STR(i+1);
+         pdaData.yAxisActPos[i] := MAPX(s);
+         IF NOT IS_MAPPED(pdaData.yAxisActPos[i]) THEN
+            RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 4, 0, "TRcuKinematic.PdaDataToInterface", s);
+            RETURN;
+         END_IF;
+     END_FOR;
+  END_IF;  
+ 
+  IF pdaData.bActiveExt THEN
+      s := cHW_PDASercosError[kinListInx];
+      pdaData.bSercosError := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.bSercosError) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 5, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDADrivesReady[kinListInx];
+      pdaData.bDrivesReady := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.bDrivesReady) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 5, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDADrivesBB[kinListInx];
+      pdaData.bDrivesBB := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.bDrivesBB) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 6, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDATCPVeloAbs[kinListInx];
+      pdaData.iTCPVeloAbs := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.iTCPVeloAbs) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 7, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDATCPVeloProg[kinListInx];
+      pdaData.iTCPVeloProg := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.iTCPVeloProg) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 8, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDATCPCartPosX[kinListInx];
+      pdaData.iTCPCartPosX := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.iTCPCartPosX) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 8, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDATCPCartPosY[kinListInx];
+      pdaData.iTCPCartPosY := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.iTCPCartPosY) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 8, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      s := cHW_PDATCPCartPosZ[kinListInx];
+      pdaData.iTCPCartPosZ := MAPX(s);
+      IF NOT IS_MAPPED(pdaData.iTCPCartPosZ) THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 8, 0, "TRcuKinematic.PdaDataToInterface", s);
+         RETURN;
+      END_IF;
+      
+      pdaData.bSercosError := UPDATE(PaintRobot[kinListInx].anySercosError);
+      pdaData.bDrivesBB    := UPDATE(PaintRobot[kinListInx].allDrivesBB);
+      pdaData.bDrivesReady := UPDATE(PaintRobot[kinListInx].allDrivesReady);
+      START MirrorTcpToPDA();
+  END_IF;
+  
+  START PdaAxisToInterface();
+  chg := IS_CHANGED(ecoscreen.ProgInfo);
+  WHILE TRUE DO
+    locProgInfo := ecoscreen.ProgInfo;
+    IF (locProgInfo.depth > 0) THEN 
+       StrSplitProgPath(locProgInfo.progNames[locProgInfo.depth-1], prog, proj, kin);
+    ELSE
+       prog := "            "; 
+    END_IF;
+    FOR i:=1 TO 12 DO
+        s := StrMid(prog, 1, i);
+        pdaData.yActModulName[i-1] := ORD(s);
+    END_FOR;
+    WAIT chg;
+    chg := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+ROUTINE PdaAxisToInterface() PRIVATE
+ VAR
+  i      : SINT;
+  factor : REAL;
+ END_VAR
+ 
+  WHILE TRUE DO
+     FOR i:=0 TO kinematic.mNrOfJoints-1 DO
+        
+         IF (PaintRobot[kinListInx].drive[i].type = eMcuJointRot) THEN
+            factor := 10.0; //multiply rotation values by 10 to have better resolution
+         ELSE
+            factor := 1.0;
+         END_IF;
+         
+         IF NOT (allDrivesSimulated OR PaintRobot[kinListInx].drive[i].simulated OR PaintRobot[kinListInx].drive[i].ioSimulated) THEN
+         
+            //Main joints
+            IF (i < nrOfMainJoints) THEN  
+               //Check range of Integer before type cast
+               IF ((readBackVals.mJoints.mMainJoints.mValues[i] * factor) > cgrMaxInteger) THEN
+                  pdaData.yAxisActPos[i] := INT(cgrMaxInteger);
+               ELSIF ((readBackVals.mJoints.mMainJoints.mValues[i] * factor) < cgrMinInteger) THEN
+                  pdaData.yAxisActPos[i] := INT(cgrMinInteger);
+               ELSE
+                  pdaData.yAxisActPos[i] := INT(readBackVals.mJoints.mMainJoints.mValues[i] * factor);
+               END_IF;
+               //Check range of Integer before type cast  
+               IF ((actJoints.mPos[i] * factor) > cgrMaxInteger) THEN   
+                  pdaData.yAxisSetPos[i] := INT(cgrMaxInteger);
+               ELSIF ((actJoints.mPos[i] * factor) < cgrMinInteger) THEN
+                  pdaData.yAxisSetPos[i] := INT(cgrMinInteger);
+               ELSE  
+                  pdaData.yAxisSetPos[i] := INT(actJoints.mPos[i] * factor);
+               END_IF;
+               
+            //Aux joints
+            ELSE  
+               //Check range of Integer before type cast
+               IF ((readBackVals.mJoints.mAuxJoints.mValues[i-nrOfMainJoints] * factor) > cgrMaxInteger) THEN
+                  pdaData.yAxisActPos[i] := INT(cgrMaxInteger);
+               ELSIF ((readBackVals.mJoints.mAuxJoints.mValues[i-nrOfMainJoints] * factor) < cgrMinInteger) THEN
+                  pdaData.yAxisActPos[i] := INT(cgrMinInteger);
+               ELSE
+                  pdaData.yAxisActPos[i] := INT(readBackVals.mJoints.mAuxJoints.mValues[i-nrOfMainJoints] * factor);
+               END_IF;
+               //Check range of Integer before type cast  
+               IF ((actJoints.mPos[i] * factor) > cgrMaxInteger) THEN   
+                  pdaData.yAxisSetPos[i] := INT(cgrMaxInteger);
+               ELSIF ((actJoints.mPos[i] * factor) < cgrMinInteger) THEN
+                  pdaData.yAxisSetPos[i] := INT(cgrMinInteger);
+               ELSE  
+                  pdaData.yAxisSetPos[i] := INT(actJoints.mPos[i] * factor);
+               END_IF;
+            END_IF;
+            
+         ELSE //drive is simulated
+            pdaData.yAxisActPos[i] := INT(actJoints.mPos[i] * factor);
+            pdaData.yAxisSetPos[i] := INT(actJoints.mPos[i] * factor);  
+         END_IF; 
+         
+     END_FOR;
+     WaitMcMicroCycles(2);    
+  END_WHILE; 
+     
+END_ROUTINE
+
+(******************************************************************************
+*** Mirror the TCP to Primas ******************************************
+******************************************************************************)
+ROUTINE MirrorTcpToPDA() PRIVATE
+  
+  WHILE TRUE DO
+     IF selectingFlow.running AND (rActProgVelocity > 0.0) THEN
+         //Check range of Integer before type cast
+         IF (actCartVals.mPathVelo > cgrMaxInteger) THEN
+             pdaData.iTCPVeloAbs := INT(cgrMaxInteger);
+         ELSIF (actCartVals.mPathVelo < cgrMinInteger) THEN
+             pdaData.iTCPVeloAbs := INT(cgrMinInteger);
+         ELSE
+            pdaData.iTCPVeloAbs := INT(actCartVals.mPathVelo);
+         END_IF;
+         
+         //Check range of Integer before type cast
+         IF (rActProgVelocity > cgrMaxInteger) THEN
+             pdaData.iTCPVeloProg := INT(cgrMaxInteger);
+         ELSIF (rActProgVelocity < cgrMinInteger) THEN
+             pdaData.iTCPVeloProg := INT(cgrMinInteger);
+     ELSE
+            pdaData.iTCPVeloProg := INT(rActProgVelocity);
+         END_IF;
+     ELSE
+         pdaData.iTCPVeloAbs   := 0;
+         pdaData.iTCPVeloProg  := 0;
+     END_IF;  
+     
+      //Check range of Integer before type cast
+      IF (readBackVals.mCartPos.mValues[0] > cgrMaxInteger) THEN
+          pdaData.iTCPCartPosX := INT(cgrMaxInteger);
+      ELSIF (readBackVals.mCartPos.mValues[0] < cgrMinInteger) THEN
+          pdaData.iTCPCartPosX := INT(cgrMinInteger);
+     ELSE
+         pdaData.iTCPCartPosX := INT(readBackVals.mCartPos.mValues[0]);
+     END_IF;  
+     
+      //Check range of Integer before type cast
+      IF (readBackVals.mCartPos.mValues[1] > cgrMaxInteger) THEN
+          pdaData.iTCPCartPosY := INT(cgrMaxInteger);
+      ELSIF (readBackVals.mCartPos.mValues[1] < cgrMinInteger) THEN
+          pdaData.iTCPCartPosY := INT(cgrMinInteger);
+     ELSE
+         pdaData.iTCPCartPosY := INT(readBackVals.mCartPos.mValues[1]);
+     END_IF;  
+     
+      //Check range of Integer before type cast
+      IF (readBackVals.mCartPos.mValues[2] > cgrMaxInteger) THEN
+          pdaData.iTCPCartPosZ := INT(cgrMaxInteger);
+      ELSIF (readBackVals.mCartPos.mValues[2] < cgrMinInteger) THEN
+          pdaData.iTCPCartPosZ := INT(cgrMinInteger);
+      ELSE
+         pdaData.iTCPCartPosZ := INT(readBackVals.mCartPos.mValues[2]);
+      END_IF;
+     
+     WaitMcMicroCycles(2);
+  END_WHILE;
+  
+END_ROUTINE
+
+//joint position, TCP position, TCP velocitiy to data recorder
+ROUTINE KinToDataRecorder() PRIVATE
+ VAR
+  i : INT;
+  progVelo : REAL;
+  actVelo : REAL;
+ END_VAR
+ 
+  WAIT gbEquipmentReady;
+  //joint position
+  FOR i:=0 TO kinematic.mNrOfJoints-1 DO
+      IF (i < nrOfMainJoints) THEN
+         START dataRecorder.RecCyclicReal(TCyclicRealSig(i), readBackVals.mJoints.mMainJoints.mValues[i]);
+      ELSE
+         START dataRecorder.RecCyclicReal(TCyclicRealSig(i), readBackVals.mJoints.mAuxJoints.mValues[i-nrOfMainJoints]);               
+      END_IF;
+  END_FOR;
+  //TCP position
+  START dataRecorder.RecTcpValue(eReal_TcpPosX, readBackObjectPos.mPos.mValues[0]);
+  START dataRecorder.RecTcpValue(eReal_TcpPosY, readBackObjectPos.mPos.mValues[1]);
+  START dataRecorder.RecTcpValue(eReal_TcpPosZ, readBackObjectPos.mPos.mValues[2]);
+  START dataRecorder.RecTcpValue(eReal_TcpPosA, readBackObjectPos.mOri.mValues[0]);
+  START dataRecorder.RecTcpValue(eReal_TcpPosB, readBackObjectPos.mOri.mValues[1]);
+  START dataRecorder.RecTcpValue(eReal_TcpPosC, readBackObjectPos.mOri.mValues[2]);
+  //TCP velocity
+  START dataRecorder.RecTcpValue(eReal_TcpVeloSet, progVelo);
+  START dataRecorder.RecTcpValue(eReal_TcpVeloAct, actVelo);
+  
+  WHILE TRUE DO
+    IF selectingFlow.running AND (rActProgVelocity > 0.0) THEN
+       progVelo := rActProgVelocity;
+       actVelo  := actCartVals.mPathVelo;
+    ELSE
+       progVelo := 0.0;
+       actVelo  := 0.0;
+    END_IF;
+    WaitMcMicroCycles(1);
+  END_WHILE;
+  
+END_ROUTINE
+
+//set EVENT with program name to data recorder
+ROUTINE ProgramNameToDataRecorder() PRIVATE
+ VAR
+  chg      : BOOL;
+  lastName : STRING[128];
+ END_VAR
+ 
+  chg := IS_CHANGED(progNameKin);
+  WHILE TRUE DO
+    IF (progNameKin <> lastName) THEN
+       //end of theach program
+       IF (progNameKin = "-") THEN
+          dataRecorder.RecProgramName(FALSE, lastName);
+       ELSE
+          dataRecorder.RecProgramName(TRUE, progNameKin);
+       END_IF;
+    END_IF;
+    //logger.SetProtocolText("KinProgInfo", "KinProgInfo - Name=" + progNameKin);
+    lastName := progNameKin;
+    WAIT chg;
+    chg:= FALSE;
+  END_WHILE;
+END_ROUTINE
+
+ROUTINE ResetEcoTalkVarList(bGhostNoMotion : BOOL) PRIVATE
+   VAR 
+      i          : SINT;
+      sysvarBool : MAPTO BOOL;
+      sysvarInt  : MAPTO INT;
+   END_VAR
+   
+   FOR i:=0 TO cgiSizeEcoTalkVarList-1 DO
+      
+      // reset all BOOL "reset variables"
+      IF (ecoTalkVarListBool.ySysVarNameReset[i] <> "") THEN
+         sysvarBool := MAPX(ecoTalkVarListBool.ySysVarNameReset[i]); 
+         IF IS_MAPPED(sysvarBool) THEN
+            sysvarBool := FALSE;
+            DebugPrint(eTraceEquipment, "ResetEcoTalkVarListBool - set variable: " + ecoTalkVarListBool.ySysVarNameReset[i] + " to FALSE");
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 5, 0, "TRcuKinematic.ResetEcoTalkVarList", ecoTalkVarListBool.ySysVarNameReset[i]);
+         END_IF;
+      END_IF;
+      ecoTalkVarListBool.ySysVarNameReset[i] := "";
+      
+      // at end of GhostNoMotion, all BOOL variables should be reset
+      IF bGhostNoMotion THEN
+         IF (ecoTalkVarListBool.ySysVarNameNoReset[i] <> "") THEN
+            sysvarBool := MAPX(ecoTalkVarListBool.ySysVarNameNoReset[i]); 
+            IF IS_MAPPED(sysvarBool) THEN
+               sysvarBool := FALSE;
+               DebugPrint(eTraceEquipment, "ResetEcoTalkVarListBool - set variable: " + ecoTalkVarListBool.ySysVarNameNoReset[i] + " to FALSE");
+            ELSE
+               RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 6, 0, "TRcuKinematic.ResetEcoTalkVarList", ecoTalkVarListBool.ySysVarNameNoReset[i]);
+            END_IF;
+         END_IF;
+         ecoTalkVarListBool.ySysVarNameNoReset[i] := "";
+      END_IF;
+      
+      // reset all INT "reset variables"
+      IF (ecoTalkVarListInt.ySysVarNameReset[i] <> "") THEN
+         sysvarInt := MAPX(ecoTalkVarListInt.ySysVarNameReset[i]); 
+         IF IS_MAPPED(sysvarInt) THEN
+            sysvarInt := 0;
+            DebugPrint(eTraceEquipment, "ResetEcoTalkVarListInt - set variable: " + ecoTalkVarListInt.ySysVarNameReset[i] + " to 0");
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 7, 0, "TRcuKinematic.ResetEcoTalkVarList", ecoTalkVarListInt.ySysVarNameReset[i]);
+         END_IF;
+      END_IF;
+      ecoTalkVarListInt.ySysVarNameReset[i] := "";
+      
+      // at end of GhostNoMotion, all INT variables should be reset
+      IF bGhostNoMotion THEN
+         IF (ecoTalkVarListInt.ySysVarNameNoReset[i] <> "") THEN
+            sysvarInt := MAPX(ecoTalkVarListInt.ySysVarNameNoReset[i]); 
+            IF IS_MAPPED(sysvarInt) THEN
+               sysvarInt := 0;
+               DebugPrint(eTraceEquipment, "ResetEcoTalkVarListInt - set variable: " + ecoTalkVarListInt.ySysVarNameNoReset[i] + " to 0");
+            ELSE
+               RcuSetMessageOnce(TRcuKinematic_ErrMotAllowedNMap, kinListInx , 8, 0, "TRcuKinematic.ResetEcoTalkVarList", ecoTalkVarListInt.ySysVarNameNoReset[i]);
+            END_IF;
+         END_IF;
+         ecoTalkVarListInt.ySysVarNameNoReset[i] := "";
+      END_IF;
+      
+   END_FOR;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// 
+//------------------------------------------------------------------------
+ROUTINE StoreRetainPosition()
+VAR
+   updCntChg : BOOL;
+   i         : INT;
+END_VAR   
+
+
+   IF NOT IS_MAPPED(sv_PositionRetain) THEN
+      RETURN;
+   END_IF;
+   IF NOT bOldPosAfterRestart THEN
+      RETURN;
+   END_IF;
+   updCntChg := IS_CHANGED(actExecData.mUpdateCounterMain);
+   sv_PositionRetain.bValid := TRUE;
+   WHILE TRUE DO
+      WAIT updCntChg;
+      updCntChg := FALSE;
+      FOR i:=0 TO nrOfMainJoints-1 DO
+        sv_PositionRetain.jointPos[i] := readBackVals.mJoints.mMainJoints.mValues[i];
+      END_FOR;
+      FOR i:=0 TO nrOfAuxJoints DO
+        sv_PositionRetain.jointPos[nrOfMainJoints+i] := readBackVals.mJoints.mAuxJoints.mValues[i];
+      END_FOR;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Only for tests in simulation without robot. Called from equipment
+//------------------------------------------------------------------------
+ROUTINE ReadRetainPosition(locRobot : TRcuRobot)
+   sv_PositionRetain := MAPX(cSV_PositionRetain[locRobot.kinListInx]);
+   IF IS_MAPPED(sv_PositionRetain) AND locRobot.bOldPosAfterRestart THEN
+      oldRetainPosition := sv_PositionRetain;
+      bOldRetainPosValid := sv_PositionRetain.bValid;
+   END_IF;
+END_ROUTINE
+
+
+//-----------------------------------------------------------------------------------------------------
+// Set cyclic error when safety function of virtual wall is enabled but no RETAIN values available
+//-----------------------------------------------------------------------------------------------------
+ROUTINE CyclicErrVirtualWallSafety() PRIVATE
+   WHILE VirtualWallSafeCfg.svSafety.bUseSafeConfiguration AND NOT VirtualWallSafeCfg.svSafety.bRetainInCatalog DO
+      RcuSetMessageOnce(TRcuKinematic_ErrNoSafeCfgVirtW, kinListInx, 1, instId, "TRcuKinematic.CyclicErrVirtualWallSafety");
+      WAIT NOT svMotionAllowed;
+      WAIT svMotionAllowed;
+   END_WHILE;   
+END_ROUTINE
+
+//-----------------------------------------------------------------------------------------------------
+// Wait until IEC sets signal -VirtualWall_Safety.bReloadCatalog- after download from 3D-OnSite
+//-----------------------------------------------------------------------------------------------------
+ROUTINE ObserveSafetyCfgDownload()
+
+  IF VirtualWallSafeCfg.svMapped THEN
+     WHILE TRUE DO
+       WAIT VirtualWallSafeCfg.svSafety.bReloadCatalog;
+       // read gripper data from catalog
+       RcuCfgReadGripper(SELF, TRUE);
+       //read data of the blocks from catalog
+       RcuCfgReadVirtualWall(SELF);
+       VirtualWallSafeCfg.svSafety.bReloadCatalog := FALSE;
+       logger.SetLoggerStep(autoControl.iLoggerNumber, "ObserveSafetyCfgDownload: Read updated catalog values and generated new checksum (" + STR(VirtualWallSafeCfg.Checksum));
+       DebugPrint(eTraceRcuConfig, "ObserveSafetyCfgDownload: Read updated catalog values and generated new checksum (" + STR(VirtualWallSafeCfg.Checksum));
+       //checksum isn't equal to last valid checksum stored in SAVE_VAR -- config has changed 
+       //RETAIN values were not available at start up -- no wall activated in MCU
+       //then restart RPC to recreate Grippers and Blocks in MCU
+       IF (VirtualWallSafeCfg.Checksum <> SavedVirtWallCrc[kinListInx]) OR NOT bAnyVirtualWallActive THEN
+          IF NOT bAnyVirtualWallActive THEN
+             logger.SetLoggerStep(autoControl.iLoggerNumber, "ObserveSafetyCfgDownload: Updated catalog values checksum (" + STR(VirtualWallSafeCfg.Checksum) + ") but no wall activated in MCU --> restart");
+             DebugPrint(eTraceRcuConfig, "ObserveSafetyCfgDownload: Updated catalog values checksum (" + STR(VirtualWallSafeCfg.Checksum) + ") but no wall activated in MCU --> restart");
+          ELSE
+             logger.SetLoggerStep(autoControl.iLoggerNumber, "ObserveSafetyCfgDownload: Updated catalog values but checksum (" + STR(VirtualWallSafeCfg.Checksum) + ") isn't valid (config changed) --> restart");
+             DebugPrint(eTraceRcuConfig, "ObserveSafetyCfgDownload: Updated catalog values but checksum (" + STR(VirtualWallSafeCfg.Checksum) + ") isn't valid (config changed) --> restart");
+          END_IF;
+          //endless error because in this situation the RPC has to be restarted !
+          WHILE TRUE DO
+             RcuSetMessageOnce(TRcuKinematic_ErrRestartCfgChg, kinListInx, 1, instId, "TRcuKinematic.ObserveSafetyCfgDownload");
+             WAIT NOT svMotionAllowed;
+             WAIT svMotionAllowed;
+          END_WHILE;
+       ELSE
+          logger.SetLoggerStep(autoControl.iLoggerNumber, "ObserveSafetyCfgDownload: Updated catalog values and checksum (" + STR(VirtualWallSafeCfg.Checksum) + ") is equal to last --> config hasn't changed");
+          DebugPrint(eTraceRcuConfig, "ObserveSafetyCfgDownload: Updated catalog values and checksum (" + STR(VirtualWallSafeCfg.Checksum) + ") is equal to last --> config hasn't changed");
+       END_IF;
+     END_WHILE;
+  END_IF;
+  
+END_ROUTINE
+
+(******************************************************************************
+* systemroutines
+*)
+
+ROUTINE NEW()
+   VAR
+      s : STRING;
+      baseHdl : DINT; // handle of the base directory for the kinematic
+      rootHdl : DINT;
+      initMainJoints : TMcuVector;
+      initAuxJoints  : TMcuVector;
+      instanceName   : STRING;
+      i       : DINT;
+      tmpName : STRING;
+      str : STRING;
+      s2  : STRING;
+      p1 : DINT;
+      p2 : DINT;
+      l  : DINT;
+      Index : INT;
+      g       : STRING;
+      t       : STRING;
+      kinNumber : INT;
+      cartDynLimit  : TMcuCartDynamicLimits;
+   END_VAR
+   
+   str := INSTANCE_NAME();
+   p1 := StrFind(str, "[");
+   p2 := StrFind(str, "]");
+   l  := p2-p1-1;
+   p1:=p1+1;
+   s2 := StrMid(str,l,p1);
+   Index :=StrToInt(s2);
+   
+   IF Index > giNumberOfRobots - 1  THEN
+      RETURN;
+   END_IF;
+   
+   kinNumber := gyIndexOfKinematics[Index];
+   
+   CASE Index OF
+      0: RcuRefSystemObject           := eRcuRefSystemObject1;
+         RcuRefSystemVisionAbs        := eRcuRefSystemVisionAbs1;
+         RcuRefSystemVisionRel        := eRcuRefSystemVisionRel1;
+         RcuRefSystemSensor           := eRcuRefSystemSensor1;
+         RcuRefSystemConveyor         := eRcuRefSystemConveyor1;
+         RcuRefSystemConveyorPostLink := eRcuRefSystemConveyorPostLink1;
+         RcuRefSystemFixTool          := eRcuRefSystemFixTool1;
+      1: RcuRefSystemObject           := eRcuRefSystemObject2;
+         RcuRefSystemVisionAbs        := eRcuRefSystemVisionAbs2;
+         RcuRefSystemVisionRel        := eRcuRefSystemVisionRel2;
+         RcuRefSystemSensor           := eRcuRefSystemSensor2;
+         RcuRefSystemConveyor         := eRcuRefSystemConveyor2;
+         RcuRefSystemConveyorPostLink := eRcuRefSystemConveyorPostLink2;
+         RcuRefSystemFixTool          := eRcuRefSystemFixTool2;
+      2: RcuRefSystemObject           := eRcuRefSystemObject3;
+         RcuRefSystemVisionAbs        := eRcuRefSystemVisionAbs3;
+         RcuRefSystemVisionRel        := eRcuRefSystemVisionRel3;
+         RcuRefSystemSensor           := eRcuRefSystemSensor3;
+         RcuRefSystemConveyor         := eRcuRefSystemConveyor3;
+         RcuRefSystemConveyorPostLink := eRcuRefSystemConveyorPostLink3;
+         RcuRefSystemFixTool          := eRcuRefSystemFixTool3;
+      3: RcuRefSystemObject           := eRcuRefSystemObject4;
+         RcuRefSystemVisionAbs        := eRcuRefSystemVisionAbs4;
+         RcuRefSystemVisionRel        := eRcuRefSystemVisionRel4;
+         RcuRefSystemSensor           := eRcuRefSystemSensor4;
+         RcuRefSystemConveyor         := eRcuRefSystemConveyor4;
+         RcuRefSystemConveyorPostLink := eRcuRefSystemConveyorPostLink4;
+         RcuRefSystemFixTool          := eRcuRefSystemFixTool4;
+   ELSE
+      DebugPrint(eTraceCommon, " NEW-Routine TRcuKinematic falsche Kinematiknummer : "+STR(Index));
+   END_CASE;
+   
+   g := "MC.KINEMATIC:" + STR(kinNumber);
+   CatalogGetHandle( g, rootHdl);
+   CatalogReadString(rootHdl, "name", t, TRUE); 
+   instanceName := t;
+   
+   instId := RcuGetInstanceId();
+   kinListInx := Index;
+   
+   // Lookup Kinematic
+   kinematicMcuId := McuSearchDbObj(instanceName, eMcuKinematic);
+   IF kinematicMcuId = 0 THEN  // unknown name
+      RcuSetMessageOnce(TRcuKinematic_ErrKinNotConf, kinListInx, 1, instId, "TRcuKinematic.NEW", instanceName);
+      RETURN;
+   END_IF;
+   
+   // Map actual-data
+   McuReadSMemName(kinematicMcuId, eMcuStateValues, s);
+   actExecData := MAPX(s);
+   McuReadSMemName(kinematicMcuId, eMcuJointValues, s);
+   actJoints := MAPX(s);
+   McuReadSMemName(kinematicMcuId, eMcuDriveValues, s);
+   actDrives := MAPX(s);
+   actDrivesExt := MAPX(s);
+   McuReadSMemName(kinematicMcuId, eMcuCartValues, s);
+   actCartVals := MAPX(s);  
+   McuReadBackHdlName(kinematicMcuId, s);
+   readBackVals := MAPX(s);
+   McuReadSMemName(kinematicMcuId, eMcuElbowValues, s);
+   actElbowVals := MAPX(s);  
+   McuReadSMemName(kinematicMcuId, eMcuGripperVectors, s);
+   gripperVectors := MAPX(s);
+   IF gbGuardsAvailable THEN
+      McuReadSMemName(kinematicMcuId, eMcuMonitoring, s);
+      Monitoring := MAPX(s);
+   END_IF;
+   isNotMovingOnPath := UPDATE(actExecData.mIsStoppedJoints OR 
+      (NOT actExecData.mIsPathProgress AND NOT actExecData.mIsSingleJointLimOn)
+       OR NOT actExecData.mIsReady);
+   isStopped := UPDATE(actExecData.mIsStoppedJoints OR NOT actExecData.mIsReady);
+   
+   // read kinematic data
+   McuReadKinematic(kinematicMcuId, kinematic);
+   
+   allDegreesOfFreedom := ((kinematic.mRobotTyp = eMcuEcopaint1) OR 
+       (kinematic.mRobotTyp = eMcuStandardArm) OR 
+       (kinematic.mRobotTyp = eMcuDoorOpener) OR 
+       (kinematic.mRobotTyp = eMcuEcorail3) OR 
+       IsPaintArm7VWrist(SELF) OR
+       (kinematic.mRobotTyp = eMcuEcopaintVWrist));  //eMcuStandardArm exists not longer
+
+   IF kinematic.mNrOfJoints > cMcuMaxJ THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrKinTMnyJoints, kinListInx, 1, instId, "TRcuKinematic.NEW", instanceName);
+      RETURN;
+   END_IF;
+   CorrectKinDataSheet(instanceName);
+   
+   // set default overlap (@? is needed when cartesian overlapping is rejected)
+   SetDefaultOverlap();
+   
+(*
+   // set values of joint limiters to 120%
+   IF  McuSetSingleJointLimiterRel(kinematicMcuId, 1.2, 1.2) = FALSE THEN
+      DebugPrint(eTraceRcuConfig, "McuSetSingleJointLimiter not successful");
+   END_IF;
+   
+   IF NOT McuSetPathSpeedLimForwRel(kinematicMcuId, 1.0, 1.0) THEN
+      DebugPrint(eTraceRcuConfig, "McuSetPathSpeedLimForwRel not successful");
+   END_IF;
+*)
+   
+   // create paths
+   noPath.Create(SELF);
+   reposPath.Create(SELF);
+   progPath.Create(SELF);
+   jogPath.Create(SELF);
+   
+   // initialize mainmodemanager
+   mainModeMgr.ConnectTo(SELF);
+   
+   // initialize member variables
+   motionMode := eRcuMMgrModeStopJoints;
+   motionRequest := eRcuMMgrModeStopJoints;
+   mmgrState := eRcuMMgrStateStoppingJoints;
+   motionRquChg := IS_CHANGED(motionRequest);
+   directionChg := IS_CHANGED(backwardMovement);
+   stopJointsDeceFactor := 0;
+   override := 1000;
+   initOverride := 1000;
+   
+   // stop interpolation
+   McuSetServoCtrl(kinematicMcuId, FALSE);
+   McuStopInterpolator(kinematicMcuId);
+   // begin interpolation for kinematic instances
+   IF NOT isRobot THEN
+      FOR i := 0 TO kinematic.mNrOfJoints-1 DO
+         McuSetJointPosition(kinematicMcuId, i, 0.0, eMcuSetPosModeAbsolute);
+      END_FOR;
+      IF NOT RcuRestartMcu() THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrKinNotActiv, kinListInx, 1, instId, "TRcuKinematic.NEW", instanceName);
+         RETURN;
+      END_IF;
+      // the following values are true for kinematic instances
+      allDrivesReferenced := TRUE;
+      updateActive := TRUE;
+      chgModeAllowed := TRUE;
+   END_IF;
+   // activate workspace-monitoring
+   McuSetWorkspaceMonitoring(kinematicMcuId, TRUE);
+   
+   // remember the execution-handle
+   mmgrFlowId := GetProgHdl();
+   // start routines running permanently
+   START MotionManager();
+   START CatchError;
+   START ObserveObjectSystem();
+   START ObserveUpdate() PRIO 3;
+   START ObserveAppendTooLate();
+   START ObservePreMain();
+   START ObservePlcJogAxis();
+   //nrOfDrives := actDrives.mValidLen;
+   
+   IF giRcKinHdl <> 0 THEN      
+      i := -1;
+      tmpName := "";
+      WHILE (i < cgiRcuMaxKinematics - 1) AND (tmpName <> kinematic.mName) DO
+         i := i + 1;
+         s := "KINEMATIC:" +STR(i);
+         IF CatalogGetHandleRelative(giMcKinHdl, s, mcCatHdl) THEN
+            CatalogReadString(mcCatHdl, "name", tmpName, FALSE);
+         END_IF;
+      END_WHILE;
+      IF tmpName = kinematic.mName THEN
+         kinListInx := i;
+         CatalogGetHandleRelative(giRcKinHdl, s, baseHdl);
+         IF baseHdl <> 0 THEN
+         rcCatHdl := baseHdl;
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_WarConfKinNotConf, kinListInx, 1, instId, "TRcuKinematic.NEW", instanceName);
+         END_IF;
+      ELSE
+         IF CatalogGetHandleRelative(giRcKinHdl, kinematic.mName, baseHdl) THEN
+            IF baseHdl <> 0 THEN
+               CatalogReadInt(baseHdl, "kinematicId", kinListInx, FALSE);
+               rcCatHdl := baseHdl;
+            ELSE
+               RcuSetMessageOnce(TRcuKinematic_WarConfKinNotConf, kinListInx, 2, instId, "TRcuKinematic.NEW", instanceName);
+            END_IF;
+         ELSE
+            RcuSetMessageOnce(TRcuKinematic_WarConfKinNotConf, kinListInx, 3, instId, "TRcuKinematic.NEW", instanceName);
+         END_IF;
+      END_IF;
+   ELSE
+      RcuSetMessageOnce(TRcuKinematic_WarConfNoKin, kinListInx, 1, instId, "TRcuKinematic.NEW");
+   END_IF;
+   
+   // register kinematic
+   RcData.Register(SELF);
+   
+   s := INSTANCE_NAME() + ".motionMode";
+   SwoAddDIntVariable(motionMode, s);
+   s := INSTANCE_NAME() + ".mmgrState";
+   SwoAddDIntVariable(mmgrState, s);
+   
+   // assignment for the cartesian data
+   nrOfCartComps := 6;
+   IF ((kinematic.mRobotTyp = eMcuEcopaint1) OR 
+       (kinematic.mRobotTyp = eMcuEcorail3) OR 
+       (kinematic.mRobotTyp = eMcuStandardArm) OR 
+       IsPaintArm7VWrist(SELF) OR
+       (kinematic.mRobotTyp = eMcuEcopaintVWrist)) THEN
+      cartCompMask := gyBits[0] OR gyBits[1] OR gyBits[2] OR gyBits[3] OR gyBits[4] OR gyBits[5];
+   ELSIF (kinematic.mRobotTyp = eMcuDoorOpener) THEN
+      cartCompMask := gyBits[0] OR gyBits[1] OR gyBits[2];
+   END_IF;
+   
+   START ObserveProgActive();
+   START ObserveMotionAllowed();
+   START ObserveRestartProgPath();
+   START ObserveSourceLineInMR();
+   
+   //--------------  V I R T U A L    W A L L   (Safe config) -------------------------------------
+   //Interface to IEC - Safety version virtual wall
+   IF NOT RcuMapVirtualWallSafety(SELF) THEN
+      START CyclicErrVirtualWallSafety();
+   END_IF;
+   // read gripper data and it to MCU
+   RcuCfgReadGripper(SELF);
+   //----------------------------------------------------------------------------------------------
+
+   START RcuEmergencyStop.Create(SELF);
+   START RcuInterfaceToBCU.Create(SELF);
+   
+   //--------------  V I R T U A L    W A L L   (Safe config) -------------------------------------
+   //read data of the blocks and activate them
+   nrOfWallBlocks := 0;
+   IF RcuCfgReadVirtualWall(SELF) THEN
+      bAnyVirtualWallActive := FALSE;
+      FOR i := 0 TO nrOfWallBlocks DO
+         IF VirtualWall[i].cfgActive THEN
+            bAnyVirtualWallActive := TRUE;
+            VirtualWall[i].areaShape := eMcuAreaBox;
+            VirtualWall[i].basePos.mFrameTyp := eMcuFrameKardan;
+            VirtualWall[i].refSys    := eRcuRefSystemWorld;
+            VirtualWall[i].inForwardInterp := TRUE;
+            VirtualWall[i].inMainInterp    := TRUE;
+            IF VirtualWall[i].Create(SELF) THEN
+               IF (VirtualWall[i].cfgSpecial <> 1) THEN
+                  IF VirtualWall[i].Activate() THEN
+                     DebugPrint(eTraceAreaJob, "Working-/NogoArea " + VirtualWall[i].areaName + " activated");
+                  ELSE
+                     RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, kinListInx, 1, instId, "TRcuKinematic.NEW", "McuActivateArea");
+                  END_IF;
+               ELSIF (mainModeMgr.fullSpeed AND interfaceToSCP.bFullSpeedAllowed) THEN
+                  IF VirtualWall[i].Activate() THEN
+                     DebugPrint(eTraceAreaJob, "Working-/NogoArea " + VirtualWall[i].areaName + " activated");
+                  ELSE
+                     RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, kinListInx, 2, instId, "TRcuKinematic.NEW", "McuActivateArea");
+                  END_IF;
+               ELSE
+                  DebugPrint(eTraceAreaJob, "Working-/NogoArea " + VirtualWall[i].areaName + " not activated");
+               END_IF;
+            END_IF;
+         END_IF;
+      END_FOR;
+      IF McuReadSMemName(kinematicMcuId, eMcuMonitoring, VirtualWallHdlName) THEN
+         VirtualWallMonitor := MAPX(VirtualWallHdlName);
+      END_IF;   
+      IF bAnyVirtualWallActive THEN
+         START ObserveVirtualWallViolations();
+   END_IF;   
+   END_IF;   
+   //----------------------------------------------------------------------------------------------
+   IF gbGuardsAvailable THEN
+      IF RcuCfgReadVelocityZone(SELF) THEN
+         FOR i := 0 TO nrOfVelocityZones DO
+            IF VelocityZone[i].cfgActive THEN
+               VelocityZone[i].areaData.mAreaShape := eMcuAreaBox;
+               IF VelocityZone[i].Create(SELF) THEN
+                     IF VelocityZone[i].Activate() THEN
+                        DebugPrint(eTraceAreaJob, "VelocityZone " + VelocityZone[i].areaData.mName + " activated");
+                     ELSE
+                        RcuSetMessageOnce(TRcuKinematic_FaErrMcuFunc, kinListInx, 1, instId, "TRcuKinematic.NEW", "McuActivateArea");
+                     END_IF;
+               END_IF;
+            END_IF;
+         END_FOR;  
+         cartDynLimit.mDynamicType := eMcuCartPosVel;
+         cartDynLimit.mName := "LimitGlobal";
+         cartDynLimit.mLimit := rGlobalVelLim;
+         cartDynLimit.mKinematicID := kinematicMcuId;
+         cartDynLimit.mDBObjTyp := eMcuPermanent;
+         McuCreateCartDynamicLimits(cartDynLimitID, cartDynLimit);
+         McuActivateMonitoring(cartDynLimitID, TRUE);
+      END_IF;
+   END_IF;
+
+   START PdaDataToInterface();
+   START KinToDataRecorder();
+   START ProgramNameToDataRecorder();
+
+   progNameKin := "-";
+   
+   RcuStopMoveFast := MAPX("Mc.McuStopMicroIP");
+   IF IS_MAPPED(RcuStopMoveFast) THEN // firmware supports function
+      stopMicroIPAvailable := 1;
+   ELSE
+      stopMicroIPAvailable := -1;
+   END_IF;
+   
+   bEnableShiftExt := kinematic.mNrOfAuxJoints > 1;
+   
+   START CalcGapForPannelJogging();
+   
+END_ROUTINE
+
+ROUTINE ObservePlcJogAxis()
+  VAR
+     bCghPlcJogAxis : BOOL;
+  END_VAR
+  
+  IF (NOT IS_MAPPED(PaintRobot[kinListInx].fieldbusIn.PlcJogAxis.svByte) OR (NOT bEnablePannelJogging)) THEN
+     RETURN; 
+  END_IF;
+  
+  bCghPlcJogAxis := IS_CHANGED(PaintRobot[kinListInx].fieldbusIn.PlcJogAxis.svByte);     
+    IF (DINT(PaintRobot[kinListInx].fieldbusIn.PlcJogAxis.svByte) > 0) THEN     
+      Focus();    
+    END_IF;
+  WHILE TRUE DO
+     WAIT (bCghPlcJogAxis AND NOT (gRcuFocusedRobot.kinListInx = kinListInx) );
+     Focus();     
+  END_WHILE;
+   
+END_ROUTINE
+
+
+ROUTINE CalcGapForPannelJogging ()
+   WAIT initKinComplete;   
+      
+   IF (kinematic.mRobotTyp = eMcuEcopaint1) OR (kinematic.mRobotTyp = eMcuEcopaintVWrist) THEN
+   // RPE / RP
+      IF nrOfAuxJoints > 0 THEN
+         IF kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN  
+          gapForPannelJogging := 1;
+         END_IF;         
+      END_IF;
+   ELSIF kinematic.mRobotTyp = eMcuStandardArm THEN
+   // Kuka
+      IF nrOfAuxJoints > 0 THEN
+         IF kinematic.mJoints[6].mDHParam.mTyp = eMcuJointRot THEN  
+          gapForPannelJogging := 1;
+         END_IF;         
+      END_IF;
+   ELSIF kinematic.mRobotTyp = eMcuDoorOpener THEN
+   // Skara
+      IF kinematic.mNrOfAuxJoints > 0 THEN
+         gapForPannelJogging := 3;
+      END_IF;
+   ELSIF IsPaintArm7VWrist(SELF) THEN
+         // RPE043
+      IF kinematic.mNrOfAuxJoints > 0 THEN
+         gapForPannelJogging := 1;
+      END_IF;
+   END_IF;
+   
+END_ROUTINE
+
+ROUTINE DELETE()
+   VAR
+      s : STRING;
+      str : STRING;
+      s2  : STRING;
+      p1 : DINT;
+      p2 : DINT;
+      l  : DINT;
+      Index : INT;      
+   END_VAR
+   
+   str := INSTANCE_NAME();
+   p1 := StrFind(str, "[");
+   p2 := StrFind(str, "]");
+   l  := p2-p1-1;
+   p1:=p1+1;
+   s2 := StrMid(str,l,p1);
+   //PRINT("NEW-Routine "+str+" Index = "+s2);
+   Index :=StrToInt(s2);
+   //PRINT("NEW-Routine "+str+" Index = "+STR(Index));  
+   
+   IF Index > giNumberOfRobots - 1  THEN
+      RETURN;
+   END_IF;
+   
+   // unregister kinematic
+   RcData.UnRegister(SELF);
+   
+   // to make sure no object-sys is set for mcu-act-vals
+   //RcuSetRefSysForActCartVals(kinematicMcuId, McuGetWorldTrsfID(), eRcuRefSystemWorld);
+   
+   IF (kinematicMcuId <> 0) AND updateActive THEN
+      McuSetTimeOverrideFactor(kinematicMcuId, emergencyTimeOverrideFactor);
+      DebugPrint(eTraceCommon, "TimeOverrideFactor 7 : " + STR(emergencyTimeOverrideFactor));
+      McuStopJoints(kinematicMcuId, 0.0);
+   END_IF;
+   IF (kinematicMcuId <> 0) THEN
+      WAIT isStopped;
+      WaitMcMainCycles(1);
+      RcuStopInterpolator();
+   END_IF;
+   IF noOvlMcuId <> 0 THEN
+      McuReleaseDbObj(noOvlMcuId);
+      McuReleaseDbObj(dummyDynMcuId);
+      McuReleaseDbObj(dummyRampMcuId);
+   END_IF;
+   IF defaultDynMcuId <> 0 THEN
+      McuReleaseDbObj(defaultDynMcuId);
+   END_IF;
+   IF defaultOvlMcuId <> 0 THEN
+      McuReleaseDbObj(defaultOvlMcuId);
+   END_IF;
+   IF kinToolMcuId <> 0 THEN
+      McuReleaseDbObj(kinToolMcuId);
+   END_IF;
+   IF kinGripperMcuId <> 0 THEN
+      McuReleaseDbObj(kinGripperMcuId);
+   END_IF;
+   IF defaultAcceRampMcuId <> 0 THEN
+      McuReleaseDbObj(defaultAcceRampMcuId);
+   END_IF;
+   IF (defaultDeceRampMcuId <> 0) AND (defaultDeceRampMcuId <> defaultAcceRampMcuId) THEN
+      McuReleaseDbObj(defaultDeceRampMcuId);
+   END_IF;
+   IF offsetID <> 0 THEN
+      McuReleaseDbObj(offsetID);
+   END_IF;
+  
+   s := INSTANCE_NAME() + ".motionMode";
+   SwoRemoveVariable(s);
+   s := INSTANCE_NAME() + ".mmgrState";
+   SwoRemoveVariable(s);
+END_ROUTINE
+
+
+ROUTINE RESERVE()
+   VAR
+      timeout : BOOL;
+      i : DINT;
+      name : STRING;
+      posP1 : DINT;
+      posP2 : DINT;
+      len   : DINT;
+      pos   : DINT;
+      l     : DINT;
+   END_VAR
+
+   iSubSelectLevels       := 0;
+   selectingFlow.lock     := TRUE; // criterium for already selected
+   selectingFlow.starting := TRUE;
+   selectingFlow.flowId   := GetProgHdl();
+   // new flowId, requeue in list
+//29-05-07   RcData.FlowChange(SELF);
+   
+   IF NOT bReleaseBlockedByHandler THEN
+      bNoContinue := FALSE;
+      trackingPosSet   := FALSE;   
+      bBeforeFirstMove := TRUE; // Flag before first move command
+
+      WHILE NOT mainModeMgr.automatic DO
+         RcuSetMessageOnce(TRcuKinematic_ErrKinNotRdy, kinListInx, 1, instId, "TRcuKinematic.RESERVE", robotName);
+         CheckKinematicNotReady();
+         stopRequired := FALSE;
+         SetMovementDirection(eDirNormal);
+         InterruptProgSelf();
+         WAIT TRUE;
+      END_WHILE;
+      bGoldenReposInterrupt := FALSE;
+
+      GetNameFromProgHdl(selectingFlow.flowId, name);
+      len := StrLen(name);
+      posP1 := StrFind(name , ".");
+      posP2 := StrFindRight(name, ".");
+      pos := posP2-posP1-1;
+      l := posP1+1;
+      RcuInterfaceToBCU.sProjectName := StrMid(name, pos, l);
+      pos := len-posP2;
+      l := posP2+1;
+      RcuInterfaceToBCU.sProgramName := StrMid(name, pos, l);
+      
+      // motionmode 'stop' before selecting Flow is set to running (to avoid interrupt)
+      SetMotionMode(eRcuMMgrModeStop);
+      WAIT motionMode = eRcuMMgrModeStop;
+      //WaitForIntValue(motionMode, eRcuMMgrModeStop);
+      resetProgPath := TRUE;
+
+      selectingFlow.present  := TRUE; // also criterium for running after continue
+      selectingFlow.running  := TRUE; // also criterium for interrupt from motionmanager
+      selectingFlow.starting := FALSE;
+
+      SetMotionMode(eRcuMMgrModeAuto);
+      // interrupt at stoprequest
+      IF stopRequired THEN
+         WAIT NOT stopRequired;
+         InterruptProgSelf();
+         WAIT TRUE;
+      END_IF;
+      IF NOT WaitForIntValueTO(motionMode, eRcuMMgrModeAuto, 1000) THEN
+         //better set an error than a warning --> on warnings the conveyor does not stop bit 13.03.09
+         //RcuSetMessageOnce(TRcuKinematic_WarWaitForAutoM, kinListInx, 1, instId, "TRcuKinematic.RESERVE", robotName);
+         RcuSetMessageOnce(TRcuKinematic_ErrWaitForAutoM, kinListInx, 1, instId, "TRcuKinematic.RESERVE", robotName);
+         WAIT motionMode = eRcuMMgrModeAuto;
+      END_IF;
+
+      IF fixpos.bExtFixpos THEN
+         // search the next movement command in the program with a fixposition
+         fixpos.SearchNextFixpos();
+      END_IF;
+
+      // get the whole program path
+      START UpdateProgInfo();
+      //delete next field of timetable
+      indexTimeTable := 0;
+      IF indexBody = 0 THEN
+         indexBody := 1;
+      ELSE
+         indexBody := 0;
+      END_IF;
+      FOR i:=0 TO cgiTimeTableSize-1 DO
+         TimeTable[indexBody].ProgTimeTable[i].ProgName := "";
+         TimeTable[indexBody].ProgTimeTable[i].Time := 0.0;
+         TimeTable[indexBody].ProgTimeTable[i].Level := 0;
+      END_FOR;
+      TimeTable[indexBody].ProjectName := "";
+      TimeTable[indexBody].ProjectTime := 0.0;
+      TimeTable[indexBody].ProgramTime := 0.0;
+
+      IF paintChecker.type <> eRcuPaintCheckerOff THEN
+         paintChecker.ResetOnProgStart();
+      END_IF;
+      
+      RcuInterfaceToProcess.ResetProcessCommand();
+
+      IF RcuInterfaceToBCU.bOpenFixationMapped THEN
+         RcuInterfaceToBCU.sMotionInterface.tMotiontoBCU.mOpenFixation := FALSE;
+      END_IF;
+
+   ELSE
+      DebugPrint(eTraceCommon, "TRcuKinematic.RESERVE: FORCE ReleaseBlockedByHandler");
+   END_IF;
+END_ROUTINE
+
+
+// will among others be called by TeachControl if the Stop-button of the ketop
+// is pressed
+ROUTINE INTERRUPT()
+   
+   // Creating an error if the stop-button of the ketop will be pressed in
+   // mode AUTO EXTERN
+   // this is necessary to stop the motion because if no error is created, the
+   // function ObserveContinue will immediately start the motion again
+   DebugPrint(eTraceCommon, "****INTERRUPT-Routine Kinematik*****");
+   IF IS_MAPPED(RcuTeachPendantControl.keyProgStop) THEN
+      IF RcuTeachPendantControl.keyProgStop AND mainModeMgr.externControl THEN
+         RcuSetMessageOnce(TRcuKinematic_ErrTPStopReq, kinListInx, 1, instId, "TRcuKinematic.INTERRUPT", robotName);
+      END_IF;
+   END_IF;
+   selectingFlow.running  := FALSE;
+   selectingFlow.starting := FALSE;
+   // do not overwrite a stopjoints request
+   IF (motionRequest <> eRcuMMgrModeStopJoints) AND NOT noStopAtInterrupt THEN
+      SetMotionMode(eRcuMMgrModeStop);
+   END_IF;
+   IF NOT noStopAtInterrupt AND goldenRepos THEN 
+      bGoldenReposInterrupt := TRUE;
+   END_IF;
+   noStopAtInterrupt := FALSE;
+END_ROUTINE
+
+
+ROUTINE CONTINUE()
+   VAR
+      timeout : BOOL;
+      iDebugMode : TDebugMode;
+      iStepState : TStepState;
+   END_VAR
+   
+   IF NOT mainModeMgr.automatic THEN
+      RcuSetMessageOnce(TRcuKinematic_ErrKinNotRdy, kinListInx, 2, instId, "TRcuKinematic.CONTINUE", robotName);
+      CheckKinematicNotReady();
+      stopRequired := FALSE;
+      InterruptProgSelf();
+   ELSE
+      // condition necessary since continue could be called during RESERVE
+      IF selectingFlow.present THEN
+         IF motionMode = eRcuMMgrModeJog THEN // wait until jogging has finished
+            IF NOT WaitForIntValueTO(motionMode, eRcuMMgrModeStop, 500) THEN
+               InterruptProgSelf();
+            END_IF;
+         END_IF;
+         selectingFlow.running  := TRUE;
+         selectingFlow.starting := FALSE;
+         SetMotionMode(eRcuMMgrModeAuto);
+         // interrupt after repositioning or at stoprequest
+         IF stopRequired THEN
+            WAIT NOT stopRequired;
+            InterruptProgSelf();
+         ELSIF reposStopRequired THEN
+            WAIT NOT reposStopRequired;
+            InterruptProgSelf();
+         ELSIF goldenRepos THEN
+            WAIT NOT goldenRepos;
+            IF bGoldenTracking THEN 
+               RcuInterfaceToBCU.mConveyorRelease := TRUE;
+            END_IF;
+            WAIT motionMode = eRcuMMgrModeAuto;
+         ELSIF backwardMovement THEN
+            WAIT NOT backwardMovement;
+            InterruptProgSelf(); // stop after backward movement
+            //WAIT motionMode = eRcuMMgrModeAuto;
+         ELSIF mmgrState = eRcuMMgrStateAutoBegin THEN   
+            WAIT mmgrState <> eRcuMMgrStateAutoBegin;
+            IF NOT WaitForIntValueTO(motionMode, eRcuMMgrModeAuto, 10000) THEN
+               RcuSetMessageOnce(TRcuKinematic_ErrWaitForAutoM, kinListInx, 3, instId, "TRcuKinematic.CONTINUE", robotName);
+               WAIT motionMode = eRcuMMgrModeAuto;
+            END_IF; 
+         ELSE 
+            timeout := NOT WaitForIntValueTO(motionMode, eRcuMMgrModeAuto, 10000);
+            IF timeout AND reposPath.reposActive THEN
+               DebugPrint(eTraceMotionModesFine, "CONTINUE reposPath.reposActive");
+               WAIT NOT reposPath.reposActive;
+               timeout := NOT WaitForIntValueTO(motionMode, eRcuMMgrModeAuto, 10000);
+            END_IF;
+            IF timeout THEN
+               //better set an error than a warning --> on warnings the conveyor does not stop bit 13.03.09
+               //RcuSetMessageOnce(TRcuKinematic_WarWaitForAutoM, kinListInx, 2, instId, "TRcuKinematic.CONTINUE", robotName);
+               RcuSetMessageOnce(TRcuKinematic_ErrWaitForAutoM, kinListInx, 2, instId, "TRcuKinematic.CONTINUE", robotName);
+               WAIT motionMode = eRcuMMgrModeAuto;
+            END_IF;
+         END_IF;
+         IF NOT selectingFlow.isStepping AND triggersAsPathPositions THEN
+            triggersAsPathPositions := FALSE;
+            gRcData.userIcon[eIconTrigger] := eIconTriggerNormal;
+            DebugPrint(eTraceTrigger, "Active program not in step-mode - Triggers reactivated");
+         END_IF;
+      END_IF;
+   END_IF;
+END_ROUTINE
+
+
+ROUTINE RELEASE()
+   VAR
+      object : TMcuFrame;
+      l : DINT;
+      s : STRING;
+      obj : OBJECT;
+      chgMM : BOOL;
+      chgStopped : BOOL;
+      emptyStack : TUserProgStackInfo;
+      trsf : TMcuTransformation;
+      dotCharNr : DINT;
+      name : STRING;
+   END_VAR
+   
+   IF NOT bReleaseBlockedByHandler THEN
+      //WAIT MAIN_RUN;
+      motionBuffer[iActMotionBuffer].bCheckMotionBuffer := FALSE;
+      STOPPOINT();
+      rSearchSlowOverride := 1.0;
+      
+      noInterrupt := TRUE;
+      chgMM := IS_CHANGED(motionMode);
+      chgStopped := IS_CHANGED(isStopped);
+      // loop to avoid problems when release is interrupted...
+      WHILE ((motionMode <> eRcuMMgrModeStop) AND (motionMode <> eRcuMMgrModeStopJoints))
+            OR NOT isStopped DO
+         
+         // do not overwrite a stopjoints request
+         IF motionRequest <> eRcuMMgrModeStopJoints THEN
+   //      IF railTracking THEN
+            IF lineTracking OR bOnlineCorr THEN
+               // McuStopJoints --> actEcecData.mIsTracking := FALSE
+               //               --> actExecData.mIsStoppedJoints := TRUE
+               SetMotionMode(eRcuMMgrModeStopJoints);
+            ELSE
+               SetMotionMode(eRcuMMgrModeStop);
+            END_IF;
+         END_IF;
+         // wait until robot has stopped moving
+         DebugPrint(eTraceMotionModesFine, "TRcuKinematic.RELEASE: wait until robot has stopped moving");
+         DebugPrint(eTraceMotionModesFine, "TRcuKinematic.RELEASE: motionMode = " + STR(motionMode));
+         WAIT chgMM OR chgStopped;
+         LOCK;
+         chgMM := FALSE;
+         chgStopped := FALSE;
+         UNLOCK;
+      END_WHILE;
+      noInterrupt := FALSE;
+      
+      resetProgPath := TRUE;
+      
+      // BMA 05.01.04
+      // Release object coordinate systems
+      IF homing.bPreHomingRun THEN                                     //Prehoming is running  
+         DebugPrint(eTraceHoming, "Homing: RELEASE() kinematic skipped PreHoming --> keep Trackingframe");
+      ELSIF (homing.tType = eSafeToHome) AND homing.bEndOfModule THEN   //SafeToHome is running
+         DebugPrint(eTraceHoming, "Homing: RELEASE() kinematic skipped SafeToHome --> keep Trackingframe");
+      ELSE    
+         object.mFrameTyp := gMcuFrameTyp;
+         IF lineTracking THEN
+            trackingPos := 0.0;
+            IF NOT actExecData.mIsTracking THEN
+               tracking.StopTracking(SELF);
+            ELSE
+               DebugPrint(eTraceTracking, "Tracking Finished not possible");
+            END_IF;
+            railTrackingActive := railTracking;
+            RcuRefSysSet(RcuRefSystemVisionAbs, object, RcuRefSystemConveyorPostLink, FALSE, "VisionAbs");
+         ELSE
+            RcuRefSysSet(RcuRefSystemVisionAbs, object, eRcuRefSystemWorld, FALSE, "VisionAbs");
+         END_IF;
+         RcuRefSysSet(RcuRefSystemVisionRel, object, RcuRefSystemVisionAbs, FALSE, "VisionRel");
+         homing.StoreRefSystemVision(TRUE, object);
+         IF bOnlineCorr THEN
+            RcuRefSysSet(RcuRefSystemSensor, object, RcuRefSystemVisionRel, TRUE, "Sensor"); // TRUE = tracking
+            RcuRefSysActivate(RcuRefSystemSensor);
+            RcuRefSysSet(RcuRefSystemObject, object, RcuRefSystemSensor, FALSE, "Object");
+            homing.StoreRefSystemVision(FALSE, object);
+            gyRcuTrackingFrame[RcuRefSystemSensor].mPos.mValues[0] := 0.0;
+            gyRcuTrackingFrame[RcuRefSystemSensor].mPos.mValues[1] := 0.0;
+            gyRcuTrackingFrame[RcuRefSystemSensor].mPos.mValues[2] := 0.0;
+            gyRcuTrackingFrame[RcuRefSystemSensor].mOri.mValues[0] := 0.0;
+            gyRcuTrackingFrame[RcuRefSystemSensor].mOri.mValues[1] := 0.0;
+            gyRcuTrackingFrame[RcuRefSystemSensor].mOri.mValues[2] := 0.0;
+         ELSE   
+            RcuRefSysSet(RcuRefSystemObject, object, RcuRefSystemVisionRel, FALSE, "Object");
+            homing.StoreRefSystemVision(FALSE, object);
+         END_IF;
+         actObject := object;
+         IF extToolActive THEN
+            extToolActive := FALSE;
+            // reset ext. tool
+            actExtTool := object;     // zeroFrame
+            IF jogPath.jogSystem = eJogCoordExtTool THEN
+               jogPath.SetJogSystem(eJogCoordTCP);
+            END_IF;
+            DebugPrint(eTraceExtTool, "External tool deactivated");
+         END_IF;
+         IF vision.bShiftA7Enable THEN
+            vision.rShiftA7Value := 0.0;
+            vision.rShiftA7Abs := 0.0;
+         END_IF;
+         actObjectName  := "no object";
+         iObjectDeclare := 0;
+         vision.tTeachInObject := obj;
+   //      vision.CalcActualObject(obj, FALSE);
+   //      vision.CalcActualObject(obj, TRUE);
+         vision.CalcActualObject();
+         dataRecorder.RecObject("no object", object);
+      END_IF;
+      // Reset to Null-Tool
+      // Tool(eulerFrame);
+      
+      // new flowId, requeue in list
+//29-05-07   RcData.FlowChange(SELF);
+      
+      progNameKin := "-";         
+      ecoscreen.ProgInfo := emptyStack;
+      LOCK;
+      iSubSelectLevels       := 0;
+      selectingFlow.flowId   := 0;
+      selectingFlow.present  := FALSE;
+      selectingFlow.running  := FALSE;
+      selectingFlow.starting := FALSE;
+      SetMovementDirection(eDirNormal);
+      selectingFlow.lock := FALSE;
+      selectingFlow.isStepping := FALSE;
+      UNLOCK;
+      
+      IF IS_MAPPED(RcuInterfaceToProcess.svCheckSumProject) THEN
+         RcuInterfaceToProcess.svCheckSumProject := 0;
+      END_IF;
+   
+      ActShift.A7_mm := 0.0;
+      ActShift.X_mm  := 0.0;
+      ActShift.Y_mm  := 0.0;
+      ActShift.Z_mm  := 0.0;
+      
+      ActMRShift.A7_mm := 0.0;
+      ActMRShift.X_mm  := 0.0;
+      ActMRShift.Y_mm  := 0.0;
+      ActMRShift.Z_mm  := 0.0;
+      
+      ActShiftExt.A7_mm  := 0.0;
+      ActShiftExt.A8_deg := 0.0;
+      ActShiftExt.A9_deg := 0.0;
+      ActShiftExt.X_mm   := 0.0;
+      ActShiftExt.Y_mm   := 0.0;
+      ActShiftExt.Z_mm   := 0.0;
+      
+      ActMRShiftExt.A7_mm  := 0.0;
+      ActMRShiftExt.A8_deg := 0.0;
+      ActMRShiftExt.A9_deg := 0.0;
+      ActMRShiftExt.X_mm   := 0.0;
+      ActMRShiftExt.Y_mm   := 0.0;
+      ActMRShiftExt.Z_mm   := 0.0;
+      
+      handler.tool.sPartShift.A7_mm := 0.0;
+      handler.tool.sPartShift.X_mm  := 0.0;
+      handler.tool.sPartShift.Y_mm  := 0.0;
+      handler.tool.sPartShift.Z_mm  := 0.0;
+      
+      bInPreposition := FALSE;
+      bWaitingTrackingPos := FALSE;
+      fixpos.bExtFixpos := FALSE;
+      fixpos.NextFixposNumber := 0;   
+      bToolOrObjChanged := FALSE;
+      
+      IF (kinToolMcuId <> 0) THEN // Gueltig ist TOOL aus Vorlauf
+         McuReadTrsf(kinToolMcuId, trsf);
+         name := trsf.mName;
+         dotCharNr := StrFind(name, ".");
+         IF dotCharNr > 0 THEN
+            //local
+            iToolDeclare := 1;
+            actToolName  := StrDelete(name, dotCharNr, 0); // clear program name from project name + "."
+         ELSE
+            //global
+            iToolDeclare := 2;
+            actToolName  := name;
+         END_IF; 
+      END_IF;
+      
+      IF NOT ((homing.tType = eSafeToHome) AND homing.bEndOfModule) THEN   //SafeToHome isn't running
+         autoControl.InitCollisionBits(FALSE);   // reset all collision bits normal logic
+      END_IF;
+      autoControl.InitCustomBits(FALSE);   // reset all custom bits
+      RcuInterfaceToProcess.ClearNeedleMemory(TRUE);
+      RcuInterfaceToProcess.InitRobotToProcess();
+      
+      IF PaintRobot[kinListInx].gluingRobot THEN
+         // Reset applicator position request
+         IF IS_MAPPED(RcuInterfaceToProcess.svSetAppPos) THEN
+            RcuInterfaceToProcess.svSetAppPos := 0;
+         END_IF;
+         IF gluing.bSendVeloToSeamCheck AND IS_MAPPED(gluing.btSeamCheckActivate) THEN
+            gluing.btSeamCheckActivate := 0;
+         END_IF;
+
+         PaintRobot[kinListInx].fieldbusOut.PlcOrder.svByte := 0;      
+      END_IF;
+      
+      IF PaintRobot[kinListInx].bEnablePlcOrderByte THEN
+         PaintRobot[kinListInx].fieldbusOut.PlcOrder.svByte := 0;      
+      END_IF;
+      
+      IF PaintRobot[kinListInx].sfaRobot THEN
+         PaintRobot[kinListInx].sfa.Release();
+      END_IF;
+      
+      //Reset command-interface to process
+      IF IS_MAPPED(RcuInterfaceToProcess.svProcessCmd) THEN
+         RcuInterfaceToProcess.svProcessCmd := 0;
+      END_IF;
+      //reset variables from Pushout, new info will be set at beginning of next body
+      IF IS_MAPPED(RcuInterfaceToProcess.svActualColGrpState) THEN
+         RcuInterfaceToProcess.svActualColGrpState := 0;
+      END_IF;
+      IF IS_MAPPED(RcuInterfaceToProcess.svActualColorGroup) THEN
+         RcuInterfaceToProcess.svActualColorGroup := 0;
+      END_IF;
+      
+      IF PaintRobot[kinListInx].vision.tVisionAbsolute.bMultiTrigger OR
+         PaintRobot[kinListInx].vision.tVisionRelative.bMultiTrigger
+         THEN
+         PaintRobot[kinListInx].fieldbusOut.RobInCamPos.svBool     := FALSE; 
+         PaintRobot[kinListInx].fieldbusOut.RobInLastCamPos.svBool := FALSE;  
+      END_IF;
+      
+      PaintRobot[kinListInx].fieldbusOut.WaitingBodyFixed.svBool := FALSE;
+      
+      homing.callStack.depth := 0;      
+      IF NOT homing.bHomingRun THEN
+         homing.sModuleName := "";
+         IF (homing.tType = eSafeToHome) THEN
+            homing.iPathNumber  := 0;
+            homing.bEndOfModule := FALSE;
+         END_IF;
+      END_IF;
+      bGoldenReposInterrupt := FALSE;
+      preventRestoreActSettings := FALSE;
+      noReadMcuActSettings := FALSE;
+      ResetEcoTalkVarList(FALSE);
+      bSetOrderFlag := FALSE;
+      RcuInterfaceToBCU.mMacroConveyorRelease := TRUE;
+      SetPcWithoutStopActive := FALSE;
+    ELSE
+      DebugPrint(eTraceCommon, "TRcuKinematic.RELEASE: FORCE ReleaseBlockedByHandler");
+      selectingFlow.flowId     := 0;
+      selectingFlow.lock       := FALSE;
+      selectingFlow.starting   := FALSE;
+      selectingFlow.isStepping := FALSE;
+   END_IF;
+   
+   RcuInterfaceToProcess.bSpeedCheck := FALSE;
+
+   IF PaintRobot[kinListInx].bBccActive THEN
+      PaintRobot[kinListInx].autoControl.ClearPlcInterface_BCC();
+   END_IF;
+   DebugPrint(eTraceMotionModesFine, "TRcuKinematic.RELEASE: END");
+  
+END_ROUTINE
+
+
+ROUTINE SETPC()
+
+   IF movementDirection = eDirNormal THEN
+      
+      restoreActSettings := TRUE;
+      IF (iLineNumberMainRun = iLineNumberPreRun) AND (sProgramNameMainRun = sProgramNamePreRun) THEN
+         // Vorlauf = Hauptlauf: Dynamik und Tool aus dem Vorlauf sind gueltig
+         noReadMcuActSettings := TRUE;
+         DebugPrint(eTraceMotionModesFine, "TRcuKinematic.SETPC: MainRun = PreRun noReadMcuActSettings");
+      END_IF;
+      IF preventRestoreActSettings THEN
+         restoreActSettings := FALSE;
+         DebugPrint(eTraceMotionModesFine, "TRcuKinematic.SETPC: preventRestoreActSettings NO restoreActSettings");
+      END_IF;
+      RcuInterfaceToProcess.CloseAllNeedles();
+      RcuInterfaceToProcess.lastGunOn := 0;
+      progPath.lastExecutedTrigger := 0;
+      progPath.lastExecJobStackHdl := 0;
+      progPath.reposTriggerGun := 0;
+      RestartProgPath();
+   END_IF;
+   rSearchSlowOverride := 1.0;
+   iSubSelectLevels := mainRunSubSelectLevel;
+   DebugPrint(eTraceCommon, "SETPC: "+STR(iSubSelectLevels));
+   
+   ActShift := ActMRShift;
+   ActShiftExt := ActMRShiftExt;
+   progPath.smooth.mSmoothFactor := progPath.rSmoothMR;
+   
+END_ROUTINE
+
+
+ROUTINE BRANCH()
+
+   IF (actExecData.mActPathID = progPath.pathMcuId) AND 
+         progPath.bAppendLate AND (progPath.endPosId <> 0) THEN
+      // endPosId = 0 -> pathIsEmpty
+      WAIT progPath.bAppendLateSMReady; // wait until shared memory is ready
+      DebugPrint(eTraceCommon, "************** Warten auf mNeedNextSeg *********************");
+      WAIT progPath.tNeedNextSM.mNeedNextSeg;
+      bActivateFromBranch := TRUE;
+      DebugPrint(eTraceCommon, "************** Warten auf mNeedNextSeg beendet *************");
+      DebugPrint(eTraceMotionStep, "need next seg - id: " + 
+         STR(progPath.tNeedNextSM.mAppendSegID) + ", param: " + 
+         STR(progPath.tNeedNextSM.mAppendParam));
+   END_IF;
+END_ROUTINE

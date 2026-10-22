@@ -1,0 +1,162 @@
+(*-----------------------------------------------------------------------------
+*    K2-System Robot Control Unit                                             *
+*                                                                             *
+*    Dürr Systems GmbH APT                                                    *
+*    Rosenstr. 39                                                             *
+*    74321 Bietigheim-Bissingen                                               *
+*    Germany                                                                  *
+*                                                                             *
+*    Copyright (C) 2016 Dürr Systems AG APT                                   *
+*    All rights reserved.                                                     *
+*                                                                             *
+*                                                                             *
+*    Author :     Bauder                                                      *
+*    E-Mail:      Manfred.Bauder@durr.com                                     *
+*                                                                             *
+*    Modul:       TRcuVelocityZone.tts                                        *
+*    Description: Functionblock for limitation of the TCP velocity            *
+*                                                                             *
+*-----------------------------------------------------------------------------*
+*)
+
+VAR
+   areaData        : TMcuArea;
+   areaID          : TMcuDbObjID;
+   cartDynLimit    : TMcuCartDynamicLimits;
+   lGuardSelection : TMcuAreaGuardSelection;
+   veloLimit       : REAL;
+   cartDynLimitID  : TMcuDbObjID;
+   cfgActive       : BOOL;         // in Configuration declared as active
+   active          : BOOL;         // indicates whether the area is active or not
+END_VAR
+
+
+// create the area object and designate it to a certain kinematic
+ROUTINE Create(CONST kin : TRcuKinematic) : BOOL
+   VAR
+      success : BOOL;
+   END_VAR
+
+   // connection to the kinematic
+   myKinematic := MAP(kin);
+
+   areaData.mDBObjTyp := eMcuPermanent;
+   areaData.mKinematicID := kin.kinematicMcuId;
+   
+   cartDynLimit.mDynamicType := eMcuCartPosVel;
+   cartDynLimit.mName := areaData.mName + STR(veloLimit);
+   cartDynLimit.mLimit := veloLimit;
+   cartDynLimit.mKinematicID := kin.kinematicMcuId;
+   cartDynLimit.mDBObjTyp := eMcuPermanent;
+   McuCreateCartDynamicLimits(cartDynLimitID, cartDynLimit);
+   objIdVector.mValidLen := 1;
+   objIdVector.mDbObjIDs[0] := cartDynLimitID;
+   SetCartDynInArea(myKinematic, areaData, objIdVector);
+   
+   lGuardSelection.mGuardModes := eMcuOnlyPosAndVelGuards;
+   lGuardSelection.mGuardRegions.mKinRegionDef := eMcuFullKinematic; // keine Raumprüfung nach Regionen
+   SetGuardSelectionInArea(myKinematic, areaData, lGuardSelection);
+
+   IF RcuRefSysGetMcuId(eRcuRefSystemWorld, areaData.mRefSysID) THEN
+      // create area object
+      IF McuCreateArea(areaID, areaData) THEN
+               success := TRUE;
+      END_IF;
+   END_IF;
+   IF NOT McuReadAreaHdlName(areaID, hdlName) THEN
+      RcuSetMessageOnce(TRcuAreaJob_ErrMcuCreateJob, kin.kinListInx, 1, instId, "TRcuAreaJob.ActivateAreaJob");
+   ELSE
+      areaState := MAPX(hdlName);
+      START ObserveAreaState();
+   END_IF;
+   
+
+   // consider success
+   IF NOT success THEN
+      RcuSetMessageOnce(TRcuWorkingArea_ErrWrkAreaCrt, myKinematic.kinListInx, 1, instId, "TRcuVelocityZone.Create", INSTANCE_NAME());
+   END_IF;
+   RETURN success;
+END_ROUTINE
+
+// activate the area
+ROUTINE Activate() : BOOL
+
+   IF McuActivateArea(areaID) THEN
+      active := TRUE;
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+// deactivate the area
+ROUTINE Deactivate() : BOOL
+
+   IF McuDeactivateArea(areaID) THEN
+      active := FALSE;
+      RETURN TRUE;
+   ELSE
+      RETURN FALSE;
+   END_IF;
+END_ROUTINE
+
+
+
+(*******************************************************************************
+* private members
+*)
+VAR PRIVATE
+   myKinematic   : MAPTO TRcuKinematic;
+   areaState     : MAPTO TMcuAreaState;
+   areaStateOld  : TMcuAreaState;
+   hdlName       : TMcuString;
+   instId        : DINT;
+   objIdVector   : TMcuDbObjIDVec;
+END_VAR
+
+//--------------------------------------------------------------------------------------
+// Observes Changes in the area state from the MCU
+//--------------------------------------------------------------------------------------
+ROUTINE ObserveAreaState() PRIVATE
+VAR
+   bChg : BOOL;
+END_VAR;
+
+   //wait some time until MCU has created area
+   myKinematic.WaitMcMainCycles(1);
+   bChg := IS_CHANGED(areaState);
+   areaStateOld := areaState;
+   WHILE TRUE DO
+      CASE areaState OF
+         eMcuAreaUnknown: myKinematic.DebugPrint(eTraceAreaJob, areaData.mName + " " + STR(areaStateOld) + " -> Area Unkown");
+         
+         eMcuAreaInside:  myKinematic.DebugPrint(eTraceAreaJob, areaData.mName + " " + STR(areaStateOld) + " -> Inside");
+         
+         eMcuAreaOutside: myKinematic.DebugPrint(eTraceAreaJob, areaData.mName + " " + STR(areaStateOld) + " -> Outside");
+         
+      END_CASE;
+      bChg := FALSE;
+      areaStateOld := areaState;
+      START PrintMonitoringVelocity(myKinematic);
+      WAIT bChg;
+   END_WHILE;
+END_ROUTINE
+
+
+
+(******************************************************************************
+* systemroutines
+*)
+ROUTINE NEW()
+  instId := RcuGetInstanceId();
+END_ROUTINE
+
+ROUTINE DELETE()
+   IF areaID <> 0 THEN
+      McuReleaseDbObj(areaID);
+   END_IF;
+   IF cartDynLimitID <> 0 THEN
+      McuReleaseDbObj(cartDynLimitID);
+   END_IF;
+END_ROUTINE

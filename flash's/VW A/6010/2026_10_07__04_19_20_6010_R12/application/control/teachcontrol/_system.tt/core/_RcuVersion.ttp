@@ -1,0 +1,45 @@
+(*-----------------------------------------------------------------------------
+*                             (c) 2002 by KEBA AG
+*                                Linz/AUSTRIA
+*                             All rights reserved
+*------------------------------------------------------------------------------
+*  Component    : RCU
+*  Modul        : RcuVersion.tts
+*  First Author : pen
+*  Date         : 18.10.2002
+*------------------------------------------------------------------------------
+*  Description:
+*
+*  version information for RCU and RCUX
+*------------------------------------------------------------------------------
+* 28.08.04 nmr: Adaption of version-string on Dürr-Versionnumber
+* 22.03.05 nmr: Adaption on other components "componentVersion" -> 
+*               "componentVersionString", also necessary for showing 
+*               in Teachview
+* 05.07.05 kto: Text translated into english 
+* 26.08.05 nmr: removed cRcuVersion, added version-info to sys-trace
+*)
+
+VAR GLOBAL
+   // global variable with RC version-name
+   gRcuVersion : STRING := "RobotControl_4.53 (774)";
+   // list of changes :
+   
+   // global variable with RCX version-name, should be set from the RCX component
+   gRcuXVersion : STRING;
+END_VAR
+
+
+ROUTINE NEW()
+   
+   PRINT(gRcuVersion + " BEGIN Init");
+   IF NOT IS_MAPPED(SysTimerGetUs) THEN
+      SysTimerGetUs := MAPX("TC/Timer/SysTimerGetUs");
+   END_IF;
+   SysTimerGetUs(RcData.iT1); 
+   
+   WAIT gbRcHandleOk;
+   IF NOT CatalogAddString(giRcBaseHdl, "componentVersionString", gRcuVersion, TRUE) THEN
+      CatalogWriteString(giRcBaseHdl, "componentVersionString", gRcuVersion);
+   END_IF;
+END_ROUTINE

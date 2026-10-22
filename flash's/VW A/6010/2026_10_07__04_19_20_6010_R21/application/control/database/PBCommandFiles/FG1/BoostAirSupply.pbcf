@@ -1,0 +1,102 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 30.09.2013  | STL    | First release
+//  v2_01.01.00  | 15.04.2014  | SMOH   | Option22 script converted to BoostAirSupply 
+//  v2_01.02.00  | 23.10.2015  | RHI    | Changed YLV1 from Family Valve to Family MainValve (for BMK convention 2)
+//  v2_01.03.00  | 11.11.2016  | STL    | Change: New files for interlock
+
+Imports Common
+
+Parameter BoostAirSupply ElectricalVersion
+
+Call Main_BoostAirSupply
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_BoostAirSupply
+	SelectNode RPC1.R11.PCU1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply.BHD1
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply.BHD1
+		Delete
+	Endif
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply.YLV2
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply.YLV2
+		Delete
+	Endif
+	SelectCase BoostAirSupply
+		Case Booster_BHD1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Call Common_AddDevice_BHD1
+			Else
+				SelectNode RPC1.R11.PCU1
+				//******** Add BoostedAirSupplyChannel channel ************
+				Call Common_AddChannel_BoostedAirSupply
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Call Common_AddDevice_BHD1
+			Endif
+			
+			//******* Add special files according to Booster Case**
+			SelectCase ElectricalVersion
+				Case El_V1
+					FSCopy ..\SpecialOptions\AirSupply\Booster_BHD1\El_V1\FB_UseReleasesYHV.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					FSCopy ..\SpecialOptions\AirSupply\Booster_BHD1\El_V1\FB_Interlocks_AirSupply.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				Case El_V2
+					FSCopy ..\SpecialOptions\AirSupply\Booster_BHD1\El_V2\FB_UseReleasesYHV.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					FSCopy ..\SpecialOptions\AirSupply\Booster_BHD1\El_V2\FB_Interlocks_AirSupply.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					Message ElectricalVersion not supported !! (Main_BoostAirSupply; Booster_BHD1)
+			EndSelect
+			
+		Case YLV2_BHD1
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Call Common_AddDevice_BHD1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Call Common_AddDeviceSealing_YLV2_Main
+			Else
+				SelectNode RPC1.R11.PCU1
+				//******** Add BoostedAirSupplyChannel channel ************
+				Call Common_AddChannel_BoostedAirSupply
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Call Common_AddDevice_BHD1
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Call Common_AddDeviceSealing_YLV2_Main
+			Endif
+			
+			//******* Add special files according to Booster Case**
+			SelectCase ElectricalVersion
+				Case El_V1
+					FSCopy ..\SpecialOptions\AirSupply\YLV2_BHD1\El_V1\FB_UseReleasesYHV.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					FSCopy ..\SpecialOptions\AirSupply\YLV2_BHD1\El_V1\FB_Interlocks_AirSupply.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				Case El_V2
+					FSCopy ..\SpecialOptions\AirSupply\YLV2_BHD1\El_V2\FB_UseReleasesYHV.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					FSCopy ..\SpecialOptions\AirSupply\YLV2_BHD1\El_V2\FB_Interlocks_AirSupply.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					Message ElectricalVersion not supported !! (Main_BoostAirSupply; YLV2_BHD1)
+			EndSelect
+			
+		Case No_BoostAirSupply
+			IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].BoostedAirSupply
+				Delete
+			Endif
+			
+			//******* Add special files according to Booster Case**
+			SelectCase ElectricalVersion
+				Case El_V1
+					FSCopy ..\SpecialOptions\AirSupply\No_BoostAirSupply\El_V1\FB_UseReleasesYHV.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					FSCopy ..\SpecialOptions\AirSupply\No_BoostAirSupply\El_V1\FB_Interlocks_AirSupply.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				Case El_V2
+					FSCopy ..\SpecialOptions\AirSupply\No_BoostAirSupply\El_V2\FB_UseReleasesYHV.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+					FSCopy ..\SpecialOptions\AirSupply\No_BoostAirSupply\El_V2\FB_Interlocks_AirSupply.pu ..\..\..\..\..\application\control\ieccontrol\PCU1\EngineeringFiles
+				CaseElse
+					Message ElectricalVersion not supported !! (Main_BoostAirSupply; YLV2_BHD1)
+			EndSelect
+			
+		CaseElse
+			Message BoostAirSupply wrong !! (Main_BoostAirSupply)
+	EndSelect
+Return

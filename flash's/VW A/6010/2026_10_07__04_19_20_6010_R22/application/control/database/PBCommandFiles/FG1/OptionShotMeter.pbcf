@@ -1,0 +1,679 @@
+//  Version      | ReleaseDate | Respon | Changes
+//  -------------------------------------------------------------------------------------
+//  v2_01.00.00  | 21.11.2016  | KLCH   | First release
+//  v2_01.01.00  | 25.08.2017  | KLCH   | Change: adaptions for mfb.cfg
+//  v2_01.02.00  | 17.11.2017  | KLCH   | Change: generate time programs (copy operation not needed)
+
+Imports Common Option20
+
+Parameter Option1 Option20 OptionShotMeter
+
+// Check [Option20] because of direct dependency
+Call Main_Option20
+Call OptionShotMeter_ConfigureDevices
+// Select tab VariantConfiguration again
+SelectNode RPC1.R11
+SelectTab [VariantConfiguration]
+END
+
+SubRoutine Main_OptionShotMeter
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			Call OptionShotMeter_ShotMeter1
+		Case EcoDose_SM_PCL
+			Call OptionShotMeter_ShotMeter1_Multi
+		Case EcoDose_SM_SM
+			Call OptionShotMeter_ShotMeter1_Multi
+			Call OptionShotMeter_ShotMeter2_Multi
+		CaseElse
+			Message Wrong process type !! (Main_OptionShotMeter)
+	EndSelect
+	
+	Call OptionShotMeter_ConfigurePressureRegulation
+Return
+
+SubRoutine OptionShotMeter_ShotMeter1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a
+		IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+			Delete
+		Endif
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				Call Common_AddDevice_MDP92_100ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92.EStop
+				OptionalUsed 1
+				Value "YESTOP92a"
+				SelectCfg MDP92.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GRa"
+				SelectCfg MDP92.PressureSensorName
+				Value "BDP92PAa"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1\113ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_590ccm
+				Call Common_AddDevice_MDP92_585ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92.EStop
+				OptionalUsed 1
+				Value "YESTOP92a"
+				SelectCfg MDP92.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GRa"
+				SelectCfg MDP92.PressureSensorName
+				Value "BDP92PAa"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1\590ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_300ccm
+				Call Common_AddDevice_MDP92_300ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92.EStop
+				OptionalUsed 0
+				Value "-"
+				SelectCfg MDP92.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GRa"
+				SelectCfg MDP92.PressureSensorName
+				Value "BDP92PAa"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1\300ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_600ccm
+				Call Common_AddDevice_MDP92_600ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92.EStop
+				OptionalUsed 0
+				Value "-"
+				SelectCfg MDP92.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GRa"
+				SelectCfg MDP92.PressureSensorName
+				Value "BDP92PAa"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1\600ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ShotMeter1; SM1a)
+		EndSelect
+		
+		SelectCase Option20 // Shot meter single
+			Case 0
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.MDP92b
+					VisuInterface 1 2
+					SelectCase OptionShotMeter
+						Case SM_113ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92.EStop
+							OptionalUsed 1
+							Value "YESTOP92b"
+							SelectCfg MDP92.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GRb"
+							SelectCfg MDP92.PressureSensorName
+							Value "BDP92PAb"
+						Case SM_590ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92.EStop
+							OptionalUsed 1
+							Value "YESTOP92b"
+							SelectCfg MDP92.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GRb"
+							SelectCfg MDP92.PressureSensorName
+							Value "BDP92PAb"
+						Case SM_300ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92.EStop
+							OptionalUsed 0
+							Value "-"
+							SelectCfg MDP92.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GRb"
+							SelectCfg MDP92.PressureSensorName
+							Value "BDP92PAb"
+						Case SM_600ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92.EStop
+							OptionalUsed 0
+							Value "-"
+							SelectCfg MDP92.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GRb"
+							SelectCfg MDP92.PressureSensorName
+							Value "BDP92PAb"
+						CaseElse
+							Message ShotMeter type not supported !! (OptionShotMeter_ShotMeter1; SM1b)
+					EndSelect
+				Else
+					Message Script error - check script for [Option20] !! (OptionShotMeter_ShotMeter1; SM1b)
+				Endif
+		EndSelect
+	Else
+		Message Script error - check script for [Option20] !! (OptionShotMeter_ShotMeter1; SM1a)
+	Endif
+Return
+
+SubRoutine OptionShotMeter_ShotMeter1_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a
+		IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+			Delete
+		Endif
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				Call Common_AddDevice_MDP92_1_100ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_1.EStop
+				OptionalUsed 1
+				Value "YESTOP92_1a"
+				SelectCfg MDP92_1.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_1a"
+				SelectCfg MDP92_1.PressureSensorName
+				Value "BDP92PA_1a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1_Multi\113ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_590ccm
+				Call Common_AddDevice_MDP92_1_585ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_1.EStop
+				OptionalUsed 1
+				Value "YESTOP92_1a"
+				SelectCfg MDP92_1.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_1a"
+				SelectCfg MDP92_1.PressureSensorName
+				Value "BDP92PA_1a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1_Multi\590ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_300ccm
+				Call Common_AddDevice_MDP92_1_300ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_1.EStop
+				OptionalUsed 0
+				Value "-"
+				SelectCfg MDP92_1.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_1a"
+				SelectCfg MDP92_1.PressureSensorName
+				Value "BDP92PA_1a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1_Multi\300ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_600ccm
+				Call Common_AddDevice_MDP92_1_600ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.MDP92_1a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_1.EStop
+				OptionalUsed 0
+				Value "-"
+				SelectCfg MDP92_1.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_1a"
+				SelectCfg MDP92_1.PressureSensorName
+				Value "BDP92PA_1a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat1_Multi\600ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ShotMeter1_Multi; SM1a)
+		EndSelect
+		
+		SelectCase Option20 // Shot meter single
+			Case 0
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.MDP92_1b
+					VisuInterface 1 2
+					SelectCase OptionShotMeter
+						Case SM_113ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_1.EStop
+							OptionalUsed 1
+							Value "YESTOP92_1b"
+							SelectCfg MDP92_1.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_1b"
+							SelectCfg MDP92_1.PressureSensorName
+							Value "BDP92PA_1b"
+						Case SM_590ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_1.EStop
+							OptionalUsed 1
+							Value "YESTOP92_1b"
+							SelectCfg MDP92_1.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_1b"
+							SelectCfg MDP92_1.PressureSensorName
+							Value "BDP92PA_1b"
+						Case SM_300ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_1.EStop
+							OptionalUsed 0
+							Value "-"
+							SelectCfg MDP92_1.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_1b"
+							SelectCfg MDP92_1.PressureSensorName
+							Value "BDP92PA_1b"
+						Case SM_600ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_1.EStop
+							OptionalUsed 0
+							Value "-"
+							SelectCfg MDP92_1.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_1b"
+							SelectCfg MDP92_1.PressureSensorName
+							Value "BDP92PA_1b"
+						CaseElse
+							Message ShotMeter type not supported !! (OptionShotMeter_ShotMeter1_Multi; SM1b)
+					EndSelect
+				Else
+					Message Script error - check script for [Option20] !! (OptionShotMeter_ShotMeter1_Multi; SM1b)
+				Endif
+		EndSelect
+	Else
+		Message Script error - check script for [Option20] !! (OptionShotMeter_ShotMeter1_Multi; SM1a)
+	Endif
+Return
+
+SubRoutine OptionShotMeter_ShotMeter2_Multi
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a
+		IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+			SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+			Delete
+		Endif
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				Call Common_AddDevice_MDP92_2_100ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_2.EStop
+				OptionalUsed 1
+				Value "YESTOP92_2a"
+				SelectCfg MDP92_2.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_2a"
+				SelectCfg MDP92_2.PressureSensorName
+				Value "BDP92PA_2a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat2_Multi\113ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_590ccm
+				Call Common_AddDevice_MDP92_2_585ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_2.EStop
+				OptionalUsed 1
+				Value "YESTOP92_2a"
+				SelectCfg MDP92_2.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_2a"
+				SelectCfg MDP92_2.PressureSensorName
+				Value "BDP92PA_2a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat2_Multi\590ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_300ccm
+				Call Common_AddDevice_MDP92_2_300ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_2.EStop
+				OptionalUsed 0
+				Value "-"
+				SelectCfg MDP92_2.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_2a"
+				SelectCfg MDP92_2.PressureSensorName
+				Value "BDP92PA_2a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat2_Multi\300ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			Case SM_600ccm
+				Call Common_AddDevice_MDP92_2_600ccm
+				SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.MDP92_2a
+				SelectTab [CfgParameter]
+				SelectCfg MDP92_2.EStop
+				OptionalUsed 0
+				Value "-"
+				SelectCfg MDP92_2.PistonEndPosSensorName
+				OptionalUsed 1
+				Value "BDP92GR_2a"
+				SelectCfg MDP92_2.PressureSensorName
+				Value "BDP92PA_2a"
+				
+				FSCopy ..\SpecialOptions\SM\Mat2_Multi\600ccm\mfb.cfg ..\..\..\..\..\application\control\config
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ShotMeter2_Multi; SM2a)
+		EndSelect
+		
+		SelectCase Option20 // Shot meter single
+			Case 0
+				IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b
+					SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.MDP92_2b
+					VisuInterface 1 2
+					SelectCase OptionShotMeter
+						Case SM_113ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_2.EStop
+							OptionalUsed 1
+							Value "YESTOP92_2b"
+							SelectCfg MDP92_2.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_2b"
+							SelectCfg MDP92_2.PressureSensorName
+							Value "BDP92PA_2b"
+						Case SM_590ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_2.EStop
+							OptionalUsed 1
+							Value "YESTOP92_2b"
+							SelectCfg MDP92_2.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_2b"
+							SelectCfg MDP92_2.PressureSensorName
+							Value "BDP92PA_2b"
+						Case SM_300ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_2.EStop
+							OptionalUsed 0
+							Value "-"
+							SelectCfg MDP92_2.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_2b"
+							SelectCfg MDP92_2.PressureSensorName
+							Value "BDP92PA_2b"
+						Case SM_600ccm
+							SelectTab [CfgParameter]
+							SelectCfg MDP92_2.EStop
+							OptionalUsed 0
+							Value "-"
+							SelectCfg MDP92_2.PistonEndPosSensorName
+							OptionalUsed 1
+							Value "BDP92GR_2b"
+							SelectCfg MDP92_2.PressureSensorName
+							Value "BDP92PA_2b"
+						CaseElse
+							Message ShotMeter type not supported !! (OptionShotMeter_ShotMeter2_Multi; SM2b)
+					EndSelect
+				Else
+					Message Script error - check script for [Option20] !! (OptionShotMeter_ShotMeter2_Multi; SM2b)
+				Endif
+		EndSelect
+	Else
+		Message Script error - check script for [Option20] !! (OptionShotMeter_ShotMeter2_Multi; SM2a)
+	Endif
+	
+Return
+
+SubRoutine OptionShotMeter_ConfigureDevices
+	SelectCase Option1 // Process type
+		Case EcoDose_SM
+			Call OptionShotMeter_ConfigureDevice_BDP92PA
+		Case EcoDose_SM_PCL
+			Call OptionShotMeter_ConfigureDevice_BDP92PA_1
+		Case EcoDose_SM_SM
+			Call OptionShotMeter_ConfigureDevice_BDP92PA_1
+			Call OptionShotMeter_ConfigureDevice_BDP92PA_2
+		CaseElse
+			Message Wrong process type !! (OptionShotMeter_ConfigureDevices)
+	EndSelect
+Return
+
+SubRoutine OptionShotMeter_ConfigureDevice_BDP92PA
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PAa
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PAa
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_590ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_300ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			Case SM_600ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ConfigureDevice_BDP92PA; a)
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PAb
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PAb
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_590ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_300ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			Case SM_600ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ConfigureDevice_BDP92PA; b)
+		EndSelect
+	Endif
+Return
+
+SubRoutine OptionShotMeter_ConfigureDevice_BDP92PA_1
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PA_1a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.a.BDP92PA_1a
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_590ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_300ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			Case SM_600ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ConfigureDevice_BDP92PA_1; a)
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PA_1b
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter1Sub_.b.BDP92PA_1b
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_590ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_300ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			Case SM_600ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_1.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ConfigureDevice_BDP92PA_1; b)
+		EndSelect
+	Endif
+Return
+
+SubRoutine OptionShotMeter_ConfigureDevice_BDP92PA_2
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92PA_2a
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.a.BDP92PA_2a
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_590ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_300ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			Case SM_600ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ConfigureDevice_BDP92PA_2; a)
+		EndSelect
+	Endif
+	
+	IfNodeExists RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.BDP92PA_2b
+		SelectNode RPC1.R11.PCU1.[ChannelsChannelgroups].ShotMeter2Sub_.b.BDP92PA_2b
+		SelectCase OptionShotMeter
+			Case SM_113ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_590ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 260
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 240
+			Case SM_300ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			Case SM_600ccm
+				SelectTab [CfgParameter]
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperAlarmRange
+				Value 250
+				SelectCfg BDP92PA_2.ActualPressure.MonitorStatic.UpperWarningRange
+				Value 220
+			CaseElse
+				Message ShotMeter type not supported !! (OptionShotMeter_ConfigureDevice_BDP92PA_2; b)
+		EndSelect
+	Endif
+Return
+
+SubRoutine OptionShotMeter_ConfigurePressureRegulation
+	SelectCase Option20 // Shot meter single
+		Case 0
+			SelectCase OptionShotMeter
+				Case SM_113ccm
+					// Enable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 100 ccm / PISTON_SEAL_100ccm
+					SelectCfg Piston Sealing 100 ccm / PISTON_SEAL_100ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 1
+				Case SM_590ccm
+					// Enable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 585 ccm / PISTON_SEAL_585ccm
+					SelectCfg Piston Sealing 585 ccm / PISTON_SEAL_585ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 1
+				Case SM_300ccm
+					// Enable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 300 ccm / PISTON_SEAL_300ccm
+					SelectCfg Piston Sealing 300 ccm / PISTON_SEAL_300ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 1
+				Case SM_600ccm
+					// Enable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 600 ccm / PISTON_SEAL_600ccm
+					SelectCfg Piston Sealing 600 ccm / PISTON_SEAL_600ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 1
+				CaseElse
+					Message ShotMeter type not supported !! (ShotMeter_ConfigurePressureRegulation)
+			EndSelect
+		Case 1
+			SelectCase OptionShotMeter
+				Case SM_113ccm
+					// Disable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 100 ccm / PISTON_SEAL_100ccm
+					SelectCfg Piston Sealing 100 ccm / PISTON_SEAL_100ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 0
+				Case SM_590ccm
+					// Disable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 585 ccm / PISTON_SEAL_585ccm
+					SelectCfg Piston Sealing 585 ccm / PISTON_SEAL_585ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 0
+				Case SM_300ccm
+					// Disable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 300 ccm / PISTON_SEAL_300ccm
+					SelectCfg Piston Sealing 300 ccm / PISTON_SEAL_300ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 0
+				Case SM_600ccm
+					// Disable Inside Pressure Regulation
+					SelectNode RPC1.R11.PCU1.[DeviceFamilies].Piston.Piston Sealing 600 ccm / PISTON_SEAL_600ccm
+					SelectCfg Piston Sealing 600 ccm / PISTON_SEAL_600ccm.SetPressureControl.GainPressureRegInside
+					OptionalUsed 0
+				CaseElse
+					Message ShotMeter type not supported !! (OptionShotMeter_ConfigurePressureRegulation)
+			EndSelect
+	EndSelect
+Return

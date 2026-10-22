@@ -1,0 +1,1779 @@
+(*----------------------------------------------------------------------------*
+*   K2-System Robot Control Unit                                              *
+*                                                                             *
+*   Dürr Systems GmbH APT                                                     *
+*   Rosenstr. 39                                                              *
+*   74321 Bietigheim-Bissingen                                                *
+*   Germany                                                                   *
+*                                                                             *
+*   Copyright (C) 2005 Dürr Systems GmbH APT                                  *
+*   All rights reserved.                                                      *
+*                                                                             *
+*   Author :     Bitzer                                                       *
+*   E-Mail:      Sven.Bitzer@durr.com                                         *
+*                                                                             *
+*   Modul:       TRcuVivaVision.tts                                           *
+*   Description: Interface to ISRA-VIVA-System and handling of Vision-data    *
+*-----------------------------------------------------------------------------*
+*   27.03.08 BIT: 
+
+
+
+   direkte Schnittstelle zu ISRA (ohne SPS)  VIVA
+
+
+
+Schnittstelle zu ISRA:
+
+Eingaenge:
+
+0	0	BOOL	1	RCU1.SLI_mVivaSystemRun          Status System läuft
+	1	BOOL	1	RCU1.SLI_mVivaSystemOnline       Status System Online
+	2	BOOL	1	RCU1.SLI_mVivaSystemReady        Status System Bereit
+	3	BOOL	1	RCU1.SLI_mVivaErrorPending       Status Fehler liegt an
+	4	BOOL	1	RCU1.SLI_mVivaSystemBusy         Status System beschäftigt
+	5	BOOL	1	RCU1.SLI_mVivaPreparationOK      Status Vorbereitung OK
+	6	BOOL	1	RCU1.SLI_mVivaRunOK              System Ablauf OK
+	7	BOOL	1	RCU1.SLI_mVivaResult             System Ergebnis liegt an
+1	0	BOOL	1	RCU1.SLI_mVivaRunning            System Ablauf läuft
+	1	BOOL	1	RCU1.SLI_mVivaPictureRun         System Bildaufnahme läuft
+	2	BOOL	1	RCU1.SLI_mVivaPictureOK          Messung OK
+	3	BOOL	1	RCU1.SLI_mVivaPictureNOK         Messung NOK
+	4	BOOL	1	--	Reserve
+	5	BOOL	1	--	Reserve
+	6	BOOL	1	--	Reserve
+	7	BOOL	1	RCU1.SLI_mVivaLifeSignal         Life-Signal
+2	0	BOOL	1	RCU1.SLI_mVivaErrIntern          Fehler: Intern
+	1	BOOL	1	RCU1.SLI_mVivaErrHardware        Fehler: Hardware
+	2	BOOL	1	RCU1.SLI_mVivaErrorComm          Fehler: Kommunikation
+	3	BOOL	1	RCU1.SLI_mVivaErrorSensor        Fehler: Sensor
+	4	BOOL	1	--	
+	5	BOOL	1	RCU1.SLI_mVivaErrorPreparation	Fehler: Vorbereitung
+	6	BOOL	1	RCU1.SLI_mVivaErrorRun           Fehler: Ablauf
+	7	BOOL	1	RCU1.SLI_mVivaErrorTolerance     Fehler:Toleranz
+3	0	BYTE	8	RCU1.SLI_bVivaMode               Betriebsart
+4	0	BYTE	8	RCU1.SLI_bVivaPositionNo         Position / Nr.
+5	0	BYTE	8	RCU1.SLI_bVivaNumber             Anzahl (gesamt)
+6	0	WORD	16	--	Reserve
+8	0	WORD	16	RCU1.SLI_wVivaValuePosX          Ergebnis Tx
+10	0	WORD	16	RCU1.SLI_wVivaValuePosY          Ergebnis Ty
+12	0	WORD	16	RCU1.SLI_wVivaValuePosZ          Ergebnis Tz
+14	0	WORD	16	RCU1.SLI_wVivaValueRotX          Ergebnis Rx (Null bei VisualRC)
+16	0	WORD	16	RCU1.SLI_wVivaValueRotY          Ergebnis Ry (Null bei VisualRC)
+18	0	WORD	16	RCU1.SLI_wVivaValueRotZ          Ergebnis Rz (Null bei VisualRC)
+
+Ausgaenge:
+
+0	0	BOOL	1	RCU1.SLO_mVivaStrobeMode         Strobe Betriebsart
+	1	BOOL	1	RCU1.SLO_mVivaStrobePrepar       Strobe Vorbereitung
+	2	BOOL	1	RCU1.SLO_mVivaStrobeStart        Strobe Ablaufstart
+	3	BOOL	1	RCU1.SLO_mVivaStrobeResult       Strobe Ergebnisanfrage
+	4	BOOL	1	RCU1.SLO_mVivaResetExec          Reset Continuous Execution
+	5	BOOL	1	RCU1.SLO_mVivaQuitData           Datenquittung
+	6	BOOL	1	RCU1.SLO_mVivaQuitError          Fehlerquittung
+	7	BOOL	1	RCU1.SLO_mVivaLifeSignal         LifeSignal
+1	0	BYTE	8	RCU1.SLO_bVivaControlMode        ControlMode VisualRC
+2	0	BYTE	8	RCU1.SLO_bVivaRunMode            Kommandoparameter Betriebsart
+3	0	BYTE	8	RCU1.SLO_bVivaExecutionMode      KommandoparameterModus
+4	0	BYTE	8	RCU1.SLO_bVivaGroupID            Gruppenkennung
+5	0	BYTE	8	RCU1.SLO_bVivaOrderID            AufgabenID
+6	0	BYTE	8	--	Reserve
+7	0	BYTE	8	RCU1.SLO_bVivaFeatureViewID      FeatureViewID
+8	0	BYTE	8	RCU1.SLO_bVivaColorID1           FarbID
+9	0	BYTE	8	RCU1.SLO_bVivaColorID2           FarbID
+10	0	BYTE	8	RCU1.SLO_bVivaColorID3           FarbID
+11	0	BYTE	8	RCU1.SLO_bVivaColorID4           FarbID
+12	0	WORD	16	RCU1.SLO_wVivaRobotPosX          Robot Position X
+14	0	WORD	16	RCU1.SLO_wVivaRobotPosY          Robot Position Y
+16	0	WORD	16	RCU1.SLO_wVivaRobotPosZ          Robot Position Z
+18	0	WORD	16	RCU1.SLO_wVivaRobotRotX          Robot Drehung X
+20	0	WORD	16	RCU1.SLO_wVivaRobotRotY          Robot Drehung Y
+22	0	WORD	16	RCU1.SLO_wVivaRobotRotZ          Robot Drehung Z
+24	0	WORD	16	RCU1.SLO_wVivaRobotVelX          Robot Geschwindigkeit X
+26	0	WORD	16	RCU1.SLO_wVivaRobotVelY          Robot Geschwindigkeit Y
+28	0	WORD	16	RCU1.SLO_wVivaRobotVelZ          Robot Geschwindigkeit Z
+30	0	WORD	16	RCU1.SLO_wVivaRoboPosID          Robot PoseID
+
+
+*)
+(************************************************************************
+* Variables
+*)
+(*
+VAR
+  iDebugProgNr      : INT;  
+  iDebugSlotProgNr  : INT;
+  iDebugSlotSubID   : INT;
+  rDebugSlotVal     : REAL; 
+  rDebugConcision   : REAL;  
+END_VAR
+*)
+
+(******************************************************************************
+***  Variables ****************************************************************
+******************************************************************************)
+
+VAR
+  iLoggerNumber         : INT;
+  iDebugVeloX           : REAL;
+  iDebugVeloY           : REAL;
+  iDebugVeloZ           : REAL;
+   
+  bCfgDataRead          : BOOL;
+END_VAR
+
+
+
+//------------------------------------------------------------------------
+// Read configuration and map PB
+//------------------------------------------------------------------------
+ROUTINE ReadConfig(locRobot : TRcuRobot) : BOOL
+   
+ VAR
+   bError          : BOOL;
+   iCatalogHdl     : DINT;    // handle of the Configuration directory
+   iTemp           : DINT;
+   rTemp           : REAL;
+   s               : STRING;
+ END_VAR
+    
+   bCfgDataRead := FALSE;
+   instId := RcuGetInstanceId(); //instance identification number (for alarms)
+   myRobot := MAP(locRobot);
+   myVision := MAP(locRobot.vision);
+   IF NOT IS_MAPPED(myRobot) THEN
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 2, instId, "TRcuVision.ReadConfig");
+      RETURN TRUE;
+   END_IF; 
+   //read robotcontrol.cfg
+   IF CatalogGetHandleRelative(myRobot.rcCatHdl, "Vision", iCatalogHdl) THEN
+      iLoggerNumber := myRobot.logger.ActivateLogger("VisionRGS-Logger", myRobot);
+      IF (iLoggerNumber = 0) THEN
+        PRINT("LOG Kein Token fuer Logger erhalten");
+      END_IF; 
+      IF CatalogReadInt(iCatalogHdl, "OnlineCorr", iTemp, TRUE) THEN
+         myRobot.bOnlineCorr := (iTemp = 1);
+      ELSE
+         myRobot.bOnlineCorr := FALSE;
+      END_IF;
+      IF CatalogReadReal(iCatalogHdl, "MaxCorrVal", rTemp, TRUE) THEN
+         rLinLimitViva := rTemp;
+      ELSE
+         rLinLimitViva := 10.0;
+      END_IF;
+      IF CatalogReadReal(iCatalogHdl, "MaxDeltaCorr", rTemp, TRUE) THEN
+         rMaxDeltaCorr := rTemp;
+      ELSE
+         rMaxDeltaCorr := 0.5;
+      END_IF;
+      CatalogReadRealRange(iCatalogHdl, "ScalFactorPos",   rScalPos , 0.0, 1000.0, FALSE);
+      CatalogReadRealRange(iCatalogHdl, "ScalFactorOri",   rScalOri , 0.0, 1000.0, FALSE);
+      //Map In-/Out-Signals from PB-Master
+      MapVivaSignals();
+   ELSE
+      bError := TRUE;
+   END_IF;
+   
+   IF bError THEN 
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler beim Lesen der Konfiguration");// Fehlermeldung ersetzen!!!!
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 4, instId, "TRcuVision.ReadConfig");
+      PRINT("------------------------------");
+      PRINT("----  Boot-up VIVA failed ----");
+      PRINT("------------------------------");
+      RETURN bError;
+   ELSE
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Das lesen der Katalog-Daten erfolgreich beendet");
+      bCfgDataRead := TRUE;
+   END_IF;
+   RETURN bError;
+END_ROUTINE
+ 
+//------------------------------------------------------------------------
+// Initialization and starting coroutines
+//------------------------------------------------------------------------
+ROUTINE InitVision()
+
+   IF NOT bCfgDataRead THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler beim Initialisieren");// Fehlermeldung ersetzen!!!!
+      RcuSetMessageOnce(TRcuVision_ErrRecVisData, myRobot.kinListInx, 5, instId, "TRcuVision.InitVision");
+      RETURN;
+   END_IF;
+   
+   WAIT myRobot.initKinComplete;
+   //simulate system
+   bSimulateSystem := myRobot.bRcuSimulatesAllDrives AND gbRcuSimulateStationPLC;
+   BuildStateInfo();
+   START UpdateVivaLifeBit();
+   SetExecutionModeToISRA(0);
+   START UpdateRobPosToISRA();
+   START SetCtrlModeToISRA();
+   //Com with RGS-Sensor
+   START ObserveErrors();
+   START HandleMainMode();
+   START ProgInfoSequence();
+   START MeasureSequence();
+   
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Boot-up RGS finished");
+   PRINT("--------------------------------");
+   PRINT("----  Boot-up VIVA finished ----");
+   PRINT("--------------------------------");
+   
+   RETURN;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// PLC starts a program
+//------------------------------------------------------------------------
+ROUTINE PlcStartProgram(progNumber : INT)
+  iProgNrToRgs     := progNumber;
+  bRunProgSequence := TRUE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// PLC init system - it is called when teachprogramm is canceled
+//------------------------------------------------------------------------
+ROUTINE PlcInitSystem()
+ VAR
+   zeroObject : TMcuFrame;
+ END_VAR
+
+   STOP ProgInfoSequence;
+   bRunProgSequence := FALSE;
+   bProgSequenceFin := FALSE;
+   bReadyToStart    := FALSE;
+   STOP MeasureSequence;
+   bRunMesSequence  := FALSE;
+   bRunLastSequence := FALSE;
+   bMesSequenceFin  := FALSE;
+   myVision.bResetDataIntern := TRUE;
+   myVision.SetVisionDataToTeachview(zeroObject, FALSE);
+   START ProgInfoSequence();
+   START MeasureSequence();
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "PlcInitSystem() ausgeführt");
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Teachprog starts a program
+//------------------------------------------------------------------------
+ROUTINE MacroStartProgram(progNumber : INT)
+ 
+   MAINRUN();
+   IF bSimulateSystem THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroStartProgram() in Simulation ausgeführt");
+      RETURN;
+   END_IF;
+   bProgSequenceFin := FALSE;
+   iProgNrToRgs     := progNumber;
+   bRunProgSequence := TRUE;
+   IF bCorrActive THEN
+      bRunUpdateRobPos := TRUE;
+   END_IF;
+  //wait sequence finish
+   WAIT bProgSequenceFin;
+   bProgSequenceFin := FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk - End of measuring job
+//------------------------------------------------------------------------
+ROUTINE MacroSetEndOfPath()
+
+   MAINRUN();
+   IF bSimulateSystem THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetEndOfPath() in Simulation ausgeführt");
+      RETURN;
+   END_IF;
+   iCtrlMode        := 2;   
+   bRunCtrlSequence := TRUE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+//  set up measurement job called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetJob(job : SINT)
+
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - request an object by sending the number to PLC
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOrder(CONST  inOrder : DINT)
+
+END_ROUTINE
+
+
+//----------------------------------------------------------------------------- 
+//  EcoTalk - 
+//-----------------------------------------------------------------------------
+ROUTINE MacroSetOnlineCorr(CONST  State : IOTYPE)
+
+   MAINRUN();
+   CASE State OF
+      High : bCorrActive := TRUE;
+      Low  : bCorrActive := FALSE;
+   ELSE
+      PRINT("ERROR - Wrong state for Job");
+   END_CASE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+//  robot is in measure position / last position called from EcoTalk
+//------------------------------------------------------------------------
+ROUTINE MacroSetMeasurePos(bLastPos : BOOL)
+   
+   MAINRUN();
+   IF bSimulateSystem THEN
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroSetMeasurePos() in Simulation ausgeführt");
+      RETURN;
+   END_IF;
+   IF NOT bLastPos THEN
+     WAIT NOT bRunMesSequence AND NOT bRunLastSequence;
+     bMesSequenceFin := FALSE;
+     bRunMesSequence := TRUE;
+     WAIT bMesSequenceFin;
+     bMesSequenceFin := FALSE;
+   ELSE
+     WAIT NOT bRunMesSequence AND NOT bRunLastSequence;
+     bMesSequenceFin := FALSE;
+     bRunLastSequence := TRUE;
+     WAIT bMesSequenceFin; 
+     bMesSequenceFin := FALSE;
+   END_IF;
+  
+END_ROUTINE
+
+//----------------------------------------------------------------------------- 
+//  Wait until ISRA gives the release for next measure position **************
+//----------------------------------------------------------------------------- 
+ROUTINE MacroReceiveNextCamPos() : BOOL
+
+    
+   STOPPOINT();  //wait for mainrun
+   IF bSimulateSystem THEN
+      Sleep(200);
+      myRobot.logger.SetLoggerStep(iLoggerNumber, "MacroReceiveNextCamPos() in Simulation ausgeführt");
+      RETURN TRUE;
+   END_IF;
+   myRobot.logger.SetLoggerStep(iLoggerNumber, "Warten auf Freigabe nächster Messpunkt");
+   WAIT (NOT bInPicRecording AND NOT bInSystemBusy) OR bFatalError;
+   RETURN TRUE;
+     
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Function is called from EcoTalk and computes the data from PLC or TV
+//------------------------------------------------------------------------
+ROUTINE MacroReceiveVisionData(VAR_IN bRelative : BOOL) : BOOL
+ VAR
+   iTmp    : INT;
+   object  : TMcuFrame;
+   zeroObject  : TMcuFrame;
+   calcObj : OBJECT;
+   sLogText: STRING;
+ END_VAR 
+ 
+  //Manualmode
+  IF NOT myRobot.mainModeMgr.externControl THEN
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "RECEIVE(ISRA, Data) - Warten bis gültige von RGS/PHG");
+     WAIT myVision.bCameraAbsDataOk OR myVision.bUserAbsDataOk;
+     IF myVision.bCameraAbsDataOk THEN
+        myVision.bDataAbsSetByUser                := FALSE;
+        myVision.bDataAbsSetByCamera              := TRUE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "RECEIVE(ISRA, Data) - Daten von RGS erhalten");
+     ELSE
+        myVision.bDataAbsSetByUser                := TRUE;
+        myVision.bDataAbsSetByCamera              := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "RECEIVE(ISRA, Data) - Daten von PHG erhalten");
+     END_IF;
+  //Automatic
+  ELSE
+     myRobot.logger.SetLoggerStep(iLoggerNumber, "EcoTalk - RECEIVE(ISRA, Data) - Warten bis gültige von RGS");
+     WAIT myVision.bCameraAbsDataOk;
+     myVision.bDataAbsSetByUser                := FALSE;
+     myVision.bDataAbsSetByCamera              := TRUE;
+  END_IF;
+
+  IF myVision.bCameraAbsDataOk THEN
+     object.mPos.mValues[0] := myVision.objectCamAbsData.mPos.mValues[0];
+     object.mPos.mValues[1] := myVision.objectCamAbsData.mPos.mValues[1];
+     object.mPos.mValues[2] := myVision.objectCamAbsData.mPos.mValues[2];
+     object.mOri.mValues[0] := myVision.objectCamAbsData.mOri.mValues[0];
+     object.mOri.mValues[1] := myVision.objectCamAbsData.mOri.mValues[1];
+     object.mOri.mValues[2] := myVision.objectCamAbsData.mOri.mValues[2];
+  ELSIF myVision.bUserAbsDataOk THEN
+     object.mPos.mValues[0] := myVision.objectUserAbsData.mPos.mValues[0];
+     object.mPos.mValues[1] := myVision.objectUserAbsData.mPos.mValues[1];
+     object.mPos.mValues[2] := myVision.objectUserAbsData.mPos.mValues[2];
+     object.mOri.mValues[0] := myVision.objectUserAbsData.mOri.mValues[0];
+     object.mOri.mValues[1] := myVision.objectUserAbsData.mOri.mValues[1];
+     object.mOri.mValues[2] := myVision.objectUserAbsData.mOri.mValues[2];
+     myVision.SaveDataGlobalFrame(object, FALSE);
+  END_IF;
+  object.mFrameTyp := gMcuFrameTyp; 
+  zeroObject.mFrameTyp := gMcuFrameTyp; 
+  
+  RcuRefSysSet(myRobot.RcuRefSystemVisionRel, object, myRobot.RcuRefSystemVisionAbs, FALSE, "VisionRel");
+  myRobot.homing.StoreRefSystemVision(TRUE, object);
+  IF myRobot.bOnlineCorr THEN
+      RcuRefSysSet(myRobot.RcuRefSystemSensor, zeroObject, myRobot.RcuRefSystemVisionRel, TRUE, "Sensor"); // TRUE = tracking
+      myRobot.homing.StoreRefSystemVision(FALSE, zeroObject);
+      RcuRefSysActivate(myRobot.RcuRefSystemSensor);
+  END_IF;
+  RcuRefSysSet(myRobot.RcuRefSystemObject, zeroObject, myRobot.RcuRefSystemSensor, FALSE, "Object");
+  IF myVision.bShiftA7Enable THEN
+     IF myVision.iShiftA7Direction = 1 THEN
+        myVision.rShiftA7Value := object.mPos.mValues[0] * myVision.rShiftA7Sign;
+     ELSIF myVision.iShiftA7Direction = 2 THEN
+        myVision.rShiftA7Value := object.mPos.mValues[1] * myVision.rShiftA7Sign;
+     END_IF;
+     sLogText := "MacroReceiveVisionData Absolute - ShiftA7Value = " + STR(myVision.rShiftA7Value);
+     myRobot.logger.SetLoggerStep(iLoggerNumber, sLogText);
+     myVision.rShiftA7Abs := myVision.rShiftA7Value;
+  END_IF;
+  
+  calcObj.X_mm  := object.mPos.mValues[0]; 
+  calcObj.Y_mm  := object.mPos.mValues[1];
+  calcObj.Z_mm  := object.mPos.mValues[2];
+  calcObj.A_deg := object.mOri.mValues[0];
+  calcObj.B_deg := object.mOri.mValues[1];
+  calcObj.C_deg := object.mOri.mValues[2];
+//  myVision.CalcActualObject(calcObj, FALSE);
+  myVision.CalcActualObject();
+  RETURN TRUE;
+  
+END_ROUTINE
+
+
+(************************************************************************
+* Types
+*)
+
+TYPE PRIVATE
+   TMainModes : (eNoMode, eSemiAuto, eAuto, eSimWithVal, eCalibration, eOffline);
+END_TYPE
+
+(************************************************************************
+* Constants
+*)
+CONSTANT PRIVATE   
+   cSequenceTime    : INT  :=  1000;   //timeout for Sequence feedback 1000ms = 1sec
+   cFeedbackTime    : INT  := 10000;   //timeout for RGS feedback 10000ms = 10sec
+   cPictureTime     : INT  :=  5000;   //timeout to take one picture 5000ms = 5sec
+   cDispValueTime   : INT  :=  3000;   //timeout to receive displacementvalues 3000ms = 3sec
+   cTrgSignalTime   : INT  :=    40;   //after this time Triggersignal is reset 40ms
+END_CONSTANT
+
+
+(************************************************************************
+* Variables
+*)
+VAR PRIVATE
+
+  myRobot           : MAPTO TRcuRobot;
+  myVision          : MAPTO TRCuVision;
+  instId            : DINT;    // instance identification number
+
+  rLinLimitViva     : REAL := 10.0;    // mm 
+  rMaxDeltaCorr     : REAL := 0.5;     // mm
+  rScalPos          : REAL := 10.0;
+  rScalOri          : REAL := 100.0;
+  
+  //Operating-data
+  modeFromViva      : TMainModes;
+  modeToViva        : TMainModes;
+  bReadyToStart     : BOOL;
+  bRunProgSequence  : BOOL;
+  bProgSequenceFin  : BOOL;
+  iProgNrToRgs      : INT;
+  bRunMesSequence   : BOOL;
+  bRunLastSequence  : BOOL;
+  bMesSequenceFin   : BOOL;
+                    
+  bInSystemRun      : BOOL;
+  bInSystemOnline   : BOOL;
+  bInSystemReady    : BOOL;
+  bInErrorPending   : BOOL;
+  bInSystemBusy     : BOOL;
+  bInPreparationOK  : BOOL;
+  bInRunOK          : BOOL;
+  bInResult         : BOOL;
+  bInRunning        : BOOL;
+  bInPicRecording   : BOOL;
+  bInMeasureOK      : BOOL;
+  bInMeasureNOK     : BOOL;
+  
+  bRunCtrlSequence  : BOOL;
+  iCtrlMode         : SINT;
+  bRunUpdateRobPos  : BOOL;
+  
+  //Operating-data
+  bFatalError       : BOOL;
+  bErrorPending     : BOOL;
+  bCheckNewErrors   : BOOL;
+  bErrorQuit        : BOOL;
+  bSimulateSystem   : BOOL;
+  iCntTriggers      : SINT;
+  yErrorStates      : ARRAY [8] OF BOOL;
+  bPosValid         : BOOL;
+  
+  bCorrActive       : BOOL;
+    
+END_VAR
+
+//------------------------------------------------------------------------
+// Set Prognr. / mainmode / errorquit to RGS
+//------------------------------------------------------------------------
+ROUTINE ProgInfoSequence() PRIVATE
+ VAR
+   bTimeOut : BOOL;
+   bOk      : BOOL;
+   i        : SINT;
+ END_VAR
+
+ 
+  bProgSequenceFin := FALSE;
+  WHILE TRUE DO
+    WAIT bRunProgSequence;
+    bRunProgSequence := FALSE;
+    bProgSequenceFin := FALSE;
+    bOk              := TRUE;
+    bTimeOut         := FALSE;
+    bReadyToStart    := FALSE;
+    
+   //Schritt 1 - Setzen Betriebsart Auto
+   IF bOk THEN
+      IF (modeFromViva < eAuto) THEN 
+         modeToViva := eAuto;
+         bTimeOut := FALSE;
+         SysTimerSet(cSequenceTime, bTimeOut);
+         WAIT (modeFromViva = eAuto) OR bTimeOut;
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime), "Automatic");
+            bOk := FALSE;
+         END_IF;
+      END_IF;
+   END_IF; 
+    
+   //Schritt 2 - Warten bis bereit für Messung
+   IF bOk THEN
+      IF NOT WaitSystemReady(TRUE) THEN
+         //Schritt 3 - Anstehende Fehler quittieren
+         bErrorQuit := TRUE;
+         bTimeOut   := FALSE;
+         SysTimerSet(cSequenceTime, bTimeOut);
+         WAIT NOT bErrorPending OR bTimeOut;
+         IF bTimeOut THEN
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutStartSeq, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime));
+         END_IF;
+         IF NOT WaitSystemReady(TRUE) THEN
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutSysReady, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime));
+            bOk := FALSE;
+         END_IF;
+      END_IF;
+   END_IF;
+     
+   //Schritt 4 - Senden ProgrammNummer
+   IF bOk THEN
+      IF bFatalError THEN
+         RcuSetMessageOnce(TRcuVision_ErrNoProgNr, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence");
+         bOk := FALSE;
+      ELSE
+         OutSignals.byteGroupID.svByte := iProgNrToRgs;  
+         OutSignals.byteOrderID.svByte := 1; // subID
+         OutSignals.byteColorID1.svByte   := 0;
+         OutSignals.byteColorID2.svByte   := 0;
+         OutSignals.byteColorID3.svByte   := 0;
+         OutSignals.byteColorID4.svByte   := 0;
+         OutSignals.byteFeatureViewID.svByte := 1; 
+         iCtrlMode        := 1;
+         IF bCorrActive THEN
+            OutSignals.byteExecutionMode.svByte := 16#01;
+         ELSE
+            OutSignals.byteExecutionMode.svByte := 16#00;
+         END_IF;
+         bRunCtrlSequence := TRUE;
+         WAIT NOT bRunCtrlSequence;
+         OutSignals.bStrobePrepar.svBool := TRUE; //set strobe
+         WAIT bInSystemBusy;
+         OutSignals.bStrobePrepar.svBool := FALSE; //lower strobe
+         WAIT bInPreparationOK; 
+         
+         IF GetAckProg() THEN
+            iCntTriggers  := 0;
+            bPosValid := FALSE;
+         END_IF;
+         OutSignals.byteGroupID.svByte    := 0;     //Prog-Nr to 0
+         OutSignals.byteOrderID.svByte    := 0; 
+         OutSignals.byteColorID1.svByte   := 0;
+      END_IF;
+   END_IF;
+        
+   IF bCorrActive THEN
+           //Schritt 5 - Starten Messung
+      IF bOk THEN
+         OutSignals.bStrobeStart.svBool := TRUE; 
+         WAIT NOT bInSystemReady; 
+         OutSignals.bStrobeStart.svBool := FALSE; 
+         IF NOT GetMeasureRunning() THEN
+            RcuSetMessageOnce(TRcuVision_ErrTimeOutStart, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ProgInfoSequence", STR(cSequenceTime));
+            bOk := FALSE;
+         ELSE
+            bReadyToStart := TRUE;   
+         END_IF;
+      END_IF;
+      
+   ELSE
+      IF bOk THEN
+         bReadyToStart := TRUE;   
+      END_IF;
+      OutSignals.byteExecutionMode.svByte := 16#00;
+   END_IF;
+   bProgSequenceFin := TRUE;
+  END_WHILE;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Set Prognr. / mainmode / errorquit to RGS
+//------------------------------------------------------------------------
+ROUTINE MeasureSequence() PRIVATE
+ VAR
+   bTimeOut : BOOL;
+   bOk      : BOOL;
+ END_VAR
+   
+  bMesSequenceFin := FALSE;
+  WHILE TRUE DO
+    WAIT bRunMesSequence OR bRunLastSequence;
+    myRobot.logger.SetLoggerStep(iLoggerNumber, "Messprogramm gestartet");
+    bMesSequenceFin  := FALSE;
+    bOk              := TRUE; 
+    IF bOk THEN
+       IF NOT bReadyToStart THEN                          // MacroSetProgNr was successful
+          RcuSetMessageOnce(TRcuVision_ErrReadyToStart, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.MeasureSequence");
+          bOk := FALSE;
+       END_IF;
+    END_IF;
+     
+    //Schritt 1 - Start Messung
+    IF bOk THEN
+         OutSignals.bStrobeStart.svBool := TRUE; 
+         WAIT NOT bInSystemReady; 
+         OutSignals.bStrobeStart.svBool := FALSE; 
+         IF NOT GetMeasureRunning() THEN
+            RcuSetMessageOnce(TRcuVision_ErrWhileStarting, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.MeasureSequence");
+            bOk := FALSE;
+         END_IF;
+    END_IF;
+    
+    //Schritt 2 - Bild aufgenommen
+    IF bOk THEN
+       IF NOT GetPictureReady() THEN
+          RcuSetMessageOnce(TRcuVision_ErrTimeOutPictureRec, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.MeasureSequence", STR(cSequenceTime));
+          bOk := FALSE;
+       END_IF;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "Bild aufgenommen");
+    END_IF;
+       
+    IF NOT bRunMesSequence AND bRunLastSequence THEN
+       GetMeasureResult();
+    END_IF;
+     
+    bMesSequenceFin  := TRUE;
+    bRunMesSequence  := FALSE;
+    bRunLastSequence := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+               
+//------------------------------------------------------------------------
+//  read in the displacement-values from RGS
+//------------------------------------------------------------------------
+ROUTINE GetMeasureResult() PRIVATE
+ VAR
+  i        : SINT;      
+  s        : STRING;
+  bStatus  : BOOL;
+  bitNr    : INT;
+  bTimeOut : BOOL;
+ END_VAR
+
+  myVision.bCameraAbsDataOk := FALSE;
+  //Schritt 1 - Messung beendet
+  IF NOT GetMeasureFinished() THEN
+     RcuSetMessageOnce(TRcuVision_ErrTimeOutEndMeasure, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.GetMeasureResult", STR(cPictureTime));
+  END_IF;
+  
+  //Schritt 2 - Warten auf Verschiebewerte
+   OutSignals.bytePositionID.svByte := 1;
+   OutSignals.byteGroupID.svByte := iProgNrToRgs;  
+   OutSignals.byteOrderID.svByte := 1; // subID
+   OutSignals.byteColorID1.svByte   := 0;
+   OutSignals.byteColorID2.svByte   := 0;
+   OutSignals.byteColorID3.svByte   := 0;
+   OutSignals.byteColorID4.svByte   := 0;
+   OutSignals.byteFeatureViewID.svByte := 1; 
+  
+  bTimeOut := FALSE;
+  SysTimerSet(cDispValueTime, bTimeOut);
+  WAIT bInSystemReady AND bInRunOK OR bTimeOut; 
+  IF bTimeOut THEN
+     RcuSetMessageOnce(TRcuVision_ErrTimeOutDispVal, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.GetMeasureResult", STR(cDispValueTime));
+     RETURN;
+  END_IF;
+  OutSignals.bStrobeResult.svBool := TRUE;
+  bTimeOut := FALSE;
+  SysTimerSet(cDispValueTime, bTimeOut);
+  WAIT bInSystemBusy OR bTimeOut;
+  IF bTimeOut THEN
+     RcuSetMessageOnce(TRcuVision_ErrTimeOutDispVal, myRobot.kinListInx, 
+                       2, instId, "TRcuVision.GetMeasureResult", STR(cDispValueTime));
+     RETURN;
+  END_IF;
+  OutSignals.bStrobeResult.svBool := FALSE;
+  bTimeOut := FALSE;
+  SysTimerSet(cDispValueTime, bTimeOut);
+  WAIT bInResult OR bTimeOut;
+  IF bTimeOut THEN
+     RcuSetMessageOnce(TRcuVision_ErrTimeOutDispVal, myRobot.kinListInx, 
+                       3, instId, "TRcuVision.GetMeasureResult", STR(cDispValueTime));
+     RETURN;
+  END_IF;
+  
+  
+  //Schritt 3 - Einlesen Daten 
+  myVision.objectCamAbsData.mPos.mValues[0] := TurnByte(InSignals.wVivaValuePosX.svWord) * myVision.tVisionAbsolute.rScaling_X; // X
+  myVision.objectCamAbsData.mPos.mValues[1] := TurnByte(InSignals.wVivaValuePosY.svWord) * myVision.tVisionAbsolute.rScaling_Y; // Y
+  myVision.objectCamAbsData.mPos.mValues[2] := TurnByte(InSignals.wVivaValuePosZ.svWord) * myVision.tVisionAbsolute.rScaling_Z; // Z
+  myVision.objectCamAbsData.mOri.mValues[0] := TurnByte(InSignals.wVivaValueRotX.svWord) * myVision.tVisionAbsolute.rScaling_A; // A
+  myVision.objectCamAbsData.mOri.mValues[1] := TurnByte(InSignals.wVivaValueRotY.svWord) * myVision.tVisionAbsolute.rScaling_B; // B
+  myVision.objectCamAbsData.mOri.mValues[2] := TurnByte(InSignals.wVivaValueRotZ.svWord) * myVision.tVisionAbsolute.rScaling_C; // C
+
+  OutSignals.bQuitData.svBool := TRUE;
+  WAIT NOT InSignals.bSystemReady.svBool;
+  OutSignals.bQuitData.svBool := FALSE;
+  
+  //Schritt 4 - Range prüfen dann ok
+  myVision.SetVisionDataToTeachview(myVision.objectCamAbsData, FALSE);
+  bPosValid := NOT bErrorPending AND InSignals.bPictureOK.svBool; //??????????? pruefen !!!!!!!!!!!!!!!!
+  IF bPosValid THEN
+     IF myVision.CheckDataRange(myVision.objectCamAbsData, FALSE) THEN
+        myVision.bCameraAbsDataOk := TRUE;   
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Prüfung der Daten von RGS erfolgreich");
+        myVision.SaveDataGlobalFrame(myVision.objectCamAbsData, FALSE);
+     ELSE
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Prüfung der Daten von RGS fehlgeschlagen, außerhalb Toleranzbereich");
+     END_IF;
+  END_IF;  
+  
+END_ROUTINE    
+               
+//------------------------------------------------------------------------
+// Set mainmodes to RGS
+// Wenn BA von SPS sich ändert dann RGS in Auto setzen, dann von T1/T2 --> Auto
+// modeToRGS kann bei Programmstart oder UserPage beschrieben werden
+//------------------------------------------------------------------------
+ROUTINE HandleMainMode() PRIVATE
+ VAR
+   bChgModeInt : BOOL;
+   bChgModeExt : BOOL;
+   bTimeOut    : BOOL;
+ END_VAR
+  
+  START ReceiveMainModes();
+  bChgModeInt := IS_CHANGED(modeToViva);
+  bChgModeExt := IS_CHANGED(myRobot.mainModeMgr.externControl);
+  WHILE TRUE DO
+    bChgModeExt := FALSE;
+    bChgModeInt := FALSE;
+    WAIT bChgModeExt OR bChgModeInt;
+    //BA-SPS ändert sich und RGS nicht in Auto/Geist dann in Auto setzen
+    IF bChgModeExt AND myRobot.mainModeMgr.externControl THEN
+       IF (modeFromViva <> eAuto) AND (modeFromViva <> eSimWithVal) THEN
+          IF bErrorPending THEN
+             bErrorQuit := TRUE;
+             Sleep(500);
+             IF bFatalError THEN
+                RcuSetMessageOnce(TRcuVision_ErrNoProgNr, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.HandleMainMode");
+                modeToViva := eNoMode; //reset order
+             END_IF;
+          ELSE 
+             OutSignals.byteControlMode.svByte := 0;
+             modeToViva := eAuto;
+             OutSignals.byteRunMode.svByte := 2;
+             OutSignals.bStrobeMode.svBool := TRUE;
+             myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Auto wurde an RGS gesetzt");
+             //start feedback timer
+             bTimeOut := FALSE;
+             SysTimerSet(cFeedbackTime, bTimeOut);
+             //wait for feedback or timeout
+             WAIT (modeToViva = modeFromViva) OR bTimeOut;
+             //Timeout --> Error 
+             IF bTimeOut THEN
+                //reset order
+                modeToViva := eNoMode;
+                RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.HandleMainMode", STR(cFeedbackTime), "Automatic");
+             END_IF;
+             OutSignals.bStrobeMode.svBool := FALSE;
+          END_IF; // bErrorPending
+       END_IF;  // modeFromViva <> eAuto
+    ELSIF bChgModeInt THEN   
+       //BA-Intern ändert sich, dann in Auto-SPS nur Auto und Geist zulassen sonst auch Teilautomatik
+       IF ((modeToViva = eAuto) OR (modeToViva = eSimWithVal) AND myRobot.mainModeMgr.externControl) OR
+          ((modeToViva >= eSemiAuto) AND NOT myRobot.mainModeMgr.externControl) THEN
+          IF bErrorPending THEN
+             bErrorQuit := TRUE;
+             Sleep(500);
+             IF bFatalError THEN
+                RcuSetMessageOnce(TRcuVision_ErrNoProgNr, myRobot.kinListInx, 
+                       2, instId, "TRcuVision.HandleMainMode");
+                modeToViva := eNoMode; //reset order
+             END_IF;
+          ELSE
+             OutSignals.byteControlMode.svByte := 0;
+             //Set new mainmode to RGS
+             IF (modeToViva = eSemiAuto) THEN
+                OutSignals.byteControlMode.svByte := 1;
+                OutSignals.bStrobeMode.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Teil-Auto wurde an VIVA gesetzt");
+             ELSIF (modeToViva = eAuto) THEN
+                OutSignals.byteControlMode.svByte := 2;
+                OutSignals.bStrobeMode.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Auto wurde an VIVA gesetzt");
+             ELSIF (modeToViva = eSimWithVal) THEN
+                OutSignals.byteControlMode.svByte := 3;
+                OutSignals.bStrobeMode.svBool := TRUE;
+                myRobot.logger.SetLoggerStep(iLoggerNumber, "Die Betriebsart Simulation mit Ergebnisuebertragung an VIVA");
+             END_IF;
+             //start feedback timer
+             bTimeOut := FALSE;
+             SysTimerSet(cFeedbackTime, bTimeOut); 
+             //wait for feedback or timeout
+             WAIT (modeToViva = modeFromViva) OR bTimeOut;
+             //Timeout --> Error 
+             IF bTimeOut THEN
+                //reset order
+                modeToViva := eNoMode;
+                RcuSetMessageOnce(TRcuVision_ErrTimeOutMainMode, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.HandleMainMode", STR(cFeedbackTime), "");
+             END_IF;
+             OutSignals.bStrobeMode.svBool := FALSE;
+          END_IF; // bErrorPending
+       END_IF; // eAuto / eSim
+    END_IF;  // bChgModeExt / bChgModeInt
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Receive mainmodes from RGS
+//------------------------------------------------------------------------
+ROUTINE ReceiveMainModes() PRIVATE
+ VAR
+   bChgModeFromViva : BOOL;
+   iByteValue       : INT;
+ END_VAR
+ 
+ IF bSimulateSystem THEN
+    bChgModeFromViva := IS_CHANGED(modeToViva);
+    WHILE TRUE DO
+      WAIT bChgModeFromViva;
+      bChgModeFromViva := FALSE;
+      Sleep(50);
+      modeFromViva := modeToViva;
+    END_WHILE;
+ END_IF; 
+ 
+ bChgModeFromViva := IS_CHANGED(InSignals.bVivaMode.svByte);
+ WHILE TRUE DO
+   iByteValue := InSignals.bVivaMode.svByte;
+   CASE iByteValue OF 
+    1: modeFromViva := eSemiAuto;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "VIVA in Betriebsart Teilautomatik");
+    2: modeFromViva := eAuto;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "VIVA in Betriebsart Automatik");
+    3: modeFromViva := eSimWithVal;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "VIVA in Betriebsart Sim mit Ergebnisuebertragung");
+    5: modeFromViva := eCalibration;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "VIVA in Betriebsart Kalibrierung");
+   12: modeFromViva := eOffline;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "VIVA in Betriebsart Offline");
+   ELSE
+       modeFromViva := eNoMode;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "VIVA in Betriebsart unbekannt");
+   END_CASE;
+   WAIT bChgModeFromViva;
+   bChgModeFromViva := FALSE;
+ END_WHILE;
+ 
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Observe the byte including the error-state
+//------------------------------------------------------------------------
+ROUTINE ObserveErrors() PRIVATE
+ VAR
+   bChgErr1 : BOOL;
+   bChgErr2 : BOOL;
+   bChgErr3 : BOOL;
+   bChgErr4 : BOOL;
+   bChgErr6 : BOOL;
+   bChgErr7 : BOOL;
+   bChgErr8 : BOOL;
+   i        : SINT;
+ END_VAR 
+ 
+   START ObserveErrorQuit();
+   bChgErr1 := IS_CHANGED(InSignals.bErrIntern.svBool);
+   bChgErr2 := IS_CHANGED(InSignals.bErrHardware.svBool);
+   bChgErr3 := IS_CHANGED(InSignals.bErrorComm.svBool);
+   bChgErr4 := IS_CHANGED(InSignals.bErrorSensor.svBool);
+   bChgErr6 := IS_CHANGED(InSignals.bErrorPreparation.svBool);
+   bChgErr7 := IS_CHANGED(InSignals.bErrorRun.svBool);
+   bChgErr8 := IS_CHANGED(InSignals.bErrorTolerance.svBool);
+   WHILE TRUE DO
+     IF NOT(InSignals.bErrIntern.svBool OR InSignals.bErrHardware.svBool OR
+            InSignals.bErrorComm.svBool OR InSignals.bErrorSensor.svBool OR
+            InSignals.bErrorPreparation.svBool OR InSignals.bErrorRun.svBool OR
+            InSignals.bErrorTolerance.svBool) THEN
+        bErrorPending := FALSE;
+        bFatalError   := FALSE;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "No Error");
+        FOR i:=0 TO 7 DO
+            yErrorStates[i] := FALSE;
+        END_FOR;
+     ELSE
+        //Bit 0
+        IF InSignals.bErrIntern.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrCommPbVision, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler: Intern");
+           yErrorStates[0] := TRUE;
+        END_IF;
+        //Bit 1
+        IF InSignals.bErrHardware.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrCommPbVision, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler: Hardware");
+           yErrorStates[1] := TRUE;
+        END_IF;
+        // Bit 2
+        IF InSignals.bErrorComm.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrCommRobVision, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler: Kommunikation");
+           yErrorStates[2] := TRUE;
+        END_IF;
+        //Bit 3
+        IF InSignals.bErrorSensor.svBool THEN
+           bErrorPending := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrCommRobVision, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler: Sensor");  
+           yErrorStates[3] := TRUE;
+        END_IF;
+        //BIT 5
+        IF InSignals.bErrorPreparation.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrWrongTypColor, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler bei der Vorbereitung");
+           yErrorStates[5] := TRUE;
+        END_IF;
+        //BIT 6
+        IF InSignals.bErrorRun.svBool THEN
+           bErrorPending := TRUE;
+           bFatalError   := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrWrongTypColor, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Fehler bei Ablauf");
+           yErrorStates[6] := TRUE;
+        END_IF;
+        //Bit 7
+        IF InSignals.bErrorTolerance.svBool THEN
+           bErrorPending := TRUE;
+           RcuSetMessageOnce(TRcuVision_ErrWrongTypColor, myRobot.kinListInx, 
+                       1, instId, "TRcuVision.ObserveErrors");
+           myRobot.logger.SetLoggerStep(iLoggerNumber, "Toleranzfehler");
+           yErrorStates[7] := TRUE;
+        END_IF;
+      END_IF;    
+      WAIT bChgErr1 OR bChgErr2 OR bChgErr3 OR bChgErr4 OR bChgErr6 OR bChgErr7 OR bChgErr8 OR bCheckNewErrors;
+      bChgErr1 := FALSE;
+      bChgErr2 := FALSE;
+      bChgErr3 := FALSE;
+      bChgErr4 := FALSE;
+      bChgErr6 := FALSE;
+      bChgErr7 := FALSE;
+      bChgErr8 := FALSE;
+      bCheckNewErrors := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Quit errors from RGS-Sensor
+//------------------------------------------------------------------------
+ROUTINE ObserveErrorQuit() PRIVATE
+ VAR
+   bChgInternalQuit : BOOL;
+   bChgErrPending   : BOOL;
+   bTimeOut         : BOOL;
+ END_VAR
+
+  bChgInternalQuit := IS_CHANGED(bErrorQuit);           //internal
+  bChgErrPending   := IS_CHANGED(myRobot.bRcuAnyErrorPending); //Alarmsystem
+  WHILE TRUE DO
+     WAIT bChgInternalQuit OR bChgErrPending;
+     IF ((bChgErrPending AND NOT myRobot.bRcuAnyErrorPending) OR bErrorQuit) THEN
+        OutSignals.bQuitError.svBool := TRUE;
+        PRINT("Quit Errors to VIVA");
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Quit Errors to VIVA");
+        bTimeOut := FALSE;
+        SysTimerSet(cSequenceTime, bTimeOut);
+        WAIT (NOT bErrorPending OR bTimeOut);
+        bCheckNewErrors := TRUE;
+        OutSignals.bQuitError.svBool := FALSE;
+     END_IF;
+     bErrorQuit := FALSE;
+     bChgErrPending   := FALSE;
+     bChgInternalQuit := FALSE;
+  END_WHILE;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait for Signal System ready
+//------------------------------------------------------------------------
+ROUTINE WaitSystemReady(positiv : BOOL) : BOOL PRIVATE
+  VAR
+    bChgReady   : BOOL;
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+//  bChgByte := IS_CHANGED(yInData[cInStateByte2]);
+  IF positiv = InSignals.bSystemReady.svBool THEN
+     RETURN TRUE;
+  END_IF;
+  bChgReady := IS_CHANGED(InSignals.bSystemReady.svBool);
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cSequenceTime, bTimeOut); 
+    WAIT bChgReady OR bTimeOut;
+    bChgReady := FALSE;
+    IF NOT bTimeOut THEN
+       IF positiv THEN
+          IF InSignals.bSystemReady.svBool THEN
+              RETURN TRUE;
+          END_IF;
+       ELSE
+          IF NOT InSignals.bSystemReady.svBool THEN
+              RETURN TRUE;
+          END_IF;
+       END_IF;   
+    ELSE
+       RETURN FALSE;
+    END_IF;
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait for ACK Program-Number or Timeout
+//------------------------------------------------------------------------
+ROUTINE GetAckProg() : BOOL PRIVATE
+  VAR
+    bChgAck    : BOOL;
+    bTimeOut   : BOOL;
+  END_VAR;
+
+  (*
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+//  bChgByte := IS_CHANGED(yInData[cInStateByte]);
+  bChgAck := IS_CHANGED(InSignals.bAckData.svBool);
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cFeedbackTime, bTimeOut); 
+  WHILE TRUE DO 
+    IF bFatalError THEN
+       RETURN FALSE;
+    END_IF;
+    IF NOT bTimeOut THEN
+       IF InSignals.bAckData.svBool THEN
+           RETURN TRUE;
+       END_IF;
+    ELSE
+       PRINT("Zeitüberschreitung quit Programmnummer");
+       RETURN FALSE;
+    END_IF;
+    WAIT bChgAck OR bTimeOut OR bFatalError;
+    bChgAck := FALSE;
+  END_WHILE;
+  *)
+  RETURN FALSE;
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until RGS has started the measuring
+//------------------------------------------------------------------------
+(*
+ROUTINE GetReadyForMeasuring() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cSequenceTime, bTimeOut); 
+  
+//  WAIT (bInPicRecording AND bInMeasuring AND bInSendingData) OR bTimeOut OR bErrorPending;
+//  WAIT (bInPicRecording AND bInMeasuring) OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+
+END_ROUTINE
+*)
+//------------------------------------------------------------------------
+// wait until RGS has startet the measuring
+//------------------------------------------------------------------------
+ROUTINE GetMeasureRunning() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cSequenceTime, bTimeOut);
+  WAIT bInRunning OR bInPicRecording OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until picture is ready
+//------------------------------------------------------------------------
+ROUTINE GetPictureReady() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cPictureTime, bTimeOut); 
+  WAIT NOT bInPicRecording OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// wait until measuring is finished
+//------------------------------------------------------------------------
+ROUTINE GetMeasureFinished() : BOOL PRIVATE
+  VAR
+    bTimeOut   : BOOL;
+  END_VAR;
+  
+  IF bSimulateSystem THEN
+     Sleep(100);
+     RETURN TRUE;
+  END_IF;
+  //start feedback timer
+  bTimeOut := FALSE;
+  SysTimerSet(cPictureTime, bTimeOut); 
+  WAIT (NOT bInPicRecording AND NOT bInSystemBusy) OR bTimeOut OR bFatalError;
+  IF bFatalError OR bTimeOut THEN
+     RETURN FALSE;
+  ELSE
+     RETURN TRUE;
+  END_IF;
+    
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// decode the VIVA state 
+//------------------------------------------------------------------------
+ROUTINE BuildStateInfo() PRIVATE
+
+  bInSystemRun      := UPDATE(InSignals.bSystemRun.svBool);
+  bInSystemOnline   := UPDATE(InSignals.bSystemOnline.svBool);
+  bInSystemReady    := UPDATE(InSignals.bSystemReady.svBool);
+  bInErrorPending   := UPDATE(InSignals.bErrorPending.svBool);
+  bInSystemBusy     := UPDATE(InSignals.bSystemBusy.svBool);
+  bInPreparationOK  := UPDATE(InSignals.bPreparationOK.svBool);
+  bInRunOK          := UPDATE(InSignals.bRunOK.svBool);
+  bInResult         := UPDATE(InSignals.bResult.svBool);
+  bInRunning        := UPDATE(InSignals.bRunning.svBool);
+  bInPicRecording   := UPDATE(InSignals.bPictureRun.svBool);
+  bInMeasureOK      := UPDATE(InSignals.bPictureOK.svBool);
+  bInMeasureNOK     := UPDATE(InSignals.bPictureNOK.svBool);
+  
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Set Execution Mode to ISRA - Viva always 1
+//------------------------------------------------------------------------
+ROUTINE SetExecutionModeToISRA(iMode : SINT) PRIVATE
+   
+  // 1 entspricht der "kontinuierlichen Ausfuehrung"
+  OutSignals.byteExecutionMode.svByte := iMode;
+  
+END_ROUTINE
+
+//------------------------------------------------------------------------
+// Set Control Mode to ISRA - Start path = 1, End path = 2
+//------------------------------------------------------------------------
+ROUTINE SetCtrlModeToISRA() PRIVATE
+VAR
+   bTimeOut : BOOL;
+END_VAR
+
+  WHILE TRUE DO
+     WAIT bRunCtrlSequence;
+     IF iCtrlMode = 1 THEN
+//           yOutData[cOutCtrlMode] := 16#03;
+        OutSignals.byteControlMode.svByte := 16#03;
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Ctrl mode start Messung für ISRA");
+     ELSIF iCtrlMode = 2 THEN
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Ctrl mode Ende Messung für ISRA");
+//           yOutData[cOutCtrlMode] := 16#04;
+        OutSignals.byteControlMode.svByte := 16#04;
+        Sleep(200);                              //Test für Viva
+//           yOutData[cOutCtrlMode] := 16#0C;
+        OutSignals.bResetExec.svBool := TRUE;    // statt OutSignals.byteControlMode.svByte := 16#0C;
+        WAIT bInSystemReady;
+        OutSignals.byteControlMode.svByte := 16#00;
+        OutSignals.byteExecutionMode.svByte := 16#00;
+        OutSignals.bResetExec.svBool := FALSE;    // statt OutSignals.byteControlMode.svByte := 16#0C;
+        bRunUpdateRobPos     := FALSE;
+        Sleep(1000);                             //Test für Viva
+//           yOutData[cOutViewID] := 0;
+         OutSignals.bQuitData.svBool := TRUE;  // Bahnkorrekturwerte nullen
+         bTimeOut := FALSE;
+         SysTimerSet(1000, bTimeOut);
+         WAIT InSignals.bSystemBusy.svBool OR bTimeOut;
+         OutSignals.bQuitData.svBool := FALSE;
+     ELSE
+        myRobot.logger.SetLoggerStep(iLoggerNumber, "Ungültiger Ctrl mode für ISRA");
+     END_IF;
+     iCtrlMode        := 0;
+     bRunCtrlSequence := FALSE;
+  END_WHILE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Lifebit from/to VIVA inverted
+//------------------------------------------------------------------------
+ROUTINE UpdateVivaLifeBit() PRIVATE
+VAR
+   bChg : BOOL;
+END_VAR
+
+   bChg := IS_CHANGED(InSignals.bLifeSignal.svBool);
+   WHILE TRUE DO
+      OutSignals.bLifeSignal.svBool := NOT InSignals.bLifeSignal.svBool;
+      WAIT bChg;
+      bChg := FALSE;
+   END_WHILE;
+END_ROUTINE
+
+
+//------------------------------------------------------------------------
+// Copy readback values to ISRA
+//------------------------------------------------------------------------
+ROUTINE UpdateRobPosToISRA() PRIVATE
+VAR
+   rTmp      : REAL;
+   iTmp      : INT;
+   iCycleCnt : DINT;
+   bChgCnt   : BOOL;
+   rLastPosX : REAL;
+   rLastPosY : REAL;
+   rLastPosZ : REAL;  
+   rISRAObjX : REAL;
+   rISRAObjY : REAL;
+   rISRAObjZ : REAL;
+   rRobObjX : REAL;
+   rRobObjY : REAL;
+   rRobObjZ : REAL;
+   rRobReadbackX : REAL;
+   rRobReadbackY : REAL;
+   rRobReadbackZ : REAL;
+   rISRAVelX : REAL;
+   rISRAVelY : REAL;
+   rISRAVelZ : REAL;
+   actObjPos : TMcuFrame;
+   dX        : REAL;
+   dY        : REAL;
+   dZ        : REAL;
+END_VAR
+  
+  // Kemroskop test
+  SwoAddRealVariable(rISRAObjX, "ISRA-Object.ValueX");
+  SwoAddRealVariable(rISRAObjY, "ISRA-Object.ValueY");
+  SwoAddRealVariable(rISRAObjZ, "ISRA-Object.ValueZ");
+  SwoAddRealVariable(rRobObjX, "Rob-Object.ValueX");
+  SwoAddRealVariable(rRobObjY, "Rob-Object.ValueY");
+  SwoAddRealVariable(rRobObjZ, "Rob-Object.ValueZ");
+  SwoAddRealVariable(rRobReadbackX, "Rob-Readback.ValueX");
+  SwoAddRealVariable(rRobReadbackY, "Rob-Readback.ValueY");
+  SwoAddRealVariable(rRobReadbackZ, "Rob-Readback.ValueZ");
+  SwoAddRealVariable(rISRAVelX, "ISRA-Velo.ValueX");
+  SwoAddRealVariable(rISRAVelY, "ISRA-Velo.ValueY");
+  SwoAddRealVariable(rISRAVelZ, "ISRA-Velo.ValueZ");
+  bChgCnt := IS_CHANGED(myRobot.actDrives.mUpdateCounterDrives);
+  WHILE TRUE DO
+  
+    IF NOT bRunUpdateRobPos THEN
+       WAIT bRunUpdateRobPos;
+       iCycleCnt := 0;
+       myRobot.ActPosInVisAbsCoord(actObjPos); // Aktuelle Position im KS Welt + SETOBJECT
+       rLastPosX := actObjPos.mPos.mValues[0];
+       rLastPosY := actObjPos.mPos.mValues[1];
+       rLastPosZ := actObjPos.mPos.mValues[2];
+    END_IF;  
+    WAIT bChgCnt;
+    bChgCnt := FALSE;    
+    
+    //CycleCounter 
+    iCycleCnt := iCycleCnt + 1;
+    IF iCycleCnt >= 65536 THEN
+       iCycleCnt := 0;
+       myRobot.logger.SetLoggerStep(iLoggerNumber, "ERROR - McCyclesCounter Überlauf");
+    END_IF;
+    iTmp := iCycleCnt;
+    OutSignals.wRobotPosID.svWord := TurnByte(iTmp);
+    
+    myRobot.ActPosInVisAbsCoord(actObjPos); // Aktuelle Position im KS Welt + SETOBJECT
+
+    rRobObjX := actObjPos.mPos.mValues[0];
+    rRobObjY := actObjPos.mPos.mValues[1];
+    rRobObjZ := actObjPos.mPos.mValues[2];
+    
+    rRobReadbackX := myRobot.readBackVals.mCartPos.mValues[0];
+    rRobReadbackY := myRobot.readBackVals.mCartPos.mValues[1];
+    rRobReadbackZ := myRobot.readBackVals.mCartPos.mValues[2];
+
+   
+    //X
+    rTmp := actObjPos.mPos.mValues[0] * rScalPos;
+    IF rAbs(rTmp) > 32767.0 THEN
+       RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 4, instId, 
+                         "TRcuVision.UpdateRobPosToISRA", " X="+ STR(actObjPos.mPos.mValues[0]) + " mm ");
+    ELSE
+       iTmp := INT(rTmp);
+       OutSignals.wRobotPosX.svWord := TurnByte(iTmp);
+    END_IF;
+    //Velo X
+    rISRAVelX := (actObjPos.mPos.mValues[0] - rLastPosX) / grCycleTime;
+    iTmp := INT(rISRAVelX);
+    OutSignals.wRobotVelX.svWord := TurnByte(iTmp);
+    rLastPosX := actObjPos.mPos.mValues[0];
+    iDebugVeloX := iTmp;
+    
+    //Y
+    rTmp := actObjPos.mPos.mValues[1] * rScalPos;
+    IF rAbs(rTmp) > 32767.0 THEN
+       RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 5, instId, 
+                         "TRcuVision.UpdateRobPosToISRA", " Y="+ STR(actObjPos.mPos.mValues[1]) + " mm ");
+    ELSE
+       iTmp := INT(rTmp);
+       OutSignals.wRobotPosY.svWord := TurnByte(iTmp);
+    END_IF;
+    //Velo Y
+    rISRAVelY := (actObjPos.mPos.mValues[1] - rLastPosY) / grCycleTime;
+    iTmp := INT(rISRAVelY);
+    OutSignals.wRobotVelX.svWord := TurnByte(iTmp);
+    rLastPosY := actObjPos.mPos.mValues[1];
+    iDebugVeloY := iTmp;
+    
+    //Z
+    rTmp := actObjPos.mPos.mValues[2] * rScalPos;
+    IF rAbs(rTmp) > 32767.0 THEN
+       RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 6, instId, 
+                         "TRcuVision.UpdateRobPosToISRA", " Z="+ STR(actObjPos.mPos.mValues[2]) + " mm ");
+    ELSE
+       iTmp := INT(rTmp);
+       OutSignals.wRobotPosZ.svWord := TurnByte(iTmp);
+    END_IF;
+    //Velo Z
+    rISRAVelZ := (actObjPos.mPos.mValues[2] - rLastPosZ) / grCycleTime;
+    iTmp := INT(rISRAVelZ);
+    OutSignals.wRobotVelZ.svWord := TurnByte(iTmp);
+    rLastPosZ := actObjPos.mPos.mValues[2];
+    iDebugVeloZ := iTmp;
+    
+    //A
+    rTmp := actObjPos.mOri.mValues[0] * rScalOri;
+    IF rAbs(rTmp) > 32767.0 THEN
+       RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 7, instId, 
+                         "TRcuVision.UpdateRobPosToISRA", " A="+ STR(actObjPos.mOri.mValues[0]) + " deg ");
+    ELSE
+       iTmp := INT(rTmp);
+       OutSignals.wRobotRotX.svWord := TurnByte(iTmp);
+    END_IF;
+    //B
+    rTmp := actObjPos.mOri.mValues[1] * rScalOri;
+    IF rAbs(rTmp) > 32767.0 THEN
+       RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 8, instId, 
+                         "TRcuVision.UpdateRobPosToISRA", " B="+ STR(actObjPos.mOri.mValues[1]) + " deg ");
+    ELSE
+       iTmp := INT(rTmp);
+       OutSignals.wRobotRotY.svWord := TurnByte(iTmp);
+    END_IF;
+    //C
+    rTmp := actObjPos.mOri.mValues[2] * rScalOri;
+    IF rAbs(rTmp) > 32767.0 THEN
+       RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 9, instId, 
+                         "TRcuVision.UpdateRobPosToISRA", " C="+ STR(actObjPos.mOri.mValues[2]) + " deg ");
+    ELSE
+       iTmp := INT(rTmp);
+       OutSignals.wRobotRotZ.svWord := TurnByte(iTmp);
+    END_IF;
+    
+    //ISRA-Values to Kemroscope
+    rISRAObjX := TurnByte(InSignals.wVivaValuePosX.svWord) * myVision.tVisionAbsolute.rScaling_X; // X
+    rISRAObjY := TurnByte(InSignals.wVivaValuePosY.svWord) * myVision.tVisionAbsolute.rScaling_Y; // Y
+    rISRAObjZ := TurnByte(InSignals.wVivaValuePosZ.svWord) * myVision.tVisionAbsolute.rScaling_Z; // Z
+   
+    IF rAbs(rISRAObjX) > rLinLimitViva THEN   
+      RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 1, instId, "TRcuVision.UpdateRobPosToISRA", " X="+ STR(rISRAObjX) + " mm ");
+    ELSE
+       dX := rISRAObjX - gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0];
+       IF dX > rMaxDeltaCorr THEN
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := 
+             gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] + rMaxDeltaCorr;
+       ELSIF (dX >= -rMaxDeltaCorr) THEN
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := rISRAObjX;
+       ELSE
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] := 
+             gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[0] - rMaxDeltaCorr;
+       END_IF;
+    END_IF;
+
+    IF rAbs(rISRAObjY) > rLinLimitViva THEN   
+      RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 2, instId, "TRcuVision.UpdateRobPosToISRA", " Y="+ STR(rISRAObjY) + " mm ");
+    ELSE
+       dY := rISRAObjY - gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1];
+       IF dY > rMaxDeltaCorr THEN
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := 
+             gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] + rMaxDeltaCorr;
+       ELSIF (dY >= -rMaxDeltaCorr) THEN
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := rISRAObjY;
+       ELSE
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] := 
+             gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[1] - rMaxDeltaCorr;
+       END_IF;
+    END_IF;
+
+    IF rAbs(rISRAObjZ) > rLinLimitViva THEN   
+      RcuSetMessageOnce(TRcuVision_ErrValTooBig, myRobot.kinListInx, 3, instId, "TRcuVision.UpdateRobPosToISRA", " Z="+ STR(rISRAObjZ) + " mm ");
+    ELSE
+       dZ := rISRAObjZ - gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2];
+       IF dZ > rMaxDeltaCorr THEN
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := 
+             gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] + rMaxDeltaCorr;
+       ELSIF (dZ >= -rMaxDeltaCorr) THEN
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := rISRAObjZ;
+       ELSE
+          gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] := 
+             gyRcuTrackingFrame[myRobot.RcuRefSystemSensor].mPos.mValues[2] - rMaxDeltaCorr;
+       END_IF;
+    END_IF;
+  END_WHILE;
+  
+END_ROUTINE
+
+
+
+
+CONSTANT PRIVATE
+//---------------------------------------------------------------------------------------------------
+//-----------------  Hardware-Endpoint to Fieldbus-Master ISRA-VIVA-System --------------------------
+//---------------------------------------------------------------------------------------------------
+   
+//--------------------------------------------------------------------------   
+//                 Inputs
+//--------------------------------------------------------------------------   
+
+   cHW_SLI_mVivaSystemRun        : STRING := "HWI_mVivaSystemRun";
+   cHW_SLI_mVivaSystemOnline     : STRING := "HWI_mVivaSystemOnline";
+   cHW_SLI_mVivaSystemReady      : STRING := "HWI_mVivaSystemReady";
+   cHW_SLI_mVivaErrorPending     : STRING := "HWI_mVivaErrorPending";
+   cHW_SLI_mVivaSystemBusy       : STRING := "HWI_mVivaSystemBusy";
+   cHW_SLI_mVivaPreparationOK    : STRING := "HWI_mVivaPreparationOK";
+   cHW_SLI_mVivaRunOK            : STRING := "HWI_mVivaRunOK";
+   cHW_SLI_mVivaResult           : STRING := "HWI_mVivaResult";
+   cHW_SLI_mVivaRunning          : STRING := "HWI_mVivaRunning";
+   cHW_SLI_mVivaPictureRun       : STRING := "HWI_mVivaPictureRun";
+   cHW_SLI_mVivaPictureOK        : STRING := "HWI_mVivaPictureOK";
+   cHW_SLI_mVivaPictureNOK       : STRING := "HWI_mVivaPictureNOK";
+   cHW_SLI_mVivaLifeSignal       : STRING := "HWI_mVivaLifeSignal";
+   cHW_SLI_mVivaErrIntern        : STRING := "HWI_mVivaErrIntern";
+   cHW_SLI_mVivaErrHardware      : STRING := "HWI_mVivaErrHardware";
+   cHW_SLI_mVivaErrorComm        : STRING := "HWI_mVivaErrorComm";
+   cHW_SLI_mVivaErrorSensor      : STRING := "HWI_mVivaErrorSensor";
+   cHW_SLI_mVivaErrorPreparation	: STRING := "HWI_mVivaErrorPreparation";
+   cHW_SLI_mVivaErrorRun         : STRING := "HWI_mVivaErrorRun";
+   cHW_SLI_mVivaErrorTolerance	: STRING := "HWI_mVivaErrorTolerance";
+   cHW_SLI_bVivaMode             : STRING := "HWI_bVivaMode";
+   cHW_SLI_bVivaPositionNo       : STRING := "HWI_bVivaPositionNo";
+   cHW_SLI_bVivaNumber           : STRING := "HWI_bVivaNumber";
+   cHW_SLI_wVivaValuePosX        : STRING := "HWI_wVivaValuePosX";
+   cHW_SLI_wVivaValuePosY        : STRING := "HWI_wVivaValuePosY";
+   cHW_SLI_wVivaValuePosZ        : STRING := "HWI_wVivaValuePosZ";
+   cHW_SLI_wVivaValueRotX        : STRING := "HWI_wVivaValueRotX";
+   cHW_SLI_wVivaValueRotY        : STRING := "HWI_wVivaValueRotY";
+   cHW_SLI_wVivaValueRotZ        : STRING := "HWI_wVivaValueRotZ";
+   
+//--------------------------------------------------------------------------   
+//                 Outputs
+//--------------------------------------------------------------------------   
+
+   cHW_SLO_mVivaStrobeMode       : STRING := "HWO_mVivaStrobeMode";
+   cHW_SLO_mVivaStrobePrepar     : STRING := "HWO_mVivaStrobePrepar";
+   cHW_SLO_mVivaStrobeStart      : STRING := "HWO_mVivaStrobeStart";
+   cHW_SLO_mVivaStrobeResult     : STRING := "HWO_mVivaStrobeResult";
+   cHW_SLO_mVivaResetExec        : STRING := "HWO_mVivaResetExec";
+   cHW_SLO_mVivaQuitData         : STRING := "HWO_mVivaQuitData";
+   cHW_SLO_mVivaQuitError        : STRING := "HWO_mVivaQuitError";
+   cHW_SLO_mVivaLifeSignal       : STRING := "HWO_mVivaLifeSignal";
+   cHW_SLO_bVivaControlMode      : STRING := "HWO_bVivaControlMode";
+   cHW_SLO_bVivaRunMode          : STRING := "HWO_bVivaRunMode";
+   cHW_SLO_bVivaExecutionMode    : STRING := "HWO_bVivaExecutionMode";
+   cHW_SLO_bVivaGroupID          : STRING := "HWO_bVivaGroupID";
+   cHW_SLO_bVivaOrderID          : STRING := "HWO_bVivaOrderID";
+   cHW_SLO_bVivaPositionID       : STRING := "HWO_bPositionID";
+   cHW_SLO_bVivaFeatureViewID    : STRING := "HWO_bVivaFeatureViewID";
+   cHW_SLO_bVivaColorID1         : STRING := "HWO_bVivaColorID1";
+   cHW_SLO_bVivaColorID2         : STRING := "HWO_bVivaColorID2";
+   cHW_SLO_bVivaColorID3         : STRING := "HWO_bVivaColorID3";
+   cHW_SLO_bVivaColorID4         : STRING := "HWO_bVivaColorID4";
+   cHW_SLO_wVivaRobotPosX        : STRING := "HWO_wVivaRobotPosX";
+   cHW_SLO_wVivaRobotPosY        : STRING := "HWO_wVivaRobotPosY";
+   cHW_SLO_wVivaRobotPosZ        : STRING := "HWO_wVivaRobotPosZ";
+   cHW_SLO_wVivaRobotRotX        : STRING := "HWO_wVivaRobotRotX";
+   cHW_SLO_wVivaRobotRotY        : STRING := "HWO_wVivaRobotRotY";
+   cHW_SLO_wVivaRobotRotZ        : STRING := "HWO_wVivaRobotRotZ";
+   cHW_SLO_wVivaRobotVelX        : STRING := "HWO_wVivaRobotVelX";
+   cHW_SLO_wVivaRobotVelY        : STRING := "HWO_wVivaRobotVelY";
+   cHW_SLO_wVivaRobotVelZ        : STRING := "HWO_wVivaRobotVelZ";
+   cHW_SLO_wVivaRoboPosID        : STRING := "HWO_wVivaRoboPosID";
+
+   
+END_CONSTANT
+
+TYPE PRIVATE
+   tsVivaInputs : STRUCT
+      bSystemRun        : TInOutBool;          // Status System läuft
+      bSystemOnline     : TInOutBool;          // Status System Online
+      bSystemReady      : TInOutBool;          // Status System Bereit
+      bErrorPending     : TInOutBool;          // Status Fehler liegt an
+      bSystemBusy       : TInOutBool;          // Status System beschäftigt
+      bPreparationOK    : TInOutBool;          // Status Vorbereitung OK
+      bRunOK            : TInOutBool;          // System Ablauf OK
+      bResult           : TInOutBool;          // System Ergebnis liegt an
+      bRunning          : TInOutBool;          // System Ablauf läuft
+      bPictureRun       : TInOutBool;          // System Bildaufnahme läuft
+      bPictureOK        : TInOutBool;          // Messung OK
+      bPictureNOK       : TInOutBool;          // Messung NOK
+      bLifeSignal       : TInOutBool;          // Life-Signal
+      bErrIntern        : TInOutBool;          // Fehler: Intern
+      bErrHardware      : TInOutBool;          // Fehler: Hardware
+      bErrorComm        : TInOutBool;          // Fehler: Kommunikation
+      bErrorSensor      : TInOutBool;          // Fehler: Sensor
+      bErrorPreparation	: TInOutBool;          // Fehler: Vorbereitung
+      bErrorRun         : TInOutBool;          // Fehler: Ablauf
+      bErrorTolerance	: TInOutBool;          // Fehler:Toleranz
+      bVivaMode         : TInOutByte;          // Betriebsart
+      byteVivaPositionNo: TInOutByte;          // Position / Nr.
+      byteVivaNumber    : TInOutByte;          // Anzahl (gesamt)
+      wVivaValuePosX    : TInOutWord;          // Ergebnis Tx
+      wVivaValuePosY    : TInOutWord;          // Ergebnis Ty
+      wVivaValuePosZ    : TInOutWord;          // Ergebnis Tz
+      wVivaValueRotX    : TInOutWord;          // Ergebnis Rx (Null bei VisualRC)
+      wVivaValueRotY    : TInOutWord;          // Ergebnis Ry (Null bei VisualRC)
+      wVivaValueRotZ    : TInOutWord;          // Ergebnis Rz (Null bei VisualRC)
+   END_STRUCT;
+   
+   tsVivaOutputs : STRUCT
+      bStrobeMode       : TInOutBool;          // Strobe Betriebsart
+      bStrobePrepar     : TInOutBool;          // Strobe Vorbereitung
+      bStrobeStart      : TInOutBool;          // Strobe Ablaufstart
+      bStrobeResult     : TInOutBool;          // Strobe Ergebnisanfrage
+      bResetExec        : TInOutBool;          // Reset Continuous Execution
+      bQuitData         : TInOutBool;          // Datenquittung
+      bQuitError        : TInOutBool;          // Fehlerquittung
+      bLifeSignal       : TInOutBool;          // LifeSignal
+      byteControlMode	: TInOutByte;          // ControlMode VisualRC
+      byteRunMode       : TInOutByte;          // Kommandoparameter Betriebsart
+      byteExecutionMode	: TInOutByte;          // KommandoparameterModus
+      byteGroupID       : TInOutByte;          // Gruppenkennung
+      byteOrderID       : TInOutByte;          // AufgabenID
+      bytePositionID    : TInOutByte;          // PositionsID
+      byteFeatureViewID	: TInOutByte;          // FeatureViewID
+      byteColorID1      : TInOutByte;          // FarbID
+      byteColorID2      : TInOutByte;          // FarbID
+      byteColorID3      : TInOutByte;          // FarbID
+      byteColorID4      : TInOutByte;          // FarbID
+      wRobotPosX        : TInOutWord;          // Robot Position X
+      wRobotPosY        : TInOutWord;          // Robot Position Y
+      wRobotPosZ        : TInOutWord;          // Robot Position Z
+      wRobotRotX        : TInOutWord;          // Robot Drehung X
+      wRobotRotY        : TInOutWord;          // Robot Drehung Y
+      wRobotRotZ        : TInOutWord;          // Robot Drehung Z
+      wRobotVelX        : TInOutWord;          // Robot Geschwindigkeit X
+      wRobotVelY        : TInOutWord;          // Robot Geschwindigkeit Y
+      wRobotVelZ        : TInOutWord;          // Robot Geschwindigkeit Z
+      wRobotPosID       : TInOutWord;          // Robot PoseID
+   END_STRUCT;
+  
+END_TYPE
+
+VAR PRIVATE
+   InSignals      : tsVivaInputs;
+   OutSignals     : tsVivaOutputs;
+   bMappingOk : BOOL;
+END_VAR
+
+
+//----------------------------------------------------------------------------------------
+// Map all In- and Outputs from one robot to VIVA
+//----------------------------------------------------------------------------------------
+ROUTINE MapVivaSignals() PRIVATE
+VAR
+   sNameSvVar         : STRING;
+   i                  : INT;
+   iRobot             : DINT;
+END_VAR
+ 
+   bMappingOk := TRUE;
+   iRobot     := myRobot.kinListInx;
+   
+  
+(*****************************************************************************************
+***********   Inputs   *******************************************************************
+******************************************************************************************)
+
+   MapAndCheckBoolIn(iRobot, InSignals.bSystemRun, cHW_SLI_mVivaSystemRun, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bSystemOnline, cHW_SLI_mVivaSystemOnline, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bSystemReady, cHW_SLI_mVivaSystemReady, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrorPending, cHW_SLI_mVivaErrorPending, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bSystemBusy, cHW_SLI_mVivaSystemBusy, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bPreparationOK, cHW_SLI_mVivaPreparationOK, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bRunOK, cHW_SLI_mVivaRunOK, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bResult, cHW_SLI_mVivaResult, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bRunning, cHW_SLI_mVivaRunning, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bPictureRun, cHW_SLI_mVivaPictureRun, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bPictureOK, cHW_SLI_mVivaPictureOK, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bPictureNOK, cHW_SLI_mVivaPictureNOK, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bLifeSignal, cHW_SLI_mVivaLifeSignal, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrIntern, cHW_SLI_mVivaErrIntern, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrHardware, cHW_SLI_mVivaErrHardware, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrorComm, cHW_SLI_mVivaErrorComm, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrorSensor, cHW_SLI_mVivaErrorSensor, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrorPreparation, cHW_SLI_mVivaErrorPreparation, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrorRun, cHW_SLI_mVivaErrorRun, bMappingOk);
+   MapAndCheckBoolIn(iRobot, InSignals.bErrorTolerance, cHW_SLI_mVivaErrorTolerance, bMappingOk);
+   MapAndCheckByteIn(iRobot, InSignals.bVivaMode, cHW_SLI_bVivaMode, bMappingOk);
+   MapAndCheckByteIn(iRobot, InSignals.byteVivaPositionNo, cHW_SLI_bVivaPositionNo, bMappingOk);
+   MapAndCheckByteIn(iRobot, InSignals.byteVivaNumber, cHW_SLI_bVivaNumber, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wVivaValuePosX, cHW_SLI_wVivaValuePosX, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wVivaValuePosY, cHW_SLI_wVivaValuePosY, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wVivaValuePosZ, cHW_SLI_wVivaValuePosZ, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wVivaValueRotX, cHW_SLI_wVivaValueRotX, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wVivaValueRotY, cHW_SLI_wVivaValueRotY, bMappingOk);
+   MapAndCheckWordIn(iRobot, InSignals.wVivaValueRotZ, cHW_SLI_wVivaValueRotZ, bMappingOk);
+
+(*****************************************************************************************
+***********   Outputs   ******************************************************************
+******************************************************************************************)   
+		   
+   MapAndCheckBoolOut(iRobot, OutSignals.bStrobeMode, cHW_SLO_mVivaStrobeMode, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bStrobePrepar, cHW_SLO_mVivaStrobePrepar, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bStrobeStart, cHW_SLO_mVivaStrobeStart, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bStrobeResult, cHW_SLO_mVivaStrobeResult, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bResetExec, cHW_SLO_mVivaResetExec, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bQuitData, cHW_SLO_mVivaQuitData, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bQuitError, cHW_SLO_mVivaQuitError, bMappingOk);
+   MapAndCheckBoolOut(iRobot, OutSignals.bLifeSignal, cHW_SLO_mVivaLifeSignal, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteControlMode, cHW_SLO_bVivaControlMode, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteRunMode, cHW_SLO_bVivaRunMode, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteExecutionMode, cHW_SLO_bVivaExecutionMode, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteGroupID, cHW_SLO_bVivaGroupID, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteOrderID, cHW_SLO_bVivaOrderID, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.bytePositionID, cHW_SLO_bVivaPositionID, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteFeatureViewID, cHW_SLO_bVivaFeatureViewID, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteColorID1, cHW_SLO_bVivaColorID1, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteColorID2, cHW_SLO_bVivaColorID2, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteColorID3, cHW_SLO_bVivaColorID3, bMappingOk);
+   MapAndCheckByteOut(iRobot, OutSignals.byteColorID4, cHW_SLO_bVivaColorID4, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotPosX, cHW_SLO_wVivaRobotPosX, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotPosY, cHW_SLO_wVivaRobotPosY, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotPosZ, cHW_SLO_wVivaRobotPosZ, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotRotX, cHW_SLO_wVivaRobotRotX, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotRotY, cHW_SLO_wVivaRobotRotY, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotRotZ, cHW_SLO_wVivaRobotRotZ, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotVelX,	cHW_SLO_wVivaRobotVelX, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotVelY,	cHW_SLO_wVivaRobotVelY, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotVelZ,	cHW_SLO_wVivaRobotVelZ, bMappingOk);
+   MapAndCheckWordOut(iRobot, OutSignals.wRobotPosID, cHW_SLO_wVivaRoboPosID, bMappingOk);
+
+   IF NOT bMappingOk THEN
+    gbBootupError := TRUE;
+    RcuSetMessageOnce(RcuFieldbusSlave_ErrMappingIOs, myRobot.kinListInx, 1, 0, "TRcuVivaVision.MapFieldbusSlave");
+   END_IF;   
+//    PaintRobot[iRobot].bFieldbusSlaveReady := bMappingOk;
+END_ROUTINE
+
