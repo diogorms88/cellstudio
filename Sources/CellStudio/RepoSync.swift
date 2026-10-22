@@ -48,7 +48,10 @@ final class RepoSync: ObservableObject {
     static let shared = RepoSync()
 
     @Published private(set) var items: [RemoteItem] = []
+    /// último commit do branch (os arquivos baixados vêm dele)
     @Published private(set) var latestCommit: String?
+    /// último commit que mudou o app (comparado com BuildInfo.current)
+    @Published private(set) var latestCode: String?
     @Published private(set) var latestMessage: String?
     @Published private(set) var loading = false
     @Published var error: String?
@@ -58,7 +61,7 @@ final class RepoSync: ObservableObject {
     @Published private(set) var manifest: [String: String] = RepoSync.loadManifest()
 
     var updateAvailable: Bool {
-        guard let latest = latestCommit, let mine = BuildInfo.current?.commit, mine != "dev" else { return false }
+        guard let latest = latestCode, let mine = BuildInfo.current?.commit, mine != "dev" else { return false }
         return latest != mine
     }
 
@@ -107,11 +110,12 @@ final class RepoSync: ObservableObject {
         return try JSONSerialization.jsonObject(with: data)
     }
 
-    /// Último commit (para o aviso de versão nova). Silencioso: sem rede, não avisa.
+    /// Último commit que mudou o código (Sources/), para o aviso de versão nova; envios de dados não contam.
+    /// Silencioso: sem rede, não avisa.
     func checkForUpdate() async {
-        guard let branch = try? await Self.api("branches/\(RepoInfo.branch)") as? [String: Any],
-              let commit = branch["commit"] as? [String: Any], let sha = commit["sha"] as? String else { return }
-        latestCommit = sha
+        guard let list = try? await Self.api("commits?sha=\(RepoInfo.branch)&path=Sources&per_page=1") as? [[String: Any]],
+              let commit = list.first, let sha = commit["sha"] as? String else { return }
+        latestCode = sha
         latestMessage = ((commit["commit"] as? [String: Any])?["message"] as? String)?.components(separatedBy: "\n").first
     }
 
@@ -122,6 +126,8 @@ final class RepoSync: ObservableObject {
         defer { loading = false }
         do {
             await checkForUpdate()
+            if let branch = try await Self.api("branches/\(RepoInfo.branch)") as? [String: Any],
+               let commit = branch["commit"] as? [String: Any] { latestCommit = commit["sha"] as? String }
             guard let ref = latestCommit else { throw NSError(domain: "GitHub", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sem conexão com o GitHub"]) }
             guard let tree = try await Self.api("git/trees/\(ref)?recursive=1") as? [String: Any],
                   let entries = tree["tree"] as? [[String: Any]] else { return }
@@ -260,14 +266,14 @@ struct DownloadsView: View {
             HStack {
                 Text("No GitHub")
                 Spacer()
-                Text(repo.latestCommit.map { String($0.prefix(7)) } ?? "…").font(.system(.body, design: .monospaced))
+                Text(repo.latestCode.map { String($0.prefix(7)) } ?? "…").font(.system(.body, design: .monospaced))
             }
             if repo.updateAvailable {
                 Label("Versão nova: \(repo.latestMessage ?? "")", systemImage: "arrow.down.app").foregroundStyle(.blue)
                 Text(Platform.isMac ? "No Mac: git pull e ./build.sh. O serviço de atualização instala a nova versão no iPhone."
                                     : "O Mac instala a nova versão sozinho quando o iPhone estiver no cabo ou na mesma rede Wi-Fi.")
                     .font(.caption).foregroundStyle(.secondary)
-            } else if repo.latestCommit != nil {
+            } else if repo.latestCode != nil {
                 Label("Atualizado", systemImage: "checkmark.circle").foregroundStyle(.green)
             }
         }
@@ -352,7 +358,7 @@ struct DownloadsView: View {
 /// Mensagem única quando o GitHub tem uma versão mais nova que a instalada.
 @MainActor func announceUpdate(_ app: AppState) {
     let repo = RepoSync.shared
-    guard repo.updateAvailable, let sha = repo.latestCommit else { return }
+    guard repo.updateAvailable, let sha = repo.latestCode else { return }
     app.info("Nova versão do CellStudio no GitHub (\(sha.prefix(7)): \(repo.latestMessage ?? "")). "
              + (Platform.isMac ? "Atualize com git pull e ./build.sh." : "O Mac instala no iPhone quando ele estiver conectado."))
 }

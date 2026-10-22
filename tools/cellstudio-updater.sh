@@ -34,7 +34,8 @@ fi
 cd "$SRC" || exit 1
 git fetch -q origin main || { log "sem conexão com o GitHub"; exit 0 }
 git reset -q --hard origin/main
-HEAD_SHA=$(git rev-parse HEAD)
+# versão do app = último commit que mudou o código (envios só de dados não recompilam)
+HEAD_SHA=$(git log -1 --format=%H -- Sources)
 
 # o próprio atualizador também se atualiza a partir do GitHub
 cp -f tools/cellstudio-updater.sh "$BASE/cellstudio-updater.sh" 2>/dev/null
