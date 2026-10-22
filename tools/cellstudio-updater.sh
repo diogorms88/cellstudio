@@ -38,7 +38,8 @@ git reset -q --hard origin/main
 HEAD_SHA=$(git log -1 --format=%H -- Sources)
 
 # o próprio atualizador também se atualiza a partir do GitHub
-cp -f tools/cellstudio-updater.sh "$BASE/cellstudio-updater.sh" 2>/dev/null
+# (cópia + mv: o zsh lê o script aos poucos, então o arquivo em execução não pode ser sobrescrito no lugar)
+cp -f tools/cellstudio-updater.sh "$BASE/.updater.new" 2>/dev/null && mv -f "$BASE/.updater.new" "$BASE/cellstudio-updater.sh"
 
 last_sha=$(cat "$STATE/iphone-commit" 2>/dev/null || echo none)
 last_time=$(cat "$STATE/iphone-time" 2>/dev/null || echo 0)
