@@ -27,7 +27,8 @@ struct BuildInfo: Decodable {
     var short: String { String(commit.prefix(7)) }
 }
 
-/// Uma estação (pasta em flash's) ou um arquivo/pasta 3D (em bodies) do repositório.
+/// Um robô (backup do flash em flash's) ou um arquivo/pasta 3D (em bodies) do repositório.
+/// Em flash's, `name` é o caminho do robô: "Módulo/[Estação/]Robô" (ex.: "Avulso/R11", "VW A/6010/…_6010_R11").
 struct RemoteItem: Identifiable {
     enum Kind { case flash, body }
     struct File { let path: String; let sha: String; let size: Int }
@@ -36,6 +37,18 @@ struct RemoteItem: Identifiable {
     let name: String
     let isFolder: Bool
     var files: [File]
+
+    private var parts: [String] { name.split(separator: "/").map(String.init) }
+    /// primeira pasta dentro de flash's (Avulso, VW A…)
+    var module: String { parts.count > 1 ? parts[0] : "" }
+    /// pastas entre o módulo e o robô (ex.: "6010"); vazio para robôs soltos no módulo
+    var station: String { parts.count > 2 ? parts[1..<(parts.count - 1)].joined(separator: " / ") : "" }
+    /// nome curto: "…_6010_R11" → "R11"
+    var label: String {
+        let last = parts.last ?? name
+        if let r = last.range(of: #"_(R\d+)$"#, options: .regularExpression) { return String(last[r].dropFirst()) }
+        return last
+    }
 
     var id: String { repoPath }
     var repoPath: String { (kind == .flash ? RepoInfo.flashFolder : RepoInfo.bodiesFolder) + "/" + name }
@@ -131,23 +144,39 @@ final class RepoSync: ObservableObject {
             guard let ref = latestCommit else { throw NSError(domain: "GitHub", code: 0, userInfo: [NSLocalizedDescriptionKey: "Sem conexão com o GitHub"]) }
             guard let tree = try await Self.api("git/trees/\(ref)?recursive=1") as? [String: Any],
                   let entries = tree["tree"] as? [[String: Any]] else { return }
+            let blobs = entries.filter { $0["type"] as? String == "blob" }
+            // robôs em flash's: a pasta acima de config/machinedata1.cfg (ou de application/control/config/…)
+            let flashPrefix = RepoInfo.flashFolder + "/"
+            let robotRoots = blobs.compactMap { $0["path"] as? String }.filter { $0.hasPrefix(flashPrefix) }.compactMap { path -> String? in
+                guard path.lowercased().hasSuffix("/config/machinedata1.cfg") else { return nil }
+                var root = String(path.dropLast("/config/machinedata1.cfg".count))
+                if root.lowercased().hasSuffix("/application/control") { root = String(root.dropLast("/application/control".count)) }
+                return root.count > flashPrefix.count ? String(root.dropFirst(flashPrefix.count)) : nil
+            }.sorted { $0.count > $1.count }          // o mais fundo primeiro
             var byKey: [String: RemoteItem] = [:]
-            for e in entries where e["type"] as? String == "blob" {
+            for e in blobs {
                 guard let path = e["path"] as? String, let sha = e["sha"] as? String else { continue }
                 let parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
                 guard parts.count >= 2 else { continue }
-                let kind: RemoteItem.Kind
+                let file = RemoteItem.File(path: path, sha: sha, size: e["size"] as? Int ?? 0)
                 switch parts[0] {
-                case RepoInfo.flashFolder: kind = .flash
-                case RepoInfo.bodiesFolder: kind = .body
+                case RepoInfo.flashFolder:
+                    // arquivo pertence ao robô cuja pasta o contém; READMEs e soltos ficam de fora
+                    let rel = String(path.dropFirst(flashPrefix.count))
+                    guard let root = robotRoots.first(where: { rel.hasPrefix($0 + "/") }) else { continue }
+                    let key = flashPrefix + root
+                    var item = byKey[key] ?? RemoteItem(kind: .flash, name: root, isFolder: true, files: [])
+                    item.files.append(file)
+                    byKey[key] = item
+                case RepoInfo.bodiesFolder:
+                    let name = parts[1]
+                    if parts.count == 2, name.hasPrefix(".") || name.lowercased() == "readme.md" { continue }
+                    let key = parts[0] + "/" + name
+                    var item = byKey[key] ?? RemoteItem(kind: .body, name: name, isFolder: parts.count > 2, files: [])
+                    item.files.append(file)
+                    byKey[key] = item
                 default: continue
                 }
-                let name = parts[1]
-                if parts.count == 2, name.hasPrefix(".") || name.lowercased() == "readme.md" { continue }
-                let key = parts[0] + "/" + name
-                var item = byKey[key] ?? RemoteItem(kind: kind, name: name, isFolder: parts.count > 2, files: [])
-                item.files.append(.init(path: path, sha: sha, size: e["size"] as? Int ?? 0))
-                byKey[key] = item
             }
             items = byKey.values.sorted { ($0.kind == .flash ? 0 : 1, $0.name.lowercased()) < ($1.kind == .flash ? 0 : 1, $1.name.lowercased()) }
             if tree["truncated"] as? Bool == true { error = "O repositório tem arquivos demais para listar de uma vez; a lista pode estar incompleta." }
@@ -223,14 +252,31 @@ struct DownloadsView: View {
         List {
             Section("Aplicativo") { versionRow }
             Section {
-                rows(.flash)
+                let robots = repo.items.filter { $0.kind == .flash }
+                let modules = Array(Set(robots.map(\.module))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                if robots.isEmpty, !repo.loading { Text("Nada em \(RepoInfo.flashFolder) no GitHub").foregroundStyle(.secondary) }
+                ForEach(modules, id: \.self) { m in
+                    let list = robots.filter { $0.module == m }
+                    NavigationLink { ModuleDownloadsView(module: m) } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder.fill").foregroundStyle(Color(red: 0.95, green: 0.75, blue: 0.3)).frame(width: 22)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(m.isEmpty ? "Sem módulo" : m).font(.system(size: 15, weight: .semibold))
+                                Text(moduleSummary(list)).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             } header: {
                 Text("Estações (\(RepoInfo.flashFolder))")
             } footer: {
-                Text("Backup do flash de cada robô. Depois de baixar, \"Abrir\" adiciona o robô à estação.")
+                Text("Um módulo por pasta (Avulso, VW A…). Dentro dele, os robôs de cada estação.")
             }
             Section {
-                rows(.body)
+                ForEach(repo.items.filter { $0.kind == .body }) { DownloadRow(item: $0) }
+                if !repo.items.contains(where: { $0.kind == .body }), !repo.loading {
+                    Text("Nada em \(RepoInfo.bodiesFolder) no GitHub").foregroundStyle(.secondary)
+                }
             } header: {
                 Text("Arquivos 3D (\(RepoInfo.bodiesFolder))")
             } footer: {
@@ -280,22 +326,40 @@ struct DownloadsView: View {
         .font(DXQ.font)
     }
 
-    @ViewBuilder private func rows(_ kind: RemoteItem.Kind) -> some View {
-        let list = repo.items.filter { $0.kind == kind }
-        if list.isEmpty, !repo.loading {
-            Text("Nada em \(kind == .flash ? RepoInfo.flashFolder : RepoInfo.bodiesFolder) no GitHub").foregroundStyle(.secondary)
-        }
-        ForEach(list) { item in row(item) }
+    private func moduleSummary(_ list: [RemoteItem]) -> String {
+        let stations = Set(list.map(\.station)).filter { !$0.isEmpty }
+        let size = ByteCountFormatter.string(fromByteCount: Int64(list.reduce(0) { $0 + $1.size }), countStyle: .file)
+        return (stations.isEmpty ? "" : "\(stations.count) estação(ões) · ") + "\(list.count) robô(s) · \(size)"
     }
 
-    private func row(_ item: RemoteItem) -> some View {
+}
+
+/// Mensagem única quando o GitHub tem uma versão mais nova que a instalada.
+@MainActor func announceUpdate(_ app: AppState) {
+    let repo = RepoSync.shared
+    guard repo.updateAvailable, let sha = repo.latestCode else { return }
+    app.info("Nova versão do CellStudio no GitHub (\(sha.prefix(7)): \(repo.latestMessage ?? "")). "
+             + (Platform.isMac ? "Atualize com git pull e ./build.sh." : "O Mac instala no iPhone quando ele estiver conectado."))
+}
+
+/// Linha de um robô ou arquivo 3D: baixar/atualizar e, depois de baixado, abrir/importar/usar.
+struct DownloadRow: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject private var repo = RepoSync.shared
+    @Environment(\.dismiss) private var dismiss
+    let item: RemoteItem
+
+    var body: some View {
         let status = repo.status(item)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: item.kind == .flash ? "externaldrive" : (item.isFolder ? "cube.transparent" : "car.side"))
                     .foregroundStyle(DXQ.blue).frame(width: 22)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(item.name).font(.system(size: 15, weight: .semibold))
+                    Text(item.kind == .flash ? item.label : item.name).font(.system(size: 15, weight: .semibold))
+                    if item.kind == .flash, item.label != item.name.split(separator: "/").last.map(String.init) {
+                        Text(item.name.split(separator: "/").last.map(String.init) ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Text("\(item.files.count) arquivo(s) · \(ByteCountFormatter.string(fromByteCount: Int64(item.size), countStyle: .file))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -335,7 +399,7 @@ struct DownloadsView: View {
         .controlSize(.small)
     }
 
-    private func download(_ item: RemoteItem) async {
+    func download(_ item: RemoteItem) async {
         guard await repo.download(item) else { return }
         // biblioteca de modelos baixada e nenhuma em uso: passa a usar
         if item.kind == .body, isModelLibrary(item), app.modelsRoot == nil { app.modelsRoot = item.localURL }
@@ -355,10 +419,43 @@ struct DownloadsView: View {
     private func close() { if Platform.isMac { dismiss() } }
 }
 
-/// Mensagem única quando o GitHub tem uma versão mais nova que a instalada.
-@MainActor func announceUpdate(_ app: AppState) {
-    let repo = RepoSync.shared
-    guard repo.updateAvailable, let sha = repo.latestCode else { return }
-    app.info("Nova versão do CellStudio no GitHub (\(sha.prefix(7)): \(repo.latestMessage ?? "")). "
-             + (Platform.isMac ? "Atualize com git pull e ./build.sh." : "O Mac instala no iPhone quando ele estiver conectado."))
+/// Um módulo de flash's (Avulso, VW A…): robôs agrupados por estação.
+struct ModuleDownloadsView: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject private var repo = RepoSync.shared
+    let module: String
+
+    var body: some View {
+        let robots = repo.items.filter { $0.kind == .flash && $0.module == module }
+        let stations = Array(Set(robots.map(\.station))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        List {
+            ForEach(stations, id: \.self) { st in
+                let list = robots.filter { $0.station == st }.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
+                Section {
+                    ForEach(list) { DownloadRow(item: $0) }
+                } header: {
+                    HStack {
+                        Text(st.isEmpty ? "Robôs" : "Estação \(st)")
+                        Spacer()
+                        if list.count > 1 { stationButtons(list) }
+                    }
+                }
+            }
+        }
+        .navigationTitle(module.isEmpty ? "Sem módulo" : module)
+        .navigationBarTitleDisplayModeInline()
+    }
+
+    /// Baixar todos / abrir todos os robôs da estação de uma vez.
+    @ViewBuilder private func stationButtons(_ list: [RemoteItem]) -> some View {
+        let missing = list.filter { repo.status($0) != .current }
+        if !missing.isEmpty {
+            Button("Baixar todos") {
+                Task { for r in missing { _ = await repo.download(r) } }
+            }
+            .disabled(list.contains { repo.progress[$0.id] != nil })
+        } else {
+            Button("Abrir todos") { list.forEach { app.openBackup($0.localURL) } }
+        }
+    }
 }

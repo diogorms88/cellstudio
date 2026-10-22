@@ -150,8 +150,8 @@ struct ProjectExplorer: View {
         } else { toggle(n.id) }
     }
 
-    private func item(_ title: String, _ icon: String?, enabled: Bool = true, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func item(_ title: String, _ icon: String?, enabled: Bool = true, _ action: @escaping @MainActor () -> Void) -> some View {
+        Button { afterMenu(action) } label: {
             if let icon, let img = DXQIcons.image(icon, size: 16) { Label { Text(title) } icon: { Image(platformImage: img) } } else { Text(title) }
         }
         .disabled(!enabled)
@@ -235,33 +235,33 @@ struct ProjectExplorer: View {
             Divider()
             item("Recortar", "general_cut") { app.explorerCopy(url, robot: rid, cut: true) }
             item("Copiar", "general_copy") { app.explorerCopy(url, robot: rid, cut: false) }
-            Button(Platform.revealTitle) { Platform.reveal(url) }
+            Button(Platform.revealTitle) { afterMenu { Platform.reveal(url) } }
         case .part(let id):
-            Button("Usar como alvo de pintura") { app.setPaintTarget(id) }
-            Button("Remover", role: .destructive) { app.removePart(id) }
+            Button("Usar como alvo de pintura") { afterMenu { app.setPaintTarget(id) } }
+            Button("Remover", role: .destructive) { afterMenu { app.removePart(id) } }
         case .robot(let id):
             let slot = app.robots.first { $0.id == id }
             if slot?.hidden3D == true {
-                Button("Mostrar na Vista 3D") { app.setRobotIn3D(id, true) }
+                Button("Mostrar na Vista 3D") { afterMenu { app.setRobotIn3D(id, true) } }
             } else {
-                Button("Tornar robô ativo") { app.activate(id) }
-                Button("Remover da Vista 3D") { app.setRobotIn3D(id, false) }
+                Button("Tornar robô ativo") { afterMenu { app.activate(id) } }
+                Button("Remover da Vista 3D") { afterMenu { app.setRobotIn3D(id, false) } }
             }
             Divider()
             if let bk = slot?.backup {
-                Button("Recarregar backup") { app.openBackup(bk.root) }
-                Button(Platform.isMac ? "Mostrar backup no Finder" : "Compartilhar backup…") { Platform.reveal(bk.root) }
+                Button("Recarregar backup") { afterMenu { app.openBackup(bk.root) } }
+                Button(Platform.isMac ? "Mostrar backup no Finder" : "Compartilhar backup…") { afterMenu { Platform.reveal(bk.root) } }
             }
             Divider()
-            Button("Excluir da estação…", role: .destructive) { app.deleteRobot(id) }
+            Button("Excluir da estação…", role: .destructive) { afterMenu { app.deleteRobot(id) } }
         case .station:
-            Button("Adicionar robô (backup do flash)…") { app.addRobotsFromBackup() }
+            Button("Adicionar robô (backup do flash)…") { afterMenu { app.addRobotsFromBackup() } }
             Divider()
-            Button("Remover todos os robôs da Vista 3D") { app.setAllRobotsIn3D(false) }.disabled(app.robotsIn3D.isEmpty)
-            Button("Mostrar todos os robôs na Vista 3D") { app.setAllRobotsIn3D(true) }.disabled(!app.robots.contains(where: \.hidden3D))
+            Button("Remover todos os robôs da Vista 3D") { afterMenu { app.setAllRobotsIn3D(false) } }.disabled(app.robotsIn3D.isEmpty)
+            Button("Mostrar todos os robôs na Vista 3D") { afterMenu { app.setAllRobotsIn3D(true) } }.disabled(!app.robots.contains(where: \.hidden3D))
             Divider()
-            Button("Renomear estação…") { app.renameStation() }
-            Button("Nova estação…") { app.newStation() }
+            Button("Renomear estação…") { afterMenu { app.renameStation() } }
+            Button("Nova estação…") { afterMenu { app.newStation() } }
         default:
             EmptyView()
         }

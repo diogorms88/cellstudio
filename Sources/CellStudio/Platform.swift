@@ -376,6 +376,17 @@ enum ScopedAccess {
     }
 }
 
+/// Ação de menu (menu de contexto ou Menu) que pode abrir diálogo ou seletor. No iPhone o diálogo
+/// não pode abrir enquanto o menu ainda está fechando (a tela trava esperando um toque que nunca chega),
+/// então a ação roda logo depois que o menu termina de sumir. No Mac roda na hora.
+@MainActor func afterMenu(_ action: @escaping @MainActor () -> Void) {
+    #if os(iOS)
+    Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in MainActor.assumeIsolated { action() } }
+    #else
+    action()
+    #endif
+}
+
 // Nomes usados no app inteiro (antes eram funções com NSOpenPanel/NSSavePanel).
 @MainActor func openFile(_ exts: [String], _ action: @escaping (URL) -> Void) {
     if let u = Dialogs.chooseFiles(exts).first { action(u) }
